@@ -65,7 +65,7 @@ func NewREST(optsGetter genericapiserver.RESTOptionsGetter) (*REST, *StatusREST)
 			return obj.(*extensions.ReplicaSet).Name, nil
 		},
 		PredicateFunc:     replicaset.MatchReplicaSet,
-		QualifiedResource: api.Resource("replicasets"),
+		QualifiedResource: extensions.Resource("replicasets"),
 
 		CreateStrategy: replicaset.Strategy,
 		UpdateStrategy: replicaset.Strategy,
