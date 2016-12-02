@@ -52,6 +52,7 @@ import (
 	roleetcd "k8s.io/kubernetes/pkg/registry/rbac/role/etcd"
 	"k8s.io/kubernetes/pkg/registry/rbac/rolebinding"
 	rolebindingetcd "k8s.io/kubernetes/pkg/registry/rbac/rolebinding/etcd"
+	"k8s.io/kubernetes/pkg/runtime/schema"
 	"k8s.io/kubernetes/pkg/watch"
 	"k8s.io/kubernetes/plugin/pkg/auth/authorizer/rbac"
 	"k8s.io/kubernetes/test/integration/framework"
@@ -83,18 +84,18 @@ func clientsetForUser(user string, config *restclient.Config) clientset.Interfac
 }
 
 func newRBACAuthorizer(t *testing.T, superUser string, config *master.Config) authorizer.Authorizer {
-	newRESTOptions := func(resource string) generic.RESTOptions {
-		storageConfig, err := config.StorageFactory.NewConfig(rbacapi.Resource(resource))
+	newRESTOptions := func(resource schema.GroupResource) generic.RESTOptions {
+		storageConfig, err := config.StorageFactory.NewConfig(resource)
 		if err != nil {
 			t.Fatalf("failed to get storage: %v", err)
 		}
-		return generic.RESTOptions{StorageConfig: storageConfig, Decorator: generic.UndecoratedStorage, ResourcePrefix: resource}
+		return generic.RESTOptions{StorageConfig: storageConfig, Decorator: generic.UndecoratedStorage, ResourcePrefix: resource.Resource}
 	}
 
-	roleRegistry := role.AuthorizerAdapter{Registry: role.NewRegistry(roleetcd.NewREST(newRESTOptions("roles")))}
-	roleBindingRegistry := rolebinding.AuthorizerAdapter{Registry: rolebinding.NewRegistry(rolebindingetcd.NewREST(newRESTOptions("rolebindings")))}
-	clusterRoleRegistry := clusterrole.AuthorizerAdapter{Registry: clusterrole.NewRegistry(clusterroleetcd.NewREST(newRESTOptions("clusterroles")))}
-	clusterRoleBindingRegistry := clusterrolebinding.AuthorizerAdapter{Registry: clusterrolebinding.NewRegistry(clusterrolebindingetcd.NewREST(newRESTOptions("clusterrolebindings")))}
+	roleRegistry := role.AuthorizerAdapter{Registry: role.NewRegistry(roleetcd.NewREST(newRESTOptions))}
+	roleBindingRegistry := rolebinding.AuthorizerAdapter{Registry: rolebinding.NewRegistry(rolebindingetcd.NewREST(newRESTOptions))}
+	clusterRoleRegistry := clusterrole.AuthorizerAdapter{Registry: clusterrole.NewRegistry(clusterroleetcd.NewREST(newRESTOptions))}
+	clusterRoleBindingRegistry := clusterrolebinding.AuthorizerAdapter{Registry: clusterrolebinding.NewRegistry(clusterrolebindingetcd.NewREST(newRESTOptions))}
 	return rbac.New(roleRegistry, roleBindingRegistry, clusterRoleRegistry, clusterRoleBindingRegistry, superUser)
 }
 
