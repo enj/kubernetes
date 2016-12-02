@@ -27,8 +27,8 @@ import (
 	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/apis/extensions"
 	extvalidation "k8s.io/kubernetes/pkg/apis/extensions/validation"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	"k8s.io/kubernetes/pkg/registry/extensions/deployment"
+	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/storage"
@@ -43,7 +43,7 @@ type DeploymentStorage struct {
 	Rollback   *RollbackREST
 }
 
-func NewStorage(optsGetter genericapiserver.RESTOptionsGetter) DeploymentStorage {
+func NewStorage(optsGetter generic.RESTOptionsGetter) DeploymentStorage {
 	deploymentRest, deploymentStatusRest, deploymentRollbackRest := NewREST(optsGetter)
 	deploymentRegistry := deployment.NewRegistry(deploymentRest)
 
@@ -60,7 +60,7 @@ type REST struct {
 }
 
 // NewREST returns a RESTStorage object that will work against deployments.
-func NewREST(optsGetter genericapiserver.RESTOptionsGetter) (*REST, *StatusREST, *RollbackREST) {
+func NewREST(optsGetter generic.RESTOptionsGetter) (*REST, *StatusREST, *RollbackREST) {
 	store := &registry.Store{
 		NewFunc:     func() runtime.Object { return &extensions.Deployment{} },
 		NewListFunc: func() runtime.Object { return &extensions.DeploymentList{} },

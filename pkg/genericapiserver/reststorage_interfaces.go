@@ -16,20 +16,9 @@ limitations under the License.
 
 package genericapiserver
 
-import (
-	"k8s.io/kubernetes/pkg/registry/generic"
-	"k8s.io/kubernetes/pkg/runtime/schema"
-)
-
-type RESTOptionsGetter func(resource schema.GroupResource) generic.RESTOptions
+import "k8s.io/kubernetes/pkg/registry/generic"
 
 type RESTStorageProvider interface {
 	GroupName() string
-	NewRESTStorage(apiResourceConfigSource APIResourceConfigSource, restOptionsGetter RESTOptionsGetter) (APIGroupInfo, bool)
-}
-
-func RESTOptionsToGetter(opts *generic.RESTOptions) RESTOptionsGetter {
-	return func(schema.GroupResource) generic.RESTOptions {
-		return *opts
-	}
+	NewRESTStorage(apiResourceConfigSource APIResourceConfigSource, restOptionsGetter generic.RESTOptionsGetter) (APIGroupInfo, bool)
 }

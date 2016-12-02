@@ -287,11 +287,11 @@ func (m *ThirdPartyResourceServer) InstallThirdPartyResource(rsrc *extensions.Th
 
 func (m *ThirdPartyResourceServer) thirdpartyapi(group, kind, version, pluralResource string) *apiserver.APIGroupVersion {
 	resourceStorage := thirdpartyresourcedataetcd.NewREST(
-		genericapiserver.RESTOptionsToGetter(&generic.RESTOptions{
+		&generic.RESTOptions{
 			StorageConfig:           m.thirdPartyStorageConfig,
 			Decorator:               generic.UndecoratedStorage,
 			DeleteCollectionWorkers: m.deleteCollectionWorkers,
-		}),
+		},
 		group,
 		kind,
 	)

@@ -18,8 +18,8 @@ package etcd
 
 import (
 	"k8s.io/kubernetes/pkg/apis/extensions"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	"k8s.io/kubernetes/pkg/registry/extensions/podsecuritypolicy"
+	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/storage"
@@ -32,7 +32,7 @@ type REST struct {
 }
 
 // NewREST returns a RESTStorage object that will work against PodSecurityPolicy objects.
-func NewREST(optsGetter genericapiserver.RESTOptionsGetter) *REST {
+func NewREST(optsGetter generic.RESTOptionsGetter) *REST {
 	store := &registry.Store{
 		NewFunc:     func() runtime.Object { return &extensions.PodSecurityPolicy{} },
 		NewListFunc: func() runtime.Object { return &extensions.PodSecurityPolicyList{} },

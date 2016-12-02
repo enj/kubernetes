@@ -19,8 +19,8 @@ package etcd
 import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/rest"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	"k8s.io/kubernetes/pkg/registry/core/persistentvolumeclaim"
+	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/storage"
@@ -32,7 +32,7 @@ type REST struct {
 }
 
 // NewREST returns a RESTStorage object that will work against persistent volume claims.
-func NewREST(optsGetter genericapiserver.RESTOptionsGetter) (*REST, *StatusREST) {
+func NewREST(optsGetter generic.RESTOptionsGetter) (*REST, *StatusREST) {
 	store := &registry.Store{
 		NewFunc:     func() runtime.Object { return &api.PersistentVolumeClaim{} },
 		NewListFunc: func() runtime.Object { return &api.PersistentVolumeClaimList{} },

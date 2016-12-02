@@ -38,14 +38,15 @@ import (
 	namespaceetcd "k8s.io/kubernetes/pkg/registry/core/namespace/etcd"
 	secretetcd "k8s.io/kubernetes/pkg/registry/core/secret/etcd"
 	serviceetcd "k8s.io/kubernetes/pkg/registry/core/service/etcd"
+	"k8s.io/kubernetes/pkg/registry/generic"
 )
 
-func installCoreAPIs(s *options.ServerRunOptions, g *genericapiserver.GenericAPIServer, restOptionsFactory restOptionsFactory) {
-	serviceStore, serviceStatusStore := serviceetcd.NewREST(restOptionsFactory.NewFor)
-	namespaceStore, namespaceStatusStore, namespaceFinalizeStore := namespaceetcd.NewREST(restOptionsFactory.NewFor)
-	secretStore := secretetcd.NewREST(restOptionsFactory.NewFor)
-	configMapStore := configmapetcd.NewREST(restOptionsFactory.NewFor)
-	eventStore := eventetcd.NewREST(restOptionsFactory.NewFor, uint64(s.EventTTL.Seconds()))
+func installCoreAPIs(s *options.ServerRunOptions, g *genericapiserver.GenericAPIServer, optsGetter generic.RESTOptionsGetter) {
+	serviceStore, serviceStatusStore := serviceetcd.NewREST(optsGetter)
+	namespaceStore, namespaceStatusStore, namespaceFinalizeStore := namespaceetcd.NewREST(optsGetter)
+	secretStore := secretetcd.NewREST(optsGetter)
+	configMapStore := configmapetcd.NewREST(optsGetter)
+	eventStore := eventetcd.NewREST(optsGetter, uint64(s.EventTTL.Seconds()))
 	coreResources := map[string]rest.Storage{
 		"secrets":             secretStore,
 		"services":            serviceStore,

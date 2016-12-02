@@ -28,13 +28,14 @@ import (
 	deploymentetcd "k8s.io/kubernetes/pkg/registry/extensions/deployment/etcd"
 	ingressetcd "k8s.io/kubernetes/pkg/registry/extensions/ingress/etcd"
 	replicasetetcd "k8s.io/kubernetes/pkg/registry/extensions/replicaset/etcd"
+	"k8s.io/kubernetes/pkg/registry/generic"
 )
 
-func installExtensionsAPIs(g *genericapiserver.GenericAPIServer, restOptionsFactory restOptionsFactory) {
-	replicaSetStorage := replicasetetcd.NewStorage(restOptionsFactory.NewFor)
-	deploymentStorage := deploymentetcd.NewStorage(restOptionsFactory.NewFor)
-	ingressStorage, ingressStatusStorage := ingressetcd.NewREST(restOptionsFactory.NewFor)
-	daemonSetStorage, daemonSetStatusStorage := daemonsetetcd.NewREST(restOptionsFactory.NewFor)
+func installExtensionsAPIs(g *genericapiserver.GenericAPIServer, optsGetter generic.RESTOptionsGetter) {
+	replicaSetStorage := replicasetetcd.NewStorage(optsGetter)
+	deploymentStorage := deploymentetcd.NewStorage(optsGetter)
+	ingressStorage, ingressStatusStorage := ingressetcd.NewREST(optsGetter)
+	daemonSetStorage, daemonSetStatusStorage := daemonsetetcd.NewREST(optsGetter)
 
 	extensionsResources := map[string]rest.Storage{
 		"replicasets":          replicaSetStorage.ReplicaSet,

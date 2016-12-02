@@ -19,7 +19,6 @@ package etcd
 import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/apis/extensions"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	"k8s.io/kubernetes/pkg/registry/extensions/thirdpartyresource"
 	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
@@ -32,9 +31,9 @@ type REST struct {
 }
 
 // NewREST returns a registry which will store ThirdPartyResource in the given helper
-func NewREST(optsGetter genericapiserver.RESTOptionsGetter) *REST {
+func NewREST(optsGetter generic.RESTOptionsGetter) *REST {
 	resource := extensions.Resource("thirdpartyresources")
-	opts := optsGetter(resource)
+	opts := optsGetter.GetRESTOptions(resource)
 	prefix := "/" + opts.ResourcePrefix
 
 	// We explicitly do NOT do any decoration here yet.

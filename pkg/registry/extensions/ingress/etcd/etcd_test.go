@@ -22,7 +22,6 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/apis/extensions"
 	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/registrytest"
@@ -34,7 +33,7 @@ import (
 func newStorage(t *testing.T) (*REST, *StatusREST, *etcdtesting.EtcdTestServer) {
 	etcdStorage, server := registrytest.NewEtcdStorage(t, extensions.GroupName)
 	restOptions := &generic.RESTOptions{StorageConfig: etcdStorage, Decorator: generic.UndecoratedStorage, DeleteCollectionWorkers: 1}
-	ingressStorage, statusStorage := NewREST(genericapiserver.RESTOptionsToGetter(restOptions))
+	ingressStorage, statusStorage := NewREST(restOptions)
 	return ingressStorage, statusStorage, server
 }
 

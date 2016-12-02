@@ -22,7 +22,6 @@ import (
 	"k8s.io/kubernetes/federation/apis/federation"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/registrytest"
@@ -36,7 +35,7 @@ func newStorage(t *testing.T) (*REST, *etcdtesting.EtcdTestServer) {
 		StorageConfig:           storageConfig,
 		Decorator:               generic.UndecoratedStorage,
 		DeleteCollectionWorkers: 1}
-	storage, _ := NewREST(genericapiserver.RESTOptionsToGetter(restOptions))
+	storage, _ := NewREST(restOptions)
 	return storage, server
 }
 

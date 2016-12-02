@@ -24,7 +24,6 @@ import (
 	"k8s.io/kubernetes/pkg/api/rest"
 	"k8s.io/kubernetes/pkg/apis/autoscaling"
 	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/registrytest"
@@ -41,7 +40,7 @@ const (
 func newStorage(t *testing.T) (ControllerStorage, *etcdtesting.EtcdTestServer) {
 	etcdStorage, server := registrytest.NewEtcdStorage(t, "")
 	restOptions := &generic.RESTOptions{StorageConfig: etcdStorage, Decorator: generic.UndecoratedStorage, DeleteCollectionWorkers: 1}
-	storage := NewStorage(genericapiserver.RESTOptionsToGetter(restOptions))
+	storage := NewStorage(restOptions)
 	return storage, server
 }
 

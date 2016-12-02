@@ -24,10 +24,10 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/rest"
 	"k8s.io/kubernetes/pkg/api/v1"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	"k8s.io/kubernetes/pkg/kubelet/client"
 	"k8s.io/kubernetes/pkg/registry/core/node"
 	noderest "k8s.io/kubernetes/pkg/registry/core/node/rest"
+	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/util/restoptions"
@@ -68,7 +68,7 @@ func (r *StatusREST) Update(ctx api.Context, name string, objInfo rest.UpdatedOb
 }
 
 // NewStorage returns a NodeStorage object that will work against nodes.
-func NewStorage(optsGetter genericapiserver.RESTOptionsGetter, kubeletClientConfig client.KubeletClientConfig, proxyTransport http.RoundTripper) (*NodeStorage, error) {
+func NewStorage(optsGetter generic.RESTOptionsGetter, kubeletClientConfig client.KubeletClientConfig, proxyTransport http.RoundTripper) (*NodeStorage, error) {
 	store := &registry.Store{
 		NewFunc:     func() runtime.Object { return &api.Node{} },
 		NewListFunc: func() runtime.Object { return &api.NodeList{} },

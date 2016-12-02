@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/registrytest"
 	"k8s.io/kubernetes/pkg/runtime"
@@ -32,7 +31,7 @@ var testTTL uint64 = 60
 func newStorage(t *testing.T) (*REST, *etcdtesting.EtcdTestServer) {
 	etcdStorage, server := registrytest.NewEtcdStorage(t, "")
 	restOptions := &generic.RESTOptions{StorageConfig: etcdStorage, Decorator: generic.UndecoratedStorage, DeleteCollectionWorkers: 1}
-	return NewREST(genericapiserver.RESTOptionsToGetter(restOptions), testTTL), server
+	return NewREST(restOptions, testTTL), server
 }
 
 func validNewEvent(namespace string) *api.Event {

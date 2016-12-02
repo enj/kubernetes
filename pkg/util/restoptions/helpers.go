@@ -23,15 +23,15 @@ import (
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/meta"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	"k8s.io/kubernetes/pkg/registry/cachesize"
+	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/storage"
 )
 
-// defaultKeyFunctions sets the default behavior for storage key generation onto a Store.
-func defaultKeyFunctions(store *registry.Store, prefix string) {
+// completeKeyFunctions sets the default behavior for storage key generation onto a Store.
+func completeKeyFunctions(store *registry.Store, prefix string) {
 	if store.CreateStrategy.NamespaceScoped() {
 		if store.KeyRootFunc == nil {
 			store.KeyRootFunc = func(ctx api.Context) string {
@@ -58,7 +58,7 @@ func defaultKeyFunctions(store *registry.Store, prefix string) {
 }
 
 // ApplyOptions updates the given generic storage from the provided rest options
-func ApplyOptions(optsGetter genericapiserver.RESTOptionsGetter, store *registry.Store, triggerFn storage.TriggerPublisherFunc) {
+func ApplyOptions(optsGetter generic.RESTOptionsGetter, store *registry.Store, triggerFn storage.TriggerPublisherFunc) {
 	if store.QualifiedResource.Empty() {
 		glog.Fatalf("store %#v must have a non-empty qualified resource", store)
 	}
@@ -72,7 +72,7 @@ func ApplyOptions(optsGetter genericapiserver.RESTOptionsGetter, store *registry
 		glog.Fatalf("store for %s must have CreateStrategy set", store.QualifiedResource.String())
 	}
 
-	opts := optsGetter(store.QualifiedResource)
+	opts := optsGetter.GetRESTOptions(store.QualifiedResource)
 
 	// Resource prefix must come from the underlying factory
 	prefix := opts.ResourcePrefix
@@ -80,7 +80,7 @@ func ApplyOptions(optsGetter genericapiserver.RESTOptionsGetter, store *registry
 		prefix = "/" + prefix
 	}
 
-	defaultKeyFunctions(store, prefix)
+	completeKeyFunctions(store, prefix)
 
 	keyFunc := func(obj runtime.Object) (string, error) {
 		accessor, err := meta.Accessor(obj)

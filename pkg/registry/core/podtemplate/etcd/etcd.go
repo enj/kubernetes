@@ -18,8 +18,8 @@ package etcd
 
 import (
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	"k8s.io/kubernetes/pkg/registry/core/podtemplate"
+	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/storage"
@@ -31,7 +31,7 @@ type REST struct {
 }
 
 // NewREST returns a RESTStorage object that will work against pod templates.
-func NewREST(optsGetter genericapiserver.RESTOptionsGetter) *REST {
+func NewREST(optsGetter generic.RESTOptionsGetter) *REST {
 	store := &registry.Store{
 		NewFunc:     func() runtime.Object { return &api.PodTemplate{} },
 		NewListFunc: func() runtime.Object { return &api.PodTemplateList{} },

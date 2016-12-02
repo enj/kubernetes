@@ -18,7 +18,7 @@ package etcd
 
 import (
 	storageapi "k8s.io/kubernetes/pkg/apis/storage"
-	"k8s.io/kubernetes/pkg/genericapiserver"
+	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/registry/storage/storageclass"
 	"k8s.io/kubernetes/pkg/runtime"
@@ -31,7 +31,7 @@ type REST struct {
 }
 
 // NewREST returns a RESTStorage object that will work against persistent volumes.
-func NewREST(optsGetter genericapiserver.RESTOptionsGetter) *REST {
+func NewREST(optsGetter generic.RESTOptionsGetter) *REST {
 	store := &registry.Store{
 		NewFunc:     func() runtime.Object { return &storageapi.StorageClass{} },
 		NewListFunc: func() runtime.Object { return &storageapi.StorageClassList{} },

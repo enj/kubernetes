@@ -18,7 +18,6 @@ package etcd
 
 import (
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	"k8s.io/kubernetes/pkg/registry/core/event"
 	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
@@ -30,9 +29,9 @@ type REST struct {
 }
 
 // NewREST returns a RESTStorage object that will work against events.
-func NewREST(optsGetter genericapiserver.RESTOptionsGetter, ttl uint64) *REST {
+func NewREST(optsGetter generic.RESTOptionsGetter, ttl uint64) *REST {
 	resource := api.Resource("events")
-	opts := optsGetter(resource)
+	opts := optsGetter.GetRESTOptions(resource)
 	prefix := "/" + opts.ResourcePrefix
 
 	// We explicitly do NOT do any decoration here - switching on Cacher

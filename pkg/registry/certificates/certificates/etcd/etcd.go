@@ -20,8 +20,8 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/rest"
 	"k8s.io/kubernetes/pkg/apis/certificates"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	csrregistry "k8s.io/kubernetes/pkg/registry/certificates/certificates"
+	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/storage"
@@ -34,7 +34,7 @@ type REST struct {
 }
 
 // NewREST returns a registry which will store CertificateSigningRequest in the given helper
-func NewREST(optsGetter genericapiserver.RESTOptionsGetter) (*REST, *StatusREST, *ApprovalREST) {
+func NewREST(optsGetter generic.RESTOptionsGetter) (*REST, *StatusREST, *ApprovalREST) {
 	store := &registry.Store{
 		NewFunc:     func() runtime.Object { return &certificates.CertificateSigningRequest{} },
 		NewListFunc: func() runtime.Object { return &certificates.CertificateSigningRequestList{} },

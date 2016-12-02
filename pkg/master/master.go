@@ -218,7 +218,7 @@ func (c completedConfig) New() (*Master, error) {
 		GenericAPIServer: s,
 	}
 
-	restOptionsFactory := restOptionsFactory{
+	restOptionsFactory := &restOptionsFactory{
 		deleteCollectionWorkers: c.DeleteCollectionWorkers,
 		enableGarbageCollection: c.GenericConfig.EnableGarbageCollection,
 		storageFactory:          c.StorageFactory,
@@ -241,7 +241,7 @@ func (c completedConfig) New() (*Master, error) {
 			ServiceNodePortRange: c.ServiceNodePortRange,
 			LoopbackClientConfig: c.GenericConfig.LoopbackClientConfig,
 		}
-		m.InstallLegacyAPI(c.Config, restOptionsFactory.NewFor, legacyRESTStorageProvider)
+		m.InstallLegacyAPI(c.Config, restOptionsFactory, legacyRESTStorageProvider)
 	}
 
 	restStorageProviders := []genericapiserver.RESTStorageProvider{
@@ -256,7 +256,7 @@ func (c completedConfig) New() (*Master, error) {
 		rbacrest.RESTStorageProvider{AuthorizerRBACSuperUser: c.GenericConfig.AuthorizerRBACSuperUser},
 		storagerest.RESTStorageProvider{},
 	}
-	m.InstallAPIs(c.Config.GenericConfig.APIResourceConfigSource, restOptionsFactory.NewFor, restStorageProviders...)
+	m.InstallAPIs(c.Config.GenericConfig.APIResourceConfigSource, restOptionsFactory, restStorageProviders...)
 
 	if c.Tunneler != nil {
 		m.installTunneler(c.Tunneler, corev1client.NewForConfigOrDie(c.GenericConfig.LoopbackClientConfig).Nodes())
@@ -265,7 +265,7 @@ func (c completedConfig) New() (*Master, error) {
 	return m, nil
 }
 
-func (m *Master) InstallLegacyAPI(c *Config, restOptionsGetter genericapiserver.RESTOptionsGetter, legacyRESTStorageProvider corerest.LegacyRESTStorageProvider) {
+func (m *Master) InstallLegacyAPI(c *Config, restOptionsGetter generic.RESTOptionsGetter, legacyRESTStorageProvider corerest.LegacyRESTStorageProvider) {
 	legacyRESTStorage, apiGroupInfo, err := legacyRESTStorageProvider.NewLegacyRESTStorage(restOptionsGetter)
 	if err != nil {
 		glog.Fatalf("Error building core storage: %v", err)
@@ -294,7 +294,7 @@ func (m *Master) installTunneler(tunneler genericapiserver.Tunneler, nodeClient 
 }
 
 // InstallAPIs will install the APIs for the restStorageProviders if they are enabled.
-func (m *Master) InstallAPIs(apiResourceConfigSource genericapiserver.APIResourceConfigSource, restOptionsGetter genericapiserver.RESTOptionsGetter, restStorageProviders ...genericapiserver.RESTStorageProvider) {
+func (m *Master) InstallAPIs(apiResourceConfigSource genericapiserver.APIResourceConfigSource, restOptionsGetter generic.RESTOptionsGetter, restStorageProviders ...genericapiserver.RESTStorageProvider) {
 	apiGroupsInfo := []genericapiserver.APIGroupInfo{}
 
 	for _, restStorageBuilder := range restStorageProviders {
@@ -337,7 +337,7 @@ type restOptionsFactory struct {
 	storageDecorator        generic.StorageDecorator
 }
 
-func (f restOptionsFactory) NewFor(resource schema.GroupResource) generic.RESTOptions {
+func (f *restOptionsFactory) GetRESTOptions(resource schema.GroupResource) generic.RESTOptions {
 	storageConfig, err := f.storageFactory.NewConfig(resource)
 	if err != nil {
 		glog.Fatalf("Unable to find storage destination for %v, due to %v", resource, err.Error())

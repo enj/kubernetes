@@ -22,7 +22,6 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/resource"
 	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	kubeletclient "k8s.io/kubernetes/pkg/kubelet/client"
 	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/registry/generic"
@@ -34,7 +33,7 @@ import (
 func newStorage(t *testing.T) (*REST, *etcdtesting.EtcdTestServer) {
 	etcdStorage, server := registrytest.NewEtcdStorage(t, "")
 	restOptions := &generic.RESTOptions{StorageConfig: etcdStorage, Decorator: generic.UndecoratedStorage, DeleteCollectionWorkers: 1}
-	storage, err := NewStorage(genericapiserver.RESTOptionsToGetter(restOptions), kubeletclient.KubeletClientConfig{}, nil)
+	storage, err := NewStorage(restOptions, kubeletclient.KubeletClientConfig{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

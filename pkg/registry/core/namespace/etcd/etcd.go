@@ -24,8 +24,8 @@ import (
 	storageerr "k8s.io/kubernetes/pkg/api/errors/storage"
 	"k8s.io/kubernetes/pkg/api/rest"
 	"k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	"k8s.io/kubernetes/pkg/registry/core/namespace"
+	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/storage"
@@ -49,7 +49,7 @@ type FinalizeREST struct {
 }
 
 // NewREST returns a RESTStorage object that will work against namespaces.
-func NewREST(optsGetter genericapiserver.RESTOptionsGetter) (*REST, *StatusREST, *FinalizeREST) {
+func NewREST(optsGetter generic.RESTOptionsGetter) (*REST, *StatusREST, *FinalizeREST) {
 	store := &registry.Store{
 		NewFunc:     func() runtime.Object { return &api.Namespace{} },
 		NewListFunc: func() runtime.Object { return &api.NamespaceList{} },

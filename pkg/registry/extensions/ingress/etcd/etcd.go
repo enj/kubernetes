@@ -20,8 +20,8 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/rest"
 	"k8s.io/kubernetes/pkg/apis/extensions"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	ingress "k8s.io/kubernetes/pkg/registry/extensions/ingress"
+	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/storage"
@@ -34,7 +34,7 @@ type REST struct {
 }
 
 // NewREST returns a RESTStorage object that will work against replication controllers.
-func NewREST(optsGetter genericapiserver.RESTOptionsGetter) (*REST, *StatusREST) {
+func NewREST(optsGetter generic.RESTOptionsGetter) (*REST, *StatusREST) {
 	store := &registry.Store{
 		NewFunc:     func() runtime.Object { return &extensions.Ingress{} },
 		NewListFunc: func() runtime.Object { return &extensions.IngressList{} },

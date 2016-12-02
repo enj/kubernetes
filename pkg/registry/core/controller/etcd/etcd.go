@@ -26,9 +26,9 @@ import (
 	"k8s.io/kubernetes/pkg/api/rest"
 	"k8s.io/kubernetes/pkg/apis/autoscaling"
 	"k8s.io/kubernetes/pkg/apis/autoscaling/validation"
-	"k8s.io/kubernetes/pkg/genericapiserver"
 	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/registry/core/controller"
+	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/storage"
@@ -42,7 +42,7 @@ type ControllerStorage struct {
 	Scale      *ScaleREST
 }
 
-func NewStorage(optsGetter genericapiserver.RESTOptionsGetter) ControllerStorage {
+func NewStorage(optsGetter generic.RESTOptionsGetter) ControllerStorage {
 	controllerREST, statusREST := NewREST(optsGetter)
 	controllerRegistry := controller.NewRegistry(controllerREST)
 
@@ -58,7 +58,7 @@ type REST struct {
 }
 
 // NewREST returns a RESTStorage object that will work against replication controllers.
-func NewREST(optsGetter genericapiserver.RESTOptionsGetter) (*REST, *StatusREST) {
+func NewREST(optsGetter generic.RESTOptionsGetter) (*REST, *StatusREST) {
 	store := &registry.Store{
 		NewFunc:     func() runtime.Object { return &api.ReplicationController{} },
 		NewListFunc: func() runtime.Object { return &api.ReplicationControllerList{} },

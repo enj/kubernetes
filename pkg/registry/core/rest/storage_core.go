@@ -59,6 +59,7 @@ import (
 	"k8s.io/kubernetes/pkg/registry/core/service/ipallocator"
 	"k8s.io/kubernetes/pkg/registry/core/service/portallocator"
 	serviceaccountetcd "k8s.io/kubernetes/pkg/registry/core/serviceaccount/etcd"
+	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/runtime/schema"
 	etcdutil "k8s.io/kubernetes/pkg/storage/etcd/util"
 	utilnet "k8s.io/kubernetes/pkg/util/net"
@@ -88,7 +89,7 @@ type LegacyRESTStorage struct {
 	ServiceNodePortAllocator  rangeallocation.RangeRegistry
 }
 
-func (c LegacyRESTStorageProvider) NewLegacyRESTStorage(restOptionsGetter genericapiserver.RESTOptionsGetter) (LegacyRESTStorage, genericapiserver.APIGroupInfo, error) {
+func (c LegacyRESTStorageProvider) NewLegacyRESTStorage(restOptionsGetter generic.RESTOptionsGetter) (LegacyRESTStorage, genericapiserver.APIGroupInfo, error) {
 	apiGroupInfo := genericapiserver.APIGroupInfo{
 		GroupMeta:                    *registered.GroupOrDie(api.GroupName),
 		VersionedResourcesStorageMap: map[string]map[string]rest.Storage{},

@@ -83,19 +83,25 @@ func clientsetForUser(user string, config *restclient.Config) clientset.Interfac
 	return clientset.NewForConfigOrDie(&configCopy)
 }
 
-func newRBACAuthorizer(t *testing.T, superUser string, config *master.Config) authorizer.Authorizer {
-	newRESTOptions := func(resource schema.GroupResource) generic.RESTOptions {
-		storageConfig, err := config.StorageFactory.NewConfig(resource)
-		if err != nil {
-			t.Fatalf("failed to get storage: %v", err)
-		}
-		return generic.RESTOptions{StorageConfig: storageConfig, Decorator: generic.UndecoratedStorage, ResourcePrefix: resource.Resource}
-	}
+type testRESTOptionsGetter struct {
+	config *master.Config
+	t      *testing.T
+}
 
-	roleRegistry := role.AuthorizerAdapter{Registry: role.NewRegistry(roleetcd.NewREST(newRESTOptions))}
-	roleBindingRegistry := rolebinding.AuthorizerAdapter{Registry: rolebinding.NewRegistry(rolebindingetcd.NewREST(newRESTOptions))}
-	clusterRoleRegistry := clusterrole.AuthorizerAdapter{Registry: clusterrole.NewRegistry(clusterroleetcd.NewREST(newRESTOptions))}
-	clusterRoleBindingRegistry := clusterrolebinding.AuthorizerAdapter{Registry: clusterrolebinding.NewRegistry(clusterrolebindingetcd.NewREST(newRESTOptions))}
+func (getter *testRESTOptionsGetter) GetRESTOptions(resource schema.GroupResource) generic.RESTOptions {
+	storageConfig, err := getter.config.StorageFactory.NewConfig(resource)
+	if err != nil {
+		getter.t.Fatalf("failed to get storage: %v", err)
+	}
+	return generic.RESTOptions{StorageConfig: storageConfig, Decorator: generic.UndecoratedStorage, ResourcePrefix: resource.Resource}
+}
+
+func newRBACAuthorizer(t *testing.T, superUser string, config *master.Config) authorizer.Authorizer {
+	optsGetter := &testRESTOptionsGetter{config, t}
+	roleRegistry := role.AuthorizerAdapter{Registry: role.NewRegistry(roleetcd.NewREST(optsGetter))}
+	roleBindingRegistry := rolebinding.AuthorizerAdapter{Registry: rolebinding.NewRegistry(rolebindingetcd.NewREST(optsGetter))}
+	clusterRoleRegistry := clusterrole.AuthorizerAdapter{Registry: clusterrole.NewRegistry(clusterroleetcd.NewREST(optsGetter))}
+	clusterRoleBindingRegistry := clusterrolebinding.AuthorizerAdapter{Registry: clusterrolebinding.NewRegistry(clusterrolebindingetcd.NewREST(optsGetter))}
 	return rbac.New(roleRegistry, roleBindingRegistry, clusterRoleRegistry, clusterRoleBindingRegistry, superUser)
 }
 
