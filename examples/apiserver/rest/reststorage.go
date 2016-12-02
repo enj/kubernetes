@@ -21,6 +21,7 @@ import (
 
 	"k8s.io/kubernetes/cmd/libs/go2idl/client-gen/test_apis/testgroup"
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/meta"
 	"k8s.io/kubernetes/pkg/fields"
 	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/registry/generic"
@@ -40,8 +41,23 @@ func NewREST(config *storagebackend.Config, storageDecorator generic.StorageDeco
 	newListFunc := func() runtime.Object { return &testgroup.TestTypeList{} }
 	// Usually you should reuse your RESTCreateStrategy.
 	strategy := &NotNamespaceScoped{}
+	storeKeyFunc := func(ctx api.Context, name string) (string, error) {
+		return registry.NamespaceKeyFunc(ctx, prefix, name)
+	}
+	keyFunc := func(obj runtime.Object) (string, error) {
+		accessor, err := meta.Accessor(obj)
+		if err != nil {
+			return "", err
+		}
+
+		if strategy.NamespaceScoped() {
+			return storeKeyFunc(api.WithNamespace(api.NewContext(), accessor.GetNamespace()), accessor.GetName())
+		}
+
+		return storeKeyFunc(api.NewContext(), accessor.GetName())
+	}
 	storageInterface, _ := storageDecorator(
-		config, 100, &testgroup.TestType{}, prefix, strategy, newListFunc, storage.NoTriggerPublisher)
+		config, 100, &testgroup.TestType{}, prefix, keyFunc, newListFunc, storage.NoTriggerPublisher)
 	store := &registry.Store{
 		NewFunc: func() runtime.Object { return &testgroup.TestType{} },
 		// NewListFunc returns an object capable of storing results of an etcd list.
@@ -53,9 +69,7 @@ func NewREST(config *storagebackend.Config, storageDecorator generic.StorageDeco
 		},
 		// Produces a path that etcd understands, to the resource by combining
 		// the namespace in the context with the given prefix.
-		KeyFunc: func(ctx api.Context, name string) (string, error) {
-			return registry.NamespaceKeyFunc(ctx, prefix, name)
-		},
+		KeyFunc: storeKeyFunc,
 		// Retrieve the name field of the resource.
 		ObjectNameFunc: func(obj runtime.Object) (string, error) {
 			return obj.(*testgroup.TestType).Name, nil
