@@ -16,7 +16,7 @@ go_library(
     tags = ["automanaged"],
     deps = [
         "//pkg/apis/rbac:go_default_library",
-        "//pkg/genericapiserver:go_default_library",
+        "//pkg/registry/generic:go_default_library",
         "//pkg/registry/generic/registry:go_default_library",
         "//pkg/registry/rbac/clusterrolebinding:go_default_library",
         "//pkg/runtime:go_default_library",

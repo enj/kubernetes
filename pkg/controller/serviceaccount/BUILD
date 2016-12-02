@@ -29,7 +29,6 @@ go_library(
         "//pkg/client/retry:go_default_library",
         "//pkg/controller/informers:go_default_library",
         "//pkg/fields:go_default_library",
-        "//pkg/genericapiserver:go_default_library",
         "//pkg/registry/core/secret:go_default_library",
         "//pkg/registry/core/secret/etcd:go_default_library",
         "//pkg/registry/core/serviceaccount:go_default_library",

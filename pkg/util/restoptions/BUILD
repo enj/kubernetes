@@ -17,8 +17,8 @@ go_library(
     deps = [
         "//pkg/api:go_default_library",
         "//pkg/api/meta:go_default_library",
-        "//pkg/genericapiserver:go_default_library",
         "//pkg/registry/cachesize:go_default_library",
+        "//pkg/registry/generic:go_default_library",
         "//pkg/registry/generic/registry:go_default_library",
         "//pkg/runtime:go_default_library",
         "//pkg/storage:go_default_library",
