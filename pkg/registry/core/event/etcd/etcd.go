@@ -31,22 +31,19 @@ type REST struct {
 // NewREST returns a RESTStorage object that will work against events.
 func NewREST(optsGetter generic.RESTOptionsGetter, ttl uint64) *REST {
 	resource := api.Resource("events")
-	opts := optsGetter.GetRESTOptions(resource)
-	prefix := "/" + opts.ResourcePrefix
+	baseOpts, err := optsGetter.GetRESTOptions(resource)
+	if err != nil {
+		panic(err) // TODO: Propagate error up
+	}
 
+	opts := *baseOpts // Make a copy because we need to mutate it
 	// We explicitly do NOT do any decoration here - switching on Cacher
 	// for events will lead to too high memory consumption.
-	storageInterface, dFunc := generic.NewRawStorage(opts.StorageConfig)
+	opts.Decorator = generic.UndecoratedStorage
 
 	store := &registry.Store{
 		NewFunc:     func() runtime.Object { return &api.Event{} },
 		NewListFunc: func() runtime.Object { return &api.EventList{} },
-		KeyRootFunc: func(ctx api.Context) string {
-			return registry.NamespaceKeyRootFunc(ctx, prefix)
-		},
-		KeyFunc: func(ctx api.Context, id string) (string, error) {
-			return registry.NamespaceKeyFunc(ctx, prefix, id)
-		},
 		ObjectNameFunc: func(obj runtime.Object) (string, error) {
 			return obj.(*api.Event).Name, nil
 		},
@@ -56,15 +53,13 @@ func NewREST(optsGetter generic.RESTOptionsGetter, ttl uint64) *REST {
 		},
 		QualifiedResource: resource,
 
-		EnableGarbageCollection: opts.EnableGarbageCollection,
-		DeleteCollectionWorkers: opts.DeleteCollectionWorkers,
-
 		CreateStrategy: event.Strategy,
 		UpdateStrategy: event.Strategy,
 		DeleteStrategy: event.Strategy,
-
-		Storage:     storageInterface,
-		DestroyFunc: dFunc,
+	}
+	options := &generic.StoreOptions{RESTOptions: &opts} // Pass in opts to use UndecoratedStorage
+	if err := store.CompleteWithOptions(options); err != nil {
+		panic(err) // TODO: Propagate error up
 	}
 	return &REST{store}
 }

@@ -22,8 +22,6 @@ import (
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/registry/rbac/rolebinding"
 	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/storage"
-	"k8s.io/kubernetes/pkg/util/restoptions"
 )
 
 // REST implements a RESTStorage for RoleBinding against etcd
@@ -46,7 +44,10 @@ func NewREST(optsGetter generic.RESTOptionsGetter) *REST {
 		UpdateStrategy: rolebinding.Strategy,
 		DeleteStrategy: rolebinding.Strategy,
 	}
-	restoptions.ApplyOptions(optsGetter, store, storage.NoTriggerPublisher)
+	options := &generic.StoreOptions{RESTOptions: optsGetter}
+	if err := store.CompleteWithOptions(options); err != nil {
+		panic(err) // TODO: Propagate error up
+	}
 
 	return &REST{store}
 }

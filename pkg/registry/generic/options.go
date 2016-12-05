@@ -18,6 +18,7 @@ package generic
 
 import (
 	"k8s.io/kubernetes/pkg/runtime/schema"
+	"k8s.io/kubernetes/pkg/storage"
 	"k8s.io/kubernetes/pkg/storage/storagebackend"
 )
 
@@ -31,10 +32,17 @@ type RESTOptions struct {
 	ResourcePrefix          string
 }
 
-func (opts *RESTOptions) GetRESTOptions(schema.GroupResource) RESTOptions {
-	return *opts
+func (opts *RESTOptions) GetRESTOptions(schema.GroupResource) (*RESTOptions, error) {
+	return opts, nil
 }
 
 type RESTOptionsGetter interface {
-	GetRESTOptions(resource schema.GroupResource) RESTOptions
+	GetRESTOptions(resource schema.GroupResource) (*RESTOptions, error)
+}
+
+// StoreOptions is set of configuration options used to complete generic registries.
+type StoreOptions struct {
+	RESTOptions RESTOptionsGetter
+	TriggerFunc storage.TriggerPublisherFunc
+	AttrFunc    storage.AttrFunc
 }

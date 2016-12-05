@@ -337,19 +337,19 @@ type restOptionsFactory struct {
 	storageDecorator        generic.StorageDecorator
 }
 
-func (f *restOptionsFactory) GetRESTOptions(resource schema.GroupResource) generic.RESTOptions {
+func (f *restOptionsFactory) GetRESTOptions(resource schema.GroupResource) (*generic.RESTOptions, error) {
 	storageConfig, err := f.storageFactory.NewConfig(resource)
 	if err != nil {
-		glog.Fatalf("Unable to find storage destination for %v, due to %v", resource, err.Error())
+		return nil, fmt.Errorf("Unable to find storage destination for %v, due to %v", resource, err.Error())
 	}
 
-	return generic.RESTOptions{
+	return &generic.RESTOptions{
 		StorageConfig:           storageConfig,
 		Decorator:               f.storageDecorator,
 		DeleteCollectionWorkers: f.deleteCollectionWorkers,
 		EnableGarbageCollection: f.enableGarbageCollection,
 		ResourcePrefix:          f.storageFactory.ResourcePrefix(resource),
-	}
+	}, nil
 }
 
 type nodeAddressProvider struct {

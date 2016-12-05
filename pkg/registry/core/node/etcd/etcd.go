@@ -30,7 +30,6 @@ import (
 	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util/restoptions"
 )
 
 // NodeStorage includes storage for nodes and all sub resources
@@ -83,7 +82,10 @@ func NewStorage(optsGetter generic.RESTOptionsGetter, kubeletClientConfig client
 		DeleteStrategy: node.Strategy,
 		ExportStrategy: node.Strategy,
 	}
-	restoptions.ApplyOptions(optsGetter, store, node.NodeNameTriggerFunc)
+	options := &generic.StoreOptions{RESTOptions: optsGetter, TriggerFunc: node.NodeNameTriggerFunc}
+	if err := store.CompleteWithOptions(options); err != nil {
+		return nil, err
+	}
 
 	statusStore := *store
 	statusStore.UpdateStrategy = node.StatusStrategy

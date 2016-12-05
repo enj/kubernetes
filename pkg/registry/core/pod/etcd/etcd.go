@@ -35,7 +35,6 @@ import (
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/storage"
-	"k8s.io/kubernetes/pkg/util/restoptions"
 )
 
 // PodStorage includes storage for pods and all sub resources
@@ -73,7 +72,10 @@ func NewStorage(optsGetter generic.RESTOptionsGetter, k client.ConnectionInfoGet
 		DeleteStrategy:      pod.Strategy,
 		ReturnDeletedObject: true,
 	}
-	restoptions.ApplyOptions(optsGetter, store, pod.NodeNameTriggerFunc)
+	options := &generic.StoreOptions{RESTOptions: optsGetter, TriggerFunc: pod.NodeNameTriggerFunc}
+	if err := store.CompleteWithOptions(options); err != nil {
+		panic(err) // TODO: Propagate error up
+	}
 
 	statusStore := *store
 	statusStore.UpdateStrategy = pod.StatusStrategy

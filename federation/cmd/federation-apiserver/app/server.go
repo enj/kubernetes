@@ -20,6 +20,7 @@ limitations under the License.
 package app
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -206,16 +207,16 @@ type restOptionsFactory struct {
 	enableGarbageCollection bool
 }
 
-func (f *restOptionsFactory) GetRESTOptions(resource schema.GroupResource) generic.RESTOptions {
+func (f *restOptionsFactory) GetRESTOptions(resource schema.GroupResource) (*generic.RESTOptions, error) {
 	config, err := f.storageFactory.NewConfig(resource)
 	if err != nil {
-		glog.Fatalf("Unable to find storage config for %v, due to %v", resource, err.Error())
+		return nil, fmt.Errorf("Unable to find storage config for %v, due to %v", resource, err.Error())
 	}
-	return generic.RESTOptions{
+	return &generic.RESTOptions{
 		StorageConfig:           config,
 		Decorator:               f.storageDecorator,
 		DeleteCollectionWorkers: f.deleteCollectionWorkers,
 		EnableGarbageCollection: f.enableGarbageCollection,
 		ResourcePrefix:          f.storageFactory.ResourcePrefix(resource),
-	}
+	}, nil
 }

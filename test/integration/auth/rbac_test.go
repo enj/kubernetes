@@ -88,12 +88,12 @@ type testRESTOptionsGetter struct {
 	t      *testing.T
 }
 
-func (getter *testRESTOptionsGetter) GetRESTOptions(resource schema.GroupResource) generic.RESTOptions {
+func (getter *testRESTOptionsGetter) GetRESTOptions(resource schema.GroupResource) (*generic.RESTOptions, error) {
 	storageConfig, err := getter.config.StorageFactory.NewConfig(resource)
 	if err != nil {
-		getter.t.Fatalf("failed to get storage: %v", err)
+		return nil, fmt.Errorf("failed to get storage: %v", err)
 	}
-	return generic.RESTOptions{StorageConfig: storageConfig, Decorator: generic.UndecoratedStorage, ResourcePrefix: resource.Resource}
+	return &generic.RESTOptions{StorageConfig: storageConfig, Decorator: generic.UndecoratedStorage, ResourcePrefix: resource.Resource}, nil
 }
 
 func newRBACAuthorizer(t *testing.T, superUser string, config *master.Config) authorizer.Authorizer {

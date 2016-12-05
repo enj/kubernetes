@@ -22,8 +22,6 @@ import (
 	"k8s.io/kubernetes/pkg/registry/generic"
 	"k8s.io/kubernetes/pkg/registry/generic/registry"
 	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/storage"
-	"k8s.io/kubernetes/pkg/util/restoptions"
 )
 
 type REST struct {
@@ -45,6 +43,9 @@ func NewREST(optsGetter generic.RESTOptionsGetter) *REST {
 		UpdateStrategy: secret.Strategy,
 		DeleteStrategy: secret.Strategy,
 	}
-	restoptions.ApplyOptions(optsGetter, store, storage.NoTriggerPublisher)
+	options := &generic.StoreOptions{RESTOptions: optsGetter}
+	if err := store.CompleteWithOptions(options); err != nil {
+		panic(err) // TODO: Propagate error up
+	}
 	return &REST{store}
 }
