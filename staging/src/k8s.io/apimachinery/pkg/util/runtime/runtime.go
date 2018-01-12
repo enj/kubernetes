@@ -19,6 +19,7 @@ package runtime
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -33,13 +34,6 @@ var (
 	// true. It's still exposed so components can optionally set to false
 	// to restore prior behavior.
 	ReallyCrash = true
-)
-
-// these constants determine the behavior dedupingErrorHandler
-const (
-	cacheSize  = 1000
-	errorDepth = 4
-	similar    = 0.75
 )
 
 // PanicHandlers is a list of functions which will be invoked when a panic happens.
@@ -88,6 +82,14 @@ func getCallers() string {
 	return callers
 }
 
+// these constants determine the default behavior of dedupingErrorHandler
+const (
+	cacheSize  = 1000
+	errorDepth = 4
+	guess      = 1 // TODO
+	similar    = 0.75
+)
+
 // ErrorHandlers is a list of functions which will be invoked when an unreturnable
 // error occurs.
 // TODO(lavalamp): for testability, this and the below HandleError function
@@ -96,6 +98,10 @@ var ErrorHandlers = []func(error){
 	(&dedupingErrorHandler{
 		cache: lru.New(cacheSize),
 		count: make(map[countKey]*[]countVal),
+
+		errorDepth: errorDepth,
+		guess:      guess,
+		similar:    similar,
 	}).handleErr,
 }
 
@@ -144,6 +150,10 @@ type dedupingErrorHandler struct {
 	mutex sync.Mutex
 	cache *lru.Cache
 	count map[countKey]*[]countVal
+
+	errorDepth int
+	guess      int
+	similar    float64
 }
 
 func (d *dedupingErrorHandler) handleErr(err error) {
@@ -156,15 +166,16 @@ func (d *dedupingErrorHandler) handleErr(err error) {
 		}
 	}
 
-	key := countKey{stack: getStack(), rtype: reflect.TypeOf(err)}
+	stack := d.getStack()
+	key := countKey{stack: stack, rtype: reflect.TypeOf(err)}
 	message := err.Error()
 
 	if count, ok := d.findAndIncrement(key, message); !ok {
 		d.addNewKey(key, message)
-		logError(err, 1)
+		d.logError(err, 1, stack)
 	} else {
 		if isPowerOfTwo(count) {
-			logError(err, count)
+			d.logError(err, count, stack)
 		}
 	}
 }
@@ -188,7 +199,7 @@ func (d *dedupingErrorHandler) findAndIncrement(key countKey, message string) (i
 	}
 	for i := range *vals {
 		val := &((*vals)[i])
-		if isSimilar(message, val.message) {
+		if d.isSimilar(message, val.message) {
 			d.cache.Get(key.withMessage(val.message))
 			val.count++
 			return val.count, true
@@ -208,6 +219,25 @@ func (d *dedupingErrorHandler) deleteFromCount(key cacheKey) {
 	}
 }
 
+func (d *dedupingErrorHandler) isSimilar(s, t string) bool {
+	return ratio(s, t) >= d.similar
+}
+
+func (d *dedupingErrorHandler) logError(err error, count int64, stack string) {
+	glog.ErrorDepth(d.errorDepth, err, "\n", "count: ", count, "\n", stack)
+}
+
+var (
+	hexNumberRE  = regexp.MustCompile(`0x[0-9a-f]+`)
+	emptyAddress = []byte("0x?")
+)
+
+func (d *dedupingErrorHandler) getStack() string {
+	stack := string(hexNumberRE.ReplaceAll(debug.Stack(), emptyAddress))
+	stackLines := strings.Split(stack, "\n")[(d.errorDepth+1)*2+d.guess:]
+	return strings.Join(stackLines, "\n")
+}
+
 type countKey struct {
 	stack string
 	rtype reflect.Type
@@ -225,19 +255,6 @@ type countVal struct {
 type cacheKey struct {
 	countKey
 	message string
-}
-
-func isSimilar(s, t string) bool {
-	return ratio(s, t) >= similar
-}
-
-// logError prints an error with the call stack of the location it was reported
-func logError(err error, count int64) {
-	glog.ErrorDepth(errorDepth, err, "\n", "count: ", count, "\n", getStack())
-}
-
-func getStack() string {
-	return strings.Join(strings.Split(string(debug.Stack()), "\n")[errorDepth*2+5:], "\n")
 }
 
 func isPowerOfTwo(n int64) bool {
@@ -287,7 +304,6 @@ func levenshteinDistanceMatrix(s, t string) [][]int {
 				d[i][j] = min + 1
 			}
 		}
-
 	}
 	return d
 }
