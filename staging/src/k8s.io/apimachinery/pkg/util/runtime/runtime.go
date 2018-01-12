@@ -38,7 +38,7 @@ var (
 // these constants determine the behavior dedupingErrorHandler
 const (
 	cacheSize  = 1000
-	errorDepth = 2
+	errorDepth = 4
 	similar    = 0.75
 )
 
@@ -227,8 +227,8 @@ type cacheKey struct {
 	message string
 }
 
-func isSimilar(s1, s2 string) bool {
-	return ratio(s1, s2) >= similar
+func isSimilar(s, t string) bool {
+	return ratio(s, t) >= similar
 }
 
 // logError prints an error with the call stack of the location it was reported
@@ -237,12 +237,14 @@ func logError(err error, count int64) {
 }
 
 func getStack() string {
-	return strings.Join(strings.Split(string(debug.Stack()), "\n")[errorDepth*2:], "\n")
+	return strings.Join(strings.Split(string(debug.Stack()), "\n")[errorDepth*2+5:], "\n")
 }
 
 func isPowerOfTwo(n int64) bool {
 	return (n & (n - 1)) == 0
 }
+
+// levenshtein bits that should be a lib
 
 func ratio(s, t string) float64 {
 	s = strings.ToLower(s)
