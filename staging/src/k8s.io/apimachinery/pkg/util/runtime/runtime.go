@@ -181,14 +181,18 @@ func (d *dedupingErrorHandler) handleErr(err error) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 
+	// we must determine our stack in this function since getStack counts frames
 	stack := d.getStack()
 	key := countKey{stack: stack, errType: reflect.TypeOf(err)}
 	message := err.Error()
 
 	if count, ok := d.findAndIncrement(key, message); !ok {
+		// we did not find the error, so add it and log
 		d.addNewKey(key, message)
 		d.logError(err, 1, stack)
 	} else {
+		// we found this error or a close enough error
+		// determine if we need to log this time
 		if isPowerOfTwo(count) {
 			d.logError(err, count, stack)
 		}
@@ -196,9 +200,11 @@ func (d *dedupingErrorHandler) handleErr(err error) {
 }
 
 func (d *dedupingErrorHandler) addNewKey(key countKey, message string) {
+	// create the associated entry in the LRU cache
 	d.cache.Add(key.withMessage(message), nil)
 	val := countVal{message: message, count: 1}
 
+	// add the val to count
 	vals, ok := d.count[key]
 	if !ok || vals == nil {
 		d.count[key] = &[]countVal{val}
@@ -213,8 +219,12 @@ func (d *dedupingErrorHandler) findAndIncrement(key countKey, message string) (i
 		return 0, false
 	}
 	for i := range *vals {
+		// get a pointer to val so we can increment val.count if needed
 		val := &((*vals)[i])
+		// check if message is close enough to consider this equal
 		if d.isSimilar(message, val.message) {
+			// tell the cache that we just saw val.message (not message)
+			// cache.Get should always return nil, true
 			d.cache.Get(key.withMessage(val.message))
 			val.count++
 			return val.count, true
