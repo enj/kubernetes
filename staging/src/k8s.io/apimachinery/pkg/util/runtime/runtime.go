@@ -28,6 +28,8 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/golang/groupcache/lru"
+
+	"k8s.io/apimachinery/pkg/util/clock"
 )
 
 var (
@@ -90,6 +92,11 @@ const (
 	// errorDepth determines how many callers need to be skipped to find the stack of HandleError's caller
 	// HandleError -> ErrorHandlers iteration -> dedupingErrorHandler.handleErr -> dedupingErrorHandler.logError
 	errorDepth = 4
+	// delta determines how long we can go in between logging the same error that we have seen multiple times
+	// it mainly exists to handle the extreme ends of the error spectrum:
+	// 1. a component that sends the same error very infrequently (we want to log these so we do not miss them)
+	// 2. a component that sends the same error as fast as it can (we want to suppress most of these, but still see it every so often)
+	delta = time.Hour
 )
 
 // ErrorHandlers is a list of functions which will be invoked when an unreturnable
@@ -97,7 +104,7 @@ const (
 // TODO(lavalamp): for testability, this and the below HandleError function
 // should be packaged up into a testable and reusable object.
 var ErrorHandlers = []func(error){
-	newDedupingErrorHandler(cacheSize, errorDepth).handleErr,
+	newDedupingErrorHandler(cacheSize, errorDepth, delta).handleErr,
 	(&rudimentaryErrorBackoff{
 		lastErrorTime: time.Now(),
 		// 1ms was the number folks were able to stomach as a global rate limit.
@@ -170,12 +177,14 @@ func RecoverFromPanic(err *error) {
 	}
 }
 
-func newDedupingErrorHandler(cacheSize, errorDepth int) *dedupingErrorHandler {
+func newDedupingErrorHandler(cacheSize, errorDepth int, delta time.Duration) *dedupingErrorHandler {
 	d := &dedupingErrorHandler{
 		cache: lru.New(cacheSize),
-		count: make(map[errKey]uint64),
+		count: make(map[errKey]errVal),
 
 		errorDepth: errorDepth,
+		delta:      delta,
+		clock:      clock.RealClock{},
 	}
 
 	d.cache.OnEvicted = func(key lru.Key, _ interface{}) {
@@ -195,17 +204,45 @@ type dedupingErrorHandler struct {
 
 	// cache tracks (stack + type + message) and cleans up old entries in count as they roll off the cache
 	cache *lru.Cache
-	// count tracks (stack + type + message) -> count
+	// count tracks (stack + type + message) -> (count + logged)
 	// since rudimentaryErrorBackoff rate limits HandleError to 1000 errors/second,
 	// this counter will effectively never overflow (nothing bad happens even if it does)
-	count map[errKey]uint64
+	count map[errKey]errVal
 
 	// errorDepth is how many frames to skip from handleErr
 	errorDepth int
+
+	// delta is the minimum difference between the current time and
+	// errVal.logged required for us to log the associated error again
+	delta time.Duration
+
+	// clock allows us to control time in unit tests
+	// TODO add unit tests
+	clock clock.Clock
 }
 
-// handleErr logs the given error if it is considered new or "not recently seen"
-// currently it logs errors whenever the associated counter is a power of two
+// errKey tracks uniqueness based on the caller's stack and the type/message of the error
+// it is stored in both the count map and the LRU cache
+// it is removed from the count map when it gets evicted from the LRU cache
+// it is comparable via ==
+type errKey struct {
+	stack   string
+	errType reflect.Type
+	// message is the err.Error() value
+	message string
+}
+
+// errVal tracks how many times we have seen an error, and the last time we logged it
+type errVal struct {
+	count  uint64
+	logged time.Time
+}
+
+// handleErr logs the given error if it is considered new or "not recently logged"
+// currently it logs errors whenever:
+// 1. the associated errKey does not exist in d.count
+// 2. the associated counter is a power of two
+// 3. the associated logged time's delta from the current time is greater than d.delta
 func (d *dedupingErrorHandler) handleErr(err error) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
@@ -215,12 +252,11 @@ func (d *dedupingErrorHandler) handleErr(err error) {
 	key := errKey{stack: stack, errType: reflect.TypeOf(err), message: err.Error()}
 
 	// increment our counter
-	_, isOldKey := d.count[key]
-	isNewKey := !isOldKey
-	d.count[key]++
-	count := d.count[key]
+	val, isOldErr := d.count[key]
+	isNewErr := !isOldErr
+	val.count++
 
-	if isNewKey {
+	if isNewErr {
 		// we did not find the error, so add
 		// the associated entry in the LRU cache
 		d.cache.Add(key, nil)
@@ -231,9 +267,13 @@ func (d *dedupingErrorHandler) handleErr(err error) {
 	}
 
 	// determine if we need to log this time
-	if isNewKey || isPowerOfTwo(count) {
-		d.logError(err, count, stack)
+	if isNewErr || isPowerOfTwo(val.count) || d.clock.Since(val.logged) >= d.delta {
+		val.logged = d.clock.Now()
+		d.logError(err, val.count, stack)
 	}
+
+	// update the counter in the map after we determine if we need to log it
+	d.count[key] = val
 }
 
 // logError uses glog to log at the call site of HandleError
@@ -262,17 +302,6 @@ func (d *dedupingErrorHandler) getStack() string {
 		return stack
 	}
 	return strings.Join(stackLines[strip:], "\n")
-}
-
-// errKey tracks uniqueness based on the caller's stack and the type/message of the error
-// it is stored in both the count map and the LRU cache
-// it is removed from the count map when it gets evicted from the LRU cache
-// it is comparable via ==
-type errKey struct {
-	stack   string
-	errType reflect.Type
-	// message is the err.Error() value
-	message string
 }
 
 func isPowerOfTwo(n uint64) bool {
