@@ -215,7 +215,8 @@ func (d *dedupingErrorHandler) handleErr(err error) {
 	key := errKey{stack: stack, errType: reflect.TypeOf(err), message: err.Error()}
 
 	// increment our counter
-	_, isNewKey := d.count[key]
+	_, isOldKey := d.count[key]
+	isNewKey := !isOldKey
 	d.count[key]++
 	count := d.count[key]
 
