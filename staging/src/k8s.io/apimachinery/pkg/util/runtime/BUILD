@@ -17,7 +17,11 @@ go_library(
     name = "go_default_library",
     srcs = ["runtime.go"],
     importpath = "k8s.io/apimachinery/pkg/util/runtime",
-    deps = ["//vendor/github.com/golang/glog:go_default_library"],
+    deps = [
+        "//vendor/github.com/golang/glog:go_default_library",
+        "//vendor/github.com/golang/groupcache/lru:go_default_library",
+        "//vendor/k8s.io/apimachinery/pkg/util/clock:go_default_library",
+    ],
 )
 
 filegroup(
