@@ -24,6 +24,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/golang/glog"
 	"github.com/golang/groupcache/lru"
@@ -84,13 +85,11 @@ func getCallers() string {
 
 // these constants determine the default behavior of dedupingErrorHandler
 const (
-	// cacheSize determines how many "unique" errors to track
+	// cacheSize determines how many "unique" errors to track (see errKey)
 	cacheSize = 1000
 	// errorDepth determines how many callers need to be skipped to find the stack of HandleError's caller
 	// HandleError -> ErrorHandlers iteration -> dedupingErrorHandler.handleErr -> dedupingErrorHandler.logError
 	errorDepth = 4
-	// similar determines if two strings are close enough to be considered equal via levenshtein ratio
-	similar = 0.75
 )
 
 // ErrorHandlers is a list of functions which will be invoked when an unreturnable
@@ -98,7 +97,14 @@ const (
 // TODO(lavalamp): for testability, this and the below HandleError function
 // should be packaged up into a testable and reusable object.
 var ErrorHandlers = []func(error){
-	newDedupingErrorHandler(cacheSize, errorDepth, similar).handleErr,
+	newDedupingErrorHandler(cacheSize, errorDepth).handleErr,
+	(&rudimentaryErrorBackoff{
+		lastErrorTime: time.Now(),
+		// 1ms was the number folks were able to stomach as a global rate limit.
+		// If you need to log errors more than 1000 times a second you
+		// should probably consider fixing your code instead. :)
+		minPeriod: time.Millisecond,
+	}).OnError,
 }
 
 // HandleError is a method to invoke when a non-user facing piece of code cannot
@@ -114,6 +120,28 @@ func HandleError(err error) {
 	for _, fn := range ErrorHandlers {
 		fn(err)
 	}
+}
+
+type rudimentaryErrorBackoff struct {
+	minPeriod time.Duration // immutable
+	// TODO(lavalamp): use the clock for testability. Need to move that
+	// package for that to be accessible here.
+	lastErrorTimeLock sync.Mutex
+	lastErrorTime     time.Time
+}
+
+// OnError will block if it is called more often than the embedded period time.
+// This will prevent overly tight hot error loops.
+func (r *rudimentaryErrorBackoff) OnError(error) {
+	r.lastErrorTimeLock.Lock()
+	defer r.lastErrorTimeLock.Unlock()
+	d := time.Since(r.lastErrorTime)
+	if d < r.minPeriod && d >= 0 {
+		// If the time moves backwards for any reason, do nothing
+		// TODO: remove check "d >= 0" after go 1.8 is no longer supported
+		time.Sleep(r.minPeriod - d)
+	}
+	r.lastErrorTime = time.Now()
 }
 
 // GetCaller returns the caller of the function that calls it.
@@ -142,128 +170,75 @@ func RecoverFromPanic(err *error) {
 	}
 }
 
-func newDedupingErrorHandler(cacheSize, errorDepth int, similar float64) *dedupingErrorHandler {
+func newDedupingErrorHandler(cacheSize, errorDepth int) *dedupingErrorHandler {
 	d := &dedupingErrorHandler{
 		cache: lru.New(cacheSize),
-		count: make(map[countKey]*[]countVal),
+		count: make(map[errKey]uint64),
 
 		errorDepth: errorDepth,
-		similar:    similar,
 	}
 
 	d.cache.OnEvicted = func(key lru.Key, _ interface{}) {
-		d.deleteFromCount(key.(cacheKey))
+		// remove the associated entry in the count map when this key is evicted from the LRU cache
+		delete(d.count, key.(errKey))
 	}
 
 	return d
 }
 
 // dedupingErrorHandler provides a go routine safe error handler via handleErr.
-// It tracks error via the caller stack and the error type and uses a levenshtein ratio to compare err.Error().
-// An error is considered unique based on the stack + type + levenshtein comparison.
+// It tracks errors via the caller stack, the error type and the error message (err.Error() value).
+// An error is considered unique based on these properties (see errKey).
 // To prevent from using an infinite amount of memory, it uses a LRU cache to purge old error values.
 type dedupingErrorHandler struct {
 	mutex sync.Mutex
 
-	// cache tracks stack + type + message and cleans up old entries in count as they roll off the cache
+	// cache tracks (stack + type + message) and cleans up old entries in count as they roll off the cache
 	cache *lru.Cache
-	// count tracks (stack + type) -> [](message + count)
-	count map[countKey]*[]countVal
+	// count tracks (stack + type + message) -> count
+	// since rudimentaryErrorBackoff rate limits HandleError to 1000 errors/second,
+	// this counter will effectively never overflow (nothing bad happens even if it does)
+	count map[errKey]uint64
 
 	// errorDepth is how many frames to skip from handleErr
 	errorDepth int
-	// similar is the levenshtein ratio used to determine equivalence
-	similar float64
 }
 
 // handleErr logs the given error if it is considered new or "not recently seen"
+// currently it logs errors whenever the associated counter is a power of two
 func (d *dedupingErrorHandler) handleErr(err error) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 
 	// we must determine our stack in this function since getStack counts frames
 	stack := d.getStack()
-	key := countKey{stack: stack, errType: reflect.TypeOf(err)}
-	message := err.Error()
+	key := errKey{stack: stack, errType: reflect.TypeOf(err), message: err.Error()}
 
-	if count, ok := d.findAndIncrement(key, message); !ok {
-		// we did not find the error, so add it and log
-		d.addNewKey(key, message)
-		d.logError(err, 1, stack)
+	// increment our counter
+	_, isNewKey := d.count[key]
+	d.count[key]++
+	count := d.count[key]
+
+	if isNewKey {
+		// we did not find the error, so add
+		// the associated entry in the LRU cache
+		d.cache.Add(key, nil)
 	} else {
-		// we found this error or a close enough error
-		// determine if we need to log this time
-		if isPowerOfTwo(count) {
-			d.logError(err, count, stack)
-		}
-	}
-}
-
-func (d *dedupingErrorHandler) addNewKey(key countKey, message string) {
-	// create the associated entry in the LRU cache
-	d.cache.Add(key.withMessage(message), nil)
-	val := countVal{message: message, count: 1}
-
-	// add the val to count
-	vals, ok := d.count[key]
-	if !ok || vals == nil {
-		d.count[key] = &[]countVal{val}
-	} else {
-		*vals = append(*vals, val)
-	}
-}
-
-func (d *dedupingErrorHandler) findAndIncrement(key countKey, message string) (int64, bool) {
-	vals, ok := d.count[key]
-	if !ok || vals == nil {
-		return 0, false
-	}
-	for i := range *vals {
-		// get a pointer to val so we can increment val.count if needed
-		val := &((*vals)[i])
-		// check if message is close enough to consider this equal
-		if d.isSimilar(message, val.message) {
-			// tell the cache that we just saw val.message (not message)
-			// cache.Get should always return nil, true
-			d.cache.Get(key.withMessage(val.message))
-			val.count++
-			return val.count, true
-		}
-	}
-	return 0, false
-}
-
-func (d *dedupingErrorHandler) deleteFromCount(key cacheKey) {
-	vals, ok := d.count[key.countKey]
-	// this should never happen but lets not panic the server in case we made a mistake
-	if !ok || vals == nil {
-		return
+		// we found this error, so tell the cache that we saw it
+		// cache.Get should always return nil, true
+		d.cache.Get(key)
 	}
 
-	// remove the slice entirely if it contains only the associated countVal
-	// if the length is 1 then the message should always match, but lets check to be sure
-	if len(*vals) == 1 && (*vals)[0].message == key.message {
-		delete(d.count, key.countKey)
-		return
+	// determine if we need to log this time
+	if isNewKey || isPowerOfTwo(count) {
+		d.logError(err, count, stack)
 	}
-
-	for i := range *vals {
-		val := &((*vals)[i])
-		if val.message == key.message {
-			*vals = append((*vals)[:i], (*vals)[i+1:]...)
-			break
-		}
-	}
-}
-
-func (d *dedupingErrorHandler) isSimilar(s, t string) bool {
-	return ratio(s, t) >= d.similar
 }
 
 // logError uses glog to log at the call site of HandleError
 // it must be called from dedupingErrorHandler.handleErr
-func (d *dedupingErrorHandler) logError(err error, count int64, stack string) {
-	glog.ErrorDepth(d.errorDepth, err, "\n", "count: ", count, "\n", stack)
+func (d *dedupingErrorHandler) logError(err error, count uint64, stack string) {
+	glog.ErrorDepth(d.errorDepth, fmt.Sprintf("%v\n%#v", err, err), "\n", "count: ", count, "\n", stack)
 }
 
 var (
@@ -279,81 +254,26 @@ func (d *dedupingErrorHandler) getStack() string {
 	// strip the redundant stuff at the top of the stack
 	// add 1 to error depth for debug.Stack (since it calls runtime.Stack), times the sum by 2 since each frame has 2 lines
 	// add 1 for go routine number header
-	stackLines := strings.Split(stack, "\n")[(d.errorDepth+1)*2+1:]
-	return strings.Join(stackLines, "\n")
+	strip := (d.errorDepth+1)*2 + 1
+	stackLines := strings.Split(stack, "\n")
+	// do not panic trying to strip a stack trace that does not meet our expectations
+	if strip >= len(stackLines) {
+		return stack
+	}
+	return strings.Join(stackLines[strip:], "\n")
 }
 
-// countKey tracks uniqueness based on the caller's stack and the type of the error
-type countKey struct {
+// errKey tracks uniqueness based on the caller's stack and the type/message of the error
+// it is stored in both the count map and the LRU cache
+// it is removed from the count map when it gets evicted from the LRU cache
+// it is comparable via ==
+type errKey struct {
 	stack   string
 	errType reflect.Type
-}
-
-func (k countKey) withMessage(message string) cacheKey {
-	return cacheKey{countKey: k, message: message}
-}
-
-// countVal tracks hits to a "unique" message associated with a countKey
-type countVal struct {
-	message string
-	count   int64
-}
-
-// cacheKey tracks a unique countKey and message combination in the LRU cache
-// when a cacheKey is dropped from the cache, it contains all the information
-// to remove the associated countVal
-type cacheKey struct {
-	countKey
+	// message is the err.Error() value
 	message string
 }
 
-func isPowerOfTwo(n int64) bool {
+func isPowerOfTwo(n uint64) bool {
 	return (n & (n - 1)) == 0
-}
-
-// TODO determine if we should vendor a proper (tested) levenshtein lib
-
-func ratio(s, t string) float64 {
-	s = strings.ToLower(s)
-	t = strings.ToLower(t)
-
-	if s == t {
-		return 1
-	}
-
-	matrix := levenshteinDistanceMatrix(s, t)
-	dist := matrix[len(matrix)-1][len(matrix[0])-1]
-
-	sum := len(s) + len(t)
-	return float64(sum-dist) / float64(sum)
-}
-
-func levenshteinDistanceMatrix(s, t string) [][]int {
-	d := make([][]int, len(s)+1)
-	for i := range d {
-		d[i] = make([]int, len(t)+1)
-	}
-	for i := range d {
-		d[i][0] = i
-	}
-	for j := range d[0] {
-		d[0][j] = j
-	}
-	for j := 1; j <= len(t); j++ {
-		for i := 1; i <= len(s); i++ {
-			if s[i-1] == t[j-1] {
-				d[i][j] = d[i-1][j-1]
-			} else {
-				min := d[i-1][j]
-				if d[i][j-1] < min {
-					min = d[i][j-1]
-				}
-				if d[i-1][j-1] < min {
-					min = d[i-1][j-1]
-				}
-				d[i][j] = min + 1
-			}
-		}
-	}
-	return d
 }
