@@ -3257,6 +3257,11 @@
 		{
 			"ImportPath": "vbom.ml/util/sortorder",
 			"Rev": "db5cfe13f5cc80a4990d98e2e1b0707a4d1a5394"
+		},
+		{
+			"ImportPath": "github.com/agext/levenshtein",
+			"Comment": "v1.2.1",
+			"Rev": "5f10fee965225ac1eecdc234c09daf5cd9e7f7b6"
 		}
 	]
 }
