@@ -96,7 +96,7 @@ const (
 	// it mainly exists to handle the extreme ends of the error spectrum:
 	// 1. a component that sends the same error very infrequently (we want to log these so we do not miss them)
 	// 2. a component that sends the same error as fast as it can (we want to suppress most of these, but still see it every so often)
-	delta = time.Hour
+	delta = 5 * time.Minute
 )
 
 // ErrorHandlers is a list of functions which will be invoked when an unreturnable
@@ -189,6 +189,7 @@ func newDedupingErrorHandler(cacheSize, errorDepth int, delta time.Duration) *de
 
 	d.cache.OnEvicted = func(key lru.Key, _ interface{}) {
 		// remove the associated entry in the count map when this key is evicted from the LRU cache
+		// d.cache.Add is only invoked when the mutex is held, so this delete is not a data race
 		delete(d.count, key.(errKey))
 	}
 
@@ -199,6 +200,7 @@ func newDedupingErrorHandler(cacheSize, errorDepth int, delta time.Duration) *de
 // It tracks errors via the caller stack, the error type and the error message (err.Error() value).
 // An error is considered unique based on these properties (see errKey).
 // To prevent from using an infinite amount of memory, it uses a LRU cache to purge old error values.
+// The cache and count map are separated to allow easy access to all keys, which is required for fuzzy matching.
 type dedupingErrorHandler struct {
 	mutex sync.Mutex
 
@@ -244,17 +246,19 @@ type errVal struct {
 // 2. the associated counter is a power of two
 // 3. the associated logged time's delta from the current time is greater than d.delta
 func (d *dedupingErrorHandler) handleErr(err error) {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
+	// the operations below that do not acquire the lock do not mutate d
 
 	// we must determine our stack in this function since getStack counts frames
 	stack := d.getStack()
 	key := errKey{stack: stack, errType: reflect.TypeOf(err), message: err.Error()}
 
 	// increment our counter
-	val, isOldErr := d.count[key]
-	isNewErr := !isOldErr
+	val, isNewErr := d.getVal(key)
 	val.count++
+
+	// operations after this point can mutate d
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
 
 	if isNewErr {
 		// we did not find the error, so add
@@ -269,17 +273,25 @@ func (d *dedupingErrorHandler) handleErr(err error) {
 	// determine if we need to log this time
 	if isNewErr || isPowerOfTwo(val.count) || d.clock.Since(val.logged) >= d.delta {
 		val.logged = d.clock.Now()
-		d.logError(err, val.count, stack)
+		d.logError(err, val.count)
 	}
 
 	// update the counter in the map after we determine if we need to log it
 	d.count[key] = val
 }
 
+// getVal returns the errVal associated with key, and if the key represents a new error
+// this operation is separated out into its own method to allow the insertion of fuzzy lookup
+// it must not mutate d since it is called when the lock is not held
+func (d *dedupingErrorHandler) getVal(key errKey) (errVal, bool) {
+	val, isOldErr := d.count[key]
+	return val, !isOldErr
+}
+
 // logError uses glog to log at the call site of HandleError
 // it must be called from dedupingErrorHandler.handleErr
-func (d *dedupingErrorHandler) logError(err error, count uint64, stack string) {
-	glog.ErrorDepth(d.errorDepth, fmt.Sprintf("%v\n%#v", err, err), "\n", "count: ", count, "\n", stack)
+func (d *dedupingErrorHandler) logError(err error, count uint64) {
+	glog.ErrorDepth(d.errorDepth, fmt.Sprintf("err=%v count=%d value=%#v", err, count, err))
 }
 
 var (
@@ -289,6 +301,7 @@ var (
 
 // getStack returns the important part of the stack trace
 // it must be called from dedupingErrorHandler.handleErr
+// it must not mutate d since it is called when the lock is not held
 func (d *dedupingErrorHandler) getStack() string {
 	// remove all hex addresses from the stack dump because closures can have volatile values
 	stack := string(hexNumberRE.ReplaceAll(debug.Stack(), emptyAddress))
