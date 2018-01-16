@@ -302,7 +302,7 @@ var (
 
 // getStack returns the important part of the stack trace
 // it must be called from dedupingErrorHandler.handleErr
-// it must not mutate d since it is called when the lock is not held
+// it must not mutate d (or even read d.cache/d.count) since it is called when the lock is not held
 func (d *dedupingErrorHandler) getStack() string {
 	// remove all hex addresses from the stack dump because closures can have volatile values
 	stack := string(hexNumberRE.ReplaceAll(debug.Stack(), emptyAddress))
