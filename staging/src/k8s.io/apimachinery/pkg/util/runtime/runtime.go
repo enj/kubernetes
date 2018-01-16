@@ -252,13 +252,15 @@ func (d *dedupingErrorHandler) handleErr(err error) {
 	stack := d.getStack()
 	key := errKey{stack: stack, errType: reflect.TypeOf(err), message: err.Error()}
 
+	// operations after this point can mutate d
+	// we must acquire the lock before calling getVal since we cannot
+	// have concurrent reads and writes against d.count
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+
 	// increment our counter
 	val, isNewErr := d.getVal(key)
 	val.count++
-
-	// operations after this point can mutate d
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
 
 	if isNewErr {
 		// we did not find the error, so add
@@ -282,7 +284,6 @@ func (d *dedupingErrorHandler) handleErr(err error) {
 
 // getVal returns the errVal associated with key, and if the key represents a new error
 // this operation is separated out into its own method to allow the insertion of fuzzy lookup
-// it must not mutate d since it is called when the lock is not held
 func (d *dedupingErrorHandler) getVal(key errKey) (errVal, bool) {
 	val, isOldErr := d.count[key]
 	return val, !isOldErr
