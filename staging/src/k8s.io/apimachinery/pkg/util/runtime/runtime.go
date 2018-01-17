@@ -98,6 +98,8 @@ const (
 	// 1. a component that sends the same error very infrequently (we want to log these so we do not miss them)
 	// 2. a component that sends the same error as fast as it can (we want to suppress most of these, but still see it every so often)
 	delta = 5 * time.Minute
+	// similar determines if two strings are close enough to be considered equal via levenshtein ratio
+	similar = 0.75
 )
 
 // ErrorHandlers is a list of functions which will be invoked when an unreturnable
@@ -105,7 +107,7 @@ const (
 // TODO(lavalamp): for testability, this and the below HandleError function
 // should be packaged up into a testable and reusable object.
 var ErrorHandlers = []func(error){
-	newDedupingErrorHandler(cacheSize, errorDepth, delta).handleErr,
+	newDedupingErrorHandler(cacheSize, errorDepth, delta, similar).handleErr,
 	(&rudimentaryErrorBackoff{
 		lastErrorTime: time.Now(),
 		// 1ms was the number folks were able to stomach as a global rate limit.
@@ -178,13 +180,14 @@ func RecoverFromPanic(err *error) {
 	}
 }
 
-func newDedupingErrorHandler(cacheSize, errorDepth int, delta time.Duration) *dedupingErrorHandler {
+func newDedupingErrorHandler(cacheSize, errorDepth int, delta time.Duration, similar float64) *dedupingErrorHandler {
 	d := &dedupingErrorHandler{
 		cache: lru.New(cacheSize),
 		count: make(map[errKey]errVal),
 
 		errorDepth: errorDepth,
 		delta:      delta,
+		similar:    similar,
 		clock:      clock.RealClock{},
 	}
 
@@ -218,6 +221,9 @@ type dedupingErrorHandler struct {
 	// delta is the minimum difference between the current time and
 	// errVal.logged required for us to log the associated error again
 	delta time.Duration
+
+	// similar is the levenshtein ratio used to determine equivalence
+	similar float64
 
 	// clock allows us to control time in unit tests
 	// TODO add unit tests
@@ -283,8 +289,11 @@ func (d *dedupingErrorHandler) handleErr(err error) {
 	d.count[key] = val
 }
 
-// getVal returns the errVal associated with key, and if the key represents a new error
-// this operation is separated out into its own method to allow the insertion of fuzzy lookup
+// getVal returns the errVal associated with key, and if the key represents a new error.
+// If the exact key does not exist in d.count, a similar enough fuzzy match on key.message
+// will be used as a fallback (the stack and error type must always match via ==).
+// If fuzzy matching is used, the given key's message will be updated to the similar message.
+// Thus this method requires that key be passed in as a pointer.
 func (d *dedupingErrorHandler) getVal(key *errKey) (errVal, bool) {
 	val, isOldErr := d.count[*key]
 	// found direct match, use that before doing levenshtein fuzzy lookup
@@ -292,20 +301,35 @@ func (d *dedupingErrorHandler) getVal(key *errKey) (errVal, bool) {
 		return val, false // return false because this is not a new error
 	}
 
+	var (
+		// fuzzySimilarity is initialized to d.similar since that is the
+		// lowest similarity value we consider as the strings being "equal"
+		fuzzySimilarity = d.similar
+		fuzzyFound      bool
+		fuzzyMessage    string
+		fuzzyVal        errVal
+	)
+
 	// we have to iterate over the whole map to do fuzzy matching on errKey.message
 	// this is ok because d.count should always be relatively small
+	// note that we cannot exit this loop early since we want to pick the most similar message
 	for k, v := range d.count {
 		// the stack and error type must match
 		if key.stack == k.stack && key.errType == k.errType {
 			// now we perform fuzzy matching on the message
-			// TODO fix p being nil
-			if levenshtein.Match(key.message, k.message, nil) >= 0.75 {
-				// TODO fix 0.75
-				// TODO doc k.message return
-				key.message = k.message
-				return v, false // return false because we do not consider this a new error
+			if s := levenshtein.Similarity(key.message, k.message, nil); s > fuzzySimilarity {
+				fuzzySimilarity = s
+				fuzzyFound = true
+				fuzzyMessage = k.message
+				fuzzyVal = v
 			}
 		}
+	}
+
+	if fuzzyFound {
+		// update the input key's message to match our fuzzy search
+		key.message = fuzzyMessage
+		return fuzzyVal, false // return false because we do not consider this a new error
 	}
 
 	return errVal{}, true // return true because this is a new error
