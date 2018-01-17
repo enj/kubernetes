@@ -260,11 +260,8 @@ func (d *dedupingErrorHandler) handleErr(err error) {
 	defer d.mutex.Unlock()
 
 	// increment our counter
-	val, message, isNewErr := d.getVal(key)
+	val, isNewErr := d.getVal(&key)
 	val.count++
-
-	// TODO
-	key.message = message
 
 	if isNewErr {
 		// we did not find the error, so add
@@ -288,11 +285,11 @@ func (d *dedupingErrorHandler) handleErr(err error) {
 
 // getVal returns the errVal associated with key, and if the key represents a new error
 // this operation is separated out into its own method to allow the insertion of fuzzy lookup
-func (d *dedupingErrorHandler) getVal(key errKey) (errVal, string, bool) {
-	val, isOldErr := d.count[key]
+func (d *dedupingErrorHandler) getVal(key *errKey) (errVal, bool) {
+	val, isOldErr := d.count[*key]
 	// found direct match, use that before doing levenshtein fuzzy lookup
 	if isOldErr {
-		return val, key.message, false // return false because this is not a new error
+		return val, false // return false because this is not a new error
 	}
 
 	// we have to iterate over the whole map to do fuzzy matching on errKey.message
@@ -305,12 +302,13 @@ func (d *dedupingErrorHandler) getVal(key errKey) (errVal, string, bool) {
 			if levenshtein.Match(key.message, k.message, nil) >= 0.75 {
 				// TODO fix 0.75
 				// TODO doc k.message return
-				return v, k.message, false // return false because we do not consider this a new error
+				key.message = k.message
+				return v, false // return false because we do not consider this a new error
 			}
 		}
 	}
 
-	return errVal{}, "", true // return true because this is a new error
+	return errVal{}, true // return true because this is a new error
 }
 
 // logError uses glog to log at the call site of HandleError
