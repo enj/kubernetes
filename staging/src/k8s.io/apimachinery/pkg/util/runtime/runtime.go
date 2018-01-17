@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/agext/levenshtein"
 	"github.com/golang/glog"
 	"github.com/golang/groupcache/lru"
 
@@ -259,8 +260,11 @@ func (d *dedupingErrorHandler) handleErr(err error) {
 	defer d.mutex.Unlock()
 
 	// increment our counter
-	val, isNewErr := d.getVal(key)
+	val, message, isNewErr := d.getVal(key)
 	val.count++
+
+	// TODO
+	key.message = message
 
 	if isNewErr {
 		// we did not find the error, so add
@@ -284,9 +288,29 @@ func (d *dedupingErrorHandler) handleErr(err error) {
 
 // getVal returns the errVal associated with key, and if the key represents a new error
 // this operation is separated out into its own method to allow the insertion of fuzzy lookup
-func (d *dedupingErrorHandler) getVal(key errKey) (errVal, bool) {
+func (d *dedupingErrorHandler) getVal(key errKey) (errVal, string, bool) {
 	val, isOldErr := d.count[key]
-	return val, !isOldErr
+	// found direct match, use that before doing levenshtein fuzzy lookup
+	if isOldErr {
+		return val, key.message, false // return false because this is not a new error
+	}
+
+	// we have to iterate over the whole map to do fuzzy matching on errKey.message
+	// this is ok because d.count should always be relatively small
+	for k, v := range d.count {
+		// the stack and error type must match
+		if key.stack == k.stack && key.errType == k.errType {
+			// now we perform fuzzy matching on the message
+			// TODO fix p being nil
+			if levenshtein.Match(key.message, k.message, nil) >= 0.75 {
+				// TODO fix 0.75
+				// TODO doc k.message return
+				return v, k.message, false // return false because we do not consider this a new error
+			}
+		}
+	}
+
+	return errVal{}, "", true // return true because this is a new error
 }
 
 // logError uses glog to log at the call site of HandleError
