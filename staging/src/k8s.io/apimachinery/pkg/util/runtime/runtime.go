@@ -88,7 +88,7 @@ func getCallers() string {
 
 // these constants determine the default behavior of dedupingErrorHandler
 const (
-	// cacheSize determines how many "unique" errors to track (see errKey)
+	// cacheSize determines how many "unique" errors to track (see errKey and dedupingErrorHandler.getVal below)
 	cacheSize = 1000
 	// errorDepth determines how many callers need to be skipped to find the stack of HandleError's caller
 	// HandleError -> ErrorHandlers iteration -> dedupingErrorHandler.handleErr -> dedupingErrorHandler.logError
@@ -202,7 +202,8 @@ func newDedupingErrorHandler(cacheSize, errorDepth int, delta time.Duration, sim
 
 // dedupingErrorHandler provides a go routine safe error handler via handleErr.
 // It tracks errors via the caller stack, the error type and the error message (err.Error() value).
-// An error is considered unique based on these properties (see errKey).
+// An error is considered unique based on these properties (see errKey), with one exception:
+// errors with the same stack and type are considered equal if their message is similar enough (see getVal).
 // To prevent from using an infinite amount of memory, it uses a LRU cache to purge old error values.
 // The cache and count map are separated to allow easy access to all keys, which is required for fuzzy matching.
 type dedupingErrorHandler struct {
@@ -249,7 +250,7 @@ type errVal struct {
 
 // handleErr logs the given error if it is considered new or "not recently logged"
 // currently it logs errors whenever:
-// 1. the associated errKey does not exist in d.count
+// 1. the associated errKey does not exist in d.count (see d.getVal for specifics on how this is calculated)
 // 2. the associated counter is a power of two
 // 3. the associated logged time's delta from the current time is greater than d.delta
 func (d *dedupingErrorHandler) handleErr(err error) {
