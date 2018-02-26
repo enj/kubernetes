@@ -207,6 +207,8 @@ func newDedupingErrorHandler(cacheSize, errorDepth int, delta time.Duration, sim
 		// d.cache.Add is only invoked when the mutex is held, so this delete is not a data race
 		delete(d.count, key.(errKey))
 	}
+	d.logErrorHandler = d.logError
+	d.getStackHandler = d.getStack
 
 	return d
 }
@@ -239,8 +241,13 @@ type dedupingErrorHandler struct {
 	Similar float64
 
 	// clock allows us to control time in unit tests
-	// TODO add unit tests
 	clock clock.Clock
+
+	// logErrorHandler allows us to check err and count in unit tests
+	logErrorHandler func(err error, count uint64)
+
+	// getStackHandler allows us to control the perceived stack in unit tests
+	getStackHandler func() (stack string)
 }
 
 // errKey tracks uniqueness based on the caller's stack and the type/message of the error
@@ -269,7 +276,7 @@ func (d *dedupingErrorHandler) handleErr(err error) {
 	// the operations below that do not acquire the lock do not mutate d
 
 	// we must determine our stack in this function since getStack counts frames
-	stack := d.getStack()
+	stack := d.getStackHandler()
 	key := errKey{stack: stack, errType: reflect.TypeOf(err), message: err.Error()}
 
 	// operations after this point can mutate d
@@ -295,7 +302,7 @@ func (d *dedupingErrorHandler) handleErr(err error) {
 	// determine if we need to log this time
 	if isNewErr || isPowerOfTwo(val.count) || d.clock.Since(val.logged) >= d.delta {
 		val.logged = d.clock.Now()
-		d.logError(err, val.count)
+		d.logErrorHandler(err, val.count)
 	}
 
 	// update the counter in the map after we determine if we need to log it
