@@ -138,7 +138,7 @@ func TestGlobalDedupingErrorHandlerGoroutineSafe(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			for j := 0; j < uniqueErrs; j++ {
-				HandleError(fmt.Errorf("test%d", j))
+				HandleError(fmt.Errorf("testwithenoughsamedata%d", j))
 			}
 			wg.Done()
 		}()
@@ -146,6 +146,27 @@ func TestGlobalDedupingErrorHandlerGoroutineSafe(t *testing.T) {
 	wg.Wait()
 
 	checkCount(t, DedupingErrorHandler.count, uniqueErrs, errFrequency)
+
+	// reset again so we can see the effects of changing similar
+	resetGlobalDedupingErrorHandler()
+
+	// enable fuzzy matching
+	DedupingErrorHandler.Similar = 0.75
+
+	// now these should all be considered the same error
+	wg2 := sync.WaitGroup{}
+	for i := 0; i < errFrequency; i++ {
+		wg2.Add(1)
+		go func() {
+			for j := 0; j < uniqueErrs; j++ {
+				HandleError(fmt.Errorf("testwithenoughsamedata%d", j))
+			}
+			wg2.Done()
+		}()
+	}
+	wg2.Wait()
+
+	checkCount(t, DedupingErrorHandler.count, 1, uniqueErrs*errFrequency)
 }
 
 func checkCount(t *testing.T, count map[errKey]errVal, unique int, frequency uint64) {
