@@ -182,7 +182,7 @@ func checkGlobalDedupingErrorHandlerCount(t *testing.T, unique int, frequency ui
 
 	for key, val := range DedupingErrorHandler.count {
 		if val.count != frequency {
-			t.Errorf("expected count of %d for key=%v val=%v", frequency, key, val)
+			t.Errorf("expected count of %d for key=%#v val=%#v", frequency, key, val)
 		}
 	}
 }
@@ -280,7 +280,7 @@ func (tr *dedupingErrorHandlerTestRunner) checkCount(expected map[error]int) {
 	tr.t.Helper()
 
 	if len(tr.handler.count) != len(expected) {
-		tr.t.Errorf("count: length mismatch %v %v", tr.handler.count, expected)
+		tr.t.Errorf("count: length mismatch %#v %#v", tr.handler.count, expected)
 	}
 
 	for err, count := range expected {
@@ -291,7 +291,7 @@ func (tr *dedupingErrorHandlerTestRunner) checkCount(expected map[error]int) {
 		}
 		val, ok := tr.handler.count[key]
 		if !ok {
-			tr.t.Errorf("count: missing key %#v in %v", err, tr.handler.count)
+			tr.t.Errorf("count: missing key %#v in %#v", err, tr.handler.count)
 			continue
 		}
 		if val.count != uint64(count) {
@@ -387,6 +387,50 @@ func TestDedupingErrorHandler(t *testing.T) {
 					3,
 					4,
 				)
+			},
+		},
+		{
+			name: "same error with different stack is not considered equal",
+			check: func(r *dedupingErrorHandlerTestRunner) {
+				// return a predictable stack string each time
+				stacks := []string{"1", "2", "1", "1", "2", "1", "1"}
+				idx := -1
+				r.handler.getStackHandler = func() (stack string) {
+					idx++
+					return stacks[idx]
+				}
+
+				err := fmt.Errorf("1")
+				errType := reflect.TypeOf(err)
+				errMsg := err.Error()
+
+				// same error but different stack
+				for range stacks {
+					r.handler.handleErr(err)
+				}
+
+				expectedCount := map[errKey]errVal{
+					{
+						stack:   stacks[0],
+						errType: errType,
+						message: errMsg,
+					}: {count: 5},
+					{
+						stack:   stacks[1],
+						errType: errType,
+						message: errMsg,
+					}: {count: 2},
+				}
+				if !reflect.DeepEqual(expectedCount, r.handler.count) {
+					t.Errorf("expected count %#v != actual count %#v", expectedCount, r.handler.count)
+				}
+
+				r.checkCache(2)
+				r.checkLog(5)
+
+				if expectedIndex := len(stacks) - 1; expectedIndex != idx {
+					r.t.Errorf("did not use all stack test data %d %d", expectedIndex, idx)
+				}
 			},
 		},
 		{
