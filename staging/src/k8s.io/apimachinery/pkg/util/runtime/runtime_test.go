@@ -422,7 +422,7 @@ func TestDedupingErrorHandler(t *testing.T) {
 					}: {count: 2},
 				}
 				if !reflect.DeepEqual(expectedCount, r.handler.count) {
-					t.Errorf("expected count %#v != actual count %#v", expectedCount, r.handler.count)
+					r.t.Errorf("expected count %#v != actual count %#v", expectedCount, r.handler.count)
 				}
 
 				r.checkCache(2)
