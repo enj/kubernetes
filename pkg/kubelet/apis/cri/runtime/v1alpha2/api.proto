@@ -214,6 +214,10 @@ message NamespaceOption {
     // Note: There is currently no way to set CONTAINER scoped IPC in the Kubernetes API.
     // Namespaces currently set by the kubelet: POD, NODE
     NamespaceMode ipc = 3;
+    // User namespace for this container/sandbox.
+    // Note: There is currently no way to set user namespace in the Kubernetes API.
+    // Namespaces currently set by the kubelet: NODE; that however clashes with protobuf3's default POD.
+    NamespaceMode user = 4;
 }
 
 // Int64Value is the wrapper of int64.
@@ -255,6 +259,9 @@ message LinuxSandboxSecurityContext {
     //   <full-path-to-profile> is the full path of the profile.
     // Default: "", which is identical with unconfined.
     string seccomp_profile_path = 7;
+    // UID and GID mappings for user namespaces
+    repeated LinuxIDMapping uid_mappings = 9;
+    repeated LinuxIDMapping gid_mappings = 10;
 }
 
 // LinuxPodSandboxConfig holds platform-specific configurations for Linux
@@ -582,6 +589,9 @@ message LinuxContainerSecurityContext {
     // no_new_privs defines if the flag for no_new_privs should be set on the
     // container.
     bool no_new_privs = 11;
+    // UID and GID mappings for user namespaces
+    repeated LinuxIDMapping uid_mappings = 13;
+    repeated LinuxIDMapping gid_mappings = 14;
 }
 
 // LinuxContainerConfig contains platform-specific configuration for
@@ -1219,4 +1229,11 @@ message ReopenContainerLogRequest {
 }
 
 message ReopenContainerLogResponse{
+}
+
+// UID and GID mapping
+message LinuxIDMapping {
+    uint32 host_id = 1;
+    uint32 container_id = 2;
+    uint32 size = 3;
 }
