@@ -2888,6 +2888,11 @@ type PodSpec struct {
 	// +k8s:conversion-gen=false
 	// +optional
 	HostIPC bool `json:"hostIPC,omitempty" protobuf:"varint,13,opt,name=hostIPC"`
+	// Use the host's user namespace.
+	// Optional: Default to true.
+	// +k8s:conversion-gen=true
+	// +optional
+	HostUserNamespace bool `json:"hostUserNamespace,omitempty" protobuf:"varint,28,opt,name=hostUserNamespace"`
 	// Share a single process namespace between all of the containers in a pod.
 	// When this is set containers will be able to view and signal processes from other containers
 	// in the same pod, and the first process in each container will not be assigned PID 1.
@@ -3013,6 +3018,9 @@ type PodSecurityContext struct {
 	// If unset, the Kubelet will not modify the ownership and permissions of any volume.
 	// +optional
 	FSGroup *int64 `json:"fsGroup,omitempty" protobuf:"varint,5,opt,name=fsGroup"`
+	// UID and GID mappings for user namespaces
+	UIDMappings []LinuxIDMapping `json:"uidMappings,omitempty" protobuf:"bytes,7,opt,name=uidMappings"`
+	GIDMappings []LinuxIDMapping `json:"gidMappings,omitempty" protobuf:"bytes,8,opt,name=gidMappings"`
 }
 
 // PodQOSClass defines the supported qos classes of Pods.
@@ -5197,6 +5205,9 @@ type SecurityContext struct {
 	// 2) has CAP_SYS_ADMIN
 	// +optional
 	AllowPrivilegeEscalation *bool `json:"allowPrivilegeEscalation,omitempty" protobuf:"varint,7,opt,name=allowPrivilegeEscalation"`
+	// UID and GID mappings for user namespaces
+	UIDMappings []LinuxIDMapping `json:"uidMappings,omitempty" protobuf:"bytes,9,opt,name=uidMappings"`
+	GIDMappings []LinuxIDMapping `json:"gidMappings,omitempty" protobuf:"bytes,10,opt,name=gidMappings"`
 }
 
 // SELinuxOptions are the labels to be applied to the container
@@ -5255,6 +5266,13 @@ type Sysctl struct {
 type NodeResources struct {
 	// Capacity represents the available resources of a node
 	Capacity ResourceList `protobuf:"bytes,1,rep,name=capacity,casttype=ResourceList,castkey=ResourceName"`
+}
+
+// UID and GID mapping
+type LinuxIDMapping struct {
+	HostId      uint32 `protobuf:"varint,1,opt,name=hostId,json=hostId" json:"hostId,omitempty"`
+	ContainerId uint32 `protobuf:"varint,2,opt,name=containerId,json=containerId" json:"containerId,omitempty"`
+	Size_       uint32 `protobuf:"varint,3,opt,name=size" json:"size,omitempty"`
 }
 
 const (
