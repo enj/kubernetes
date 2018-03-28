@@ -157,6 +157,8 @@ func SetDefaults_Pod(obj *v1.Pod) {
 			}
 		}
 	}
+	if obj.Spec.SecurityContext.HostUserNamespace == nil {
+	}
 }
 func SetDefaults_PodSpec(obj *v1.PodSpec) {
 	if obj.DNSPolicy == "" {
