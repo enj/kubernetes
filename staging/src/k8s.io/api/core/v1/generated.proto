@@ -3136,7 +3136,7 @@ message PodSpec {
 
   // Use the host's user namespace.
   // Optional: Default to true.
-  // +k8s:conversion-gen=true
+  // +k8s:conversion-gen=false
   // +optional
   optional bool hostUserNamespace = 28;
 
