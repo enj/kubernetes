@@ -189,7 +189,7 @@ type Interface interface {
 	//       curr.Counter++
 	//
 	//       // Return the modified object - return an error to stop iterating. Return
-	//       // a uint64 to alter the TTL on the object, or nil to keep it the same value.
+	//       // a uint64 to alter the TTL on the object, or res.TTL to keep it the same value.
 	//       return cur, nil, nil
 	//    }
 	// })

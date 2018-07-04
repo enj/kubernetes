@@ -629,7 +629,8 @@ func (e *Store) Update(ctx context.Context, name string, objInfo rest.UpdatedObj
 		if err != nil {
 			return nil, nil, err
 		}
-		if int64(ttl) != res.TTL {
+		// TODO doc
+		if e.TTLFunc != nil {
 			return obj, &ttl, nil
 		}
 		return obj, nil, nil
