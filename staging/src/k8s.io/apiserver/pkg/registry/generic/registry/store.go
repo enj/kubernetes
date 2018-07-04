@@ -579,11 +579,15 @@ func (e *Store) Update(ctx context.Context, name string, objInfo rest.UpdatedObj
 					return nil, nil, err
 				}
 			}
+
+			// TODO doc
+			if e.TTLFunc == nil {
+				return obj, nil, nil
+			}
 			ttl, err := e.calculateTTL(obj, 0, false)
 			if err != nil {
 				return nil, nil, err
 			}
-
 			return obj, &ttl, nil
 		}
 
@@ -625,15 +629,16 @@ func (e *Store) Update(ctx context.Context, name string, objInfo rest.UpdatedObj
 			deleteObj = obj
 			return nil, nil, errEmptiedFinalizers
 		}
+
+		// TODO doc
+		if e.TTLFunc == nil {
+			return obj, nil, nil
+		}
 		ttl, err := e.calculateTTL(obj, res.TTL, true)
 		if err != nil {
 			return nil, nil, err
 		}
-		// TODO doc
-		if e.TTLFunc != nil {
-			return obj, &ttl, nil
-		}
-		return obj, nil, nil
+		return obj, &ttl, nil
 	})
 
 	if err != nil {

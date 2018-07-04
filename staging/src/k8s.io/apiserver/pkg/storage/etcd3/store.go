@@ -767,6 +767,7 @@ func (s *store) updateState(st *objState, userUpdate storage.UpdateFunc, mustChe
 		}
 		ttl = *ttlPtr
 	}
+	// TODO comment about how we have to assume ttl is 0 based on the nil instead of use st.meta.TTL
 
 	if err := s.versioner.PrepareObjectForStorage(ret); err != nil {
 		return nil, 0, fmt.Errorf("PrepareObjectForStorage failed: %v", err)
