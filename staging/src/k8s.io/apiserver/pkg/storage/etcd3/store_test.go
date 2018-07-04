@@ -580,6 +580,73 @@ func TestGuaranteedUpdateChecksStoredData(t *testing.T) {
 	}
 }
 
+func TestGuaranteedUpdateReuseLease(t *testing.T) {
+	ctx, store, cluster := testSetup(t)
+	defer cluster.Terminate(t)
+
+	input := &example.Pod{ObjectMeta: metav1.ObjectMeta{Name: "foo"}}
+	key := "/somekey"
+
+	// serialize input into etcd with data that would be normalized by a write - in this case, leading
+	// and trailing whitespace
+	codec := codecs.LegacyCodec(examplev1.SchemeGroupVersion)
+	data, err := runtime.Encode(codec, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := store.client.Put(ctx, key, "test! "+string(data)+" ")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store.transformer = prefixTransformer{prefix: []byte(defaultTestPrefix)}
+
+	// this update should write the canonical value to etcd because the new serialization differs
+	// from the stored serialization
+	input.ResourceVersion = strconv.FormatInt(resp.Header.Revision, 10)
+	out := &example.Pod{}
+	err = store.GuaranteedUpdate(ctx, key, out, true, nil,
+		func(_ runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
+			return input, nil, nil
+		}, input)
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	if out.ResourceVersion == strconv.FormatInt(resp.Header.Revision, 10) {
+		t.Errorf("guaranteed update should have updated the serialized data, got %#v", out)
+	}
+
+	lastVersion := out.ResourceVersion
+
+	// this update should not write to etcd because the input matches the stored data
+	input = out
+	out = &example.Pod{}
+	err = store.GuaranteedUpdate(ctx, key, out, true, nil,
+		func(_ runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
+			return input, nil, nil
+		}, input)
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	if out.ResourceVersion != lastVersion {
+		t.Errorf("guaranteed update should have short-circuited write, got %#v", out)
+	}
+
+	store.transformer = prefixTransformer{prefix: []byte(defaultTestPrefix), stale: true}
+
+	// this update should write to etcd because the transformer reported stale
+	err = store.GuaranteedUpdate(ctx, key, out, true, nil,
+		func(_ runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
+			return input, nil, nil
+		}, input)
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	if out.ResourceVersion == lastVersion {
+		t.Errorf("guaranteed update should have written to etcd when transformer reported stale, got %#v", out)
+	}
+}
+
 func TestGuaranteedUpdateWithConflict(t *testing.T) {
 	ctx, store, cluster := testSetup(t)
 	defer cluster.Terminate(t)
