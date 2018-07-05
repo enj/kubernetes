@@ -580,7 +580,8 @@ func (e *Store) Update(ctx context.Context, name string, objInfo rest.UpdatedObj
 				}
 			}
 
-			// TODO doc
+			// always return a nil TTL when we have no TTL func so that the
+			// storage interface can distinguish between no TTL, 0 TTL, 1+ TTL
 			if e.TTLFunc == nil {
 				return obj, nil, nil
 			}
@@ -630,7 +631,8 @@ func (e *Store) Update(ctx context.Context, name string, objInfo rest.UpdatedObj
 			return nil, nil, errEmptiedFinalizers
 		}
 
-		// TODO doc
+		// always return a nil TTL when we have no TTL func so that the
+		// storage interface can distinguish between no TTL, 0 TTL, 1+ TTL
 		if e.TTLFunc == nil {
 			return obj, nil, nil
 		}

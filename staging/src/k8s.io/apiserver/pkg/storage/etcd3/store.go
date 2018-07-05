@@ -758,16 +758,21 @@ func (s *store) updateState(st *objState, userUpdate storage.UpdateFunc, mustChe
 		// to userUpdate as the existing object's TTL (because the cache does not know the TTL value).
 		// send a specific error in this case to signal that we need to get the actual object from ETCD
 		// so we can extract the lease's current TTL.  this check assumes that userUpdate will only assert
-		// a TTL when the value it wants to assert is different than the existing objects TTL (zero).
-		// in this case that means that userUpdate only asserts a non-zero TTL which works out nicely
-		// since zero means "no TTL."  registry.Store.Update has the "correct" behavior in this regard.
-		// TODO fix comment above
+		// a non-nil TTL when the associated object actually needs a TTL (or wants to remove a TTL).
+		// registry.Store.Update has the "correct" behavior in this regard.
 		if mustCheckData {
 			return nil, 0, errStaleTTL
 		}
 		ttl = *ttlPtr
 	}
-	// TODO comment about how we have to assume ttl is 0 based on the nil instead of use st.meta.TTL
+	// when ttlPtr is nil it would be nice to be able to use the value stored in st.meta.TTL
+	// as the TTL.  but the only way for use to know if that value is correct when mustCheckData
+	// is true is to fetch the latest object.  since ttlPtr is almost always nil, we would lose
+	// all benefit from using the suggestion object if we attempted a fetch.  we also cannot
+	// blindly use st.meta.TTL because it would it is zero when the state of the object is restored
+	// from the cache and thus would lead to inconsistent behavior (i.e. sometimes we keep the correct
+	// TTL for the object and other times we set the TTL to zero so the object does not expire).
+	// thus for the sake of consistency we assume a nil TTL to mean zero.
 
 	if err := s.versioner.PrepareObjectForStorage(ret); err != nil {
 		return nil, 0, fmt.Errorf("PrepareObjectForStorage failed: %v", err)
@@ -778,13 +783,13 @@ func (s *store) updateState(st *objState, userUpdate storage.UpdateFunc, mustChe
 
 // ttlOpts returns client options based on given ttl.
 // ttl: if ttl is non-zero, it will attach the key to a lease with ttl of roughly the same length
-// TODO doc reuse
+// if ttl is the same as st.meta.TTL, reuse the lease specified in st.lease
 func (s *store) ttlOpts(ctx context.Context, ttl int64, st *objState) ([]clientv3.OpOption, error) {
 	if ttl == 0 {
 		return nil, nil
 	}
 
-	// TODO doc
+	// we want to keep the same TTL as before, so reuse the same lease
 	if st != nil && ttl == st.meta.TTL && st.lease != clientv3.NoLease {
 		return []clientv3.OpOption{clientv3.WithLease(st.lease)}, nil
 	}

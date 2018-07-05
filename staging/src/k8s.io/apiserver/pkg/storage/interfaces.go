@@ -190,8 +190,9 @@ type Interface interface {
 	//
 	//       // Return the modified object - return an error to stop iterating. Return
 	//       // a uint64 to alter the TTL on the object, or res.TTL to keep it the same value.
-	//       // TODO comment about what nil TTL means for both object had a TTL before
-	//       // TODO and for when object did not have a TTL before
+	//       // Returning a nil TTL when the object previously had no TTL means "no TTL."
+	//       // Returning a nil TTL when the object previously had a TTL is an error
+	//       // and will lead to undefined behavior.
 	//       return cur, nil, nil
 	//    }
 	// })
