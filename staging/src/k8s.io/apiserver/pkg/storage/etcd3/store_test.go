@@ -599,9 +599,7 @@ func TestGuaranteedUpdateReuseLease(t *testing.T) {
 		if i%100 != 0 || i <= 0 {
 			t.Fatalf("invalid test data for initTTL: %v", i)
 		}
-		if i != 0 {
-			i -= 25 // fudge the value a bit so the "remaining" TTLs round up correctly
-		}
+		i -= 25 // fudge the value a bit so the "remaining" TTLs round up correctly
 		return &i
 	}
 	getNewTTL := func(u uint64) *uint64 {
