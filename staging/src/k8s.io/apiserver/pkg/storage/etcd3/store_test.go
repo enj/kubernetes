@@ -595,7 +595,24 @@ func TestGuaranteedUpdateReuseLease(t *testing.T) {
 	}
 	strData := string(data)
 
-	getTTL := func(i int64) *int64 { return &i }
+	getInitTTL := func(i int64) *int64 {
+		if i%100 != 0 || i <= 0 {
+			t.Fatalf("invalid test data for initTTL: %v", i)
+		}
+		if i != 0 {
+			i -= 25 // fudge the value a bit so the "remaining" TTLs round up correctly
+		}
+		return &i
+	}
+	getNewTTL := func(u uint64) *uint64 {
+		if u%100 != 0 {
+			t.Fatalf("invalid test data for newTTL: %v", u)
+		}
+		if u != 0 {
+			u -= 25 // fudge the value a bit so the "remaining" TTLs round up correctly
+		}
+		return &u
+	}
 
 	type args struct {
 		initTTL    *int64
@@ -612,9 +629,117 @@ func TestGuaranteedUpdateReuseLease(t *testing.T) {
 		wants wants
 	}{
 		{
+			name: "no TTLs",
+			args: args{
+				initTTL:    nil,
+				newTTL:     func(resTTL uint64) *uint64 { return nil },
+				suggestion: false,
+			},
+			wants: wants{
+				ttls:     []int64{0},
+				newLease: false,
+			},
+		},
+		{
+			name: "no TTLs with suggestion",
+			args: args{
+				initTTL:    nil,
+				newTTL:     func(resTTL uint64) *uint64 { return nil },
+				suggestion: true,
+			},
+			wants: wants{
+				ttls:     []int64{0, 0},
+				newLease: false,
+			},
+		},
+		{
+			name: "new TTL on update",
+			args: args{
+				initTTL:    nil,
+				newTTL:     func(resTTL uint64) *uint64 { return getNewTTL(400) },
+				suggestion: false,
+			},
+			wants: wants{
+				ttls:     []int64{0, 400},
+				newLease: true,
+			},
+		},
+		{
+			name: "new TTL on update with suggestion",
+			args: args{
+				initTTL:    nil,
+				newTTL:     func(resTTL uint64) *uint64 { return getNewTTL(400) },
+				suggestion: true,
+			},
+			wants: wants{
+				ttls:     []int64{0, 0, 400},
+				newLease: true,
+			},
+		},
+		{
+			name: "remove TTL on update",
+			args: args{
+				initTTL:    getInitTTL(600),
+				newTTL:     func(resTTL uint64) *uint64 { return getNewTTL(0) },
+				suggestion: false,
+			},
+			wants: wants{
+				ttls:     []int64{600, 0},
+				newLease: true,
+			},
+		},
+		{
+			name: "remove TTL on update with suggestion",
+			args: args{
+				initTTL:    getInitTTL(600),
+				newTTL:     func(resTTL uint64) *uint64 { return getNewTTL(0) },
+				suggestion: true,
+			},
+			wants: wants{
+				ttls:     []int64{0, 600, 0},
+				newLease: true,
+			},
+		},
+		{
+			name: "undefined behavior, nil TTL on update",
+			args: args{
+				initTTL:    getInitTTL(700),
+				newTTL:     func(resTTL uint64) *uint64 { return nil },
+				suggestion: false,
+			},
+			wants: wants{
+				ttls:     []int64{700, 0}, // lease ends up being removed
+				newLease: true,
+			},
+		},
+		{
+			name: "undefined behavior, nil TTL on update with suggestion",
+			args: args{
+				initTTL:    getInitTTL(700),
+				newTTL:     func(resTTL uint64) *uint64 { return nil },
+				suggestion: true,
+			},
+			wants: wants{
+				ttls:     []int64{0, 700, 0}, // lease ends up being removed
+				newLease: true,
+			},
+		},
+		{
+			name: "reusing preexisting TTL",
+			args: args{
+				initTTL:    getInitTTL(300),
+				newTTL:     func(resTTL uint64) *uint64 { return &resTTL },
+				suggestion: false,
+			},
+			wants: wants{
+				ttls:     []int64{300, 300},
+				newLease: false,
+			},
+		},
+		{
 			name: "reusing preexisting TTL with suggestion",
 			args: args{
-				initTTL:    getTTL(300),
+				initTTL:    getInitTTL(300),
 				newTTL:     func(resTTL uint64) *uint64 { return &resTTL },
 				suggestion: true,
 			},
@@ -689,6 +814,8 @@ func TestGuaranteedUpdateReuseLease(t *testing.T) {
 					t.Fatal(err)
 				}
 				ttls = append(ttls, ttlResp.GrantedTTL) // use granted because we only care about what we asked for, not the current state
+			} else if tt.wants.newLease {
+				ttls = append(ttls, 0) // the test considers this a change so record it
 			}
 
 			if tt.wants.newLease {
