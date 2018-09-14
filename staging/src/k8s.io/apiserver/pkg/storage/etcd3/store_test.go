@@ -593,15 +593,14 @@ func TestGuaranteedUpdateReuseLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	//_ = data
+	strData := string(data)
 
 	getTTL := func(i int64) *int64 { return &i }
 
 	type args struct {
-		initTTL *int64
-		//newTTL     *uint64
-		suggestion *example.Pod
+		initTTL    *int64
 		newTTL     func(resTTL uint64) *uint64
+		suggestion bool
 	}
 	type wants struct {
 		ttls     []int64
@@ -613,30 +612,11 @@ func TestGuaranteedUpdateReuseLease(t *testing.T) {
 		wants wants
 	}{
 		{
-			name: "no old TTL",
+			name: "reusing preexisting TTL with suggestion",
 			args: args{
-				initTTL: getTTL(300),
-				//newTTL:     nil,
-				suggestion: &example.Pod{},
+				initTTL:    getTTL(300),
 				newTTL:     func(resTTL uint64) *uint64 { return &resTTL },
-				//[]storage.UpdateFunc{
-				//func(input runtime.Object, res storage.ResponseMeta) (output runtime.Object, ttl *uint64, err error) {
-				//	five := uint64(res.TTL)
-				//	return pod, &five, nil
-				//},
-				//func(input runtime.Object, res storage.ResponseMeta) (output runtime.Object, ttl *uint64, err error) {
-				//	pod := input.(*example.Pod)
-				//	pod.Name = "2"
-				//	five := uint64(5)
-				//	return pod, &five, nil
-				//},
-				//func(input runtime.Object, res storage.ResponseMeta) (output runtime.Object, ttl *uint64, err error) {
-				//	pod := input.(*example.Pod)
-				//	pod.Name = "2"
-				//	five := uint64(5)
-				//	return pod, &five, nil
-				//},
-				//},
+				suggestion: true,
 			},
 			wants: wants{
 				ttls:     []int64{0, 300, 300},
@@ -646,18 +626,9 @@ func TestGuaranteedUpdateReuseLease(t *testing.T) {
 	}
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			//if len(tt.args.tryUpdates) != len(tt.wants.ttls) {
-			//	t.Fatal("invalid test data")
-			//}
-
 			key := "/key/test" + strconv.Itoa(i)
 
 			var opts []clientv3.OpOption
-
-			//out1 := &example.Pod{}
-
-			//var ttl uint64
-
 			initLeaseID := clientv3.NoLease
 
 			if ttl := tt.args.initTTL; ttl != nil {
@@ -669,52 +640,46 @@ func TestGuaranteedUpdateReuseLease(t *testing.T) {
 				initLeaseID = lease.ID
 			}
 
-			_, err := store.client.Put(ctx, key, string(data), opts...)
-			if err != nil {
+			if _, err := store.client.Put(ctx, key, strData, opts...); err != nil {
 				t.Fatal(err)
 			}
 
-			//try := 0
-			out := &example.Pod{}
 			var ttls []int64
 
 			wrapper := func(obj runtime.Object, res storage.ResponseMeta) (runtime.Object, *uint64, error) {
-				//if try >= len(tt.args.tryUpdates) {
-				//	t.Fatal("bad")
-				//}
-
 				if res.TTL < 0 {
-					t.Fatal()
+					t.Fatalf("invalid TTL %v", res.TTL)
 				}
 
 				ttls = append(ttls, res.TTL)
 
-				//updateFunc := tt.args.tryUpdates[try]
-				//try++
 				pod := obj.(*example.Pod)
 				pod.Name = "notfoo"
+
 				inTTL := uint64(res.TTL)
 				outTTL := tt.args.newTTL(inTTL)
+
 				return pod, outTTL, nil
 			}
 
 			var suggestions []runtime.Object
-			if suggestion := tt.args.suggestion; suggestion != nil {
-				suggestions = append(suggestions, suggestion)
+			if tt.args.suggestion {
+				suggestions = append(suggestions, &example.Pod{})
 			}
 
-			if err := store.GuaranteedUpdate(ctx, key, out, false, nil, wrapper, suggestions...); err != nil {
+			ignored := &example.Pod{}
+			if err := store.GuaranteedUpdate(ctx, key, ignored, false, nil, wrapper, suggestions...); err != nil {
 				t.Fatal(err)
 			}
 
-			out2, err := store.client.Get(ctx, key)
+			updated, err := store.client.Get(ctx, key)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if out2.Count != 1 {
-				t.Fatal()
+			if updated.Count != 1 {
+				t.Fatalf("too many KVs returned: %#v", updated)
 			}
-			kv := out2.Kvs[0]
+			kv := updated.Kvs[0]
 
 			endLeaseID := clientv3.LeaseID(kv.Lease)
 
@@ -723,7 +688,7 @@ func TestGuaranteedUpdateReuseLease(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				ttls = append(ttls, ttlResp.GrantedTTL)
+				ttls = append(ttls, ttlResp.GrantedTTL) // use granted because we only care about what we asked for, not the current state
 			}
 
 			if tt.wants.newLease {
@@ -736,6 +701,9 @@ func TestGuaranteedUpdateReuseLease(t *testing.T) {
 				}
 			}
 
+			// since most of the TTLs seen are based on the remaining TTL and not the initially granted TTL,
+			// we round them up to the nearest hundred.  this means that all expected TTLs need to be multiples
+			// of 100, and ideally no smaller than 200 (to make sure the test does not pass when it should fail).
 			fixedTTLs := make([]int64, len(ttls))
 			for i, ttl := range ttls {
 				if mod := ttl % 100; mod != 0 {
@@ -747,57 +715,8 @@ func TestGuaranteedUpdateReuseLease(t *testing.T) {
 			if expected := tt.wants.ttls; !reflect.DeepEqual(expected, fixedTTLs) {
 				t.Errorf("expectedTTLs=%v, fixedTTLs=%v, realTTLs=%v", expected, fixedTTLs, ttls)
 			}
-
-			//if got := ValidateGitHubIdentityProvider(tt.args.provider, tt.args.challenge, tt.args.mappingMethod, tt.args.fieldPath); !reflect.DeepEqual(got, tt.want) {
-			//	t.Errorf("ValidateGitHubIdentityProvider() = %v, want %v", got, tt.want)
-			//}
 		})
 	}
-	//
-	//// this update should write the canonical value to etcd because the new serialization differs
-	//// from the stored serialization
-	//input.ResourceVersion = strconv.FormatInt(resp.Header.Revision, 10)
-	//out := &example.Pod{}
-	//err = store.GuaranteedUpdate(ctx, key, out, true, nil,
-	//	func(_ runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
-	//		return input, nil, nil
-	//	}, input)
-	//if err != nil {
-	//	t.Fatalf("Update failed: %v", err)
-	//}
-	//if out.ResourceVersion == strconv.FormatInt(resp.Header.Revision, 10) {
-	//	t.Errorf("guaranteed update should have updated the serialized data, got %#v", out)
-	//}
-	//
-	//lastVersion := out.ResourceVersion
-	//
-	//// this update should not write to etcd because the input matches the stored data
-	//input = out
-	//out = &example.Pod{}
-	//err = store.GuaranteedUpdate(ctx, key, out, true, nil,
-	//	func(_ runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
-	//		return input, nil, nil
-	//	}, input)
-	//if err != nil {
-	//	t.Fatalf("Update failed: %v", err)
-	//}
-	//if out.ResourceVersion != lastVersion {
-	//	t.Errorf("guaranteed update should have short-circuited write, got %#v", out)
-	//}
-	//
-	//store.transformer = prefixTransformer{prefix: []byte(defaultTestPrefix), stale: true}
-	//
-	//// this update should write to etcd because the transformer reported stale
-	//err = store.GuaranteedUpdate(ctx, key, out, true, nil,
-	//	func(_ runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
-	//		return input, nil, nil
-	//	}, input)
-	//if err != nil {
-	//	t.Fatalf("Update failed: %v", err)
-	//}
-	//if out.ResourceVersion == lastVersion {
-	//	t.Errorf("guaranteed update should have written to etcd when transformer reported stale, got %#v", out)
-	//}
 }
 
 func TestGuaranteedUpdateWithConflict(t *testing.T) {
