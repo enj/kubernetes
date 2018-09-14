@@ -75,7 +75,7 @@ type store struct {
 
 type objState struct {
 	obj   runtime.Object
-	meta  *storage.ResponseMeta
+	meta  storage.ResponseMeta
 	rev   int64
 	data  []byte
 	stale bool
@@ -688,8 +688,7 @@ func (s *store) watch(ctx context.Context, key string, rv string, pred storage.S
 
 func (s *store) getState(ctx context.Context, getResp *clientv3.GetResponse, key string, v reflect.Value, ignoreNotFound bool) (*objState, error) {
 	state := &objState{
-		obj:  reflect.New(v.Type()).Interface().(runtime.Object),
-		meta: &storage.ResponseMeta{},
+		obj: reflect.New(v.Type()).Interface().(runtime.Object),
 	}
 	if len(getResp.Kvs) == 0 {
 		if !ignoreNotFound {
@@ -725,8 +724,7 @@ func (s *store) getState(ctx context.Context, getResp *clientv3.GetResponse, key
 
 func (s *store) getStateFromObject(obj runtime.Object) (*objState, error) {
 	state := &objState{
-		obj:  obj,
-		meta: &storage.ResponseMeta{},
+		obj: obj,
 	}
 
 	rv, err := s.versioner.ObjectResourceVersion(obj)
@@ -752,7 +750,7 @@ func (s *store) getStateFromObject(obj runtime.Object) (*objState, error) {
 var errStaleTTL = errors.New("updateState needs current objState for TTL calculation")
 
 func (s *store) updateState(st *objState, userUpdate storage.UpdateFunc, mustCheckData bool) (runtime.Object, uint64, error) {
-	ret, ttlPtr, err := userUpdate(st.obj, *st.meta)
+	ret, ttlPtr, err := userUpdate(st.obj, st.meta)
 	if err != nil {
 		return nil, 0, err
 	}

@@ -32,7 +32,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/integration"
 	"github.com/coreos/pkg/capnslog"
-	apitesting "k8s.io/apimachinery/pkg/api/apitesting"
+	"k8s.io/apimachinery/pkg/api/apitesting"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -584,67 +584,220 @@ func TestGuaranteedUpdateReuseLease(t *testing.T) {
 	ctx, store, cluster := testSetup(t)
 	defer cluster.Terminate(t)
 
-	input := &example.Pod{ObjectMeta: metav1.ObjectMeta{Name: "foo"}}
-	key := "/somekey"
+	store.transformer = value.IdentityTransformer
 
-	// serialize input into etcd with data that would be normalized by a write - in this case, leading
-	// and trailing whitespace
+	input := &example.Pod{ObjectMeta: metav1.ObjectMeta{Name: "foo"}}
+
 	codec := codecs.LegacyCodec(examplev1.SchemeGroupVersion)
 	data, err := runtime.Encode(codec, input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := store.client.Put(ctx, key, "test! "+string(data)+" ")
-	if err != nil {
-		t.Fatal(err)
-	}
+	//_ = data
 
-	store.transformer = prefixTransformer{prefix: []byte(defaultTestPrefix)}
+	getTTL := func(i int64) *int64 { return &i }
 
-	// this update should write the canonical value to etcd because the new serialization differs
-	// from the stored serialization
-	input.ResourceVersion = strconv.FormatInt(resp.Header.Revision, 10)
-	out := &example.Pod{}
-	err = store.GuaranteedUpdate(ctx, key, out, true, nil,
-		func(_ runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
-			return input, nil, nil
-		}, input)
-	if err != nil {
-		t.Fatalf("Update failed: %v", err)
+	type args struct {
+		initTTL *int64
+		//newTTL     *uint64
+		suggestion *example.Pod
+		newTTL     func(resTTL uint64) *uint64
 	}
-	if out.ResourceVersion == strconv.FormatInt(resp.Header.Revision, 10) {
-		t.Errorf("guaranteed update should have updated the serialized data, got %#v", out)
+	type wants struct {
+		ttls     []int64
+		newLease bool
 	}
+	tests := []struct {
+		name  string
+		args  args
+		wants wants
+	}{
+		{
+			name: "no old TTL",
+			args: args{
+				initTTL: getTTL(300),
+				//newTTL:     nil,
+				suggestion: &example.Pod{},
+				newTTL:     func(resTTL uint64) *uint64 { return &resTTL },
+				//[]storage.UpdateFunc{
+				//func(input runtime.Object, res storage.ResponseMeta) (output runtime.Object, ttl *uint64, err error) {
+				//	five := uint64(res.TTL)
+				//	return pod, &five, nil
+				//},
+				//func(input runtime.Object, res storage.ResponseMeta) (output runtime.Object, ttl *uint64, err error) {
+				//	pod := input.(*example.Pod)
+				//	pod.Name = "2"
+				//	five := uint64(5)
+				//	return pod, &five, nil
+				//},
+				//func(input runtime.Object, res storage.ResponseMeta) (output runtime.Object, ttl *uint64, err error) {
+				//	pod := input.(*example.Pod)
+				//	pod.Name = "2"
+				//	five := uint64(5)
+				//	return pod, &five, nil
+				//},
+				//},
+			},
+			wants: wants{
+				ttls:     []int64{0, 300, 300},
+				newLease: false,
+			},
+		},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			//if len(tt.args.tryUpdates) != len(tt.wants.ttls) {
+			//	t.Fatal("invalid test data")
+			//}
 
-	lastVersion := out.ResourceVersion
+			key := "/key/test" + strconv.Itoa(i)
 
-	// this update should not write to etcd because the input matches the stored data
-	input = out
-	out = &example.Pod{}
-	err = store.GuaranteedUpdate(ctx, key, out, true, nil,
-		func(_ runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
-			return input, nil, nil
-		}, input)
-	if err != nil {
-		t.Fatalf("Update failed: %v", err)
-	}
-	if out.ResourceVersion != lastVersion {
-		t.Errorf("guaranteed update should have short-circuited write, got %#v", out)
-	}
+			var opts []clientv3.OpOption
 
-	store.transformer = prefixTransformer{prefix: []byte(defaultTestPrefix), stale: true}
+			//out1 := &example.Pod{}
 
-	// this update should write to etcd because the transformer reported stale
-	err = store.GuaranteedUpdate(ctx, key, out, true, nil,
-		func(_ runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
-			return input, nil, nil
-		}, input)
-	if err != nil {
-		t.Fatalf("Update failed: %v", err)
+			//var ttl uint64
+
+			initLeaseID := clientv3.NoLease
+
+			if ttl := tt.args.initTTL; ttl != nil {
+				lease, err := store.leaseManager.client.Grant(ctx, *ttl)
+				if err != nil {
+					t.Fatal(err)
+				}
+				opts = append(opts, clientv3.WithLease(lease.ID))
+				initLeaseID = lease.ID
+			}
+
+			_, err := store.client.Put(ctx, key, string(data), opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			//try := 0
+			out := &example.Pod{}
+			var ttls []int64
+
+			wrapper := func(obj runtime.Object, res storage.ResponseMeta) (runtime.Object, *uint64, error) {
+				//if try >= len(tt.args.tryUpdates) {
+				//	t.Fatal("bad")
+				//}
+
+				if res.TTL < 0 {
+					t.Fatal()
+				}
+
+				ttls = append(ttls, res.TTL)
+
+				//updateFunc := tt.args.tryUpdates[try]
+				//try++
+				pod := obj.(*example.Pod)
+				pod.Name = "notfoo"
+				inTTL := uint64(res.TTL)
+				outTTL := tt.args.newTTL(inTTL)
+				return pod, outTTL, nil
+			}
+
+			var suggestions []runtime.Object
+			if suggestion := tt.args.suggestion; suggestion != nil {
+				suggestions = append(suggestions, suggestion)
+			}
+
+			if err := store.GuaranteedUpdate(ctx, key, out, false, nil, wrapper, suggestions...); err != nil {
+				t.Fatal(err)
+			}
+
+			out2, err := store.client.Get(ctx, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out2.Count != 1 {
+				t.Fatal()
+			}
+			kv := out2.Kvs[0]
+
+			endLeaseID := clientv3.LeaseID(kv.Lease)
+
+			if endLeaseID != clientv3.NoLease {
+				ttlResp, err := store.leaseManager.client.TimeToLive(ctx, endLeaseID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ttls = append(ttls, ttlResp.GrantedTTL)
+			}
+
+			if tt.wants.newLease {
+				if initLeaseID == endLeaseID {
+					t.Errorf("expected new lease ID, init/end=%v", initLeaseID)
+				}
+			} else {
+				if initLeaseID != endLeaseID {
+					t.Errorf("expected old lease ID, init=%v end=%v", initLeaseID, endLeaseID)
+				}
+			}
+
+			fixedTTLs := make([]int64, len(ttls))
+			for i, ttl := range ttls {
+				if mod := ttl % 100; mod != 0 {
+					ttl += 100 - mod
+				}
+				fixedTTLs[i] = ttl
+			}
+
+			if expected := tt.wants.ttls; !reflect.DeepEqual(expected, fixedTTLs) {
+				t.Errorf("expectedTTLs=%v, fixedTTLs=%v, realTTLs=%v", expected, fixedTTLs, ttls)
+			}
+
+			//if got := ValidateGitHubIdentityProvider(tt.args.provider, tt.args.challenge, tt.args.mappingMethod, tt.args.fieldPath); !reflect.DeepEqual(got, tt.want) {
+			//	t.Errorf("ValidateGitHubIdentityProvider() = %v, want %v", got, tt.want)
+			//}
+		})
 	}
-	if out.ResourceVersion == lastVersion {
-		t.Errorf("guaranteed update should have written to etcd when transformer reported stale, got %#v", out)
-	}
+	//
+	//// this update should write the canonical value to etcd because the new serialization differs
+	//// from the stored serialization
+	//input.ResourceVersion = strconv.FormatInt(resp.Header.Revision, 10)
+	//out := &example.Pod{}
+	//err = store.GuaranteedUpdate(ctx, key, out, true, nil,
+	//	func(_ runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
+	//		return input, nil, nil
+	//	}, input)
+	//if err != nil {
+	//	t.Fatalf("Update failed: %v", err)
+	//}
+	//if out.ResourceVersion == strconv.FormatInt(resp.Header.Revision, 10) {
+	//	t.Errorf("guaranteed update should have updated the serialized data, got %#v", out)
+	//}
+	//
+	//lastVersion := out.ResourceVersion
+	//
+	//// this update should not write to etcd because the input matches the stored data
+	//input = out
+	//out = &example.Pod{}
+	//err = store.GuaranteedUpdate(ctx, key, out, true, nil,
+	//	func(_ runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
+	//		return input, nil, nil
+	//	}, input)
+	//if err != nil {
+	//	t.Fatalf("Update failed: %v", err)
+	//}
+	//if out.ResourceVersion != lastVersion {
+	//	t.Errorf("guaranteed update should have short-circuited write, got %#v", out)
+	//}
+	//
+	//store.transformer = prefixTransformer{prefix: []byte(defaultTestPrefix), stale: true}
+	//
+	//// this update should write to etcd because the transformer reported stale
+	//err = store.GuaranteedUpdate(ctx, key, out, true, nil,
+	//	func(_ runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
+	//		return input, nil, nil
+	//	}, input)
+	//if err != nil {
+	//	t.Fatalf("Update failed: %v", err)
+	//}
+	//if out.ResourceVersion == lastVersion {
+	//	t.Errorf("guaranteed update should have written to etcd when transformer reported stale, got %#v", out)
+	//}
 }
 
 func TestGuaranteedUpdateWithConflict(t *testing.T) {
