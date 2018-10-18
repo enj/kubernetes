@@ -35,7 +35,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/dynamic"
-	clientset "k8s.io/client-go/kubernetes"
 )
 
 // Only add kinds to this list when this a virtual resource with get and create verbs that doesn't actually
@@ -54,9 +53,9 @@ func TestEtcdStoragePath(t *testing.T) {
 	defer master.Cleanup()
 	defer dumpEtcdKVOnFailure(t, master.KV)
 
-	client := &allClient{dynamicClient: dynamic.NewForConfigOrDie(master.Config)}
+	client := &allClient{dynamicClient: master.Dynamic}
 
-	if _, err := clientset.NewForConfigOrDie(master.Config).CoreV1().Namespaces().Create(&v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}); err != nil {
+	if _, err := master.Client.CoreV1().Namespaces().Create(&v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,19 +67,11 @@ func TestEtcdStoragePath(t *testing.T) {
 	cohabitatingResources := map[string]map[schema.GroupVersionKind]empty{}
 
 	for _, resourceToPersist := range master.Resources {
-		t.Run(resourceToPersist.Gvr.String(), func(t *testing.T) {
-			gvk := resourceToPersist.Gvk
-			gvResource := resourceToPersist.Gvr
+		t.Run(resourceToPersist.Mapping.Resource.String(), func(t *testing.T) {
+			mapping := resourceToPersist.Mapping
+			gvk := resourceToPersist.Mapping.GroupVersionKind
+			gvResource := resourceToPersist.Mapping.Resource
 			kind := gvk.Kind
-
-			mapping := &meta.RESTMapping{
-				Resource:         resourceToPersist.Gvr,
-				GroupVersionKind: resourceToPersist.Gvk,
-				Scope:            meta.RESTScopeRoot,
-			}
-			if resourceToPersist.Namespaced {
-				mapping.Scope = meta.RESTScopeNamespace
-			}
 
 			if kindWhiteList.Has(kind) {
 				kindSeen.Insert(kind)

@@ -32,7 +32,6 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	utilfeaturetesting "k8s.io/apiserver/pkg/util/feature/testing"
 	"k8s.io/client-go/dynamic"
-	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/test/integration/etcd"
 )
 
@@ -212,9 +211,7 @@ func TestDryRun(t *testing.T) {
 	master := etcd.StartRealMasterOrDie(t)
 	defer master.Cleanup()
 
-	dClient := dynamic.NewForConfigOrDie(master.Config)
-
-	if _, err := clientset.NewForConfigOrDie(master.Config).CoreV1().Namespaces().Create(&v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}); err != nil {
+	if _, err := master.Client.CoreV1().Namespaces().Create(&v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -227,19 +224,11 @@ func TestDryRun(t *testing.T) {
 	dryrunData[eventsGVR] = eventsData
 
 	for _, resourceToTest := range master.Resources {
-		t.Run(resourceToTest.Gvr.String(), func(t *testing.T) {
-			gvk := resourceToTest.Gvk
-			gvResource := resourceToTest.Gvr
+		t.Run(resourceToTest.Mapping.Resource.String(), func(t *testing.T) {
+			mapping := resourceToTest.Mapping
+			gvk := resourceToTest.Mapping.GroupVersionKind
+			gvResource := resourceToTest.Mapping.Resource
 			kind := gvk.Kind
-
-			mapping := &meta.RESTMapping{
-				Resource:         resourceToTest.Gvr,
-				GroupVersionKind: resourceToTest.Gvk,
-				Scope:            meta.RESTScopeRoot,
-			}
-			if resourceToTest.Namespaced {
-				mapping.Scope = meta.RESTScopeNamespace
-			}
 
 			if kindWhiteList.Has(kind) {
 				t.Skip("whitelisted")
@@ -260,9 +249,9 @@ func TestDryRun(t *testing.T) {
 			typeMetaAdder["apiVersion"] = mapping.GroupVersionKind.GroupVersion().String()
 			typeMetaAdder["kind"] = mapping.GroupVersionKind.Kind
 
-			rsc := dClient.Resource(mapping.Resource).Namespace(testNamespace)
+			rsc := master.Dynamic.Resource(mapping.Resource).Namespace(testNamespace)
 			if mapping.Scope == meta.RESTScopeRoot {
-				rsc = dClient.Resource(mapping.Resource)
+				rsc = master.Dynamic.Resource(mapping.Resource)
 			}
 			obj := &unstructured.Unstructured{Object: typeMetaAdder}
 			name := obj.GetName()

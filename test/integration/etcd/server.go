@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	genericapiserveroptions "k8s.io/apiserver/pkg/server/options"
 	cacheddiscovery "k8s.io/client-go/discovery/cached"
+	"k8s.io/client-go/dynamic"
 	clientset "k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
@@ -132,15 +133,19 @@ func StartRealMasterOrDie(t *testing.T) *Master {
 	}
 
 	return &Master{
+		Client:    kubeClient,
+		Dynamic:   dynamic.NewForConfigOrDie(kubeClientConfig),
 		Config:    kubeClientConfig,
 		KV:        kvClient,
 		Mapper:    restMapper,
-		Resources: getResources(t, serverResources),
+		Resources: GetResources(t, serverResources),
 		Cleanup:   cleanup,
 	}
 }
 
 type Master struct {
+	Client    clientset.Interface
+	Dynamic   dynamic.Interface
 	Config    *restclient.Config
 	KV        clientv3.KV
 	Mapper    meta.RESTMapper
@@ -149,13 +154,11 @@ type Master struct {
 }
 
 type Resource struct {
-	Gvk                 schema.GroupVersionKind
-	Gvr                 schema.GroupVersionResource
-	Namespaced          bool
+	Mapping             *meta.RESTMapping
 	HasDeleteCollection bool
 }
 
-func getResources(t *testing.T, serverResources []*metav1.APIResourceList) []Resource {
+func GetResources(t *testing.T, serverResources []*metav1.APIResourceList) []Resource {
 	var resources []Resource
 
 	for _, discoveryGroup := range serverResources {
@@ -197,13 +200,22 @@ func getResources(t *testing.T, serverResources []*metav1.APIResourceList) []Res
 			gvr := resourceGV.WithResource(discoveryResource.Name)
 
 			resources = append(resources, Resource{
-				Gvk:                 gvk,
-				Gvr:                 gvr,
-				Namespaced:          discoveryResource.Namespaced,
+				Mapping: &meta.RESTMapping{
+					Resource:         gvr,
+					GroupVersionKind: gvk,
+					Scope:            scope(discoveryResource.Namespaced),
+				},
 				HasDeleteCollection: hasDeleteCollection,
 			})
 		}
 	}
 
 	return resources
+}
+
+func scope(namespaced bool) meta.RESTScope {
+	if namespaced {
+		return meta.RESTScopeNamespace
+	}
+	return meta.RESTScopeRoot
 }
