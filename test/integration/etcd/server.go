@@ -1,6 +1,7 @@
 package etcd
 
 import (
+	"encoding/json"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -218,4 +220,21 @@ func scope(namespaced bool) meta.RESTScope {
 		return meta.RESTScopeNamespace
 	}
 	return meta.RESTScopeRoot
+}
+
+func JsonToUnstructured(stub, namespace string, mapping *meta.RESTMapping, dynamicClient dynamic.Interface) (dynamic.ResourceInterface, *unstructured.Unstructured, error) {
+	typeMetaAdder := map[string]interface{}{}
+	if err := json.Unmarshal([]byte(stub), &typeMetaAdder); err != nil {
+		return nil, nil, err
+	}
+
+	// we don't require GVK on the data we provide, so we fill it in here.  We could, but that seems extraneous.
+	typeMetaAdder["apiVersion"] = mapping.GroupVersionKind.GroupVersion().String()
+	typeMetaAdder["kind"] = mapping.GroupVersionKind.Kind
+
+	if mapping.Scope == meta.RESTScopeRoot {
+		namespace = ""
+	}
+
+	return dynamicClient.Resource(mapping.Resource).Namespace(namespace), &unstructured.Unstructured{Object: typeMetaAdder}, nil
 }

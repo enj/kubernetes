@@ -17,12 +17,10 @@ limitations under the License.
 package dryrun
 
 import (
-	"encoding/json"
 	"testing"
 
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -240,20 +238,11 @@ func TestDryRun(t *testing.T) {
 				t.Fatalf("no test data for %s.  Please add a test for your new type to dryrunData.", gvResource)
 			}
 
-			// we don't require GVK on the data we provide, so we fill it in here.  We could, but that seems extraneous.
-			typeMetaAdder := map[string]interface{}{}
-			err := json.Unmarshal([]byte(testData.Stub), &typeMetaAdder)
+			rsc, obj, err := etcd.JsonToUnstructured(testData.Stub, testNamespace, mapping, master.Dynamic)
 			if err != nil {
 				t.Fatalf("failed to unmarshal stub (%v): %v", testData.Stub, err)
 			}
-			typeMetaAdder["apiVersion"] = mapping.GroupVersionKind.GroupVersion().String()
-			typeMetaAdder["kind"] = mapping.GroupVersionKind.Kind
 
-			rsc := master.Dynamic.Resource(mapping.Resource).Namespace(testNamespace)
-			if mapping.Scope == meta.RESTScopeRoot {
-				rsc = master.Dynamic.Resource(mapping.Resource)
-			}
-			obj := &unstructured.Unstructured{Object: typeMetaAdder}
 			name := obj.GetName()
 
 			DryRunCreateTest(t, rsc, obj, gvResource)

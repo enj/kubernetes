@@ -265,25 +265,18 @@ type allClient struct {
 }
 
 func (c *allClient) create(stub, ns string, mapping *meta.RESTMapping, all *[]cleanupData) error {
-	// we don't require GVK on the data we provide, so we fill it in here.  We could, but that seems extraneous.
-	typeMetaAdder := map[string]interface{}{}
-	err := json.Unmarshal([]byte(stub), &typeMetaAdder)
-	if err != nil {
-		return err
-	}
-	typeMetaAdder["apiVersion"] = mapping.GroupVersionKind.GroupVersion().String()
-	typeMetaAdder["kind"] = mapping.GroupVersionKind.Kind
-
-	if mapping.Scope == meta.RESTScopeRoot {
-		ns = ""
-	}
-	obj := &unstructured.Unstructured{Object: typeMetaAdder}
-	actual, err := c.dynamicClient.Resource(mapping.Resource).Namespace(ns).Create(obj, metav1.CreateOptions{})
+	resourceClient, obj, err := JsonToUnstructured(stub, ns, mapping, c.dynamicClient)
 	if err != nil {
 		return err
 	}
 
-	*all = append(*all, cleanupData{actual, mapping.Resource})
+	actual, err := resourceClient.Create(obj, metav1.CreateOptions{})
+	if err != nil {
+		return err
+	}
+
+	*all = append(*all, cleanupData{obj: actual, resource: mapping.Resource})
+
 	return nil
 }
 
