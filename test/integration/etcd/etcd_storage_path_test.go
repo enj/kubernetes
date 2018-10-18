@@ -50,13 +50,13 @@ const testNamespace = "etcdstoragepathtestnamespace"
 // It will also fail when a type gets moved to a different location. Be very careful in this situation because
 // it essentially means that you will be break old clusters unless you create some migration path for the old data.
 func TestEtcdStoragePath(t *testing.T) {
-	clientConfig, kvClient, restMapper, resources, cleanup := StartRealMasterOrDie(t)
-	defer cleanup()
-	defer dumpEtcdKVOnFailure(t, kvClient)
+	master := StartRealMasterOrDie(t)
+	defer master.Cleanup()
+	defer dumpEtcdKVOnFailure(t, master.KV)
 
-	client := &allClient{dynamicClient: dynamic.NewForConfigOrDie(clientConfig)}
+	client := &allClient{dynamicClient: dynamic.NewForConfigOrDie(master.Config)}
 
-	if _, err := clientset.NewForConfigOrDie(clientConfig).CoreV1().Namespaces().Create(&v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}); err != nil {
+	if _, err := clientset.NewForConfigOrDie(master.Config).CoreV1().Namespaces().Create(&v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -67,7 +67,7 @@ func TestEtcdStoragePath(t *testing.T) {
 	etcdSeen := map[schema.GroupVersionResource]empty{}
 	cohabitatingResources := map[string]map[schema.GroupVersionKind]empty{}
 
-	for _, resourceToPersist := range resources {
+	for _, resourceToPersist := range master.Resources {
 		t.Run(resourceToPersist.Gvr.String(), func(t *testing.T) {
 			gvk := resourceToPersist.Gvk
 			gvResource := resourceToPersist.Gvr
@@ -119,7 +119,7 @@ func TestEtcdStoragePath(t *testing.T) {
 				}
 			}()
 
-			if err := client.createPrerequisites(restMapper, testNamespace, testData.Prerequisites, all); err != nil {
+			if err := client.createPrerequisites(master.Mapper, testNamespace, testData.Prerequisites, all); err != nil {
 				t.Fatalf("failed to create prerequisites for %s: %#v", gvResource, err)
 			}
 
@@ -129,7 +129,7 @@ func TestEtcdStoragePath(t *testing.T) {
 				}
 			}
 
-			output, err := getFromEtcd(kvClient, testData.ExpectedEtcdPath)
+			output, err := getFromEtcd(master.KV, testData.ExpectedEtcdPath)
 			if err != nil {
 				t.Fatalf("failed to get from etcd for %s: %#v", gvResource, err)
 			}

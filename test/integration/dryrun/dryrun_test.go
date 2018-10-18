@@ -209,12 +209,12 @@ func DryRunDeleteTest(t *testing.T, rsc dynamic.ResourceInterface, name string) 
 func TestDryRun(t *testing.T) {
 	defer utilfeaturetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.DryRun, true)()
 
-	clientConfig, _, _, resources, cleanup := etcd.StartRealMasterOrDie(t)
-	defer cleanup()
+	master := etcd.StartRealMasterOrDie(t)
+	defer master.Cleanup()
 
-	dClient := dynamic.NewForConfigOrDie(clientConfig)
+	dClient := dynamic.NewForConfigOrDie(master.Config)
 
-	if _, err := clientset.NewForConfigOrDie(clientConfig).CoreV1().Namespaces().Create(&v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}); err != nil {
+	if _, err := clientset.NewForConfigOrDie(master.Config).CoreV1().Namespaces().Create(&v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -226,7 +226,7 @@ func TestDryRun(t *testing.T) {
 	eventsData.Stub = `{"involvedObject": {"namespace": "dryrunnamespace"}, "message": "some data here", "metadata": {"name": "event1"}}`
 	dryrunData[eventsGVR] = eventsData
 
-	for _, resourceToTest := range resources {
+	for _, resourceToTest := range master.Resources {
 		t.Run(resourceToTest.Gvr.String(), func(t *testing.T) {
 			gvk := resourceToTest.Gvk
 			gvResource := resourceToTest.Gvr

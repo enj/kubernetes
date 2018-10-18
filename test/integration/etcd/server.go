@@ -30,7 +30,7 @@ import (
 	_ "k8s.io/kubernetes/pkg/master"
 )
 
-func StartRealMasterOrDie(t *testing.T) (*restclient.Config, clientv3.KV, meta.RESTMapper, []Resource, func()) {
+func StartRealMasterOrDie(t *testing.T) *Master {
 	certDir, err := ioutil.TempDir("", t.Name())
 	if err != nil {
 		t.Fatal(err)
@@ -63,11 +63,20 @@ func StartRealMasterOrDie(t *testing.T) (*restclient.Config, clientv3.KV, meta.R
 		t.Fatal(err)
 	}
 
-	kubeAPIServer, err := app.CreateServerChain(completedOptions, wait.NeverStop)
+	stopCh := make(chan struct{})
+
+	kubeAPIServer, err := app.CreateServerChain(completedOptions, stopCh)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	kubeClientConfig := restclient.CopyConfig(kubeAPIServer.LoopbackClientConfig)
+
+	// we make lots of requests, don't be slow
+	kubeClientConfig.QPS = 99999
+	kubeClientConfig.Burst = 9999
+
+	kubeClient := clientset.NewForConfigOrDie(kubeClientConfig)
 
 	go func() {
 		// Catch panics that occur in this go routine so we get a comprehensible failure
@@ -77,12 +86,10 @@ func StartRealMasterOrDie(t *testing.T) (*restclient.Config, clientv3.KV, meta.R
 			}
 		}()
 
-		if err := kubeAPIServer.PrepareRun().Run(wait.NeverStop); err != nil {
+		if err := kubeAPIServer.PrepareRun().Run(stopCh); err != nil {
 			t.Fatal(err)
 		}
 	}()
-
-	kubeClient := clientset.NewForConfigOrDie(kubeClientConfig)
 
 	lastHealth := ""
 	if err := wait.PollImmediate(time.Second, time.Minute, func() (done bool, err error) {
@@ -102,10 +109,6 @@ func StartRealMasterOrDie(t *testing.T) (*restclient.Config, clientv3.KV, meta.R
 		t.Fatal(err)
 	}
 
-	// this test makes lots of requests, don't be slow
-	kubeClientConfig.QPS = 99999
-	kubeClientConfig.Burst = 9999
-
 	kvClient, err := integration.GetEtcdKVClient(kubeAPIServerOptions.Etcd.StorageConfig)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +124,28 @@ func StartRealMasterOrDie(t *testing.T) (*restclient.Config, clientv3.KV, meta.R
 		t.Fatal(err)
 	}
 
-	return kubeClientConfig, kvClient, restMapper, getResources(t, serverResources), func() { _ = os.RemoveAll(certDir) }
+	cleanup := func() {
+		if err := os.RemoveAll(certDir); err != nil {
+			t.Log(err)
+		}
+		close(stopCh)
+	}
+
+	return &Master{
+		Config:    kubeClientConfig,
+		KV:        kvClient,
+		Mapper:    restMapper,
+		Resources: getResources(t, serverResources),
+		Cleanup:   cleanup,
+	}
+}
+
+type Master struct {
+	Config    *restclient.Config
+	KV        clientv3.KV
+	Mapper    meta.RESTMapper
+	Resources []Resource
+	Cleanup   func()
 }
 
 type Resource struct {
