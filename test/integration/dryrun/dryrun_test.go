@@ -215,11 +215,17 @@ func TestDryRun(t *testing.T) {
 
 	dryrunData := etcd.GetEtcdStorageData()
 
-	// need to change event's namespace field to match dry run test
-	eventsGVR := gvr("", "v1", "events")
-	eventsData := dryrunData[eventsGVR]
-	eventsData.Stub = `{"involvedObject": {"namespace": "dryrunnamespace"}, "message": "some data here", "metadata": {"name": "event1"}}`
-	dryrunData[eventsGVR] = eventsData
+	// dry run specific stub overrides
+	for resource, stub := range map[schema.GroupVersionResource]string{
+		// need to change event's namespace field to match dry run test
+		gvr("", "v1", "events"): `{"involvedObject": {"namespace": "dryrunnamespace"}, "message": "some data here", "metadata": {"name": "event1"}}`,
+		// create a different namespace so we do not conflict if namespace1 has not been deleted yet
+		gvr("", "v1", "namespaces"): `{"metadata": {"name": "namespace2"}, "spec": {"finalizers": ["kubernetes"]}}`,
+	} {
+		data := dryrunData[resource]
+		data.Stub = stub
+		dryrunData[resource] = data
+	}
 
 	for _, resourceToTest := range master.Resources {
 		t.Run(resourceToTest.Mapping.Resource.String(), func(t *testing.T) {
