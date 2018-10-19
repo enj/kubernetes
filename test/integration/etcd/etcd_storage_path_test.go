@@ -265,7 +265,7 @@ type allClient struct {
 }
 
 func (c *allClient) create(stub, ns string, mapping *meta.RESTMapping, all *[]cleanupData) error {
-	resourceClient, obj, err := JsonToUnstructured(stub, ns, mapping, c.dynamicClient)
+	resourceClient, obj, err := JSONToUnstructured(stub, ns, mapping, c.dynamicClient)
 	if err != nil {
 		return err
 	}

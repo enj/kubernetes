@@ -238,7 +238,7 @@ func TestDryRun(t *testing.T) {
 				t.Fatalf("no test data for %s.  Please add a test for your new type to etcd.GetEtcdStorageData().", gvResource)
 			}
 
-			rsc, obj, err := etcd.JsonToUnstructured(testData.Stub, testNamespace, mapping, master.Dynamic)
+			rsc, obj, err := etcd.JSONToUnstructured(testData.Stub, testNamespace, mapping, master.Dynamic)
 			if err != nil {
 				t.Fatalf("failed to unmarshal stub (%v): %v", testData.Stub, err)
 			}

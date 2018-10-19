@@ -49,6 +49,7 @@ import (
 	_ "k8s.io/kubernetes/pkg/master"
 )
 
+// StartRealMasterOrDie starts an API master that is appropriate for use in tests that require one of every resource
 func StartRealMasterOrDie(t *testing.T) *Master {
 	certDir, err := ioutil.TempDir("", t.Name())
 	if err != nil {
@@ -161,6 +162,8 @@ func StartRealMasterOrDie(t *testing.T) *Master {
 	}
 }
 
+// Master represents a running API server that is ready for use
+// The Cleanup func must be deferred to prevent resource leaks
 type Master struct {
 	Client    clientset.Interface
 	Dynamic   dynamic.Interface
@@ -171,11 +174,13 @@ type Master struct {
 	Cleanup   func()
 }
 
+// Resource contains REST mapping information for a specific resource and extra metadata such as delete collection support
 type Resource struct {
 	Mapping             *meta.RESTMapping
 	HasDeleteCollection bool
 }
 
+// GetResources fetches the Resources associated with serverResources that support get and create
 func GetResources(t *testing.T, serverResources []*metav1.APIResourceList) []Resource {
 	var resources []Resource
 
@@ -238,7 +243,9 @@ func scope(namespaced bool) meta.RESTScope {
 	return meta.RESTScopeRoot
 }
 
-func JsonToUnstructured(stub, namespace string, mapping *meta.RESTMapping, dynamicClient dynamic.Interface) (dynamic.ResourceInterface, *unstructured.Unstructured, error) {
+// JSONToUnstructured converts a JSON stub to unstructured.Unstructured and
+// returns a dynamic resource client that can be used to interact with it
+func JSONToUnstructured(stub, namespace string, mapping *meta.RESTMapping, dynamicClient dynamic.Interface) (dynamic.ResourceInterface, *unstructured.Unstructured, error) {
 	typeMetaAdder := map[string]interface{}{}
 	if err := json.Unmarshal([]byte(stub), &typeMetaAdder); err != nil {
 		return nil, nil, err

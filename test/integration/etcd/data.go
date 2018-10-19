@@ -21,8 +21,8 @@ import "k8s.io/apimachinery/pkg/runtime/schema"
 // GetEtcdStorageData returns ETCD data for all persisted objects.
 // It is exported so that it can be reused across multiple tests.
 // It returns a new map on every invocation to prevent different tests from mutating shared state.
-func GetEtcdStorageData() map[schema.GroupVersionResource]EtcdData {
-	return map[schema.GroupVersionResource]EtcdData{
+func GetEtcdStorageData() map[schema.GroupVersionResource]StorageData {
+	return map[schema.GroupVersionResource]StorageData{
 		// k8s.io/kubernetes/pkg/api/v1
 		gvr("", "v1", "configmaps"): {
 			Stub:             `{"data": {"foo": "bar"}, "metadata": {"name": "cm1"}}`,
@@ -431,13 +431,16 @@ func GetEtcdStorageData() map[schema.GroupVersionResource]EtcdData {
 	}
 }
 
-type EtcdData struct {
+// StorageData contains information required to create an object and verify its storage in ETCD
+// It must be paired with a specific resource
+type StorageData struct {
 	Stub             string                   // Valid JSON stub to use during create
 	Prerequisites    []Prerequisite           // Optional, ordered list of JSON objects to create before stub
 	ExpectedEtcdPath string                   // Expected location of object in etcd, do not use any variables, constants, etc to derive this value - always supply the full raw string
 	ExpectedGVK      *schema.GroupVersionKind // The GVK that we expect this object to be stored as - leave this nil to use the default
 }
 
+// Prerequisite contains information required to create a resource (but not verify it)
 type Prerequisite struct {
 	GvrData schema.GroupVersionResource
 	Stub    string
