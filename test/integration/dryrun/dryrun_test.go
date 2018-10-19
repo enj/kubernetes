@@ -219,8 +219,6 @@ func TestDryRun(t *testing.T) {
 	for resource, stub := range map[schema.GroupVersionResource]string{
 		// need to change event's namespace field to match dry run test
 		gvr("", "v1", "events"): `{"involvedObject": {"namespace": "dryrunnamespace"}, "message": "some data here", "metadata": {"name": "event1"}}`,
-		// create a different namespace so we do not conflict if namespace1 has not been deleted yet
-		gvr("", "v1", "namespaces"): `{"metadata": {"name": "namespace2"}, "spec": {"finalizers": ["kubernetes"]}}`,
 	} {
 		data := dryrunData[resource]
 		data.Stub = stub

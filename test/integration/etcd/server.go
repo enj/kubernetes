@@ -17,6 +17,7 @@ limitations under the License.
 package etcd
 
 import (
+	"context"
 	"encoding/json"
 	"io/ioutil"
 	"net"
@@ -83,6 +84,17 @@ func StartRealMasterOrDie(t *testing.T) *Master {
 		t.Fatal(err)
 	}
 
+	// get etcd client before starting API server
+	kvClient, err := integration.GetEtcdKVClient(kubeAPIServerOptions.Etcd.StorageConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// make sure we start with a clean slate
+	if _, err := kvClient.Delete(context.Background(), "/", clientv3.WithPrefix()); err != nil {
+		t.Fatal(err)
+	}
+
 	stopCh := make(chan struct{})
 
 	kubeAPIServer, err := app.CreateServerChain(completedOptions, stopCh)
@@ -126,11 +138,6 @@ func StartRealMasterOrDie(t *testing.T) *Master {
 		return status == http.StatusOK, nil
 	}); err != nil {
 		t.Log(lastHealth)
-		t.Fatal(err)
-	}
-
-	kvClient, err := integration.GetEtcdKVClient(kubeAPIServerOptions.Etcd.StorageConfig)
-	if err != nil {
 		t.Fatal(err)
 	}
 

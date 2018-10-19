@@ -18,7 +18,7 @@ package etcd
 
 import "k8s.io/apimachinery/pkg/runtime/schema"
 
-// GetEtcdStorageData returns ETCD data for all persisted objects.
+// GetEtcdStorageData returns etcd data for all persisted objects.
 // It is exported so that it can be reused across multiple tests.
 // It returns a new map on every invocation to prevent different tests from mutating shared state.
 func GetEtcdStorageData() map[schema.GroupVersionResource]StorageData {
@@ -431,7 +431,7 @@ func GetEtcdStorageData() map[schema.GroupVersionResource]StorageData {
 	}
 }
 
-// StorageData contains information required to create an object and verify its storage in ETCD
+// StorageData contains information required to create an object and verify its storage in etcd
 // It must be paired with a specific resource
 type StorageData struct {
 	Stub             string                   // Valid JSON stub to use during create
