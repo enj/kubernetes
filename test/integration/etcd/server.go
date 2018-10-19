@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
+	"github.com/coreos/etcd/clientv3/concurrency"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -85,10 +86,21 @@ func StartRealMasterOrDie(t *testing.T) *Master {
 	}
 
 	// get etcd client before starting API server
-	kvClient, err := integration.GetEtcdKVClient(completedOptions.Etcd.StorageConfig)
+	rawClient, kvClient, err := integration.GetEtcdClients(completedOptions.Etcd.StorageConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// get a leased session
+	session, err := concurrency.NewSession(rawClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// then build and use an etcd lock
+	// this prevents more than one of these masters from running at the same time
+	lock := concurrency.NewLocker(session, "kube_integration_etcd_raw")
+	lock.Lock()
 
 	// make sure we start with a clean slate
 	if _, err := kvClient.Delete(context.Background(), "/registry/", clientv3.WithPrefix()); err != nil {
@@ -156,6 +168,7 @@ func StartRealMasterOrDie(t *testing.T) *Master {
 			t.Log(err)
 		}
 		close(stopCh)
+		lock.Unlock()
 	}
 
 	return &Master{
