@@ -24,10 +24,11 @@ import (
 	"sync"
 	"time"
 
-	"k8s.io/klog"
+	"github.com/davecgh/go-spew/spew"
+	"github.com/google/go-cmp/cmp"
 
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/diff"
+	"k8s.io/klog"
 )
 
 var mutationDetectionEnabled = false
@@ -75,8 +76,8 @@ type defaultCacheMutationDetector struct {
 
 // cacheObj holds the actual object and a copy
 type cacheObj struct {
-	cached interface{}
-	copied interface{}
+	cached runtime.Object
+	copied runtime.Object
 }
 
 func (d *defaultCacheMutationDetector) Run(stopCh <-chan struct{}) {
@@ -113,8 +114,12 @@ func (d *defaultCacheMutationDetector) CompareObjects() {
 
 	altered := false
 	for i, obj := range d.cachedObjs {
-		if !reflect.DeepEqual(obj.cached, obj.copied) {
-			fmt.Printf("CACHE %s[%d] ALTERED!\n%v\n", d.name, i, diff.ObjectGoPrintSideBySide(obj.cached, obj.copied))
+		// make sure that we have a stable view of the cached object
+		// sometimes code will modify an object and then reset it back to the original state
+		// this can result in reflect.DeepEqual returning false while structDiff prints an empty diff
+		cached := obj.cached.DeepCopyObject()
+		if !reflect.DeepEqual(cached, obj.copied) {
+			fmt.Printf("CACHE %s[%d] ALTERED!\n%v\n", d.name, i, structDiff(cached, obj.copied))
 			altered = true
 		}
 	}
@@ -127,4 +132,17 @@ func (d *defaultCacheMutationDetector) CompareObjects() {
 		}
 		panic(msg)
 	}
+}
+
+// structDiff detects differences between two structs that will lead to reflect.DeepEqual returning false
+func structDiff(a, b interface{}) string {
+	s := spew.ConfigState{
+		Indent:                  "\t",
+		DisableMethods:          true,
+		DisablePointerAddresses: true,
+		DisableCapacities:       true,
+		SortKeys:                true,
+		SpewKeys:                true,
+	}
+	return cmp.Diff(s.Sdump(a), s.Sdump(b))
 }
