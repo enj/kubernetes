@@ -51,6 +51,12 @@ const (
 	testNamespace            = "secret-encryption-test"
 	testSecret               = "test-secret"
 	metricsPrefix            = "apiserver_storage_"
+
+	// precomputed key and secret for use with AES CBC
+	// this looks exactly the same as the AES GCM secret but with a different value
+	legacyAESCBCKey       = "nbKcg2Dks/T/30ZCa29vLnyV/bhaFFnZ0cgVp7hagOE="
+	legacyEncryptedSecret = "azhzOmVuYzprbXM6djE6a21zLXByb3ZpZGVyOgAsbmJLY2cyRGtzL1QvMzBaQ2EyOXZMbnlWL2JoYUZGblowY2dWcDdoYWdPRT0RM8idSrtIpRoUN7uYzH+IjXOkMoCBO5NAtywkRIJG7PxQyVwO9jEA7vS6WEdJHbUIuElKqKMtb/EjZxxAwWZtJhZsr3kmUSAUxDDijCBHgKVvF/T9HzoOI4YXiFNPr04X5cQbyZIB2W4PG0lZAKVs9qqRlunObsUh9mbqGZYi+DAmMLISwldtHRVxktCD+QfuK6H1wS966Ts2r6TG42ELbuaoM9Dgg9JmU9UYc4+8CA=="
+	legacySecretVal       = "🤗🐼"
 )
 
 type unSealSecret func(cipherText []byte, ctx value.Context, config apiserverconfigv1.ProviderConfiguration) ([]byte, error)
@@ -234,6 +240,19 @@ func (e *transformTest) readRawRecordFromETCD(path string) (*clientv3.GetRespons
 	response, err := etcdClient.Get(context.Background(), path, clientv3.WithPrefix())
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve secret from etcd %v", err)
+	}
+
+	return response, nil
+}
+
+func (e *transformTest) writeRawRecordToETCD(path string, data []byte) (*clientv3.PutResponse, error) {
+	_, etcdClient, err := integration.GetEtcdClients(e.kubeAPIServer.ServerOpts.Etcd.StorageConfig.Transport)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create etcd client: %v", err)
+	}
+	response, err := etcdClient.Put(context.Background(), path, string(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to write secret to etcd %v", err)
 	}
 
 	return response, nil
