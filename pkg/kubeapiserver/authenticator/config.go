@@ -87,7 +87,7 @@ type Config struct {
 
 // New returns an authenticator.Request or an error that supports the standard
 // Kubernetes authentication mechanisms.
-func (config Config) New() (authenticator.Request, *spec.SecurityDefinitions, error) {
+func (config Config) New(stopCh <-chan struct{}) (authenticator.Request, *spec.SecurityDefinitions, error) {
 	var authenticators []authenticator.Request
 	var tokenAuthenticators []authenticator.Token
 	securityDefinitions := spec.SecurityDefinitions{}
@@ -185,6 +185,12 @@ func (config Config) New() (authenticator.Request, *spec.SecurityDefinitions, er
 			return nil, nil, err
 		}
 		tokenAuthenticators = append(tokenAuthenticators, webhookTokenAuth)
+	}
+
+	if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationWebhook) {
+		dynamicWebhook, dynamicWebhookRunner := webhook.NewDynamic()
+		dynamicWebhookRunner(stopCh)
+		tokenAuthenticators = append(tokenAuthenticators, dynamicWebhook)
 	}
 
 	if len(tokenAuthenticators) > 0 {

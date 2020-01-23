@@ -240,6 +240,12 @@ const (
 	// to the API server.
 	BoundServiceAccountTokenVolume featuregate.Feature = "BoundServiceAccountTokenVolume"
 
+	// owner: @enj
+	// alpha: v1.18
+	//
+	// Allow configuration of authentication webhooks via the Kubernetes API.
+	DynamicAuthenticationWebhook featuregate.Feature = "DynamicAuthenticationWebhook"
+
 	// owner: @Random-Liu
 	// beta: v1.11
 	//
