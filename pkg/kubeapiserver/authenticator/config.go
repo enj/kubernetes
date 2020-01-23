@@ -188,9 +188,9 @@ func (config Config) New(stopCh <-chan struct{}) (authenticator.Request, *spec.S
 	}
 
 	if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationWebhook) {
-		dynamicWebhook, dynamicWebhookRunner := webhook.NewDynamic()
+		dynamicWebhook, dynamicWebhookRunner := webhook.NewDynamic(config.APIAudiences)
 		dynamicWebhookRunner(stopCh)
-		tokenAuthenticators = append(tokenAuthenticators, dynamicWebhook)
+		tokenAuthenticators = append(tokenAuthenticators, tokencache.New(dynamicWebhook, false, 30*time.Second, 10*time.Second))
 	}
 
 	if len(tokenAuthenticators) > 0 {
