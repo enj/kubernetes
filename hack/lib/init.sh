@@ -73,6 +73,7 @@ apps/v1beta2 \
 auditregistration.k8s.io/v1alpha1 \
 authentication.k8s.io/v1 \
 authentication.k8s.io/v1beta1 \
+authentication.k8s.io/v1alpha1 \
 authorization.k8s.io/v1 \
 authorization.k8s.io/v1beta1 \
 autoscaling/v1 \
