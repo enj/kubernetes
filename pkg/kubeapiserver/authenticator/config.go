@@ -40,6 +40,7 @@ import (
 	"k8s.io/apiserver/plugin/pkg/authenticator/request/basicauth"
 	"k8s.io/apiserver/plugin/pkg/authenticator/token/oidc"
 	"k8s.io/apiserver/plugin/pkg/authenticator/token/webhook"
+	authenticationinformerv1alpha1 "k8s.io/client-go/informers/authentication/v1alpha1"
 
 	// Initialize all known client auth plugins.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -84,6 +85,8 @@ type Config struct {
 	// Generally this is the CA bundle file used to authenticate client certificates
 	// If this value is nil, then mutual TLS is disabled.
 	ClientCAContentProvider dynamiccertificates.CAContentProvider
+
+	AuthenticationConfigInformer authenticationinformerv1alpha1.AuthenticationConfigInformer
 }
 
 // New returns an authenticator.Request or an error that supports the standard
@@ -207,7 +210,7 @@ func (config Config) New(stopCh <-chan struct{}) (authenticator.Request, *spec.S
 	}
 
 	if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationConfig) {
-		dynamicAuthenticators, dynamicAuthenticatorsRunner := dynamic.New(config.APIAudiences)
+		dynamicAuthenticators, dynamicAuthenticatorsRunner := dynamic.New(config.APIAudiences, config.AuthenticationConfigInformer)
 		dynamicAuthenticatorsRunner(stopCh)
 		authenticators = append(authenticators, dynamicAuthenticators)
 	}

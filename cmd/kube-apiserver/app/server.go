@@ -546,6 +546,10 @@ func BuildAuthenticator(s *options.ServerRunOptions, extclient clientgoclientset
 		versionedInformer.Core().V1().Secrets().Lister().Secrets(v1.NamespaceSystem),
 	)
 
+	if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationConfig) {
+		authenticatorConfig.AuthenticationConfigInformer = versionedInformer.Authentication().V1alpha1().AuthenticationConfigs()
+	}
+
 	return authenticatorConfig.New(stopCh)
 }
 
