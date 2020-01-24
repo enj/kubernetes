@@ -19,6 +19,7 @@ package authentication
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/kubernetes/pkg/apis/admissionregistration"
 )
 
 const (
@@ -158,4 +159,85 @@ type BoundObjectReference struct {
 	Name string
 	// UID of the referent.
 	UID types.UID
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+type AuthenticationConfig struct {
+	metav1.TypeMeta
+	// +optional
+	metav1.ObjectMeta
+
+	Spec AuthenticationConfigSpec
+
+	// +optional
+	Status AuthenticationConfigStatus
+}
+
+type AuthenticationConfigSpec struct {
+	Type AuthenticationConfigType
+
+	X509 *X509Config
+
+	OIDC *OIDCConfig
+
+	Webhook *WebhookConfig
+
+	// TODO decide if this needs to be a pointer or not
+	// TODO this may only make sense for the webhook type
+	ServerAuthentication *ServerAuthentication
+
+	// TODO this may only make sense for the webhook type
+	// ClientConfig defines how to communicate with the hook.
+	// Required
+	ClientConfig admissionregistration.WebhookClientConfig
+}
+
+type AuthenticationConfigStatus struct {
+	// TODO needed?
+}
+
+type AuthenticationConfigType string
+
+const (
+	AuthenticationConfigTypeX509    AuthenticationConfigType = "x509"
+	AuthenticationConfigTypeOIDC    AuthenticationConfigType = "oidc"
+	AuthenticationConfigTypeWebhook AuthenticationConfigType = "webhook"
+)
+
+type X509Config struct {
+	// TODO do we need this with the recent CSR API signer changes?
+	// TODO fill in
+}
+
+type OIDCConfig struct {
+	Issuer string
+
+	ClientID string
+
+	UsernameClaim string
+
+	// TODO complete
+}
+
+type WebhookConfig struct {
+	// TODO fill in
+}
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// AuthenticationConfigList is a list of AuthenticationConfig.
+type AuthenticationConfigList struct {
+	metav1.TypeMeta
+	// Standard list metadata.
+	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+	// +optional
+	metav1.ListMeta
+	// List of AuthenticationConfig.
+	Items []AuthenticationConfig
+}
+
+type ServerAuthentication struct {
+	// TODO client cert + key
+	// TODO bearer token
 }
