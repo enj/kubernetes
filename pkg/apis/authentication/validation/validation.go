@@ -39,3 +39,13 @@ func ValidateTokenRequest(tr *authentication.TokenRequest) field.ErrorList {
 	}
 	return allErrs
 }
+
+func ValidateAuthenticationConfig(authenticationConfig *authentication.AuthenticationConfig) field.ErrorList {
+	// TODO implement and unit test
+	return nil
+}
+
+func ValidateAuthenticationConfigUpdate(newAuthenticationConfig, oldAuthenticationConfig *authentication.AuthenticationConfig) field.ErrorList {
+	// TODO implement and unit test
+	return nil
+}

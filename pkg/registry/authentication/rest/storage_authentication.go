@@ -18,6 +18,7 @@ package rest
 
 import (
 	authenticationv1 "k8s.io/api/authentication/v1"
+	authenticationv1alpha1 "k8s.io/api/authentication/v1alpha1"
 	authenticationv1beta1 "k8s.io/api/authentication/v1beta1"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/registry/generic"
@@ -26,6 +27,7 @@ import (
 	serverstorage "k8s.io/apiserver/pkg/server/storage"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/apis/authentication"
+	authenticationconfigstorage "k8s.io/kubernetes/pkg/registry/authentication/authenticationconfig/storage"
 	"k8s.io/kubernetes/pkg/registry/authentication/tokenreview"
 )
 
@@ -44,6 +46,13 @@ func (p RESTStorageProvider) NewRESTStorage(apiResourceConfigSource serverstorag
 	// If you add a version here, be sure to add an entry in `k8s.io/kubernetes/cmd/kube-apiserver/app/aggregator.go with specific priorities.
 	// TODO refactor the plumbing to provide the information in the APIGroupInfo
 
+	if apiResourceConfigSource.VersionEnabled(authenticationv1alpha1.SchemeGroupVersion) {
+		storageMap, err := p.v1alpha1Storage(apiResourceConfigSource, restOptionsGetter)
+		if err != nil {
+			return genericapiserver.APIGroupInfo{}, false, err
+		}
+		apiGroupInfo.VersionedResourcesStorageMap[authenticationv1alpha1.SchemeGroupVersion.Version] = storageMap
+	}
 	if apiResourceConfigSource.VersionEnabled(authenticationv1beta1.SchemeGroupVersion) {
 		apiGroupInfo.VersionedResourcesStorageMap[authenticationv1beta1.SchemeGroupVersion.Version] = p.v1beta1Storage(apiResourceConfigSource, restOptionsGetter)
 	}
@@ -52,6 +61,19 @@ func (p RESTStorageProvider) NewRESTStorage(apiResourceConfigSource serverstorag
 	}
 
 	return apiGroupInfo, true, nil
+}
+
+func (p RESTStorageProvider) v1alpha1Storage(apiResourceConfigSource serverstorage.APIResourceConfigSource, restOptionsGetter generic.RESTOptionsGetter) (map[string]rest.Storage, error) {
+	storage := map[string]rest.Storage{}
+
+	authenticationConfigStorage, err := authenticationconfigstorage.NewREST(restOptionsGetter)
+	if err != nil {
+		return nil, err
+	}
+
+	storage["authenticationconfigs"] = authenticationConfigStorage
+
+	return storage, nil
 }
 
 func (p RESTStorageProvider) v1beta1Storage(apiResourceConfigSource serverstorage.APIResourceConfigSource, restOptionsGetter generic.RESTOptionsGetter) map[string]rest.Storage {
