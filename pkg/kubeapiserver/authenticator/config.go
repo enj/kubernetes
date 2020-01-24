@@ -26,6 +26,7 @@ import (
 	"k8s.io/apiserver/pkg/authentication/group"
 	"k8s.io/apiserver/pkg/authentication/request/anonymous"
 	"k8s.io/apiserver/pkg/authentication/request/bearertoken"
+	"k8s.io/apiserver/pkg/authentication/request/dynamic"
 	"k8s.io/apiserver/pkg/authentication/request/headerrequest"
 	"k8s.io/apiserver/pkg/authentication/request/union"
 	"k8s.io/apiserver/pkg/authentication/request/websocket"
@@ -187,12 +188,6 @@ func (config Config) New(stopCh <-chan struct{}) (authenticator.Request, *spec.S
 		tokenAuthenticators = append(tokenAuthenticators, webhookTokenAuth)
 	}
 
-	if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationWebhook) {
-		dynamicWebhook, dynamicWebhookRunner := webhook.NewDynamic(config.APIAudiences)
-		dynamicWebhookRunner(stopCh)
-		tokenAuthenticators = append(tokenAuthenticators, tokencache.New(dynamicWebhook, false, 30*time.Second, 10*time.Second))
-	}
-
 	if len(tokenAuthenticators) > 0 {
 		// Union the token authenticators
 		tokenAuth := tokenunion.New(tokenAuthenticators...)
@@ -209,6 +204,12 @@ func (config Config) New(stopCh <-chan struct{}) (authenticator.Request, *spec.S
 				Description: "Bearer Token authentication",
 			},
 		}
+	}
+
+	if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationConfig) {
+		dynamicAuthenticators, dynamicAuthenticatorsRunner := dynamic.New(config.APIAudiences)
+		dynamicAuthenticatorsRunner(stopCh)
+		authenticators = append(authenticators, dynamicAuthenticators)
 	}
 
 	if len(authenticators) == 0 {

@@ -243,8 +243,8 @@ const (
 	// owner: @enj
 	// alpha: v1.18
 	//
-	// Allow configuration of authentication webhooks via the Kubernetes API.
-	DynamicAuthenticationWebhook featuregate.Feature = "DynamicAuthenticationWebhook"
+	// Allow configuration of authentication via the Kubernetes API.
+	DynamicAuthenticationConfig featuregate.Feature = "DynamicAuthenticationConfig"
 
 	// owner: @Random-Liu
 	// beta: v1.11
