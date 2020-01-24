@@ -2,13 +2,20 @@ package dynamic
 
 import (
 	"fmt"
+	"math/rand"
 	"net/http"
 	"sync/atomic"
+	"time"
 
 	authenticationv1alpha1 "k8s.io/api/authentication/v1alpha1"
 	"k8s.io/apimachinery/pkg/labels"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
+	"k8s.io/apiserver/pkg/authentication/request/bearertoken"
+	"k8s.io/apiserver/pkg/authentication/request/union"
+	"k8s.io/apiserver/pkg/authentication/request/websocket"
+	tokencache "k8s.io/apiserver/pkg/authentication/token/cache"
+	"k8s.io/apiserver/plugin/pkg/authenticator/token/oidc"
 	authenticationinformerv1alpha1 "k8s.io/client-go/informers/authentication/v1alpha1"
 	authenticationlisterv1alpha1 "k8s.io/client-go/listers/authentication/v1alpha1"
 	"k8s.io/client-go/tools/cache"
@@ -68,6 +75,61 @@ func (d *dynamicAuthConfig) updateConfiguration() {
 
 // TODO unit tests
 func authConfigsToAuthenticator(implicitAuds authenticator.Audiences, authenticationConfigs []*authenticationv1alpha1.AuthenticationConfig) authenticator.Request {
-	// TODO logic
-	return emptyAuthenticator
+	authenticators := make([]authenticator.Request, 0, len(authenticationConfigs))
+
+	for _, authenticationConfig := range authenticationConfigs {
+		switch authenticationConfig.Spec.Type {
+		case authenticationv1alpha1.AuthenticationConfigTypeOIDC:
+			oidcConfig := authenticationConfig.Spec.OIDC
+			if oidcConfig == nil {
+				continue // TODO drop when validation makes this impossible
+			}
+			oidcAuth, err := oidcConfigToAuthenticator(implicitAuds, oidcConfig)
+			if err != nil {
+				// TODO update status?
+				utilruntime.HandleError(fmt.Errorf("failed to honor OIDC config %s: %w", authenticationConfig.Name, err))
+				continue
+			}
+			authenticators = append(authenticators, oidcAuth)
+		default:
+			// TODO implement the rest
+		}
+	}
+
+	if len(authenticators) == 0 {
+		return emptyAuthenticator
+	}
+
+	// guarantee no particular ordering for now
+	// TODO think about this more
+	rand.Shuffle(len(authenticators), func(i, j int) {
+		authenticators[i], authenticators[j] = authenticators[j], authenticators[i]
+	})
+
+	return union.New(authenticators...)
+}
+
+func oidcConfigToAuthenticator(implicitAuds authenticator.Audiences, oidcConfig *authenticationv1alpha1.OIDCConfig) (authenticator.Request, error) {
+	// TODO turn newAuthenticatorFromOIDCIssuerURL's logic into proper defaulting and validation
+	oidcAuth, err := oidc.New(oidc.Options{
+		IssuerURL:     oidcConfig.Issuer,
+		ClientID:      oidcConfig.ClientID,
+		UsernameClaim: oidcConfig.UsernameClaim,
+		APIAudiences:  implicitAuds,
+
+		// TODO wire these as well
+		CAFile:               "",
+		UsernamePrefix:       "",
+		GroupsClaim:          "",
+		GroupsPrefix:         "",
+		SupportedSigningAlgs: nil,
+		RequiredClaims:       nil,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO this layering is pretty expensive in comparison to the built in auth stack
+	tokenAuth := tokencache.New(oidcAuth, false, 30*time.Second, 10*time.Second)
+	return union.New(bearertoken.New(tokenAuth), websocket.NewProtocolAuthenticator(tokenAuth)), nil
 }
