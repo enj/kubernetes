@@ -29,6 +29,7 @@ import (
 	admissionregistration "k8s.io/client-go/informers/admissionregistration"
 	apps "k8s.io/client-go/informers/apps"
 	auditregistration "k8s.io/client-go/informers/auditregistration"
+	authentication "k8s.io/client-go/informers/authentication"
 	autoscaling "k8s.io/client-go/informers/autoscaling"
 	batch "k8s.io/client-go/informers/batch"
 	certificates "k8s.io/client-go/informers/certificates"
@@ -193,6 +194,7 @@ type SharedInformerFactory interface {
 	Admissionregistration() admissionregistration.Interface
 	Apps() apps.Interface
 	Auditregistration() auditregistration.Interface
+	Authentication() authentication.Interface
 	Autoscaling() autoscaling.Interface
 	Batch() batch.Interface
 	Certificates() certificates.Interface
@@ -221,6 +223,10 @@ func (f *sharedInformerFactory) Apps() apps.Interface {
 
 func (f *sharedInformerFactory) Auditregistration() auditregistration.Interface {
 	return auditregistration.New(f, f.namespace, f.tweakListOptions)
+}
+
+func (f *sharedInformerFactory) Authentication() authentication.Interface {
+	return authentication.New(f, f.namespace, f.tweakListOptions)
 }
 
 func (f *sharedInformerFactory) Autoscaling() autoscaling.Interface {
