@@ -75,3 +75,16 @@ type OIDCConfig struct {
 type WebhookConfig struct {
 	// TODO fill in
 }
+
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
+// AuthenticationConfigList is a list of AuthenticationConfig.
+type AuthenticationConfigList struct {
+	metav1.TypeMeta `json:",inline"`
+	// Standard list metadata.
+	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+	// +optional
+	metav1.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+	// List of AuthenticationConfig.
+	Items []AuthenticationConfig `json:"items" protobuf:"bytes,2,rep,name=items"`
+}
