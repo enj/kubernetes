@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -43,6 +44,15 @@ type AuthenticationConfigSpec struct {
 	OIDC *OIDCConfig `json:"oidc,omitempty" protobuf:"bytes,3,opt,name=oidc"`
 
 	Webhook *WebhookConfig `json:"webhook,omitempty" protobuf:"bytes,4,opt,name=webhook"`
+
+	// TODO decide if this needs to be a pointer or not
+	// TODO this may only make sense for the webhook type
+	ServerAuthentication *ServerAuthentication `json:"serverAuthentication,omitempty" protobuf:"bytes,5,opt,name=serverAuthentication"`
+
+	// TODO this may only make sense for the webhook type
+	// ClientConfig defines how to communicate with the hook.
+	// Required
+	ClientConfig admissionregistrationv1.WebhookClientConfig `json:"clientConfig" protobuf:"bytes,6,opt,name=clientConfig"`
 }
 
 type AuthenticationConfigStatus struct {
@@ -87,4 +97,9 @@ type AuthenticationConfigList struct {
 	metav1.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 	// List of AuthenticationConfig.
 	Items []AuthenticationConfig `json:"items" protobuf:"bytes,2,rep,name=items"`
+}
+
+type ServerAuthentication struct {
+	// TODO client cert + key
+	// TODO bearer token
 }
