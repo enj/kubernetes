@@ -21,31 +21,12 @@ limitations under the License.
 package v1alpha1
 
 import (
-	v1alpha1 "k8s.io/api/authentication/v1alpha1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
-	v1 "k8s.io/kubernetes/pkg/apis/admissionregistration/v1"
 )
 
 // RegisterDefaults adds defaulters functions to the given scheme.
 // Public to allow building arbitrary schemes.
 // All generated defaulters are covering - they call all nested defaulters.
 func RegisterDefaults(scheme *runtime.Scheme) error {
-	scheme.AddTypeDefaultingFunc(&v1alpha1.AuthenticationConfig{}, func(obj interface{}) { SetObjectDefaults_AuthenticationConfig(obj.(*v1alpha1.AuthenticationConfig)) })
-	scheme.AddTypeDefaultingFunc(&v1alpha1.AuthenticationConfigList{}, func(obj interface{}) {
-		SetObjectDefaults_AuthenticationConfigList(obj.(*v1alpha1.AuthenticationConfigList))
-	})
 	return nil
-}
-
-func SetObjectDefaults_AuthenticationConfig(in *v1alpha1.AuthenticationConfig) {
-	if in.Spec.ClientConfig.Service != nil {
-		v1.SetDefaults_ServiceReference(in.Spec.ClientConfig.Service)
-	}
-}
-
-func SetObjectDefaults_AuthenticationConfigList(in *v1alpha1.AuthenticationConfigList) {
-	for i := range in.Items {
-		a := &in.Items[i]
-		SetObjectDefaults_AuthenticationConfig(a)
-	}
 }
