@@ -12,8 +12,10 @@ go_library(
     deps = [
         "//pkg/api/legacyscheme:go_default_library",
         "//pkg/apis/authentication:go_default_library",
+        "//pkg/registry/authentication/authenticationconfig/storage:go_default_library",
         "//pkg/registry/authentication/tokenreview:go_default_library",
         "//staging/src/k8s.io/api/authentication/v1:go_default_library",
+        "//staging/src/k8s.io/api/authentication/v1alpha1:go_default_library",
         "//staging/src/k8s.io/api/authentication/v1beta1:go_default_library",
         "//staging/src/k8s.io/apiserver/pkg/authentication/authenticator:go_default_library",
         "//staging/src/k8s.io/apiserver/pkg/registry/generic:go_default_library",

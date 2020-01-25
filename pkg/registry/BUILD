@@ -33,6 +33,7 @@ filegroup(
         "//pkg/registry/apps/statefulset:all-srcs",
         "//pkg/registry/auditregistration/auditsink:all-srcs",
         "//pkg/registry/auditregistration/rest:all-srcs",
+        "//pkg/registry/authentication/authenticationconfig:all-srcs",
         "//pkg/registry/authentication/rest:all-srcs",
         "//pkg/registry/authentication/tokenreview:all-srcs",
         "//pkg/registry/authorization/localsubjectaccessreview:all-srcs",
