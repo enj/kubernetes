@@ -1,5 +1,5 @@
 /*
-Copyright 2017 The Kubernetes Authors.
+Copyright 2020 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
-	authenticationv1 "k8s.io/api/authentication/v1"
+	authenticationv1alpha1 "k8s.io/api/authentication/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
@@ -33,6 +33,6 @@ func Resource(resource string) schema.GroupResource {
 }
 
 var (
-	localSchemeBuilder = &authenticationv1.SchemeBuilder
+	localSchemeBuilder = &authenticationv1alpha1.SchemeBuilder
 	AddToScheme        = localSchemeBuilder.AddToScheme
 )
