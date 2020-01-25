@@ -96,6 +96,7 @@ type AuthenticationConfigList struct {
 	// +optional
 	metav1.ListMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 	// List of AuthenticationConfig.
+	// +listType=set
 	Items []AuthenticationConfig `json:"items" protobuf:"bytes,2,rep,name=items"`
 }
 
