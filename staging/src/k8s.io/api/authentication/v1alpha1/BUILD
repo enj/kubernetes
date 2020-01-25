@@ -13,7 +13,6 @@ go_library(
     importpath = "k8s.io/api/authentication/v1alpha1",
     visibility = ["//visibility:public"],
     deps = [
-        "//staging/src/k8s.io/api/admissionregistration/v1:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/apis/meta/v1:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/runtime:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/runtime/schema:go_default_library",
