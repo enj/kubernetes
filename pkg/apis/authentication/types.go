@@ -234,6 +234,7 @@ type AuthenticationConfigList struct {
 	// +optional
 	metav1.ListMeta
 	// List of AuthenticationConfig.
+	// +listType=set
 	Items []AuthenticationConfig
 }
 
