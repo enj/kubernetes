@@ -28,6 +28,7 @@ import (
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/apis/apps"
+	"k8s.io/kubernetes/pkg/apis/authentication"
 	"k8s.io/kubernetes/pkg/apis/batch"
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/apis/events"
@@ -56,6 +57,7 @@ func NewStorageFactoryConfig() *StorageFactoryConfig {
 		batch.Resource("cronjobs").WithVersion("v1beta1"),
 		networking.Resource("ingresses").WithVersion("v1beta1"),
 		apisstorage.Resource("csidrivers").WithVersion("v1beta1"),
+		authentication.Resource("authenticationconfigs").WithVersion("v1alpha1"),
 	}
 
 	return &StorageFactoryConfig{
