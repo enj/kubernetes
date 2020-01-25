@@ -29,7 +29,7 @@ func New(implicitAuds authenticator.Audiences, authConfigInformer authentication
 	}
 
 	// start with a no-op authenticator
-	dynamicAuth.delegate.Store(emptyAuthenticator)
+	dynamicAuth.delegate.Store(box{emptyAuthenticator})
 
 	// rebuild the entire config on any change since this is a slow moving API
 	// authentication fails closed, so we do not need to sync the informer
@@ -48,6 +48,11 @@ func New(implicitAuds authenticator.Audiences, authConfigInformer authentication
 var emptyAuthenticator authenticator.Request = authenticator.RequestFunc(func(req *http.Request) (*authenticator.Response, bool, error) {
 	return nil, false, nil
 })
+
+// atomic.Value requires a consistent concrete type with calls to Store
+type box struct {
+	authenticator.Request
+}
 
 type dynamicAuthConfig struct {
 	// the current authenticator based on overall config
@@ -70,7 +75,7 @@ func (d *dynamicAuthConfig) updateConfiguration() {
 		utilruntime.HandleError(fmt.Errorf("error updating dynamic authentication configuration: %w", err))
 		return
 	}
-	d.delegate.Store(authConfigsToAuthenticator(d.implicitAuds, authenticationConfigs))
+	d.delegate.Store(box{authConfigsToAuthenticator(d.implicitAuds, authenticationConfigs)})
 }
 
 // TODO unit tests
