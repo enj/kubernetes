@@ -47,6 +47,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/kubernetes/pkg/apis/admissionregistration"
 	"k8s.io/kubernetes/pkg/apis/apps"
+	"k8s.io/kubernetes/pkg/apis/authentication"
 	"k8s.io/kubernetes/pkg/apis/autoscaling"
 	"k8s.io/kubernetes/pkg/apis/batch"
 	"k8s.io/kubernetes/pkg/apis/certificates"
@@ -517,6 +518,14 @@ func AddHandlers(h printers.PrintHandler) {
 	}
 	h.TableHandler(validatingWebhookColumnDefinitions, printValidatingWebhook)
 	h.TableHandler(validatingWebhookColumnDefinitions, printValidatingWebhookList)
+
+	authenticationConfigColumnDefinitions := []metav1.TableColumnDefinition{
+		{Name: "Name", Type: "string", Format: "name", Description: metav1.ObjectMeta{}.SwaggerDoc()["name"]},
+		{Name: "Type", Type: "string", Description: "The type of authentication mode used in this configuration"},
+		{Name: "Age", Type: "string", Description: metav1.ObjectMeta{}.SwaggerDoc()["creationTimestamp"]},
+	}
+	h.TableHandler(authenticationConfigColumnDefinitions, printAuthenticationConfig)
+	h.TableHandler(authenticationConfigColumnDefinitions, printAuthenticationConfigList)
 }
 
 // Pass ports=nil for all ports.
@@ -1287,6 +1296,26 @@ func printMutatingWebhook(obj *admissionregistration.MutatingWebhookConfiguratio
 	}
 	row.Cells = append(row.Cells, obj.Name, len(obj.Webhooks), translateTimestampSince(obj.CreationTimestamp))
 	return []metav1.TableRow{row}, nil
+}
+
+func printAuthenticationConfig(obj *authentication.AuthenticationConfig, options printers.GenerateOptions) ([]metav1.TableRow, error) {
+	row := metav1.TableRow{
+		Object: runtime.RawExtension{Object: obj},
+	}
+	row.Cells = append(row.Cells, obj.Name, string(obj.Spec.Type), translateTimestampSince(obj.CreationTimestamp))
+	return []metav1.TableRow{row}, nil
+}
+
+func printAuthenticationConfigList(list *authentication.AuthenticationConfigList, options printers.GenerateOptions) ([]metav1.TableRow, error) {
+	rows := make([]metav1.TableRow, 0, len(list.Items))
+	for i := range list.Items {
+		r, err := printAuthenticationConfig(&list.Items[i], options)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, r...)
+	}
+	return rows, nil
 }
 
 func printMutatingWebhookList(list *admissionregistration.MutatingWebhookConfigurationList, options printers.GenerateOptions) ([]metav1.TableRow, error) {
