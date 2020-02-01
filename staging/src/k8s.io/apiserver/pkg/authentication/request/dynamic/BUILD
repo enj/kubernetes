@@ -14,11 +14,14 @@ go_library(
         "//staging/src/k8s.io/apiserver/pkg/authentication/request/bearertoken:go_default_library",
         "//staging/src/k8s.io/apiserver/pkg/authentication/request/union:go_default_library",
         "//staging/src/k8s.io/apiserver/pkg/authentication/request/websocket:go_default_library",
+        "//staging/src/k8s.io/apiserver/pkg/authentication/request/x509:go_default_library",
         "//staging/src/k8s.io/apiserver/pkg/authentication/token/cache:go_default_library",
         "//staging/src/k8s.io/apiserver/plugin/pkg/authenticator/token/oidc:go_default_library",
         "//staging/src/k8s.io/client-go/informers/authentication/v1alpha1:go_default_library",
         "//staging/src/k8s.io/client-go/listers/authentication/v1alpha1:go_default_library",
         "//staging/src/k8s.io/client-go/tools/cache:go_default_library",
+        "//staging/src/k8s.io/client-go/util/cert:go_default_library",
+        "//vendor/k8s.io/klog:go_default_library",
     ],
 )
 
