@@ -156,5 +156,9 @@ message WebhookConfig {
 }
 
 message X509Config {
+  // caBundle is a PEM encoded CA bundle used for client auth (x509.ExtKeyUsageClientAuth).
+  // +listType=atomic
+  // Required
+  optional bytes caBundle = 1;
 }
 
