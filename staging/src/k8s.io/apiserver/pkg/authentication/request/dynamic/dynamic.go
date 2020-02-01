@@ -14,11 +14,14 @@ import (
 	"k8s.io/apiserver/pkg/authentication/request/bearertoken"
 	"k8s.io/apiserver/pkg/authentication/request/union"
 	"k8s.io/apiserver/pkg/authentication/request/websocket"
+	"k8s.io/apiserver/pkg/authentication/request/x509"
 	tokencache "k8s.io/apiserver/pkg/authentication/token/cache"
 	"k8s.io/apiserver/plugin/pkg/authenticator/token/oidc"
 	authenticationinformerv1alpha1 "k8s.io/client-go/informers/authentication/v1alpha1"
 	authenticationlisterv1alpha1 "k8s.io/client-go/listers/authentication/v1alpha1"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/cert"
+	"k8s.io/klog"
 )
 
 func New(implicitAuds authenticator.Audiences, authConfigInformer authenticationinformerv1alpha1.AuthenticationConfigInformer) (authenticator.Request, func(stopCh <-chan struct{})) {
@@ -83,9 +86,24 @@ func authConfigsToAuthenticator(implicitAuds authenticator.Audiences, authentica
 	authenticators := make([]authenticator.Request, 0, len(authenticationConfigs))
 
 	for _, authenticationConfig := range authenticationConfigs {
-		switch authenticationConfig.Spec.Type {
+		spec := authenticationConfig.Spec
+		switch spec.Type {
+		case authenticationv1alpha1.AuthenticationConfigTypeX509:
+			x509Config := spec.X509
+			if x509Config == nil {
+				continue // TODO drop when validation makes this impossible
+			}
+			var err error
+			opts := x509.DefaultVerifyOptions()
+			opts.Roots, err = cert.NewPoolFromBytes(x509Config.CABundle)
+			if err != nil {
+				continue // TODO use validation to make impossible
+			}
+			certAuth := x509.New(opts, x509.CommonNameUserConversion)
+			authenticators = append(authenticators, certAuth)
+
 		case authenticationv1alpha1.AuthenticationConfigTypeOIDC:
-			oidcConfig := authenticationConfig.Spec.OIDC
+			oidcConfig := spec.OIDC
 			if oidcConfig == nil {
 				continue // TODO drop when validation makes this impossible
 			}
@@ -96,8 +114,12 @@ func authConfigsToAuthenticator(implicitAuds authenticator.Audiences, authentica
 				continue
 			}
 			authenticators = append(authenticators, oidcAuth)
+
+		case authenticationv1alpha1.AuthenticationConfigTypeWebhook:
+			// TODO implement
+
 		default:
-			// TODO implement the rest
+			klog.Errorf("authentication config %s has unknown type %s", authenticationConfig.Name, authenticationConfig.Spec.Type)
 		}
 	}
 

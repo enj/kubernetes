@@ -67,8 +67,10 @@ const (
 )
 
 type X509Config struct {
-	// TODO do we need this with the recent CSR API signer changes?
-	// TODO fill in
+	// caBundle is a PEM encoded CA bundle used for client auth (x509.ExtKeyUsageClientAuth).
+	// +listType=atomic
+	// Required
+	CABundle []byte `json:"caBundle" protobuf:"bytes,1,opt,name=caBundle"`
 }
 
 type OIDCConfig struct {
