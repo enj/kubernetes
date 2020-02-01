@@ -38,6 +38,8 @@ type AuthenticationConfig struct {
 type AuthenticationConfigSpec struct {
 	Type AuthenticationConfigType `json:"type" protobuf:"bytes,1,opt,name=type"`
 
+	// TODO add generic username and group prefix config here
+
 	X509 *X509Config `json:"x509,omitempty" protobuf:"bytes,2,opt,name=x509"`
 
 	OIDC *OIDCConfig `json:"oidc,omitempty" protobuf:"bytes,3,opt,name=oidc"`
@@ -74,6 +76,7 @@ type X509Config struct {
 }
 
 type OIDCConfig struct {
+	// TODO make URL or service ref
 	Issuer string `json:"issuer" protobuf:"bytes,1,opt,name=issuer"`
 
 	ClientID string `json:"clientID" protobuf:"bytes,2,opt,name=clientID"`
