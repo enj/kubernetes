@@ -73,6 +73,7 @@ message AuthenticationConfigStatus {
 }
 
 message OIDCConfig {
+  // TODO make URL or service ref
   optional string issuer = 1;
 
   optional string clientID = 2;
