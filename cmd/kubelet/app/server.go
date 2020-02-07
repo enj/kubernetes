@@ -1012,6 +1012,8 @@ func InitializeTLS(kf *options.KubeletFlags, kc *kubeletconfiginternal.KubeletCo
 	}
 
 	if len(kc.Authentication.X509.ClientCAFile) > 0 {
+		// TODO wire dynamic certs
+
 		clientCAs, err := certutil.NewPool(kc.Authentication.X509.ClientCAFile)
 		if err != nil {
 			return nil, fmt.Errorf("unable to load client CA file %s: %v", kc.Authentication.X509.ClientCAFile, err)
