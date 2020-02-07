@@ -27,27 +27,37 @@ import (
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/authorization/authorizerfactory"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/client-go/informers"
+	authenticationinformerv1alpha1 "k8s.io/client-go/informers/authentication/v1alpha1"
 	clientset "k8s.io/client-go/kubernetes"
 	authenticationclient "k8s.io/client-go/kubernetes/typed/authentication/v1"
 	authorizationclient "k8s.io/client-go/kubernetes/typed/authorization/v1"
-
+	"k8s.io/kubernetes/pkg/features"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/pkg/kubelet/server"
 )
 
 // BuildAuth creates an authenticator, an authorizer, and a matching authorizer attributes getter compatible with the kubelet's needs
-func BuildAuth(nodeName types.NodeName, client clientset.Interface, config kubeletconfig.KubeletConfiguration) (server.AuthInterface, error) {
+func BuildAuth(nodeName types.NodeName, client clientset.Interface, config kubeletconfig.KubeletConfiguration, stopCh <-chan struct{}) (server.AuthInterface, error) {
 	// Get clients, if provided
 	var (
-		tokenClient authenticationclient.TokenReviewInterface
-		sarClient   authorizationclient.SubjectAccessReviewInterface
+		tokenClient                  authenticationclient.TokenReviewInterface
+		sarClient                    authorizationclient.SubjectAccessReviewInterface
+		authenticationConfigInformer authenticationinformerv1alpha1.AuthenticationConfigInformer
 	)
 	if client != nil && !reflect.ValueOf(client).IsNil() {
 		tokenClient = client.AuthenticationV1().TokenReviews()
 		sarClient = client.AuthorizationV1().SubjectAccessReviews()
+
+		if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationConfig) {
+			factory := informers.NewSharedInformerFactory(client, 0)
+			authenticationConfigInformer = factory.Authentication().V1alpha1().AuthenticationConfigs()
+			defer factory.Start(stopCh) // defer this as we need to use the informer before starting the factory
+		}
 	}
 
-	authenticator, err := BuildAuthn(tokenClient, config.Authentication)
+	authenticator, err := BuildAuthn(tokenClient, config.Authentication, authenticationConfigInformer)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +73,7 @@ func BuildAuth(nodeName types.NodeName, client clientset.Interface, config kubel
 }
 
 // BuildAuthn creates an authenticator compatible with the kubelet's needs
-func BuildAuthn(client authenticationclient.TokenReviewInterface, authn kubeletconfig.KubeletAuthentication) (authenticator.Request, error) {
+func BuildAuthn(client authenticationclient.TokenReviewInterface, authn kubeletconfig.KubeletAuthentication, authenticationConfigInformer authenticationinformerv1alpha1.AuthenticationConfigInformer) (authenticator.Request, error) {
 	var clientCertificateCAContentProvider authenticatorfactory.CAContentProvider
 	var err error
 	if len(authn.X509.ClientCAFile) > 0 {
@@ -77,6 +87,7 @@ func BuildAuthn(client authenticationclient.TokenReviewInterface, authn kubeletc
 		Anonymous:                          authn.Anonymous.Enabled,
 		CacheTTL:                           authn.Webhook.CacheTTL.Duration,
 		ClientCertificateCAContentProvider: clientCertificateCAContentProvider,
+		AuthenticationConfigInformer:       authenticationConfigInformer,
 	}
 
 	if authn.Webhook.Enabled {
