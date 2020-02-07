@@ -211,7 +211,7 @@ func (config Config) New(stopCh <-chan struct{}) (authenticator.Request, *spec.S
 
 	if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationConfig) {
 		// TODO reconcile the dynamic nature of this with the static nature of open api securityDefinitions
-		dynamicAuthenticators, dynamicAuthenticatorsRunner := dynamic.New(config.APIAudiences, config.AuthenticationConfigInformer)
+		dynamicAuthenticators, dynamicAuthenticatorsRunner := dynamic.New(config.APIAudiences, config.AuthenticationConfigInformer, false)
 		dynamicAuthenticatorsRunner(stopCh)
 		authenticators = append(authenticators, dynamicAuthenticators)
 	}

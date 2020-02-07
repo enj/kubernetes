@@ -21,18 +21,22 @@ import (
 	"time"
 
 	"github.com/go-openapi/spec"
+	authenticationinformerv1alpha1 "k8s.io/client-go/informers/authentication/v1alpha1"
 
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authentication/group"
 	"k8s.io/apiserver/pkg/authentication/request/anonymous"
 	"k8s.io/apiserver/pkg/authentication/request/bearertoken"
+	"k8s.io/apiserver/pkg/authentication/request/dynamic"
 	"k8s.io/apiserver/pkg/authentication/request/headerrequest"
 	unionauth "k8s.io/apiserver/pkg/authentication/request/union"
 	"k8s.io/apiserver/pkg/authentication/request/websocket"
 	"k8s.io/apiserver/pkg/authentication/request/x509"
 	"k8s.io/apiserver/pkg/authentication/token/cache"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	webhooktoken "k8s.io/apiserver/plugin/pkg/authenticator/token/webhook"
 	authenticationclient "k8s.io/client-go/kubernetes/typed/authentication/v1"
+	"k8s.io/kubernetes/pkg/features"
 )
 
 // DelegatingAuthenticatorConfig is the minimal configuration needed to create an authenticator
@@ -54,6 +58,8 @@ type DelegatingAuthenticatorConfig struct {
 	APIAudiences authenticator.Audiences
 
 	RequestHeaderConfig *RequestHeaderConfig
+
+	AuthenticationConfigInformer authenticationinformerv1alpha1.AuthenticationConfigInformer
 }
 
 func (c DelegatingAuthenticatorConfig) New() (authenticator.Request, *spec.SecurityDefinitions, error) {
@@ -76,6 +82,13 @@ func (c DelegatingAuthenticatorConfig) New() (authenticator.Request, *spec.Secur
 	// x509 client cert auth
 	if c.ClientCertificateCAContentProvider != nil {
 		authenticators = append(authenticators, x509.NewDynamic(c.ClientCertificateCAContentProvider.VerifyOptions, x509.CommonNameUserConversion))
+	}
+
+	// dynamic non-token based auth
+	if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationConfig) {
+		// TODO reconcile the dynamic nature of this with the static nature of open api securityDefinitions
+		dynamicAuthenticators, _ := dynamic.New(c.APIAudiences, c.AuthenticationConfigInformer, true)
+		authenticators = append(authenticators, dynamicAuthenticators)
 	}
 
 	if c.TokenAccessReviewClient != nil {

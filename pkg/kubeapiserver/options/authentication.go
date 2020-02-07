@@ -417,6 +417,8 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(c *genericapiserver.Config) error
 		}
 	}
 
+	// TODO wire in dynamic certs here
+
 	c.Authentication.SupportsBasicAuth = o.PasswordFile != nil && len(o.PasswordFile.BasicAuthFile) > 0
 
 	c.Authentication.APIAudiences = o.APIAudiences

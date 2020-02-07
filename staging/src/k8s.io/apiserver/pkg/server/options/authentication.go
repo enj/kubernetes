@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/kubernetes/pkg/features"
 
 	"github.com/spf13/pflag"
 
@@ -31,6 +33,7 @@ import (
 	"k8s.io/apiserver/pkg/authentication/authenticatorfactory"
 	"k8s.io/apiserver/pkg/authentication/request/headerrequest"
 	"k8s.io/apiserver/pkg/server"
+	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -306,6 +309,17 @@ func (s *DelegatingAuthenticationOptions) ApplyTo(authenticationInfo *server.Aut
 		cfg.RequestHeaderConfig = requestHeaderConfig
 		if err = authenticationInfo.ApplyClientCert(cfg.RequestHeaderConfig.CAContentProvider, servingInfo); err != nil {
 			return fmt.Errorf("unable to load request-header-client-ca-file: %v", err)
+		}
+	}
+
+	if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationConfig) && client != nil {
+		factory := informers.NewSharedInformerFactory(client, 0)
+		cfg.AuthenticationConfigInformer = factory.Authentication().V1alpha1().AuthenticationConfigs()
+
+		// TODO wire in dynamic certs here
+
+		if err = authenticationInfo.ApplyClientCert(nil, servingInfo); err != nil {
+			return fmt.Errorf("unable to configure dynamic authentication: %v", err)
 		}
 	}
 

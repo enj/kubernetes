@@ -24,11 +24,12 @@ import (
 	"k8s.io/klog"
 )
 
-func New(implicitAuds authenticator.Audiences, authConfigInformer authenticationinformerv1alpha1.AuthenticationConfigInformer) (authenticator.Request, func(stopCh <-chan struct{})) {
+func New(implicitAuds authenticator.Audiences, authConfigInformer authenticationinformerv1alpha1.AuthenticationConfigInformer, noTokenAuth bool) (authenticator.Request, func(stopCh <-chan struct{})) {
 	dynamicAuth := &dynamicAuthConfig{
 		delegate:         &atomic.Value{},
 		implicitAuds:     implicitAuds,
 		authConfigLister: authConfigInformer.Lister(),
+		noTokenAuth:      noTokenAuth,
 	}
 
 	// start with a no-op authenticator
@@ -66,6 +67,9 @@ type dynamicAuthConfig struct {
 
 	// dynamic config sources
 	authConfigLister authenticationlisterv1alpha1.AuthenticationConfigLister
+
+	// if noTokenAuth is true, token based authentication methods are ignored
+	noTokenAuth bool
 }
 
 func (d *dynamicAuthConfig) AuthenticateRequest(req *http.Request) (*authenticator.Response, bool, error) {
@@ -78,11 +82,11 @@ func (d *dynamicAuthConfig) updateConfiguration() {
 		utilruntime.HandleError(fmt.Errorf("error updating dynamic authentication configuration: %w", err))
 		return
 	}
-	d.delegate.Store(box{authConfigsToAuthenticator(d.implicitAuds, authenticationConfigs)})
+	d.delegate.Store(box{authConfigsToAuthenticator(d.implicitAuds, authenticationConfigs, d.noTokenAuth)})
 }
 
 // TODO unit tests
-func authConfigsToAuthenticator(implicitAuds authenticator.Audiences, authenticationConfigs []*authenticationv1alpha1.AuthenticationConfig) authenticator.Request {
+func authConfigsToAuthenticator(implicitAuds authenticator.Audiences, authenticationConfigs []*authenticationv1alpha1.AuthenticationConfig, noTokenAuth bool) authenticator.Request {
 	authenticators := make([]authenticator.Request, 0, len(authenticationConfigs))
 
 	for _, authenticationConfig := range authenticationConfigs {
@@ -103,6 +107,10 @@ func authConfigsToAuthenticator(implicitAuds authenticator.Audiences, authentica
 			authenticators = append(authenticators, certAuth)
 
 		case authenticationv1alpha1.AuthenticationConfigTypeOIDC:
+			if noTokenAuth {
+				continue
+			}
+
 			oidcConfig := spec.OIDC
 			if oidcConfig == nil {
 				continue // TODO drop when validation makes this impossible
@@ -116,6 +124,10 @@ func authConfigsToAuthenticator(implicitAuds authenticator.Audiences, authentica
 			authenticators = append(authenticators, oidcAuth)
 
 		case authenticationv1alpha1.AuthenticationConfigTypeWebhook:
+			if noTokenAuth {
+				continue
+			}
+
 			// TODO implement
 
 		default:
