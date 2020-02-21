@@ -313,12 +313,12 @@ func (s *DelegatingAuthenticationOptions) ApplyTo(authenticationInfo *server.Aut
 	}
 
 	if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationConfig) && client != nil {
-		factory := informers.NewSharedInformerFactory(client, 0)
+		// TODO is there a way to share this factory?
+		factory := informers.NewSharedInformerFactory(client, 10*time.Minute)
 		cfg.AuthenticationConfigInformer = factory.Authentication().V1alpha1().AuthenticationConfigs()
 
-		// TODO wire in dynamic certs here
-
-		if err = authenticationInfo.ApplyClientCert(nil, servingInfo); err != nil {
+		dynamicAuthCA := dynamiccertificates.NewDynamicAuthenticationConfigCA(cfg.APIAudiences, cfg.AuthenticationConfigInformer, factory)
+		if err := authenticationInfo.ApplyClientCert(dynamicAuthCA, servingInfo); err != nil {
 			return fmt.Errorf("unable to configure dynamic authentication: %v", err)
 		}
 	}

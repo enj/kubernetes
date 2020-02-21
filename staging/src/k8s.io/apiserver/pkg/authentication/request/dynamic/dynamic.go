@@ -132,6 +132,7 @@ func authConfigsToAuthenticator(implicitAuds authenticator.Audiences, authentica
 
 		default:
 			klog.Errorf("authentication config %s has unknown type %s", authenticationConfig.Name, authenticationConfig.Spec.Type)
+			continue
 		}
 	}
 
