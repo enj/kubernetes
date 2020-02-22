@@ -24,14 +24,16 @@ import (
 	"time"
 
 	"github.com/spf13/pflag"
-	"k8s.io/klog"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	genericapiserver "k8s.io/apiserver/pkg/server"
+	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	genericoptions "k8s.io/apiserver/pkg/server/options"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/client-go/informers"
 	cliflag "k8s.io/component-base/cli/flag"
+	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/features"
 	kubeauthenticator "k8s.io/kubernetes/pkg/kubeapiserver/authenticator"
 	authzmodes "k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
@@ -391,7 +393,7 @@ func (s *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticat
 	return ret, nil
 }
 
-func (o *BuiltInAuthenticationOptions) ApplyTo(c *genericapiserver.Config) error {
+func (o *BuiltInAuthenticationOptions) ApplyTo(c *genericapiserver.Config, versionedInformers informers.SharedInformerFactory) error {
 	if o == nil {
 		return nil
 	}
@@ -417,13 +419,19 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(c *genericapiserver.Config) error
 		}
 	}
 
-	// TODO wire in dynamic certs here
-
 	c.Authentication.SupportsBasicAuth = o.PasswordFile != nil && len(o.PasswordFile.BasicAuthFile) > 0
 
 	c.Authentication.APIAudiences = o.APIAudiences
 	if o.ServiceAccounts != nil && o.ServiceAccounts.Issuer != "" && len(o.APIAudiences) == 0 {
 		c.Authentication.APIAudiences = authenticator.Audiences{o.ServiceAccounts.Issuer}
+	}
+
+	if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationConfig) {
+		authConfigInformer := versionedInformers.Authentication().V1alpha1().AuthenticationConfigs()
+		dynamicAuthCA := dynamiccertificates.NewDynamicAuthenticationConfigCA(c.Authentication.APIAudiences, authConfigInformer, versionedInformers)
+		if err := c.Authentication.ApplyClientCert(dynamicAuthCA, c.SecureServing); err != nil {
+			return fmt.Errorf("unable to configure dynamic authentication: %v", err)
+		}
 	}
 
 	return nil

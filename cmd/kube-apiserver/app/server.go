@@ -431,7 +431,7 @@ func buildGenericConfig(
 	}
 	versionedInformers = clientgoinformers.NewSharedInformerFactory(clientgoExternalClient, 10*time.Minute)
 
-	if lastErr = s.Authentication.ApplyTo(genericConfig); lastErr != nil {
+	if lastErr = s.Authentication.ApplyTo(genericConfig, versionedInformers); lastErr != nil {
 		return
 	}
 	if lastErr = s.Features.ApplyTo(genericConfig); lastErr != nil {
