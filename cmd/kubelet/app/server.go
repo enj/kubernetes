@@ -595,7 +595,7 @@ func run(s *options.KubeletServer, kubeDeps *kubelet.Dependencies, featureGate f
 	}
 
 	if kubeDeps.Auth == nil {
-		auth, err := BuildAuth(nodeName, kubeDeps.KubeClient, s.KubeletConfiguration, stopCh)
+		auth, err := BuildAuth(nodeName, kubeDeps.KubeClient, s.KubeletConfiguration, kubeDeps.TLSOptions, stopCh)
 		if err != nil {
 			return err
 		}
@@ -1012,8 +1012,6 @@ func InitializeTLS(kf *options.KubeletFlags, kc *kubeletconfiginternal.KubeletCo
 	}
 
 	if len(kc.Authentication.X509.ClientCAFile) > 0 {
-		// TODO wire dynamic certs
-
 		clientCAs, err := certutil.NewPool(kc.Authentication.X509.ClientCAFile)
 		if err != nil {
 			return nil, fmt.Errorf("unable to load client CA file %s: %v", kc.Authentication.X509.ClientCAFile, err)

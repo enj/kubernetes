@@ -17,6 +17,7 @@ limitations under the License.
 package app
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"reflect"
@@ -33,31 +34,65 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	authenticationclient "k8s.io/client-go/kubernetes/typed/authentication/v1"
 	authorizationclient "k8s.io/client-go/kubernetes/typed/authorization/v1"
+	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/features"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/pkg/kubelet/server"
 )
 
 // BuildAuth creates an authenticator, an authorizer, and a matching authorizer attributes getter compatible with the kubelet's needs
-func BuildAuth(nodeName types.NodeName, client clientset.Interface, config kubeletconfig.KubeletConfiguration, stopCh <-chan struct{}) (server.AuthInterface, error) {
+func BuildAuth(nodeName types.NodeName, client clientset.Interface, config kubeletconfig.KubeletConfiguration, opts *server.TLSOptions, stopCh <-chan struct{}) (server.AuthInterface, error) {
 	// Get clients, if provided
 	var (
-		tokenClient                  authenticationclient.TokenReviewInterface
-		sarClient                    authorizationclient.SubjectAccessReviewInterface
-		authenticationConfigInformer authenticationinformerv1alpha1.AuthenticationConfigInformer
+		tokenClient                        authenticationclient.TokenReviewInterface
+		sarClient                          authorizationclient.SubjectAccessReviewInterface
+		clientCertificateCAContentProvider authenticatorfactory.CAContentProvider
+		authenticationConfigInformer       authenticationinformerv1alpha1.AuthenticationConfigInformer
 	)
+
+	if len(config.Authentication.X509.ClientCAFile) > 0 {
+		dynamicCAContentFromFile, err := dynamiccertificates.NewDynamicCAContentFromFile("client-ca-bundle", config.Authentication.X509.ClientCAFile)
+		if err != nil {
+			return nil, err
+		}
+		clientCertificateCAContentProvider = dynamicCAContentFromFile
+	}
+
 	if client != nil && !reflect.ValueOf(client).IsNil() {
 		tokenClient = client.AuthenticationV1().TokenReviews()
 		sarClient = client.AuthorizationV1().SubjectAccessReviews()
 
 		if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationConfig) {
+			opts.Config.ClientAuth = tls.RequestClientCert
+
 			factory := informers.NewSharedInformerFactory(client, 0)
 			authenticationConfigInformer = factory.Authentication().V1alpha1().AuthenticationConfigs()
-			defer factory.Start(stopCh) // defer this as we need to use the informer before starting the factory
+
+			dynamicAuthCA := dynamiccertificates.NewDynamicAuthenticationConfigCA(nil, authenticationConfigInformer, factory)
+			if clientCertificateCAContentProvider != nil {
+				clientCertificateCAContentProvider = dynamiccertificates.NewUnionCAContentProvider(dynamicAuthCA, clientCertificateCAContentProvider)
+			} else {
+				clientCertificateCAContentProvider = dynamicAuthCA
+			}
+
+			dynamicCertificateController := dynamiccertificates.NewDynamicServingCertificateController(*opts.Config.Clone(), clientCertificateCAContentProvider, nil, nil, nil)
+			opts.Config.GetConfigForClient = dynamicCertificateController.GetConfigForClient
+
+			// register if possible
+			if notifier, ok := clientCertificateCAContentProvider.(dynamiccertificates.Notifier); ok {
+				notifier.AddListener(dynamicCertificateController)
+			}
+
+			// runonce to try to prime data.  If this fails, it's ok because we fail closed.
+			// Files are required to be populated already, so this is for convenience.
+			if err := dynamicCertificateController.RunOnce(); err != nil {
+				klog.Warningf("Initial population of dynamic certificates failed: %v", err)
+			}
+			go dynamicCertificateController.Run(1, stopCh)
 		}
 	}
 
-	authenticator, err := BuildAuthn(tokenClient, config.Authentication, authenticationConfigInformer)
+	authenticator, err := BuildAuthn(tokenClient, config.Authentication, clientCertificateCAContentProvider, authenticationConfigInformer)
 	if err != nil {
 		return nil, err
 	}
@@ -69,20 +104,21 @@ func BuildAuth(nodeName types.NodeName, client clientset.Interface, config kubel
 		return nil, err
 	}
 
+	if controller, ok := clientCertificateCAContentProvider.(dynamiccertificates.ControllerRunner); ok {
+		// runonce to try to prime data.  If this fails, it's ok because we fail closed.
+		// Files are required to be populated already, so this is for convenience.
+		if err := controller.RunOnce(); err != nil {
+			klog.Warningf("Initial population of default serving certificate failed: %v", err)
+		}
+
+		go controller.Run(1, stopCh)
+	}
+
 	return server.NewKubeletAuth(authenticator, attributes, authorizer), nil
 }
 
 // BuildAuthn creates an authenticator compatible with the kubelet's needs
-func BuildAuthn(client authenticationclient.TokenReviewInterface, authn kubeletconfig.KubeletAuthentication, authenticationConfigInformer authenticationinformerv1alpha1.AuthenticationConfigInformer) (authenticator.Request, error) {
-	var clientCertificateCAContentProvider authenticatorfactory.CAContentProvider
-	var err error
-	if len(authn.X509.ClientCAFile) > 0 {
-		clientCertificateCAContentProvider, err = dynamiccertificates.NewDynamicCAContentFromFile("client-ca-bundle", authn.X509.ClientCAFile)
-		if err != nil {
-			return nil, err
-		}
-	}
-
+func BuildAuthn(client authenticationclient.TokenReviewInterface, authn kubeletconfig.KubeletAuthentication, clientCertificateCAContentProvider authenticatorfactory.CAContentProvider, authenticationConfigInformer authenticationinformerv1alpha1.AuthenticationConfigInformer) (authenticator.Request, error) {
 	authenticatorConfig := authenticatorfactory.DelegatingAuthenticatorConfig{
 		Anonymous:                          authn.Anonymous.Enabled,
 		CacheTTL:                           authn.Webhook.CacheTTL.Duration,
