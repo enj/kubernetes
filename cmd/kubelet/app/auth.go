@@ -17,7 +17,6 @@ limitations under the License.
 package app
 
 import (
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"reflect"
@@ -34,14 +33,13 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	authenticationclient "k8s.io/client-go/kubernetes/typed/authentication/v1"
 	authorizationclient "k8s.io/client-go/kubernetes/typed/authorization/v1"
-	"k8s.io/klog"
 	"k8s.io/kubernetes/pkg/features"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/pkg/kubelet/server"
 )
 
 // BuildAuth creates an authenticator, an authorizer, and a matching authorizer attributes getter compatible with the kubelet's needs
-func BuildAuth(nodeName types.NodeName, client clientset.Interface, config kubeletconfig.KubeletConfiguration, opts *server.TLSOptions, stopCh <-chan struct{}) (server.AuthInterface, error) {
+func BuildAuth(nodeName types.NodeName, client clientset.Interface, config kubeletconfig.KubeletConfiguration) (server.AuthInterface, authenticatorfactory.CAContentProvider, error) {
 	// Get clients, if provided
 	var (
 		tokenClient                        authenticationclient.TokenReviewInterface
@@ -53,7 +51,7 @@ func BuildAuth(nodeName types.NodeName, client clientset.Interface, config kubel
 	if len(config.Authentication.X509.ClientCAFile) > 0 {
 		dynamicCAContentFromFile, err := dynamiccertificates.NewDynamicCAContentFromFile("client-ca-bundle", config.Authentication.X509.ClientCAFile)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		clientCertificateCAContentProvider = dynamicCAContentFromFile
 	}
@@ -63,8 +61,6 @@ func BuildAuth(nodeName types.NodeName, client clientset.Interface, config kubel
 		sarClient = client.AuthorizationV1().SubjectAccessReviews()
 
 		if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationConfig) {
-			opts.Config.ClientAuth = tls.RequestClientCert
-
 			factory := informers.NewSharedInformerFactory(client, 0)
 			authenticationConfigInformer = factory.Authentication().V1alpha1().AuthenticationConfigs()
 
@@ -74,47 +70,22 @@ func BuildAuth(nodeName types.NodeName, client clientset.Interface, config kubel
 			} else {
 				clientCertificateCAContentProvider = dynamicAuthCA
 			}
-
-			dynamicCertificateController := dynamiccertificates.NewDynamicServingCertificateController(*opts.Config.Clone(), clientCertificateCAContentProvider, nil, nil, nil)
-			opts.Config.GetConfigForClient = dynamicCertificateController.GetConfigForClient
-
-			// register if possible
-			if notifier, ok := clientCertificateCAContentProvider.(dynamiccertificates.Notifier); ok {
-				notifier.AddListener(dynamicCertificateController)
-			}
-
-			// runonce to try to prime data.  If this fails, it's ok because we fail closed.
-			// Files are required to be populated already, so this is for convenience.
-			if err := dynamicCertificateController.RunOnce(); err != nil {
-				klog.Warningf("Initial population of dynamic certificates failed: %v", err)
-			}
-			go dynamicCertificateController.Run(1, stopCh)
 		}
 	}
 
 	authenticator, err := BuildAuthn(tokenClient, config.Authentication, clientCertificateCAContentProvider, authenticationConfigInformer)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	attributes := server.NewNodeAuthorizerAttributesGetter(nodeName)
 
 	authorizer, err := BuildAuthz(sarClient, config.Authorization)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	if controller, ok := clientCertificateCAContentProvider.(dynamiccertificates.ControllerRunner); ok {
-		// runonce to try to prime data.  If this fails, it's ok because we fail closed.
-		// Files are required to be populated already, so this is for convenience.
-		if err := controller.RunOnce(); err != nil {
-			klog.Warningf("Initial population of default serving certificate failed: %v", err)
-		}
-
-		go controller.Run(1, stopCh)
-	}
-
-	return server.NewKubeletAuth(authenticator, attributes, authorizer), nil
+	return server.NewKubeletAuth(authenticator, attributes, authorizer), clientCertificateCAContentProvider, nil
 }
 
 // BuildAuthn creates an authenticator compatible with the kubelet's needs

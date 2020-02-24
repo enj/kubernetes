@@ -30,6 +30,7 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	genericapiserver "k8s.io/apiserver/pkg/server"
 	clientset "k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -146,7 +147,8 @@ func newHollowNodeCommand() *cobra.Command {
 		Long: "kubemark",
 		Run: func(cmd *cobra.Command, args []string) {
 			verflag.PrintAndExitIfRequested()
-			run(s)
+			stopCh := genericapiserver.SetupSignalHandler()
+			run(s, stopCh)
 		},
 	}
 	s.addFlags(cmd.Flags())
@@ -154,7 +156,7 @@ func newHollowNodeCommand() *cobra.Command {
 	return cmd
 }
 
-func run(config *hollowNodeConfig) {
+func run(config *hollowNodeConfig, stopCh <-chan struct{}) {
 	// To help debugging, immediately log version
 	klog.Infof("Version: %+v", version.Get())
 
@@ -218,7 +220,7 @@ func run(config *hollowNodeConfig) {
 			runtimeService,
 			containerManager,
 		)
-		hollowKubelet.Run()
+		hollowKubelet.Run(stopCh)
 	}
 
 	if config.Morph == "proxy" {

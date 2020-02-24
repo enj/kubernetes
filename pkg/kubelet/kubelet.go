@@ -33,6 +33,8 @@ import (
 	"time"
 
 	cadvisorapi "github.com/google/cadvisor/info/v1"
+	"k8s.io/apiserver/pkg/authentication/authenticatorfactory"
+	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	utilexec "k8s.io/utils/exec"
 	"k8s.io/utils/integer"
 	"k8s.io/utils/mount"
@@ -200,7 +202,7 @@ type Bootstrap interface {
 	ListenAndServe(address net.IP, port uint, tlsOptions *server.TLSOptions, auth server.AuthInterface, enableCAdvisorJSONEndpoints, enableDebuggingHandlers, enableContentionProfiling bool)
 	ListenAndServeReadOnly(address net.IP, port uint, enableCAdvisorJSONEndpoints bool)
 	ListenAndServePodResources()
-	Run(<-chan kubetypes.PodUpdate)
+	Run(updates <-chan kubetypes.PodUpdate, stopCh <-chan struct{})
 	RunOnce(<-chan kubetypes.PodUpdate) ([]RunPodResult, error)
 }
 
@@ -244,30 +246,31 @@ type Dependencies struct {
 	Options []Option
 
 	// Injected Dependencies
-	Auth                    server.AuthInterface
-	CAdvisorInterface       cadvisor.Interface
-	Cloud                   cloudprovider.Interface
-	ContainerManager        cm.ContainerManager
-	DockerClientConfig      *dockershim.ClientConfig
-	EventClient             v1core.EventsGetter
-	HeartbeatClient         clientset.Interface
-	OnHeartbeatFailure      func()
-	KubeClient              clientset.Interface
-	Mounter                 mount.Interface
-	HostUtil                hostutil.HostUtils
-	OOMAdjuster             *oom.OOMAdjuster
-	OSInterface             kubecontainer.OSInterface
-	PodConfig               *config.PodConfig
-	Recorder                record.EventRecorder
-	Subpather               subpath.Interface
-	VolumePlugins           []volume.VolumePlugin
-	DynamicPluginProber     volume.DynamicPluginProber
-	TLSOptions              *server.TLSOptions
-	KubeletConfigController *kubeletconfig.Controller
-	RemoteRuntimeService    internalapi.RuntimeService
-	RemoteImageService      internalapi.ImageManagerService
-	criHandler              http.Handler
-	dockerLegacyService     dockershim.DockerLegacyService
+	Auth                               server.AuthInterface
+	ClientCertificateCAContentProvider authenticatorfactory.CAContentProvider
+	CAdvisorInterface                  cadvisor.Interface
+	Cloud                              cloudprovider.Interface
+	ContainerManager                   cm.ContainerManager
+	DockerClientConfig                 *dockershim.ClientConfig
+	EventClient                        v1core.EventsGetter
+	HeartbeatClient                    clientset.Interface
+	OnHeartbeatFailure                 func()
+	KubeClient                         clientset.Interface
+	Mounter                            mount.Interface
+	HostUtil                           hostutil.HostUtils
+	OOMAdjuster                        *oom.OOMAdjuster
+	OSInterface                        kubecontainer.OSInterface
+	PodConfig                          *config.PodConfig
+	Recorder                           record.EventRecorder
+	Subpather                          subpath.Interface
+	VolumePlugins                      []volume.VolumePlugin
+	DynamicPluginProber                volume.DynamicPluginProber
+	TLSOptions                         *server.TLSOptions
+	KubeletConfigController            *kubeletconfig.Controller
+	RemoteRuntimeService               internalapi.RuntimeService
+	RemoteImageService                 internalapi.ImageManagerService
+	criHandler                         http.Handler
+	dockerLegacyService                dockershim.DockerLegacyService
 	// remove it after cadvisor.UsingLegacyCadvisorStats dropped.
 	useLegacyCadvisorStats bool
 }
@@ -773,18 +776,8 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 		klet.containerLogManager = logs.NewStubContainerLogManager()
 	}
 
-	if kubeCfg.ServerTLSBootstrap && kubeDeps.TLSOptions != nil && utilfeature.DefaultFeatureGate.Enabled(features.RotateKubeletServerCertificate) {
-		klet.serverCertificateManager, err = kubeletcertificate.NewKubeletServerCertificateManager(klet.kubeClient, kubeCfg, klet.nodeName, klet.getLastObservedNodeAddresses, certDirectory)
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize certificate manager: %v", err)
-		}
-		kubeDeps.TLSOptions.Config.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-			cert := klet.serverCertificateManager.Current()
-			if cert == nil {
-				return nil, fmt.Errorf("no serving certificate available for the kubelet")
-			}
-			return cert, nil
-		}
+	if err := finalizeTLSOptions(kubeCfg, kubeDeps, klet, certDirectory); err != nil {
+		return nil, err
 	}
 
 	klet.probeManager = prober.NewManager(
@@ -902,6 +895,37 @@ func NewMainKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 	return klet, nil
 }
 
+func finalizeTLSOptions(kubeCfg *kubeletconfiginternal.KubeletConfiguration, kubeDeps *Dependencies, klet *Kubelet, certDirectory string) error {
+	if kubeCfg.ServerTLSBootstrap && kubeDeps.TLSOptions != nil && utilfeature.DefaultFeatureGate.Enabled(features.RotateKubeletServerCertificate) {
+		var err error
+		klet.serverCertificateManager, err = kubeletcertificate.NewKubeletServerCertificateManager(klet.kubeClient, kubeCfg, klet.nodeName, klet.getLastObservedNodeAddresses, certDirectory)
+		if err != nil {
+			return fmt.Errorf("failed to initialize certificate manager: %v", err)
+		}
+		kubeDeps.TLSOptions.Config.GetCertificate = func(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			cert := klet.serverCertificateManager.Current()
+			if cert == nil {
+				return nil, fmt.Errorf("no serving certificate available for the kubelet")
+			}
+			return cert, nil
+		}
+	}
+
+	if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationConfig) && kubeDeps.TLSOptions != nil {
+		klet.clientCertificateCAContentProvider = kubeDeps.ClientCertificateCAContentProvider
+		klet.dynamicCertificateController = dynamiccertificates.NewDynamicServingCertificateController(*kubeDeps.TLSOptions.Config, klet.clientCertificateCAContentProvider, nil, nil, nil)
+		kubeDeps.TLSOptions.Config.GetConfigForClient = klet.dynamicCertificateController.GetConfigForClient
+		kubeDeps.TLSOptions.Config.ClientAuth = tls.RequestClientCert
+
+		// register if possible
+		if notifier, ok := klet.clientCertificateCAContentProvider.(dynamiccertificates.Notifier); ok {
+			notifier.AddListener(klet.dynamicCertificateController)
+		}
+	}
+
+	return nil
+}
+
 type serviceLister interface {
 	List(labels.Selector) ([]*v1.Service, error)
 }
@@ -1015,6 +1039,10 @@ type Kubelet struct {
 
 	// Handles certificate rotations.
 	serverCertificateManager certificate.Manager
+
+	// Handles dynamic client cert auth CA config
+	clientCertificateCAContentProvider authenticatorfactory.CAContentProvider
+	dynamicCertificateController       *dynamiccertificates.DynamicServingCertificateController
 
 	// Syncs pods statuses with apiserver; also used as a cache of statuses.
 	statusManager status.Manager
@@ -1326,7 +1354,7 @@ func (kl *Kubelet) StartGarbageCollection() {
 
 // initializeModules will initialize internal modules that do not require the container runtime to be up.
 // Note that the modules here must not depend on modules that are not initialized here.
-func (kl *Kubelet) initializeModules() error {
+func (kl *Kubelet) initializeModules(stopCh <-chan struct{}) error {
 	// Prometheus metrics.
 	metrics.Register(
 		kl.runtimeCache,
@@ -1354,6 +1382,26 @@ func (kl *Kubelet) initializeModules() error {
 	// Start the certificate manager if it was enabled.
 	if kl.serverCertificateManager != nil {
 		kl.serverCertificateManager.Start()
+	}
+
+	if kl.dynamicCertificateController != nil {
+		// runonce to try to prime data.  If this fails, it's ok because we fail closed.
+		// Files are required to be populated already, so this is for convenience.
+		if err := kl.dynamicCertificateController.RunOnce(); err != nil {
+			klog.Warningf("Initial population of dynamic certificates failed: %v", err)
+		}
+		go kl.dynamicCertificateController.Run(1, stopCh)
+	}
+
+	if kl.clientCertificateCAContentProvider != nil {
+		if controller, ok := kl.clientCertificateCAContentProvider.(dynamiccertificates.ControllerRunner); ok {
+			// runonce to try to prime data.  If this fails, it's ok because we fail closed.
+			// Files are required to be populated already, so this is for convenience.
+			if err := controller.RunOnce(); err != nil {
+				klog.Warningf("Initial population of default serving certificate failed: %v", err)
+			}
+			go controller.Run(1, stopCh)
+		}
 	}
 
 	// Start out of memory watcher.
@@ -1405,7 +1453,7 @@ func (kl *Kubelet) initializeRuntimeDependentModules() {
 }
 
 // Run starts the kubelet reacting to config updates
-func (kl *Kubelet) Run(updates <-chan kubetypes.PodUpdate) {
+func (kl *Kubelet) Run(updates <-chan kubetypes.PodUpdate, stopCh <-chan struct{}) {
 	if kl.logServer == nil {
 		kl.logServer = http.StripPrefix("/logs/", http.FileServer(http.Dir("/var/log/")))
 	}
@@ -1415,26 +1463,26 @@ func (kl *Kubelet) Run(updates <-chan kubetypes.PodUpdate) {
 
 	// Start the cloud provider sync manager
 	if kl.cloudResourceSyncManager != nil {
-		go kl.cloudResourceSyncManager.Run(wait.NeverStop)
+		go kl.cloudResourceSyncManager.Run(stopCh)
 	}
 
-	if err := kl.initializeModules(); err != nil {
+	if err := kl.initializeModules(stopCh); err != nil {
 		kl.recorder.Eventf(kl.nodeRef, v1.EventTypeWarning, events.KubeletSetupFailed, err.Error())
 		klog.Fatal(err)
 	}
 
 	// Start volume manager
-	go kl.volumeManager.Run(kl.sourcesReady, wait.NeverStop)
+	go kl.volumeManager.Run(kl.sourcesReady, stopCh)
 
 	if kl.kubeClient != nil {
 		// Start syncing node status immediately, this may set up things the runtime needs to run.
-		go wait.Until(kl.syncNodeStatus, kl.nodeStatusUpdateFrequency, wait.NeverStop)
+		go wait.Until(kl.syncNodeStatus, kl.nodeStatusUpdateFrequency, stopCh)
 		go kl.fastStatusUpdateOnce()
 
 		// start syncing lease
-		go kl.nodeLeaseController.Run(wait.NeverStop)
+		go kl.nodeLeaseController.Run(stopCh)
 	}
-	go wait.Until(kl.updateRuntimeUp, 5*time.Second, wait.NeverStop)
+	go wait.Until(kl.updateRuntimeUp, 5*time.Second, stopCh)
 
 	// Set up iptables util rules
 	if kl.makeIPTablesUtilChains {
@@ -1443,7 +1491,7 @@ func (kl *Kubelet) Run(updates <-chan kubetypes.PodUpdate) {
 
 	// Start a goroutine responsible for killing pods (that are not properly
 	// handled by pod workers).
-	go wait.Until(kl.podKiller, 1*time.Second, wait.NeverStop)
+	go wait.Until(kl.podKiller, 1*time.Second, stopCh)
 
 	// Start component sync loops.
 	kl.statusManager.Start()
@@ -1451,7 +1499,7 @@ func (kl *Kubelet) Run(updates <-chan kubetypes.PodUpdate) {
 
 	// Start syncing RuntimeClasses if enabled.
 	if kl.runtimeClassManager != nil {
-		kl.runtimeClassManager.Start(wait.NeverStop)
+		kl.runtimeClassManager.Start(stopCh)
 	}
 
 	// Start the pod lifecycle event generator.
