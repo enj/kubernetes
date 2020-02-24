@@ -91,7 +91,7 @@ type Config struct {
 
 // New returns an authenticator.Request or an error that supports the standard
 // Kubernetes authentication mechanisms.
-func (config Config) New(stopCh <-chan struct{}) (authenticator.Request, *spec.SecurityDefinitions, error) {
+func (config Config) New() (authenticator.Request, *spec.SecurityDefinitions, error) {
 	var authenticators []authenticator.Request
 	var tokenAuthenticators []authenticator.Token
 	securityDefinitions := spec.SecurityDefinitions{}
@@ -211,8 +211,7 @@ func (config Config) New(stopCh <-chan struct{}) (authenticator.Request, *spec.S
 
 	if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationConfig) {
 		// TODO reconcile the dynamic nature of this with the static nature of open api securityDefinitions
-		dynamicAuthenticators, dynamicAuthenticatorsRunner := dynamic.New(config.APIAudiences, config.AuthenticationConfigInformer, false)
-		dynamicAuthenticatorsRunner(stopCh)
+		dynamicAuthenticators := dynamic.New(config.APIAudiences, config.AuthenticationConfigInformer, false)
 		authenticators = append(authenticators, dynamicAuthenticators)
 	}
 

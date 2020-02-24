@@ -87,7 +87,7 @@ func (c DelegatingAuthenticatorConfig) New() (authenticator.Request, *spec.Secur
 	// dynamic non-token based auth
 	if utilfeature.DefaultFeatureGate.Enabled(features.DynamicAuthenticationConfig) {
 		// TODO reconcile the dynamic nature of this with the static nature of open api securityDefinitions
-		dynamicAuthenticators, _ := dynamic.New(c.APIAudiences, c.AuthenticationConfigInformer, true)
+		dynamicAuthenticators := dynamic.New(c.APIAudiences, c.AuthenticationConfigInformer, true)
 		authenticators = append(authenticators, dynamicAuthenticators)
 	}
 

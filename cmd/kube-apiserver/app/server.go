@@ -169,7 +169,7 @@ func CreateServerChain(completedOptions completedServerRunOptions, stopCh <-chan
 		return nil, err
 	}
 
-	kubeAPIServerConfig, insecureServingInfo, serviceResolver, pluginInitializer, err := CreateKubeAPIServerConfig(completedOptions, nodeTunneler, proxyTransport, stopCh)
+	kubeAPIServerConfig, insecureServingInfo, serviceResolver, pluginInitializer, err := CreateKubeAPIServerConfig(completedOptions, nodeTunneler, proxyTransport)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +271,6 @@ func CreateKubeAPIServerConfig(
 	s completedServerRunOptions,
 	nodeTunneler tunneler.Tunneler,
 	proxyTransport *http.Transport,
-	stopCh <-chan struct{},
 ) (
 	*master.Config,
 	*genericapiserver.DeprecatedInsecureServingInfo,
@@ -279,7 +278,7 @@ func CreateKubeAPIServerConfig(
 	[]admission.PluginInitializer,
 	error,
 ) {
-	genericConfig, versionedInformers, insecureServingInfo, serviceResolver, pluginInitializers, admissionPostStartHook, storageFactory, err := buildGenericConfig(s.ServerRunOptions, proxyTransport, stopCh)
+	genericConfig, versionedInformers, insecureServingInfo, serviceResolver, pluginInitializers, admissionPostStartHook, storageFactory, err := buildGenericConfig(s.ServerRunOptions, proxyTransport)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -389,7 +388,6 @@ func CreateKubeAPIServerConfig(
 func buildGenericConfig(
 	s *options.ServerRunOptions,
 	proxyTransport *http.Transport,
-	stopCh <-chan struct{},
 ) (
 	genericConfig *genericapiserver.Config,
 	versionedInformers clientgoinformers.SharedInformerFactory,
@@ -472,7 +470,7 @@ func buildGenericConfig(
 		return
 	}
 
-	genericConfig.Authentication.Authenticator, genericConfig.OpenAPIConfig.SecurityDefinitions, err = BuildAuthenticator(s, clientgoExternalClient, versionedInformers, stopCh)
+	genericConfig.Authentication.Authenticator, genericConfig.OpenAPIConfig.SecurityDefinitions, err = BuildAuthenticator(s, clientgoExternalClient, versionedInformers)
 	if err != nil {
 		lastErr = fmt.Errorf("invalid authentication config: %v", err)
 		return
@@ -530,7 +528,7 @@ func buildGenericConfig(
 }
 
 // BuildAuthenticator constructs the authenticator
-func BuildAuthenticator(s *options.ServerRunOptions, extclient clientgoclientset.Interface, versionedInformer clientgoinformers.SharedInformerFactory, stopCh <-chan struct{}) (authenticator.Request, *spec.SecurityDefinitions, error) {
+func BuildAuthenticator(s *options.ServerRunOptions, extclient clientgoclientset.Interface, versionedInformer clientgoinformers.SharedInformerFactory) (authenticator.Request, *spec.SecurityDefinitions, error) {
 	authenticatorConfig, err := s.Authentication.ToAuthenticationConfig()
 	if err != nil {
 		return nil, nil, err
@@ -551,7 +549,7 @@ func BuildAuthenticator(s *options.ServerRunOptions, extclient clientgoclientset
 		authenticatorConfig.AuthenticationConfigInformer = versionedInformer.Authentication().V1alpha1().AuthenticationConfigs()
 	}
 
-	return authenticatorConfig.New(stopCh)
+	return authenticatorConfig.New()
 }
 
 // BuildAuthorizer constructs the authorizer

@@ -24,7 +24,7 @@ import (
 	"k8s.io/klog"
 )
 
-func New(implicitAuds authenticator.Audiences, authConfigInformer authenticationinformerv1alpha1.AuthenticationConfigInformer, noTokenAuth bool) (authenticator.Request, func(stopCh <-chan struct{})) {
+func New(implicitAuds authenticator.Audiences, authConfigInformer authenticationinformerv1alpha1.AuthenticationConfigInformer, noTokenAuth bool) authenticator.Request {
 	dynamicAuth := &dynamicAuthConfig{
 		delegate:         &atomic.Value{},
 		implicitAuds:     implicitAuds,
@@ -44,9 +44,7 @@ func New(implicitAuds authenticator.Audiences, authConfigInformer authentication
 		DeleteFunc: func(_ interface{}) { dynamicAuth.updateConfiguration() },
 	})
 
-	return dynamicAuth, func(stopCh <-chan struct{}) {
-		// TODO drop stopCh func
-	}
+	return dynamicAuth
 }
 
 var emptyAuthenticator authenticator.Request = authenticator.RequestFunc(func(req *http.Request) (*authenticator.Response, bool, error) {
