@@ -910,7 +910,7 @@ func finalizeTLSOptions(kubeCfg *kubeletconfiginternal.KubeletConfiguration, kub
 
 	if kubeDeps.ClientCertificateCAContentProvider != nil {
 		klet.clientCertificateCAContentProvider = kubeDeps.ClientCertificateCAContentProvider
-		klet.dynamicCertificateController = dynamiccertificates.NewDynamicServingCertificateController(*kubeDeps.TLSOptions.Config, klet.clientCertificateCAContentProvider, nil, nil, nil)
+		klet.dynamicCertificateController = dynamiccertificates.NewDynamicServingCertificateController(*kubeDeps.TLSOptions.Config.Clone(), klet.clientCertificateCAContentProvider, nil, nil, nil)
 		kubeDeps.TLSOptions.Config.GetConfigForClient = klet.dynamicCertificateController.GetConfigForClient
 
 		// register if possible
