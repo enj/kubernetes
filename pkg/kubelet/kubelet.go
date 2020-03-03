@@ -909,12 +909,28 @@ func finalizeTLSOptions(kubeCfg *kubeletconfiginternal.KubeletConfiguration, kub
 	}
 
 	if kubeDeps.ClientCertificateCAContentProvider != nil {
+		if getCert, certFile, keyFile := kubeDeps.TLSOptions.Config.GetCertificate, kubeDeps.TLSOptions.CertFile, kubeDeps.TLSOptions.KeyFile; getCert == nil && len(certFile) > 0 && len(keyFile) > 0 {
+			var err error
+			klet.certKeyContentProvider, err = dynamiccertificates.NewDynamicServingContentFromFiles("kubelet-serving-cert", certFile, keyFile)
+			if err != nil {
+				return fmt.Errorf("failed to initialize dynamic serving cert: %v", err)
+			}
+		}
 		klet.clientCertificateCAContentProvider = kubeDeps.ClientCertificateCAContentProvider
-		klet.dynamicCertificateController = dynamiccertificates.NewDynamicServingCertificateController(*kubeDeps.TLSOptions.Config.Clone(), klet.clientCertificateCAContentProvider, nil, nil, nil)
+		klet.dynamicCertificateController = dynamiccertificates.NewDynamicServingCertificateController(
+			*kubeDeps.TLSOptions.Config,
+			klet.clientCertificateCAContentProvider,
+			klet.certKeyContentProvider,
+			nil,
+			record.NewEventRecorderAdapter(kubeDeps.Recorder),
+		)
 		kubeDeps.TLSOptions.Config.GetConfigForClient = klet.dynamicCertificateController.GetConfigForClient
 
 		// register if possible
 		if notifier, ok := klet.clientCertificateCAContentProvider.(dynamiccertificates.Notifier); ok {
+			notifier.AddListener(klet.dynamicCertificateController)
+		}
+		if notifier, ok := klet.certKeyContentProvider.(dynamiccertificates.Notifier); ok {
 			notifier.AddListener(klet.dynamicCertificateController)
 		}
 	}
@@ -1038,6 +1054,7 @@ type Kubelet struct {
 
 	// Handles dynamic CA bundles.
 	clientCertificateCAContentProvider authenticatorfactory.CAContentProvider
+	certKeyContentProvider             dynamiccertificates.CertKeyContentProvider
 	dynamicCertificateController       *dynamiccertificates.DynamicServingCertificateController
 
 	// Syncs pods statuses with apiserver; also used as a cache of statuses.
@@ -1389,15 +1406,22 @@ func (kl *Kubelet) initializeModules(stopCh <-chan struct{}) error {
 		go kl.dynamicCertificateController.Run(1, stopCh)
 	}
 
-	if kl.clientCertificateCAContentProvider != nil {
-		if controller, ok := kl.clientCertificateCAContentProvider.(dynamiccertificates.ControllerRunner); ok {
-			// runonce to try to prime data.  If this fails, it's ok because we fail closed.
-			// Files are required to be populated already, so this is for convenience.
-			if err := controller.RunOnce(); err != nil {
-				klog.Warningf("Initial population of default serving certificate failed: %v", err)
-			}
-			go controller.Run(1, stopCh)
+	if controller, ok := kl.clientCertificateCAContentProvider.(dynamiccertificates.ControllerRunner); ok {
+		// runonce to try to prime data.  If this fails, it's ok because we fail closed.
+		// Files are required to be populated already, so this is for convenience.
+		if err := controller.RunOnce(); err != nil {
+			klog.Warningf("Initial population of client CA failed: %v", err)
 		}
+		go controller.Run(1, stopCh)
+	}
+
+	if controller, ok := kl.certKeyContentProvider.(dynamiccertificates.ControllerRunner); ok {
+		// runonce to try to prime data.  If this fails, it's ok because we fail closed.
+		// Files are required to be populated already, so this is for convenience.
+		if err := controller.RunOnce(); err != nil {
+			klog.Warningf("Initial population of default serving certificate failed: %v", err)
+		}
+		go controller.Run(1, stopCh)
 	}
 
 	// Start out of memory watcher.
