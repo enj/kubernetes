@@ -37,6 +37,9 @@ const (
 	// auditKey is the context key for the audit event.
 	auditKey
 
+	// auditAnnotationsKey is the context key for the audit annotations.
+	auditAnnotationsKey
+
 	// audiencesKey is the context key for request audiences.
 	audiencesKey
 )
@@ -93,4 +96,13 @@ func WithAuditEvent(parent context.Context, ev *audit.Event) context.Context {
 func AuditEventFrom(ctx context.Context) *audit.Event {
 	ev, _ := ctx.Value(auditKey).(*audit.Event)
 	return ev
+}
+
+func WithAuditAnnotations(parent context.Context, annotations map[string]string) context.Context {
+	return WithValue(parent, auditAnnotationsKey, annotations)
+}
+
+func AuditAnnotationsFrom(ctx context.Context) (map[string]string, bool) {
+	annotations, ok := ctx.Value(auditAnnotationsKey).(map[string]string)
+	return annotations, ok
 }
