@@ -67,6 +67,17 @@ func WithAuthentication(handler http.Handler, auth authenticator.Request, failed
 		req.Header.Del("Authorization")
 
 		req = req.WithContext(genericapirequest.WithUser(req.Context(), resp.User))
+
+		if annotations, ok := genericapirequest.AuditAnnotationsFrom(req.Context()); ok {
+			for key, value := range resp.AuditAnnotations {
+				if v, ok := annotations[key]; ok && v != value {
+					klog.Warningf("Authentication failed to set audit annotations[%q] to %q, it has already been set to %q", key, value, v)
+					continue
+				}
+				annotations[key] = value
+			}
+		}
+
 		handler.ServeHTTP(w, req)
 	})
 }
