@@ -23,11 +23,20 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
+	"net/url"
 	"reflect"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/waitgroup"
+	auditinternal "k8s.io/apiserver/pkg/apis/audit"
+	"k8s.io/apiserver/pkg/audit"
+	"k8s.io/apiserver/pkg/audit/policy"
+	"k8s.io/apiserver/pkg/authentication/authenticator"
+	"k8s.io/apiserver/pkg/authentication/user"
+	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/server/healthz"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes/fake"
@@ -240,4 +249,101 @@ func checkExpectedPathsAtRoot(url string, expectedPaths []string, t *testing.T) 
 			t.Errorf(" Expected %v path which we did not get", p)
 		}
 	})
+}
+
+func TestAuthenticationAuditAnnotationsDefaultChain(t *testing.T) {
+	authn := authenticator.RequestFunc(func(req *http.Request) (*authenticator.Response, bool, error) {
+		// confirm that we can set an audit annotation in a handler before WithAudit
+		audit.AddAuditAnnotation(req.Context(), "pandas", "are awesome")
+
+		// confirm that trying to use the audit event directly would never work
+		if ae := request.AuditEventFrom(req.Context()); ae != nil {
+			t.Errorf("expected nil audit event, got %v", ae)
+		}
+
+		return &authenticator.Response{User: &user.DefaultInfo{}}, true, nil
+	})
+	backend := &testBackend{}
+	c := &Config{
+		Authentication:     AuthenticationInfo{Authenticator: authn},
+		AuditBackend:       backend,
+		AuditPolicyChecker: policy.FakeChecker(auditinternal.LevelMetadata, nil),
+
+		// avoid nil panics
+		HandlerChainWaitGroup: &waitgroup.SafeWaitGroup{},
+		RequestInfoResolver:   &request.RequestInfoFactory{},
+		RequestTimeout:        10 * time.Second,
+		LongRunningFunc:       func(_ *http.Request, _ *request.RequestInfo) bool { return false },
+	}
+
+	h := DefaultBuildHandlerChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// confirm this is a no-op
+		if r.Context() != audit.WithAuditAnnotations(r.Context()) {
+			t.Error("unexpected double wrapping of context")
+		}
+
+		// confirm that we have an audit event
+		ae := request.AuditEventFrom(r.Context())
+		if ae == nil {
+			t.Error("unexpected nil audit event")
+		}
+
+		// confirm that the direct way of setting audit annotations later in the chain works as expected
+		audit.LogAnnotation(ae, "snorlax", "is cool too")
+
+		// confirm that the indirect way of setting audit annotations later in the chain also works
+		audit.AddAuditAnnotation(r.Context(), "dogs", "are okay")
+
+		_, _ = w.Write([]byte("done"))
+	}), c)
+	w := &testResponseWriter{header: http.Header{}}
+
+	h.ServeHTTP(w, &http.Request{URL: &url.URL{}})
+
+	if ok := w.respCode == http.StatusOK && w.writeHeaderCalled && string(w.data) == "done" && len(w.header.Get(auditinternal.HeaderAuditID)) > 0; !ok {
+		t.Errorf("invalid response: %#v", w)
+	}
+	if len(backend.events) == 0 {
+		t.Error("expected audit events, got none")
+	}
+	for _, event := range backend.events {
+		if want := map[string]string{"pandas": "are awesome", "snorlax": "is cool too", "dogs": "are okay"}; !reflect.DeepEqual(event.Annotations, want) {
+			t.Errorf("event has unexpected annotations: %#v, want annotations %#v", event, want)
+		}
+	}
+}
+
+type testBackend struct {
+	events []*auditinternal.Event
+
+	audit.Backend // nil panic if anything other than ProcessEvents called
+}
+
+func (b *testBackend) ProcessEvents(events ...*auditinternal.Event) bool {
+	b.events = append(b.events, events...)
+	return true
+}
+
+type testResponseWriter struct {
+	writeHeaderCalled bool
+	header            http.Header
+	respCode          int
+	data              []byte
+}
+
+func (r *testResponseWriter) Header() http.Header {
+	return r.header
+}
+
+func (r *testResponseWriter) WriteHeader(code int) {
+	r.writeHeaderCalled = true
+	r.respCode = code
+}
+
+func (r *testResponseWriter) Write(in []byte) (int, error) {
+	if !r.writeHeaderCalled {
+		r.WriteHeader(http.StatusOK)
+	}
+	r.data = append(r.data, in...)
+	return len(in), nil
 }
