@@ -36,6 +36,7 @@ import (
 	auditinternal "k8s.io/apiserver/pkg/apis/audit"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
+	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 )
 
 const (
@@ -85,6 +86,12 @@ func NewEventFromRequest(req *http.Request, level auditinternal.Level, attribs a
 			Subresource: attribs.GetSubresource(),
 			APIGroup:    attribs.GetAPIGroup(),
 			APIVersion:  attribs.GetAPIVersion(),
+		}
+	}
+
+	if annotations, ok := genericapirequest.AuditAnnotationsFrom(req.Context()); ok {
+		for key, value := range annotations {
+			LogAnnotation(ev, key, value)
 		}
 	}
 
