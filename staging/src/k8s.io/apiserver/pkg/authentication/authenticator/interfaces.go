@@ -62,4 +62,9 @@ type Response struct {
 	Audiences Audiences
 	// User is the UserInfo associated with the authentication context.
 	User user.Info
+	// AuditAnnotations is an optional map that an authenticator can
+	// return to assert some information into the request's audit event.
+	// Keys should uniquely identify the informing authenticator to avoid
+	// name collisions and values should be short.
+	AuditAnnotations map[string]string
 }
