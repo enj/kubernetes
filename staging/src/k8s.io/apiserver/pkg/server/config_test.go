@@ -252,11 +252,10 @@ func checkExpectedPathsAtRoot(url string, expectedPaths []string, t *testing.T) 
 }
 
 func TestAuthenticationAuditAnnotationsDefaultChain(t *testing.T) {
-	annotations := map[string]string{"pandas": "are awesome"}
 	authn := authenticator.RequestFunc(func(req *http.Request) (*authenticator.Response, bool, error) {
 		return &authenticator.Response{
 			User:             &user.DefaultInfo{},
-			AuditAnnotations: annotations,
+			AuditAnnotations: map[string]string{"pandas": "are awesome"},
 		}, true, nil
 	})
 	backend := &testBackend{}
@@ -272,7 +271,24 @@ func TestAuthenticationAuditAnnotationsDefaultChain(t *testing.T) {
 		LongRunningFunc:       func(_ *http.Request, _ *request.RequestInfo) bool { return false },
 	}
 
-	h := DefaultBuildHandlerChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("done")) }), c)
+	h := DefaultBuildHandlerChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// confirm that handlers later in the chain cannot accidentally use these functions
+		testPanicChecker(t, func() { _, _ = request.AuditAnnotationsFrom(r.Context()) },
+			"invalid attempt to get audit annotations from context after WithAuditEvent has been called")
+		testPanicChecker(t, func() { _ = request.WithAuditAnnotations(r.Context(), nil) },
+			"invalid attempt to set audit annotations on context after WithAuditEvent has been called")
+
+		// confirm that we have an audit event
+		ae := request.AuditEventFrom(r.Context())
+		if ae == nil {
+			t.Error("unexpected nil audit event")
+		}
+
+		// confirm that the correct way of setting audit annotations later in the chain works as expected
+		audit.LogAnnotation(ae, "snorlax", "is cool too")
+
+		_, _ = w.Write([]byte("done"))
+	}), c)
 	w := &testResponseWriter{header: http.Header{}}
 
 	h.ServeHTTP(w, &http.Request{URL: &url.URL{}})
@@ -284,10 +300,27 @@ func TestAuthenticationAuditAnnotationsDefaultChain(t *testing.T) {
 		t.Error("expected audit events, got none")
 	}
 	for _, event := range backend.events {
-		if !reflect.DeepEqual(event.Annotations, annotations) {
-			t.Errorf("event has unexpected annotations: %#v", event)
+		if want := map[string]string{"pandas": "are awesome", "snorlax": "is cool too"}; !reflect.DeepEqual(event.Annotations, want) {
+			t.Errorf("event has unexpected annotations: %#v, want annotations %#v", event, want)
 		}
 	}
+}
+
+func testPanicChecker(t *testing.T, f func(), message string) {
+	defer func() {
+		r := recover()
+		switch rt := r.(type) {
+		case nil:
+			t.Errorf("expected panic with message %q but got none", message)
+		case string:
+			if rt != message {
+				t.Errorf("unexpected panic message %q, want %q", rt, message)
+			}
+		default:
+			t.Errorf("unexpected panic type %#v, want string message %q", rt, message)
+		}
+	}()
+	f()
 }
 
 type testBackend struct {

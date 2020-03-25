@@ -99,10 +99,16 @@ func AuditEventFrom(ctx context.Context) *audit.Event {
 }
 
 func WithAuditAnnotations(parent context.Context, annotations map[string]string) context.Context {
+	if ae := AuditEventFrom(parent); ae != nil {
+		panic("invalid attempt to set audit annotations on context after WithAuditEvent has been called")
+	}
 	return WithValue(parent, auditAnnotationsKey, annotations)
 }
 
 func AuditAnnotationsFrom(ctx context.Context) (map[string]string, bool) {
+	if ae := AuditEventFrom(ctx); ae != nil {
+		panic("invalid attempt to get audit annotations from context after WithAuditEvent has been called")
+	}
 	annotations, ok := ctx.Value(auditAnnotationsKey).(map[string]string)
 	return annotations, ok
 }
