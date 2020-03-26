@@ -67,7 +67,7 @@ func WithAuthentication(handler http.Handler, auth authenticator.Request, failed
 		req.Header.Del("Authorization")
 
 		req = req.WithContext(genericapirequest.WithUser(req.Context(), resp.User))
-		addAuditAnnotations(req, resp)
+		req = addAuditAnnotations(req, resp)
 		handler.ServeHTTP(w, req)
 	})
 }
@@ -94,17 +94,16 @@ func audiencesAreAcceptable(apiAuds, responseAudiences authenticator.Audiences) 
 	return len(apiAuds.Intersect(responseAudiences)) > 0
 }
 
-func addAuditAnnotations(req *http.Request, resp *authenticator.Response) {
-	annotations, ok := genericapirequest.AuditAnnotationsFrom(req.Context())
-	if !ok {
-		return
+func addAuditAnnotations(req *http.Request, resp *authenticator.Response) *http.Request {
+	if len(resp.AuditAnnotations) == 0 {
+		return req // avoid unnecessary wrapping
 	}
 
+	ctx := req.Context()
+
 	for key, value := range resp.AuditAnnotations {
-		if v, ok := annotations[key]; ok && v != value {
-			klog.Warningf("Authentication failed to set audit annotations[%q] to %q, it has already been set to %q", key, value, v)
-			continue
-		}
-		annotations[key] = value
+		ctx = genericapirequest.AddEarlyAuditAnnotation(ctx, key, value)
 	}
+
+	return req.WithContext(ctx)
 }

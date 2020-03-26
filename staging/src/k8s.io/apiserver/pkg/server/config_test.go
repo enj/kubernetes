@@ -255,7 +255,7 @@ func TestAuthenticationAuditAnnotationsDefaultChain(t *testing.T) {
 	authn := authenticator.RequestFunc(func(req *http.Request) (*authenticator.Response, bool, error) {
 		return &authenticator.Response{
 			User:             &user.DefaultInfo{},
-			AuditAnnotations: map[string]string{"pandas": "are awesome"},
+			AuditAnnotations: map[string]string{"pandas": "are awesome", "dogs": "are okay"},
 		}, true, nil
 	})
 	backend := &testBackend{}
@@ -273,10 +273,10 @@ func TestAuthenticationAuditAnnotationsDefaultChain(t *testing.T) {
 
 	h := DefaultBuildHandlerChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// confirm that handlers later in the chain cannot accidentally use these functions
-		testPanicChecker(t, func() { _, _ = request.AuditAnnotationsFrom(r.Context()) },
-			"invalid attempt to get audit annotations from context after WithAuditEvent has been called")
-		testPanicChecker(t, func() { _ = request.WithAuditAnnotations(r.Context(), nil) },
-			"invalid attempt to set audit annotations on context after WithAuditEvent has been called")
+		testPanicChecker(t, func() { _ = request.EarlyAuditAnnotationsFrom(r.Context()) },
+			"invalid attempt to get early audit annotations from context after WithAuditEvent has been called")
+		testPanicChecker(t, func() { _ = request.AddEarlyAuditAnnotation(r.Context(), "", "") },
+			"invalid attempt to set early audit annotation on context after WithAuditEvent has been called")
 
 		// confirm that we have an audit event
 		ae := request.AuditEventFrom(r.Context())
@@ -300,7 +300,7 @@ func TestAuthenticationAuditAnnotationsDefaultChain(t *testing.T) {
 		t.Error("expected audit events, got none")
 	}
 	for _, event := range backend.events {
-		if want := map[string]string{"pandas": "are awesome", "snorlax": "is cool too"}; !reflect.DeepEqual(event.Annotations, want) {
+		if want := map[string]string{"pandas": "are awesome", "dogs": "are okay", "snorlax": "is cool too"}; !reflect.DeepEqual(event.Annotations, want) {
 			t.Errorf("event has unexpected annotations: %#v, want annotations %#v", event, want)
 		}
 	}
