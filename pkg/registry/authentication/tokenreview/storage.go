@@ -25,6 +25,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apiserver/pkg/audit"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/registry/rest"
@@ -32,7 +33,10 @@ import (
 	"k8s.io/kubernetes/pkg/apis/authentication"
 )
 
-var badAuthenticatorAuds = apierrors.NewInternalError(errors.New("error validating audiences"))
+var (
+	badAuthenticatorAuds = apierrors.NewInternalError(errors.New("error validating audiences"))
+	auditEventKeyPrefix  = authentication.Resource("tokenreviews").String() + "/rest/"
+)
 
 type REST struct {
 	tokenAuthenticator authenticator.Request
@@ -101,7 +105,7 @@ func (r *REST) Create(ctx context.Context, obj runtime.Object, createValidation 
 		return nil, badAuthenticatorAuds
 	}
 
-	if resp != nil && resp.User != nil {
+	if ok && err == nil && resp != nil && resp.User != nil {
 		tokenReview.Status.User = authentication.UserInfo{
 			Username: resp.User.GetName(),
 			UID:      resp.User.GetUID(),
@@ -109,9 +113,15 @@ func (r *REST) Create(ctx context.Context, obj runtime.Object, createValidation 
 			Extra:    map[string]authentication.ExtraValue{},
 		}
 		for k, v := range resp.User.GetExtra() {
-			tokenReview.Status.User.Extra[k] = authentication.ExtraValue(v)
+			tokenReview.Status.User.Extra[k] = v
 		}
 		tokenReview.Status.Audiences = resp.Audiences
+
+		if ae := genericapirequest.AuditEventFrom(ctx); ae != nil {
+			for key, value := range resp.AuditAnnotations {
+				audit.LogAnnotation(ae, auditEventKeyPrefix+key, value)
+			}
+		}
 	}
 
 	return tokenReview, nil
