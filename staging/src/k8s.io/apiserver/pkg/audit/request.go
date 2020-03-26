@@ -89,8 +89,7 @@ func NewEventFromRequest(req *http.Request, level auditinternal.Level, attribs a
 		}
 	}
 
-	annotations, _ := genericapirequest.AuditAnnotationsFrom(req.Context())
-	for key, value := range annotations {
+	for key, value := range genericapirequest.EarlyAuditAnnotationsFrom(req.Context()) {
 		LogAnnotation(ev, key, value)
 	}
 

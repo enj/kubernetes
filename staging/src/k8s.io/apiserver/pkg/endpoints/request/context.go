@@ -22,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/apis/audit"
 	"k8s.io/apiserver/pkg/authentication/user"
+	"k8s.io/klog"
 )
 
 // The key type is unexported to prevent collisions
@@ -98,17 +99,48 @@ func AuditEventFrom(ctx context.Context) *audit.Event {
 	return ev
 }
 
-func WithAuditAnnotations(parent context.Context, annotations map[string]string) context.Context {
+func AddEarlyAuditAnnotation(parent context.Context, key, value string) context.Context {
 	if ae := AuditEventFrom(parent); ae != nil {
-		panic("invalid attempt to set audit annotations on context after WithAuditEvent has been called")
+		panic("invalid attempt to set early audit annotation on context after WithAuditEvent has been called")
 	}
+
+	annotations, ok := parent.Value(auditAnnotationsKey).(map[string]string)
+
+	if v, hasKey := annotations[key]; hasKey && v != value {
+		klog.Warningf("failed to set early audit annotation %q to %q, it has already been set to %q", key, value, v)
+		return parent
+	}
+
+	// allocate a new map if needed only after we confirm our intent to write the new key
+	if !ok {
+		annotations = map[string]string{}
+	}
+
+	annotations[key] = value
+
+	// avoid extra wrapping when we mutated a pre-existing map
+	if ok {
+		return parent
+	}
+
 	return WithValue(parent, auditAnnotationsKey, annotations)
 }
 
-func AuditAnnotationsFrom(ctx context.Context) (map[string]string, bool) {
+func EarlyAuditAnnotationsFrom(ctx context.Context) map[string]string {
 	if ae := AuditEventFrom(ctx); ae != nil {
-		panic("invalid attempt to get audit annotations from context after WithAuditEvent has been called")
+		panic("invalid attempt to get early audit annotations from context after WithAuditEvent has been called")
 	}
+
 	annotations, ok := ctx.Value(auditAnnotationsKey).(map[string]string)
-	return annotations, ok
+	if !ok {
+		return nil // return early to avoid allocations
+	}
+
+	// prevent mutation of stored map as that is only allowed via AddEarlyAuditAnnotation
+	annotationsCopy := make(map[string]string, len(annotations))
+	for k, v := range annotations {
+		annotationsCopy[k] = v
+	}
+
+	return annotationsCopy
 }

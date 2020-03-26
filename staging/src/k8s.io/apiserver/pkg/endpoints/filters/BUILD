@@ -45,7 +45,6 @@ go_library(
     name = "go_default_library",
     srcs = [
         "audit.go",
-        "audit_annotations.go",
         "authentication.go",
         "authn_audit.go",
         "authorization.go",
