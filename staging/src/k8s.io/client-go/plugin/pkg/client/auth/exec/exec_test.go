@@ -134,9 +134,9 @@ func TestCacheKey(t *testing.T) {
 		},
 		APIVersion: "client.authentication.k8s.io/v1alpha1",
 	}
-	key1 := cacheKey(c1)
-	key2 := cacheKey(c2)
-	key3 := cacheKey(c3)
+	key1 := cacheKey(c1, )
+	key2 := cacheKey(c2, )
+	key3 := cacheKey(c3, )
 	if key1 != key2 {
 		t.Error("key1 and key2 didn't match")
 	}
@@ -462,7 +462,7 @@ func TestRefreshCreds(t *testing.T) {
 				Value: test.output,
 			})
 
-			a, err := newAuthenticator(newCache(), &c)
+			a, err := newAuthenticator(newCache(), &c, )
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -538,7 +538,7 @@ func TestRoundTripper(t *testing.T) {
 		Command:    "./testdata/test-plugin.sh",
 		APIVersion: "client.authentication.k8s.io/v1alpha1",
 	}
-	a, err := newAuthenticator(newCache(), &c)
+	a, err := newAuthenticator(newCache(), &c, )
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -642,7 +642,7 @@ func TestTLSCredentials(t *testing.T) {
 	a, err := newAuthenticator(newCache(), &api.ExecConfig{
 		Command:    "./testdata/test-plugin.sh",
 		APIVersion: "client.authentication.k8s.io/v1alpha1",
-	})
+	}, )
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -732,7 +732,7 @@ func TestConcurrentUpdateTransportConfig(t *testing.T) {
 		Command:    "./testdata/test-plugin.sh",
 		APIVersion: "client.authentication.k8s.io/v1alpha1",
 	}
-	a, err := newAuthenticator(newCache(), &c)
+	a, err := newAuthenticator(newCache(), &c, )
 	if err != nil {
 		t.Fatal(err)
 	}

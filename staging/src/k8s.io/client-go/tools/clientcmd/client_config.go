@@ -171,7 +171,7 @@ func (config *DirectClientConfig) ClientConfig() (*restclient.Config, error) {
 			authInfoName, _ := config.getAuthInfoName()
 			persister = PersisterForUser(config.configAccess, authInfoName)
 		}
-		userAuthPartialConfig, err := config.getUserIdentificationPartialConfig(configAuthInfo, config.fallbackReader, persister)
+		userAuthPartialConfig, err := config.getUserIdentificationPartialConfig(configAuthInfo, config.fallbackReader, persister, configClusterInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -214,7 +214,7 @@ func getServerIdentificationPartialConfig(configAuthInfo clientcmdapi.AuthInfo, 
 // 2.  configAuthInfo.auth-path (this file can contain information that conflicts with #1, and we want #1 to win the priority)
 // 3.  if there is not enough information to identify the user, load try the ~/.kubernetes_auth file
 // 4.  if there is not enough information to identify the user, prompt if possible
-func (config *DirectClientConfig) getUserIdentificationPartialConfig(configAuthInfo clientcmdapi.AuthInfo, fallbackReader io.Reader, persistAuthConfig restclient.AuthProviderConfigPersister) (*restclient.Config, error) {
+func (config *DirectClientConfig) getUserIdentificationPartialConfig(configAuthInfo clientcmdapi.AuthInfo, fallbackReader io.Reader, persistAuthConfig restclient.AuthProviderConfigPersister, configClusterInfo clientcmdapi.Cluster) (*restclient.Config, error) {
 	mergedConfig := &restclient.Config{}
 
 	// blindly overwrite existing values based on precedence
@@ -252,6 +252,7 @@ func (config *DirectClientConfig) getUserIdentificationPartialConfig(configAuthI
 	}
 	if configAuthInfo.Exec != nil {
 		mergedConfig.ExecProvider = configAuthInfo.Exec
+		mergedConfig.ExecProviderCluster = configClusterInfo
 	}
 
 	// if there still isn't enough information to authenticate the user, try prompting

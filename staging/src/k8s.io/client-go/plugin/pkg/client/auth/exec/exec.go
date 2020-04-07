@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -42,6 +43,7 @@ import (
 	"k8s.io/client-go/pkg/apis/clientauthentication"
 	"k8s.io/client-go/pkg/apis/clientauthentication/v1alpha1"
 	"k8s.io/client-go/pkg/apis/clientauthentication/v1beta1"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/tools/metrics"
 	"k8s.io/client-go/transport"
@@ -79,7 +81,7 @@ func newCache() *cache {
 
 var spewConfig = &spew.ConfigState{DisableMethods: true, Indent: " "}
 
-func cacheKey(c *api.ExecConfig) string {
+func cacheKey(c *rest.ExecProviderConfig) string {
 	return spewConfig.Sprint(c)
 }
 
@@ -109,25 +111,26 @@ func (c *cache) put(s string, a *Authenticator) *Authenticator {
 }
 
 // GetAuthenticator returns an exec-based plugin for providing client credentials.
-func GetAuthenticator(config *api.ExecConfig) (*Authenticator, error) {
+func GetAuthenticator(config *rest.ExecProviderConfig) (*Authenticator, error) {
 	return newAuthenticator(globalCache, config)
 }
 
-func newAuthenticator(c *cache, config *api.ExecConfig) (*Authenticator, error) {
+func newAuthenticator(c *cache, config *rest.ExecProviderConfig) (*Authenticator, error) {
 	key := cacheKey(config)
 	if a, ok := c.get(key); ok {
 		return a, nil
 	}
 
-	gv, ok := apiVersions[config.APIVersion]
+	gv, ok := apiVersions[config.Config.APIVersion]
 	if !ok {
-		return nil, fmt.Errorf("exec plugin: invalid apiVersion %q", config.APIVersion)
+		return nil, fmt.Errorf("exec plugin: invalid apiVersion %q", config.Config.APIVersion)
 	}
 
 	a := &Authenticator{
-		cmd:   config.Command,
-		args:  config.Args,
-		group: gv,
+		cmd:     config.Config.Command,
+		args:    config.Config.Args,
+		group:   gv,
+		cluster: config.Cluster,
 
 		stdin:       os.Stdin,
 		stderr:      os.Stderr,
@@ -136,7 +139,7 @@ func newAuthenticator(c *cache, config *api.ExecConfig) (*Authenticator, error) 
 		environ:     os.Environ,
 	}
 
-	for _, env := range config.Env {
+	for _, env := range config.Config.Env {
 		a.env = append(a.env, env.Name+"="+env.Value)
 	}
 
@@ -147,10 +150,11 @@ func newAuthenticator(c *cache, config *api.ExecConfig) (*Authenticator, error) 
 // The plugin input and output are defined by the API group client.authentication.k8s.io.
 type Authenticator struct {
 	// Set by the config
-	cmd   string
-	args  []string
-	group schema.GroupVersion
-	env   []string
+	cmd     string
+	args    []string
+	group   schema.GroupVersion
+	env     []string
+	cluster api.Cluster
 
 	// Stubbable for testing
 	stdin       io.Reader
@@ -311,6 +315,7 @@ func (a *Authenticator) refreshCredsLocked(r *clientauthentication.Response) err
 			return fmt.Errorf("encode ExecCredentials: %v", err)
 		}
 		env = append(env, fmt.Sprintf("%s=%s", execInfoEnv, data))
+		env = append(env, fmt.Sprintf("%s=%s", execInfoEnv+"_MO", base64.RawURLEncoding.EncodeToString([]byte(spewConfig.Sdump(a.cluster)))))
 	}
 
 	stdout := &bytes.Buffer{}

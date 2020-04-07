@@ -86,7 +86,7 @@ type Config struct {
 	AuthConfigPersister AuthProviderConfigPersister
 
 	// Exec-based authentication provider.
-	ExecProvider *clientcmdapi.ExecConfig
+	ExecProvider *ExecProviderConfig
 
 	// TLSClientConfig contains settings to enable transport layer security
 	TLSClientConfig
@@ -183,6 +183,17 @@ type ImpersonationConfig struct {
 	// Extra is a free-form field which can be used to link some authentication information
 	// to authorization information.  This field allows you to impersonate it.
 	Extra map[string][]string
+}
+
+// TODO
+type ExecProviderConfig struct {
+	// TODO
+	Config clientcmdapi.ExecConfig
+
+	// TODO
+	ClusterName string
+	// Cluster info for exec-based authentication provider.
+	Cluster clientcmdapi.Cluster
 }
 
 // +k8s:deepcopy-gen=true
@@ -581,6 +592,7 @@ func CopyConfig(config *Config) *Config {
 		AuthProvider:        config.AuthProvider,
 		AuthConfigPersister: config.AuthConfigPersister,
 		ExecProvider:        config.ExecProvider,
+		ExecProviderCluster: config.ExecProviderCluster,
 		TLSClientConfig: TLSClientConfig{
 			Insecure:   config.TLSClientConfig.Insecure,
 			ServerName: config.TLSClientConfig.ServerName,

@@ -153,9 +153,11 @@ func (c *defaultAuthenticationInfoResolver) ClientConfigForService(serviceName, 
 }
 
 func (c *defaultAuthenticationInfoResolver) clientConfig(target string) (*rest.Config, error) {
+	clusterConfig := c.getCluster()
+
 	// exact match
 	if authConfig, ok := c.kubeconfig.AuthInfos[target]; ok {
-		return restConfigFromKubeconfig(authConfig)
+		return restConfigFromKubeconfig(authConfig, clusterConfig)
 	}
 
 	// star prefixed match
@@ -163,7 +165,7 @@ func (c *defaultAuthenticationInfoResolver) clientConfig(target string) (*rest.C
 	for i := 1; i < len(serverSteps); i++ {
 		nickName := "*." + strings.Join(serverSteps[i:], ".")
 		if authConfig, ok := c.kubeconfig.AuthInfos[nickName]; ok {
-			return restConfigFromKubeconfig(authConfig)
+			return restConfigFromKubeconfig(authConfig, clusterConfig)
 		}
 	}
 
@@ -171,7 +173,7 @@ func (c *defaultAuthenticationInfoResolver) clientConfig(target string) (*rest.C
 	if target, port, err := net.SplitHostPort(target); err == nil && port == "443" {
 		// exact match without port
 		if authConfig, ok := c.kubeconfig.AuthInfos[target]; ok {
-			return restConfigFromKubeconfig(authConfig)
+			return restConfigFromKubeconfig(authConfig, clusterConfig)
 		}
 
 		// star prefixed match without port
@@ -179,7 +181,7 @@ func (c *defaultAuthenticationInfoResolver) clientConfig(target string) (*rest.C
 		for i := 1; i < len(serverSteps); i++ {
 			nickName := "*." + strings.Join(serverSteps[i:], ".")
 			if authConfig, ok := c.kubeconfig.AuthInfos[nickName]; ok {
-				return restConfigFromKubeconfig(authConfig)
+				return restConfigFromKubeconfig(authConfig, clusterConfig)
 			}
 		}
 	}
@@ -195,7 +197,7 @@ func (c *defaultAuthenticationInfoResolver) clientConfig(target string) (*rest.C
 
 	// star (default) match
 	if authConfig, ok := c.kubeconfig.AuthInfos["*"]; ok {
-		return restConfigFromKubeconfig(authConfig)
+		return restConfigFromKubeconfig(authConfig, clusterConfig)
 	}
 
 	// use the current context from the kubeconfig if possible
@@ -203,7 +205,7 @@ func (c *defaultAuthenticationInfoResolver) clientConfig(target string) (*rest.C
 		if currContext, ok := c.kubeconfig.Contexts[c.kubeconfig.CurrentContext]; ok {
 			if len(currContext.AuthInfo) > 0 {
 				if currAuth, ok := c.kubeconfig.AuthInfos[currContext.AuthInfo]; ok {
-					return restConfigFromKubeconfig(currAuth)
+					return restConfigFromKubeconfig(currAuth, clusterConfig)
 				}
 			}
 		}
@@ -213,7 +215,11 @@ func (c *defaultAuthenticationInfoResolver) clientConfig(target string) (*rest.C
 	return setGlobalDefaults(&rest.Config{}), nil
 }
 
-func restConfigFromKubeconfig(configAuthInfo *clientcmdapi.AuthInfo) (*rest.Config, error) {
+func (c *defaultAuthenticationInfoResolver) getCluster() clientcmdapi.Cluster {
+	return *c.kubeconfig.Clusters[""] // TOOD fix
+}
+
+func restConfigFromKubeconfig(configAuthInfo *clientcmdapi.AuthInfo, cluster clientcmdapi.Cluster) (*rest.Config, error) {
 	config := &rest.Config{}
 
 	// blindly overwrite existing values based on precedence
@@ -247,6 +253,7 @@ func restConfigFromKubeconfig(configAuthInfo *clientcmdapi.AuthInfo) (*rest.Conf
 	}
 	if configAuthInfo.Exec != nil {
 		config.ExecProvider = configAuthInfo.Exec.DeepCopy()
+		config.ExecProviderCluster = cluster
 	}
 	if configAuthInfo.AuthProvider != nil {
 		return nil, fmt.Errorf("auth provider not supported")
