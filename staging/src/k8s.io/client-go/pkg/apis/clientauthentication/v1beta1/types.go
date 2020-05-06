@@ -18,17 +18,17 @@ package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// ExecCredentials is used by exec-based plugins to communicate credentials to
+// ExecCredential is used by exec-based plugins to communicate credentials to
 // HTTP transports.
 type ExecCredential struct {
 	metav1.TypeMeta `json:",inline"`
 
-	// Spec holds information passed to the plugin by the transport. This contains
-	// request and runtime specific information, such as if the session is interactive.
+	// Spec holds information passed to the plugin by the transport.
 	Spec ExecCredentialSpec `json:"spec,omitempty"`
 
 	// Status is filled in by the plugin and holds the credentials that the transport
@@ -37,9 +37,12 @@ type ExecCredential struct {
 	Status *ExecCredentialStatus `json:"status,omitempty"`
 }
 
-// ExecCredenitalSpec holds request and runtime specific information provided by
+// ExecCredentialSpec holds request and runtime specific information provided by
 // the transport.
-type ExecCredentialSpec struct{}
+type ExecCredentialSpec struct {
+	// Cluster contains information to allow an exec plugin to communicate with the kubernetes cluster being authenticated to.
+	Cluster Cluster `json:"cluster"`
+}
 
 // ExecCredentialStatus holds credentials for the transport to use.
 //
@@ -56,4 +59,23 @@ type ExecCredentialStatus struct {
 	ClientCertificateData string `json:"clientCertificateData,omitempty"`
 	// PEM-encoded private key for the above certificate.
 	ClientKeyData string `json:"clientKeyData,omitempty"`
+}
+
+// Cluster contains information to allow an exec plugin to communicate with the kubernetes cluster being authenticated to.
+type Cluster struct {
+	// Server is the address of the kubernetes cluster (https://hostname:port).
+	Server string `json:"server"`
+	// ServerName is passed to the server for SNI and is used in the client to check server
+	// certificates against. If ServerName is empty, the hostname used to contact the
+	// server is used.
+	// +optional
+	ServerName string `json:"serverName,omitempty"`
+	// CAData contains PEM-encoded certificate authority certificates.
+	// If empty, system roots should be used.
+	// +listType=atomic
+	// +optional
+	CAData []byte `json:"caData,omitempty"`
+	// Config holds additional config data that is specific to the exec plugin with regards to the cluster being authenticated to.
+	// +optional
+	Config runtime.RawExtension `json:"config,omitempty"`
 }

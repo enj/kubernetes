@@ -246,7 +246,8 @@ func restConfigFromKubeconfig(configAuthInfo *clientcmdapi.AuthInfo) (*rest.Conf
 		config.Password = configAuthInfo.Password
 	}
 	if configAuthInfo.Exec != nil {
-		config.ExecProvider = configAuthInfo.Exec.DeepCopy()
+		config.Exec.ExecProvider = configAuthInfo.Exec.DeepCopy()
+		config.Exec.Config = nil // TODO fix
 	}
 	if configAuthInfo.AuthProvider != nil {
 		return nil, fmt.Errorf("auth provider not supported")

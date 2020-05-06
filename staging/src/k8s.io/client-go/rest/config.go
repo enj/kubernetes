@@ -86,7 +86,7 @@ type Config struct {
 	AuthConfigPersister AuthProviderConfigPersister
 
 	// Exec-based authentication provider.
-	ExecProvider *clientcmdapi.ExecConfig
+	Exec Exec
 
 	// TLSClientConfig contains settings to enable transport layer security
 	TLSClientConfig
@@ -147,6 +147,15 @@ func (sanitizedAuthConfigPersister) String() string {
 	return "rest.AuthProviderConfigPersister(--- REDACTED ---)"
 }
 
+type sanitizedObject struct{ runtime.Object }
+
+func (sanitizedObject) GoString() string {
+	return "runtime.Object(--- REDACTED ---)"
+}
+func (sanitizedObject) String() string {
+	return "runtime.Object(--- REDACTED ---)"
+}
+
 // GoString implements fmt.GoStringer and sanitizes sensitive fields of Config
 // to prevent accidental leaking via logs.
 func (c *Config) GoString() string {
@@ -170,8 +179,19 @@ func (c *Config) String() string {
 	if cc.AuthConfigPersister != nil {
 		cc.AuthConfigPersister = sanitizedAuthConfigPersister{cc.AuthConfigPersister}
 	}
-
+	if cc.Exec.Config != nil {
+		cc.Exec.Config = sanitizedObject{Object: cc.Exec.Config}
+	}
 	return fmt.Sprintf("%#v", cc)
+}
+
+// Exec plugin authentication provider.
+type Exec struct {
+	// ExecProvider provides the config needed to execute the exec plugin.
+	ExecProvider *clientcmdapi.ExecConfig
+
+	// Config holds additional config data that is specific to the exec plugin with regards to the cluster being authenticated to.
+	Config runtime.Object
 }
 
 // ImpersonationConfig has all the available impersonation options
@@ -580,7 +600,10 @@ func CopyConfig(config *Config) *Config {
 		},
 		AuthProvider:        config.AuthProvider,
 		AuthConfigPersister: config.AuthConfigPersister,
-		ExecProvider:        config.ExecProvider,
+		Exec: Exec{
+			ExecProvider: config.Exec.ExecProvider,
+			Config:       config.Exec.Config,
+		},
 		TLSClientConfig: TLSClientConfig{
 			Insecure:   config.TLSClientConfig.Insecure,
 			ServerName: config.TLSClientConfig.ServerName,
