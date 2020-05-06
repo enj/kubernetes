@@ -81,8 +81,8 @@ func RegisterConversions(s *runtime.Scheme) error {
 
 func autoConvert_v1beta1_Cluster_To_clientauthentication_Cluster(in *Cluster, out *clientauthentication.Cluster, s conversion.Scope) error {
 	out.Server = in.Server
-	out.TLSServerName = in.TLSServerName
-	out.CertificateAuthorityData = *(*[]byte)(unsafe.Pointer(&in.CertificateAuthorityData))
+	out.ServerName = in.ServerName
+	out.CAData = *(*[]byte)(unsafe.Pointer(&in.CAData))
 	if err := runtime.Convert_runtime_RawExtension_To_runtime_Object(&in.Config, &out.Config, s); err != nil {
 		return err
 	}
@@ -96,8 +96,8 @@ func Convert_v1beta1_Cluster_To_clientauthentication_Cluster(in *Cluster, out *c
 
 func autoConvert_clientauthentication_Cluster_To_v1beta1_Cluster(in *clientauthentication.Cluster, out *Cluster, s conversion.Scope) error {
 	out.Server = in.Server
-	out.TLSServerName = in.TLSServerName
-	out.CertificateAuthorityData = *(*[]byte)(unsafe.Pointer(&in.CertificateAuthorityData))
+	out.ServerName = in.ServerName
+	out.CAData = *(*[]byte)(unsafe.Pointer(&in.CAData))
 	if err := runtime.Convert_runtime_Object_To_runtime_RawExtension(&in.Config, &out.Config, s); err != nil {
 		return err
 	}
