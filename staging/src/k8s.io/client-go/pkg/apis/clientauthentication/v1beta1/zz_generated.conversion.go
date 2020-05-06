@@ -61,11 +61,6 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
-	if err := s.AddGeneratedConversionFunc((*clientauthentication.ExecCredentialSpec)(nil), (*ExecCredentialSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_clientauthentication_ExecCredentialSpec_To_v1beta1_ExecCredentialSpec(a.(*clientauthentication.ExecCredentialSpec), b.(*ExecCredentialSpec), scope)
-	}); err != nil {
-		return err
-	}
 	if err := s.AddGeneratedConversionFunc((*ExecCredentialStatus)(nil), (*clientauthentication.ExecCredentialStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1beta1_ExecCredentialStatus_To_clientauthentication_ExecCredentialStatus(a.(*ExecCredentialStatus), b.(*clientauthentication.ExecCredentialStatus), scope)
 	}); err != nil {
@@ -73,6 +68,11 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}
 	if err := s.AddGeneratedConversionFunc((*clientauthentication.ExecCredentialStatus)(nil), (*ExecCredentialStatus)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_clientauthentication_ExecCredentialStatus_To_v1beta1_ExecCredentialStatus(a.(*clientauthentication.ExecCredentialStatus), b.(*ExecCredentialStatus), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*clientauthentication.ExecCredentialSpec)(nil), (*ExecCredentialSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_clientauthentication_ExecCredentialSpec_To_v1beta1_ExecCredentialSpec(a.(*clientauthentication.ExecCredentialSpec), b.(*ExecCredentialSpec), scope)
 	}); err != nil {
 		return err
 	}
