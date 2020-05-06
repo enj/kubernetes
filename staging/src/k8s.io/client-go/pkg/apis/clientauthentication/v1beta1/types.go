@@ -23,13 +23,12 @@ import (
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// ExecCredentials is used by exec-based plugins to communicate credentials to
+// ExecCredential is used by exec-based plugins to communicate credentials to
 // HTTP transports.
 type ExecCredential struct {
 	metav1.TypeMeta `json:",inline"`
 
-	// Spec holds information passed to the plugin by the transport. This contains
-	// request and runtime specific information, such as if the session is interactive.
+	// Spec holds information passed to the plugin by the transport.
 	Spec ExecCredentialSpec `json:"spec,omitempty"`
 
 	// Status is filled in by the plugin and holds the credentials that the transport
@@ -38,7 +37,7 @@ type ExecCredential struct {
 	Status *ExecCredentialStatus `json:"status,omitempty"`
 }
 
-// ExecCredenitalSpec holds request and runtime specific information provided by
+// ExecCredentialSpec holds request and runtime specific information provided by
 // the transport.
 type ExecCredentialSpec struct {
 	// Cluster contains information to allow an exec plugin to communicate with the kubernetes cluster being authenticated to.
@@ -66,13 +65,15 @@ type ExecCredentialStatus struct {
 type Cluster struct {
 	// Server is the address of the kubernetes cluster (https://hostname:port).
 	Server string `json:"server"`
-	// TLSServerName is used to check server certificate. If TLSServerName is empty, the hostname used to contact the server is used.
+	// ServerName is passed to the server for SNI and is used in the client to check server
+	// certificates against. If ServerName is empty, the hostname used to contact the
+	// server is used.
 	// +optional
-	TLSServerName string `json:"tls-server-name,omitempty"`
-	// CertificateAuthorityData contains PEM-encoded certificate authority certificates.
-	// If empty, system roots are used.
+	ServerName string `json:"serverName,omitempty"`
+	// CAData contains PEM-encoded certificate authority certificates.
+	// If empty, system roots should be used.
 	// +optional
-	CertificateAuthorityData []byte `json:"certificate-authority-data,omitempty"`
+	CAData []byte `json:"caData,omitempty"`
 	// Config holds additional config data that is specific to the exec plugin with regards to the cluster being authenticated to.
 	// +optional
 	Config runtime.RawExtension `json:"config,omitempty"`

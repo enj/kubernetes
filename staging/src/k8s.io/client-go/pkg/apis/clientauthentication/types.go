@@ -84,13 +84,15 @@ type Response struct {
 type Cluster struct {
 	// Server is the address of the kubernetes cluster (https://hostname:port).
 	Server string
-	// TLSServerName is used to check server certificate. If TLSServerName is empty, the hostname used to contact the server is used.
+	// ServerName is passed to the server for SNI and is used in the client to check server
+	// certificates against. If ServerName is empty, the hostname used to contact the
+	// server is used.
 	// +optional
-	TLSServerName string
-	// CertificateAuthorityData contains PEM-encoded certificate authority certificates.
-	// If empty, system roots are used.
+	ServerName string
+	// CAData contains PEM-encoded certificate authority certificates.
+	// If empty, system roots should be used.
 	// +optional
-	CertificateAuthorityData []byte
+	CAData []byte
 	// Config holds additional config data that is specific to the exec plugin with regards to the cluster being authenticated to.
 	// +optional
 	Config runtime.Object

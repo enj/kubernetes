@@ -100,10 +100,10 @@ func (c *Config) TransportConfig() (*transport.Config, error) {
 			return nil, fmt.Errorf("failed to load CA bundle for execProvider: %v", err)
 		}
 		cluster := clientauthentication.Cluster{
-			Server:                   c.Host,
-			TLSServerName:            c.TLSClientConfig.ServerName,
-			CertificateAuthorityData: caData,
-			Config:                   c.Exec.Config,
+			Server:     c.Host,
+			ServerName: c.TLSClientConfig.ServerName,
+			CAData:     caData,
+			Config:     c.Exec.Config,
 		}
 		provider, err := exec.GetAuthenticator(c.Exec.ExecProvider, cluster)
 		if err != nil {
