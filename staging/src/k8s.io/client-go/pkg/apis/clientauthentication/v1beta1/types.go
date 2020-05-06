@@ -18,6 +18,7 @@ package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
@@ -39,7 +40,10 @@ type ExecCredential struct {
 
 // ExecCredenitalSpec holds request and runtime specific information provided by
 // the transport.
-type ExecCredentialSpec struct{}
+type ExecCredentialSpec struct {
+	// Cluster contains information to allow an exec plugin to communicate with the kubernetes cluster being authenticated to.
+	Cluster Cluster `json:"cluster"`
+}
 
 // ExecCredentialStatus holds credentials for the transport to use.
 //
@@ -56,4 +60,20 @@ type ExecCredentialStatus struct {
 	ClientCertificateData string `json:"clientCertificateData,omitempty"`
 	// PEM-encoded private key for the above certificate.
 	ClientKeyData string `json:"clientKeyData,omitempty"`
+}
+
+// Cluster contains information to allow an exec plugin to communicate with the kubernetes cluster being authenticated to.
+type Cluster struct {
+	// Server is the address of the kubernetes cluster (https://hostname:port).
+	Server string `json:"server"`
+	// TLSServerName is used to check server certificate. If TLSServerName is empty, the hostname used to contact the server is used.
+	// +optional
+	TLSServerName string `json:"tls-server-name,omitempty"`
+	// CertificateAuthorityData contains PEM-encoded certificate authority certificates.
+	// If empty, system roots are used.
+	// +optional
+	CertificateAuthorityData []byte `json:"certificate-authority-data,omitempty"`
+	// Config holds additional config data that is specific to the exec plugin with regards to the cluster being authenticated to.
+	// +optional
+	Config runtime.RawExtension `json:"config,omitempty"`
 }

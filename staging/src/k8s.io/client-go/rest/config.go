@@ -86,7 +86,7 @@ type Config struct {
 	AuthConfigPersister AuthProviderConfigPersister
 
 	// Exec-based authentication provider.
-	ExecProvider *clientcmdapi.ExecConfig
+	Exec Exec
 
 	// TLSClientConfig contains settings to enable transport layer security
 	TLSClientConfig
@@ -171,7 +171,16 @@ func (c *Config) String() string {
 		cc.AuthConfigPersister = sanitizedAuthConfigPersister{cc.AuthConfigPersister}
 	}
 
+	// TODO add AuthProvider and Exec fields?
+
 	return fmt.Sprintf("%#v", cc)
+}
+
+// TODO comments
+type Exec struct {
+	ExecProvider *clientcmdapi.ExecConfig
+
+	Config runtime.Object
 }
 
 // ImpersonationConfig has all the available impersonation options
@@ -580,7 +589,10 @@ func CopyConfig(config *Config) *Config {
 		},
 		AuthProvider:        config.AuthProvider,
 		AuthConfigPersister: config.AuthConfigPersister,
-		ExecProvider:        config.ExecProvider,
+		Exec: Exec{
+			ExecProvider: config.Exec.ExecProvider,
+			Config:       config.Exec.Config,
+		},
 		TLSClientConfig: TLSClientConfig{
 			Insecure:   config.TLSClientConfig.Insecure,
 			ServerName: config.TLSClientConfig.ServerName,
