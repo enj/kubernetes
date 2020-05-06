@@ -72,6 +72,7 @@ type Cluster struct {
 	ServerName string `json:"serverName,omitempty"`
 	// CAData contains PEM-encoded certificate authority certificates.
 	// If empty, system roots should be used.
+	// +listType=atomic
 	// +optional
 	CAData []byte `json:"caData,omitempty"`
 	// Config holds additional config data that is specific to the exec plugin with regards to the cluster being authenticated to.
