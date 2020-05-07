@@ -210,5 +210,5 @@ func TestAuthenticationDetection(t *testing.T) {
 			}
 		})
 	}
-
+	// TODO add test
 }

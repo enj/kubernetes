@@ -27,7 +27,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
-	egressselector "k8s.io/apiserver/pkg/server/egressselector"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apiserver/pkg/server/egressselector"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -155,7 +156,7 @@ func (c *defaultAuthenticationInfoResolver) ClientConfigForService(serviceName, 
 func (c *defaultAuthenticationInfoResolver) clientConfig(target string) (*rest.Config, error) {
 	// exact match
 	if authConfig, ok := c.kubeconfig.AuthInfos[target]; ok {
-		return restConfigFromKubeconfig(authConfig)
+		return restConfigFromKubeconfig(authConfig, c.clusterInfoFromAuth(target))
 	}
 
 	// star prefixed match
@@ -163,7 +164,7 @@ func (c *defaultAuthenticationInfoResolver) clientConfig(target string) (*rest.C
 	for i := 1; i < len(serverSteps); i++ {
 		nickName := "*." + strings.Join(serverSteps[i:], ".")
 		if authConfig, ok := c.kubeconfig.AuthInfos[nickName]; ok {
-			return restConfigFromKubeconfig(authConfig)
+			return restConfigFromKubeconfig(authConfig, c.clusterInfoFromAuth(nickName))
 		}
 	}
 
@@ -171,7 +172,7 @@ func (c *defaultAuthenticationInfoResolver) clientConfig(target string) (*rest.C
 	if target, port, err := net.SplitHostPort(target); err == nil && port == "443" {
 		// exact match without port
 		if authConfig, ok := c.kubeconfig.AuthInfos[target]; ok {
-			return restConfigFromKubeconfig(authConfig)
+			return restConfigFromKubeconfig(authConfig, c.clusterInfoFromAuth(target))
 		}
 
 		// star prefixed match without port
@@ -179,7 +180,7 @@ func (c *defaultAuthenticationInfoResolver) clientConfig(target string) (*rest.C
 		for i := 1; i < len(serverSteps); i++ {
 			nickName := "*." + strings.Join(serverSteps[i:], ".")
 			if authConfig, ok := c.kubeconfig.AuthInfos[nickName]; ok {
-				return restConfigFromKubeconfig(authConfig)
+				return restConfigFromKubeconfig(authConfig, c.clusterInfoFromAuth(nickName))
 			}
 		}
 	}
@@ -195,7 +196,7 @@ func (c *defaultAuthenticationInfoResolver) clientConfig(target string) (*rest.C
 
 	// star (default) match
 	if authConfig, ok := c.kubeconfig.AuthInfos["*"]; ok {
-		return restConfigFromKubeconfig(authConfig)
+		return restConfigFromKubeconfig(authConfig, c.clusterInfoFromAuth("*"))
 	}
 
 	// use the current context from the kubeconfig if possible
@@ -203,7 +204,7 @@ func (c *defaultAuthenticationInfoResolver) clientConfig(target string) (*rest.C
 		if currContext, ok := c.kubeconfig.Contexts[c.kubeconfig.CurrentContext]; ok {
 			if len(currContext.AuthInfo) > 0 {
 				if currAuth, ok := c.kubeconfig.AuthInfos[currContext.AuthInfo]; ok {
-					return restConfigFromKubeconfig(currAuth)
+					return restConfigFromKubeconfig(currAuth, c.clusterInfoFromAuth(currContext.AuthInfo))
 				}
 			}
 		}
@@ -213,7 +214,43 @@ func (c *defaultAuthenticationInfoResolver) clientConfig(target string) (*rest.C
 	return setGlobalDefaults(&rest.Config{}), nil
 }
 
-func restConfigFromKubeconfig(configAuthInfo *clientcmdapi.AuthInfo) (*rest.Config, error) {
+func (c *defaultAuthenticationInfoResolver) clusterInfoFromAuth(authInfoName string) *clientcmdapi.Cluster {
+	// if we only have one, just use it
+	if len(c.kubeconfig.Clusters) == 1 {
+		for _, cluster := range c.kubeconfig.Clusters {
+			return cluster
+		}
+	}
+
+	// use the current context if possible
+	if len(c.kubeconfig.CurrentContext) > 0 {
+		if currContext, ok := c.kubeconfig.Contexts[c.kubeconfig.CurrentContext]; ok {
+			if len(currContext.Cluster) > 0 && currContext.AuthInfo == authInfoName {
+				if currCluster, ok := c.kubeconfig.Clusters[currContext.Cluster]; ok {
+					return currCluster
+				}
+			}
+		}
+	}
+
+	// use first matching cluster
+	for _, contextName := range sets.StringKeySet(c.kubeconfig.Contexts).List() {
+		context := c.kubeconfig.Contexts[contextName]
+		if context.AuthInfo != authInfoName {
+			continue
+		}
+		cluster, ok := c.kubeconfig.Clusters[context.Cluster]
+		if !ok {
+			continue
+		}
+		return cluster
+	}
+
+	// prevent nil panic
+	return &clientcmdapi.Cluster{}
+}
+
+func restConfigFromKubeconfig(configAuthInfo *clientcmdapi.AuthInfo, configClusterInfo *clientcmdapi.Cluster) (*rest.Config, error) {
 	config := &rest.Config{}
 
 	// blindly overwrite existing values based on precedence
@@ -247,7 +284,7 @@ func restConfigFromKubeconfig(configAuthInfo *clientcmdapi.AuthInfo) (*rest.Conf
 	}
 	if configAuthInfo.Exec != nil {
 		config.Exec.ExecProvider = configAuthInfo.Exec.DeepCopy()
-		config.Exec.Config = nil // TODO fix
+		config.Exec.Config = configClusterInfo.Extensions["exec"]
 	}
 	if configAuthInfo.AuthProvider != nil {
 		return nil, fmt.Errorf("auth provider not supported")
