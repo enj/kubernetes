@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/client-go/rest"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -193,6 +194,123 @@ func TestAuthenticationDetection(t *testing.T) {
 			},
 			expected: rest.Config{BearerToken: "fallback"},
 		},
+		{
+			name:       "only one cluster",
+			serverName: "foo.com",
+			kubeconfig: clientcmdapi.Config{
+				AuthInfos: map[string]*clientcmdapi.AuthInfo{
+					"foo.com": {Exec: &clientcmdapi.ExecConfig{Command: "foo-command"}},
+				},
+				Clusters: map[string]*clientcmdapi.Cluster{
+					"ignored": {
+						Extensions: map[string]runtime.Object{
+							"exec": &runtime.Unknown{
+								Raw: []byte("snorlax"),
+							},
+						},
+					},
+				},
+			},
+			expected: rest.Config{Exec: rest.Exec{
+				ExecProvider: &clientcmdapi.ExecConfig{Command: "foo-command"},
+				Config:       &runtime.Unknown{Raw: []byte("snorlax")},
+			}},
+		},
+		{
+			name:       "current context",
+			serverName: "bar.com",
+			kubeconfig: clientcmdapi.Config{
+				CurrentContext: "context2",
+				Contexts: map[string]*clientcmdapi.Context{
+					"context1": {
+						Cluster:  "cluster1",
+						AuthInfo: "bar.com",
+					},
+					"context2": {
+						Cluster:  "cluster2",
+						AuthInfo: "bar.com",
+					},
+				},
+				AuthInfos: map[string]*clientcmdapi.AuthInfo{
+					"foo.com": {Exec: &clientcmdapi.ExecConfig{Command: "foo-command"}},
+					"bar.com": {Exec: &clientcmdapi.ExecConfig{Command: "bar-command"}},
+					"baz.com": {Exec: &clientcmdapi.ExecConfig{Command: "baz-command"}},
+				},
+				Clusters: map[string]*clientcmdapi.Cluster{
+					"cluster1": {
+						Extensions: map[string]runtime.Object{
+							"exec": &runtime.Unknown{
+								Raw: []byte("snorlax"),
+							},
+						},
+					},
+					"cluster2": {
+						Extensions: map[string]runtime.Object{
+							"exec": &runtime.Unknown{
+								Raw: []byte("panda"),
+							},
+						},
+					},
+				},
+			},
+			expected: rest.Config{Exec: rest.Exec{
+				ExecProvider: &clientcmdapi.ExecConfig{Command: "bar-command"},
+				Config:       &runtime.Unknown{Raw: []byte("panda")},
+			}},
+		},
+		{
+			name:       "first match",
+			serverName: "baz.com",
+			kubeconfig: clientcmdapi.Config{
+				CurrentContext: "context2",
+				Contexts: map[string]*clientcmdapi.Context{
+					"context0": {
+						Cluster:  "cluster1",
+						AuthInfo: "bar.com",
+					},
+					"context1": {
+						Cluster:  "cluster3",
+						AuthInfo: "baz.com",
+					},
+					"context2": {
+						Cluster:  "cluster2",
+						AuthInfo: "bar.com",
+					},
+				},
+				AuthInfos: map[string]*clientcmdapi.AuthInfo{
+					"foo.com": {Exec: &clientcmdapi.ExecConfig{Command: "foo-command"}},
+					"bar.com": {Exec: &clientcmdapi.ExecConfig{Command: "bar-command"}},
+					"baz.com": {Exec: &clientcmdapi.ExecConfig{Command: "baz-command"}},
+				},
+				Clusters: map[string]*clientcmdapi.Cluster{
+					"cluster1": {
+						Extensions: map[string]runtime.Object{
+							"exec": &runtime.Unknown{
+								Raw: []byte("snorlax"),
+							},
+						},
+					},
+					"cluster2": {
+						Extensions: map[string]runtime.Object{
+							"exec": &runtime.Unknown{
+								Raw: []byte("panda"),
+							},
+						},
+					},
+					"cluster3": {
+						Extensions: map[string]runtime.Object{
+							"exec": &runtime.Unknown{
+								Raw: []byte("trees"),
+							},
+						},
+					},
+				},
+			},
+			expected: rest.Config{Exec: rest.Exec{
+				ExecProvider: &clientcmdapi.ExecConfig{Command: "baz-command"},
+				Config:       &runtime.Unknown{Raw: []byte("trees")},
+			}},
+		},
 	}
 
 	for _, tc := range tests {
@@ -210,5 +328,4 @@ func TestAuthenticationDetection(t *testing.T) {
 			}
 		})
 	}
-	// TODO add test
 }
