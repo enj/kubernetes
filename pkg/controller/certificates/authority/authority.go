@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"math/big"
 	"time"
+
+	capi "k8s.io/api/certificates/v1"
 )
 
 var serialNumberLimit = new(big.Int).Lsh(big.NewInt(1), 128)
@@ -37,23 +39,11 @@ type CertificateAuthority struct {
 
 	Certificate *x509.Certificate
 	PrivateKey  crypto.Signer
-	Backdate    time.Duration
-	Now         func() time.Time
 }
 
 // Sign signs a certificate request, applying a SigningPolicy and returns a DER
 // encoded x509 certificate.
-func (ca *CertificateAuthority) Sign(crDER []byte, policy SigningPolicy) ([]byte, error) {
-	now := time.Now()
-	if ca.Now != nil {
-		now = ca.Now()
-	}
-
-	nbf := now.Add(-ca.Backdate)
-	if !nbf.Before(ca.Certificate.NotAfter) {
-		return nil, fmt.Errorf("the signer has expired: NotAfter=%v", ca.Certificate.NotAfter)
-	}
-
+func (ca *CertificateAuthority) Sign(crDER []byte, policy SigningPolicy, usages []capi.KeyUsage) ([]byte, error) {
 	cr, err := x509.ParseCertificateRequest(crDER)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse certificate request: %v", err)
@@ -78,16 +68,19 @@ func (ca *CertificateAuthority) Sign(crDER []byte, policy SigningPolicy) ([]byte
 		PublicKey:          cr.PublicKey,
 		Extensions:         cr.Extensions,
 		ExtraExtensions:    cr.ExtraExtensions,
-		NotBefore:          nbf,
 	}
-	if err := policy.apply(tmpl); err != nil {
+	if err := policy.apply(tmpl, usages); err != nil {
 		return nil, err
+	}
+
+	if !tmpl.NotBefore.Before(ca.Certificate.NotAfter) {
+		return nil, fmt.Errorf("the signer has expired: NotAfter=%v", ca.Certificate.NotAfter)
 	}
 
 	if !tmpl.NotAfter.Before(ca.Certificate.NotAfter) {
 		tmpl.NotAfter = ca.Certificate.NotAfter
 	}
-	if !now.Before(ca.Certificate.NotAfter) {
+	if !time.Now().Before(ca.Certificate.NotAfter) {
 		return nil, fmt.Errorf("refusing to sign a certificate that expired in the past")
 	}
 
