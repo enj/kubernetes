@@ -18,6 +18,7 @@ go_test(
     deps = [
         "//pkg/apis/certificates/v1:go_default_library",
         "//pkg/controller/certificates:go_default_library",
+        "//pkg/controller/certificates/authority:go_default_library",
         "//staging/src/k8s.io/api/certificates/v1:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/util/clock:go_default_library",
         "//staging/src/k8s.io/apimachinery/pkg/util/diff:go_default_library",
