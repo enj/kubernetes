@@ -31,34 +31,45 @@ import (
 type SigningPolicy interface {
 	// not-exporting apply forces signing policy implementations to be internal
 	// to this package.
-	apply(template *x509.Certificate) error
+	apply(template *x509.Certificate, usages []capi.KeyUsage) error
 }
 
 // PermissiveSigningPolicy is the signing policy historically used by the local
 // signer.
 //
 //  * It forwards all SANs from the original signing request.
-//  * It sets allowed usages as configured in the policy.
+//  * It sets allowed usages as configured in the policy and based on the requested usages.
+//  * It sets NotBefore based on the Backdate configured in the policy.
 //  * It sets NotAfter based on the TTL configured in the policy.
 //  * It zeros all extensions.
 //  * It sets BasicConstraints to true.
 //  * It sets IsCA to false.
 type PermissiveSigningPolicy struct {
-	// TTL is the certificate TTL. It's used to calculate the NotAfter value of
+	// TTL is the certificate TTL. Now and TTL are used to calculate the NotAfter value of
 	// the certificate.
 	TTL time.Duration
-	// Usages are the allowed usages of a certificate.
-	Usages []capi.KeyUsage
+
+	// Backdate and Now are used to calculate the NotBefore value of the certificate.
+	Backdate time.Duration
+
+	// Now defaults to time.Now but can be stubbed for testing
+	Now func() time.Time
 }
 
-func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate) error {
-	usage, extUsages, err := keyUsagesFromStrings(p.Usages)
+func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, usages []capi.KeyUsage) error {
+	now := time.Now()
+	if p.Now != nil {
+		now = p.Now()
+	}
+
+	usage, extUsages, err := keyUsagesFromStrings(usages)
 	if err != nil {
 		return err
 	}
 	tmpl.KeyUsage = usage
 	tmpl.ExtKeyUsage = extUsages
-	tmpl.NotAfter = tmpl.NotBefore.Add(p.TTL)
+	tmpl.NotBefore = now.Add(-p.Backdate)
+	tmpl.NotAfter = now.Add(p.TTL)
 
 	tmpl.ExtraExtensions = nil
 	tmpl.Extensions = nil

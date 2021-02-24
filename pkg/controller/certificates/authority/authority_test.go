@@ -68,15 +68,16 @@ func TestCertificateAuthority(t *testing.T) {
 	tests := []struct {
 		name     string
 		cr       x509.CertificateRequest
-		backdate time.Duration
 		policy   SigningPolicy
+		usages   []capi.KeyUsage
+		mutateCA func(ca *CertificateAuthority)
 
 		want    x509.Certificate
-		wantErr bool
+		wantErr string
 	}{
 		{
 			name:   "ca info",
-			policy: PermissiveSigningPolicy{TTL: time.Hour},
+			policy: PermissiveSigningPolicy{TTL: time.Hour, Now: func() time.Time { return now }},
 			want: x509.Certificate{
 				Issuer:                caCert.Subject,
 				AuthorityKeyId:        caCert.SubjectKeyId,
@@ -87,7 +88,8 @@ func TestCertificateAuthority(t *testing.T) {
 		},
 		{
 			name:   "key usage",
-			policy: PermissiveSigningPolicy{TTL: time.Hour, Usages: []capi.KeyUsage{"signing"}},
+			policy: PermissiveSigningPolicy{TTL: time.Hour, Now: func() time.Time { return now }},
+			usages: []capi.KeyUsage{"signing"},
 			want: x509.Certificate{
 				NotBefore:             now,
 				NotAfter:              now.Add(1 * time.Hour),
@@ -97,7 +99,8 @@ func TestCertificateAuthority(t *testing.T) {
 		},
 		{
 			name:   "ext key usage",
-			policy: PermissiveSigningPolicy{TTL: time.Hour, Usages: []capi.KeyUsage{"client auth"}},
+			policy: PermissiveSigningPolicy{TTL: time.Hour, Now: func() time.Time { return now }},
+			usages: []capi.KeyUsage{"client auth"},
 			want: x509.Certificate{
 				NotBefore:             now,
 				NotAfter:              now.Add(1 * time.Hour),
@@ -106,18 +109,26 @@ func TestCertificateAuthority(t *testing.T) {
 			},
 		},
 		{
-			name:     "backdate",
-			policy:   PermissiveSigningPolicy{TTL: time.Hour},
-			backdate: 5 * time.Minute,
+			name:   "backdate",
+			policy: PermissiveSigningPolicy{TTL: time.Hour, Backdate: 5 * time.Minute, Now: func() time.Time { return now }},
 			want: x509.Certificate{
 				NotBefore:             now.Add(-5 * time.Minute),
-				NotAfter:              now.Add(55 * time.Minute),
+				NotAfter:              now.Add(1 * time.Hour),
+				BasicConstraintsValid: true,
+			},
+		},
+		{
+			name:   "backdate super short ttl",
+			policy: PermissiveSigningPolicy{TTL: time.Minute, Backdate: 5 * time.Minute, Now: func() time.Time { return now }},
+			want: x509.Certificate{
+				NotBefore:             now.Add(-5 * time.Minute),
+				NotAfter:              now.Add(1 * time.Minute),
 				BasicConstraintsValid: true,
 			},
 		},
 		{
 			name:   "truncate expiration",
-			policy: PermissiveSigningPolicy{TTL: 48 * time.Hour},
+			policy: PermissiveSigningPolicy{TTL: 48 * time.Hour, Now: func() time.Time { return now }},
 			want: x509.Certificate{
 				NotBefore:             now,
 				NotAfter:              now.Add(24 * time.Hour),
@@ -126,7 +137,7 @@ func TestCertificateAuthority(t *testing.T) {
 		},
 		{
 			name:   "uri sans",
-			policy: PermissiveSigningPolicy{TTL: time.Hour},
+			policy: PermissiveSigningPolicy{TTL: time.Hour, Now: func() time.Time { return now }},
 			cr: x509.CertificateRequest{
 				URIs: []*url.URL{uri},
 			},
@@ -136,6 +147,14 @@ func TestCertificateAuthority(t *testing.T) {
 				NotAfter:              now.Add(1 * time.Hour),
 				BasicConstraintsValid: true,
 			},
+		},
+		{
+			name:   "expired ca",
+			policy: PermissiveSigningPolicy{TTL: time.Hour, Now: func() time.Time { return now }},
+			mutateCA: func(ca *CertificateAuthority) {
+				ca.Certificate.NotAfter = now // pretend that the CA has expired
+			},
+			wantErr: "the signer has expired: NotAfter=" + now.String(),
 		},
 	}
 
@@ -149,10 +168,10 @@ func TestCertificateAuthority(t *testing.T) {
 			ca := &CertificateAuthority{
 				Certificate: caCert,
 				PrivateKey:  caKey,
-				Now: func() time.Time {
-					return now
-				},
-				Backdate: test.backdate,
+			}
+
+			if test.mutateCA != nil {
+				test.mutateCA(ca)
 			}
 
 			csr, err := x509.CreateCertificateRequest(rand.Reader, &test.cr, crKey)
@@ -160,15 +179,15 @@ func TestCertificateAuthority(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			certDER, err := ca.Sign(csr, test.policy)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if test.wantErr {
-				if err == nil {
-					t.Fatal("expected error")
+			certDER, err := ca.Sign(csr, test.policy, test.usages)
+			if len(test.wantErr) > 0 {
+				if errStr := errString(err); test.wantErr != errStr {
+					t.Fatalf("expected error %s but got %s", test.wantErr, errStr)
 				}
 				return
+			}
+			if err != nil {
+				t.Fatal(err)
 			}
 
 			cert, err := x509.ParseCertificate(certDER)
@@ -196,4 +215,12 @@ func TestCertificateAuthority(t *testing.T) {
 			}
 		})
 	}
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	return err.Error()
 }
