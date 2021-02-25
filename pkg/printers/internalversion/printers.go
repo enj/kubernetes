@@ -1888,7 +1888,7 @@ func printCertificateSigningRequest(obj *certificates.CertificateSigningRequest,
 	}
 	notAfterHint := "<none>"
 	if !obj.Spec.NotAfterHint.IsZero() {
-		notAfterHint = obj.Spec.NotAfterHint.UTC().String()
+		notAfterHint = obj.Spec.NotAfterHint.UTC().String() // TODO: it is unclear how to best display this
 	}
 	row.Cells = append(row.Cells, obj.Name, translateTimestampSince(obj.CreationTimestamp), signerName, notAfterHint, obj.Spec.Username, status)
 	return []metav1.TableRow{row}, nil

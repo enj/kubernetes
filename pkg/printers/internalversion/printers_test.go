@@ -3781,7 +3781,7 @@ func TestPrintCertificateSigningRequest(t *testing.T) {
 				Status: certificates.CertificateSigningRequestStatus{},
 			},
 			// Columns: Name, Age, Requestor, Condition
-			expected: []metav1.TableRow{{Cells: []interface{}{"csr1", "0s", "<none>", "", "Pending"}}},
+			expected: []metav1.TableRow{{Cells: []interface{}{"csr1", "0s", "<none>", "<none>", "", "Pending"}}},
 		},
 		// Basic CSR with Spec and Status=Approved.
 		{
@@ -3802,9 +3802,8 @@ func TestPrintCertificateSigningRequest(t *testing.T) {
 				},
 			},
 			// Columns: Name, Age, Requestor, Condition
-			expected: []metav1.TableRow{{Cells: []interface{}{"csr2", "0s", "<none>", "CSR Requestor", "Approved"}}},
+			expected: []metav1.TableRow{{Cells: []interface{}{"csr2", "0s", "<none>", "<none>", "CSR Requestor", "Approved"}}},
 		},
-		// TODO fix and add
 		// Basic CSR with Spec and SignerName set
 		{
 			csr: certificates.CertificateSigningRequest{
@@ -3825,7 +3824,29 @@ func TestPrintCertificateSigningRequest(t *testing.T) {
 				},
 			},
 			// Columns: Name, Age, Requestor, Condition
-			expected: []metav1.TableRow{{Cells: []interface{}{"csr2", "0s", "example.com/test-signer", "CSR Requestor", "Approved"}}},
+			expected: []metav1.TableRow{{Cells: []interface{}{"csr2", "0s", "example.com/test-signer", "<none>", "CSR Requestor", "Approved"}}},
+		},
+		// Basic CSR with Spec, SignerName and NotAfterHint set
+		{
+			csr: certificates.CertificateSigningRequest{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "csr2",
+					CreationTimestamp: metav1.Time{Time: time.Now().Add(1.9e9)},
+				},
+				Spec: certificates.CertificateSigningRequestSpec{
+					Username:     "CSR Requestor",
+					SignerName:   "example.com/test-signer",
+					NotAfterHint: metav1.Date(1337, time.January, 1, 0, 0, 0, 0, time.UTC),
+				},
+				Status: certificates.CertificateSigningRequestStatus{
+					Conditions: []certificates.CertificateSigningRequestCondition{
+						{
+							Type: certificates.CertificateApproved,
+						},
+					},
+				},
+			},
+			expected: []metav1.TableRow{{Cells: []interface{}{"csr2", "0s", "example.com/test-signer", "1337-01-01 00:00:00 +0000 UTC", "CSR Requestor", "Approved"}}},
 		},
 		// Basic CSR with Spec and Status=Approved; certificate issued.
 		{
@@ -3847,7 +3868,7 @@ func TestPrintCertificateSigningRequest(t *testing.T) {
 				},
 			},
 			// Columns: Name, Age, Requestor, Condition
-			expected: []metav1.TableRow{{Cells: []interface{}{"csr2", "0s", "<none>", "CSR Requestor", "Approved,Issued"}}},
+			expected: []metav1.TableRow{{Cells: []interface{}{"csr2", "0s", "<none>", "<none>", "CSR Requestor", "Approved,Issued"}}},
 		},
 		// Basic CSR with Spec and Status=Denied.
 		{
@@ -3868,7 +3889,7 @@ func TestPrintCertificateSigningRequest(t *testing.T) {
 				},
 			},
 			// Columns: Name, Age, Requestor, Condition
-			expected: []metav1.TableRow{{Cells: []interface{}{"csr3", "0s", "<none>", "CSR Requestor", "Denied"}}},
+			expected: []metav1.TableRow{{Cells: []interface{}{"csr3", "0s", "<none>", "<none>", "CSR Requestor", "Denied"}}},
 		},
 	}
 
