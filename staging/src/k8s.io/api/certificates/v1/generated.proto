@@ -135,6 +135,9 @@ message CertificateSigningRequestSpec {
   //  6. Whether or not requests for CA certificates are allowed.
   optional string signerName = 7;
 
+  // TODO
+  optional k8s.io.apimachinery.pkg.apis.meta.v1.Time notAfterHint = 8;
+
   // usages specifies a set of key usages requested in the issued certificate.
   //
   // Requests for TLS client certificates typically request: "digital signature", "key encipherment", "client auth".

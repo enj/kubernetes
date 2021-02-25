@@ -116,6 +116,7 @@ func (in *CertificateSigningRequestSpec) DeepCopyInto(out *CertificateSigningReq
 		*out = new(string)
 		**out = **in
 	}
+	in.NotAfterHint.DeepCopyInto(&out.NotAfterHint)
 	if in.Usages != nil {
 		in, out := &in.Usages, &out.Usages
 		*out = make([]KeyUsage, len(*in))

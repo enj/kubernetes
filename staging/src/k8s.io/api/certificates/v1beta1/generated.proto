@@ -101,6 +101,9 @@ message CertificateSigningRequestSpec {
   // +optional
   optional string signerName = 7;
 
+  // TODO
+  optional k8s.io.apimachinery.pkg.apis.meta.v1.Time notAfterHint = 8;
+
   // allowedUsages specifies a set of usage contexts the key will be
   // valid for.
   // See: https://tools.ietf.org/html/rfc5280#section-4.2.1.3
