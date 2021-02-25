@@ -30,7 +30,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	types "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	certificatesclient "k8s.io/client-go/kubernetes/typed/certificates/v1"
@@ -81,6 +81,8 @@ var _ = SIGDescribe("Certificates API [Privileged:ClusterAdmin]", func() {
 					certificatesv1.UsageClientAuth,
 				},
 				SignerName: certificatesv1.KubeAPIServerClientSignerName,
+				// TODO: should we check notAfter of the resulting certificate?
+				NotAfterHint: metav1.NewTime(time.Now().Add(time.Hour)),
 			},
 		}
 
@@ -207,7 +209,9 @@ var _ = SIGDescribe("Certificates API [Privileged:ClusterAdmin]", func() {
 			Spec: certificatesv1.CertificateSigningRequestSpec{
 				Request:    csrData,
 				SignerName: signerName,
-				Usages:     []certificatesv1.KeyUsage{certificatesv1.UsageDigitalSignature, certificatesv1.UsageKeyEncipherment, certificatesv1.UsageServerAuth},
+				// TODO: should we check notAfter of the resulting certificate?
+				NotAfterHint: metav1.NewTime(time.Now().Add(time.Hour)),
+				Usages:       []certificatesv1.KeyUsage{certificatesv1.UsageDigitalSignature, certificatesv1.UsageKeyEncipherment, certificatesv1.UsageServerAuth},
 			},
 		}
 

@@ -61,12 +61,6 @@ func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, usages []capi.Key
 		return fmt.Errorf("invalid ttl=%s or backdate=%s", p.TTL, p.Backdate)
 	}
 
-	backdate := p.Backdate
-	if backdate == 0 {
-		// TODO maybe
-		// backdate = 5 * time.Minute
-	}
-
 	now := time.Now()
 	if p.Now != nil {
 		now = p.Now()
@@ -78,7 +72,7 @@ func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, usages []capi.Key
 	}
 	tmpl.KeyUsage = usage
 	tmpl.ExtKeyUsage = extUsages
-	tmpl.NotBefore = now.Add(-backdate)
+	tmpl.NotBefore = now.Add(-p.Backdate)
 	tmpl.NotAfter = now.Add(p.TTL)
 
 	if !tmpl.NotAfter.Before(caNotAfter) {
