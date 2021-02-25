@@ -29,7 +29,7 @@ package v1beta1
 // AUTO-GENERATED FUNCTIONS START HERE. DO NOT EDIT.
 var map_CertificateSigningRequest = map[string]string{
 	"":       "Describes a certificate signing request",
-	"spec":   "The certificate request itself and any additional information.",
+	"spec":   "spec contains the certificate request, and is immutable after creation. Only the request, signerName, notAfterHint, and usages fields can be set on creation. Other fields are derived by Kubernetes and cannot be modified by users.",
 	"status": "Derived information about the request.",
 }
 
@@ -51,7 +51,7 @@ func (CertificateSigningRequestCondition) SwaggerDoc() map[string]string {
 }
 
 var map_CertificateSigningRequestSpec = map[string]string{
-	"":             "This information is immutable after the request is created. Only the Request and Usages fields can be set on creation, other fields are derived by Kubernetes and cannot be modified by users.",
+	"":             "CertificateSigningRequestSpec contains the certificate request.",
 	"request":      "Base64-encoded PKCS#10 CSR data",
 	"signerName":   "Requested signer for the request. It is a qualified name in the form: `scope-hostname.io/name`. If empty, it will be defaulted:\n 1. If it's a kubelet client certificate, it is assigned\n    \"kubernetes.io/kube-apiserver-client-kubelet\".\n 2. If it's a kubelet serving certificate, it is assigned\n    \"kubernetes.io/kubelet-serving\".\n 3. Otherwise, it is assigned \"kubernetes.io/legacy-unknown\".\nDistribution of trust for signers happens out of band. You can select on this field using `spec.signerName`.",
 	"notAfterHint": "notAfterHint is a hint to the signer in regards to when the issued certificate should expire. The signer may or may not honor this field.  The well-known kubernetes signers will honor this field as long as the requested notAfter time is not later than the maximum notAfter time they will honor.",

@@ -34,8 +34,9 @@ message CertificateSigningRequest {
   // +optional
   optional k8s.io.apimachinery.pkg.apis.meta.v1.ObjectMeta metadata = 1;
 
-  // The certificate request itself and any additional information.
-  // +optional
+  // spec contains the certificate request, and is immutable after creation.
+  // Only the request, signerName, notAfterHint, and usages fields can be set on creation.
+  // Other fields are derived by Kubernetes and cannot be modified by users.
   optional CertificateSigningRequestSpec spec = 2;
 
   // Derived information about the request.
@@ -80,9 +81,7 @@ message CertificateSigningRequestList {
   repeated CertificateSigningRequest items = 2;
 }
 
-// This information is immutable after the request is created. Only the Request
-// and Usages fields can be set on creation, other fields are derived by
-// Kubernetes and cannot be modified by users.
+// CertificateSigningRequestSpec contains the certificate request.
 message CertificateSigningRequestSpec {
   // Base64-encoded PKCS#10 CSR data
   // +listType=atomic
