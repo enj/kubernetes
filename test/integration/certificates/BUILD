@@ -11,6 +11,7 @@ go_test(
         "defaulting_test.go",
         "field_selector_test.go",
         "main_test.go",
+        "notafter_test.go",
     ],
     tags = ["integration"],
     deps = [

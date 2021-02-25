@@ -44,7 +44,7 @@ message CertificateSigningRequest {
   optional k8s.io.apimachinery.pkg.apis.meta.v1.ObjectMeta metadata = 1;
 
   // spec contains the certificate request, and is immutable after creation.
-  // Only the request, signerName, and usages fields can be set on creation.
+  // Only the request, signerName, notAfterHint, and usages fields can be set on creation.
   // Other fields are derived by Kubernetes and cannot be modified by users.
   optional CertificateSigningRequestSpec spec = 2;
 
@@ -134,6 +134,11 @@ message CertificateSigningRequestSpec {
   //  5. Expiration/certificate lifetime: whether it is fixed by the signer, configurable by the admin.
   //  6. Whether or not requests for CA certificates are allowed.
   optional string signerName = 7;
+
+  // notAfterHint is a hint to the signer in regards to when the issued certificate should expire.
+  // The signer may or may not honor this field.  The well-known kubernetes signers will honor this field
+  // as long as the requested notAfter time is not later than the maximum notAfter time they will honor.
+  optional k8s.io.apimachinery.pkg.apis.meta.v1.Time notAfterHint = 8;
 
   // usages specifies a set of key usages requested in the issued certificate.
   //

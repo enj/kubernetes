@@ -22,6 +22,7 @@ go_library(
         "//plugin/pkg/admission/alwayspullimages:go_default_library",
         "//plugin/pkg/admission/antiaffinity:go_default_library",
         "//plugin/pkg/admission/certificates/approval:go_default_library",
+        "//plugin/pkg/admission/certificates/notafter:go_default_library",
         "//plugin/pkg/admission/certificates/signing:go_default_library",
         "//plugin/pkg/admission/certificates/subjectrestriction:go_default_library",
         "//plugin/pkg/admission/defaulttolerationseconds:go_default_library",

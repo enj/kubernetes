@@ -14,6 +14,7 @@ filegroup(
     srcs = [
         ":package-srcs",
         "//plugin/pkg/admission/certificates/approval:all-srcs",
+        "//plugin/pkg/admission/certificates/notafter:all-srcs",
         "//plugin/pkg/admission/certificates/signing:all-srcs",
         "//plugin/pkg/admission/certificates/subjectrestriction:all-srcs",
     ],

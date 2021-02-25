@@ -34,8 +34,9 @@ message CertificateSigningRequest {
   // +optional
   optional k8s.io.apimachinery.pkg.apis.meta.v1.ObjectMeta metadata = 1;
 
-  // The certificate request itself and any additional information.
-  // +optional
+  // spec contains the certificate request, and is immutable after creation.
+  // Only the request, signerName, notAfterHint, and usages fields can be set on creation.
+  // Other fields are derived by Kubernetes and cannot be modified by users.
   optional CertificateSigningRequestSpec spec = 2;
 
   // Derived information about the request.
@@ -80,9 +81,7 @@ message CertificateSigningRequestList {
   repeated CertificateSigningRequest items = 2;
 }
 
-// This information is immutable after the request is created. Only the Request
-// and Usages fields can be set on creation, other fields are derived by
-// Kubernetes and cannot be modified by users.
+// CertificateSigningRequestSpec contains the certificate request.
 message CertificateSigningRequestSpec {
   // Base64-encoded PKCS#10 CSR data
   // +listType=atomic
@@ -100,6 +99,11 @@ message CertificateSigningRequestSpec {
   // You can select on this field using `spec.signerName`.
   // +optional
   optional string signerName = 7;
+
+  // notAfterHint is a hint to the signer in regards to when the issued certificate should expire.
+  // The signer may or may not honor this field.  The well-known kubernetes signers will honor this field
+  // as long as the requested notAfter time is not later than the maximum notAfter time they will honor.
+  optional k8s.io.apimachinery.pkg.apis.meta.v1.Time notAfterHint = 8;
 
   // allowedUsages specifies a set of usage contexts the key will be
   // valid for.
