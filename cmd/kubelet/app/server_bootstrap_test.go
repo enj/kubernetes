@@ -308,7 +308,7 @@ func (s *csrSimulator) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			Now: func() time.Time {
 				return time.Now().Add(-s.backdate)
 			},
-		}, nil)
+		}, nil, metav1.Time{})
 		if err != nil {
 			t.Fatal(err)
 		}

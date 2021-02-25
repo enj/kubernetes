@@ -176,7 +176,7 @@ func (s *signer) handle(csr *capi.CertificateSigningRequest) error {
 		// Ignore requests for kubernetes.io signerNames we don't recognize
 		return nil
 	}
-	cert, err := s.sign(x509cr, csr.Spec.Usages)
+	cert, err := s.sign(x509cr, csr.Spec.Usages, csr.Spec.NotAfterHint)
 	if err != nil {
 		return fmt.Errorf("error auto signing csr: %v", err)
 	}
@@ -188,12 +188,12 @@ func (s *signer) handle(csr *capi.CertificateSigningRequest) error {
 	return nil
 }
 
-func (s *signer) sign(x509cr *x509.CertificateRequest, usages []capi.KeyUsage) ([]byte, error) {
+func (s *signer) sign(x509cr *x509.CertificateRequest, usages []capi.KeyUsage, notAfter metav1.Time) ([]byte, error) {
 	currCA, err := s.caProvider.currentCA()
 	if err != nil {
 		return nil, err
 	}
-	der, err := currCA.Sign(x509cr.Raw, s.policy, usages)
+	der, err := currCA.Sign(x509cr.Raw, s.policy, usages, notAfter)
 	if err != nil {
 		return nil, err
 	}

@@ -84,6 +84,9 @@ type CertificateSigningRequestSpec struct {
 	//  6. Whether or not requests for CA certificates are allowed.
 	SignerName string `json:"signerName" protobuf:"bytes,7,opt,name=signerName"`
 
+	// TODO
+	NotAfterHint metav1.Time `json:"notAfterHint,omitempty" protobuf:"bytes,8,opt,name=notAfterHint"`
+
 	// usages specifies a set of key usages requested in the issued certificate.
 	//
 	// Requests for TLS client certificates typically request: "digital signature", "key encipherment", "client auth".

@@ -51,6 +51,9 @@ type CertificateSigningRequestSpec struct {
 	// You can select on this field using `spec.signerName`.
 	SignerName string
 
+	// TODO
+	NotAfterHint metav1.Time
+
 	// usages specifies a set of usage contexts the key will be
 	// valid for.
 	// See: https://tools.ietf.org/html/rfc5280#section-4.2.1.3

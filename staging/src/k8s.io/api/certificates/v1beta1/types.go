@@ -66,6 +66,9 @@ type CertificateSigningRequestSpec struct {
 	// +optional
 	SignerName *string `json:"signerName,omitempty" protobuf:"bytes,7,opt,name=signerName"`
 
+	// TODO
+	NotAfterHint metav1.Time `json:"notAfterHint,omitempty" protobuf:"bytes,8,opt,name=notAfterHint"`
+
 	// allowedUsages specifies a set of usage contexts the key will be
 	// valid for.
 	// See: https://tools.ietf.org/html/rfc5280#section-4.2.1.3
