@@ -22,6 +22,8 @@ import (
 	"crypto/x509"
 	"fmt"
 	"math/big"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var serialNumberLimit = new(big.Int).Lsh(big.NewInt(1), 128)
@@ -40,7 +42,7 @@ type CertificateAuthority struct {
 
 // Sign signs a certificate request, applying a SigningPolicy and returns a DER
 // encoded x509 certificate.
-func (ca *CertificateAuthority) Sign(crDER []byte, policy SigningPolicy) ([]byte, error) {
+func (ca *CertificateAuthority) Sign(crDER []byte, policy SigningPolicy, durationHint *metav1.Duration) ([]byte, error) {
 	cr, err := x509.ParseCertificateRequest(crDER)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse certificate request: %v", err)
@@ -66,7 +68,7 @@ func (ca *CertificateAuthority) Sign(crDER []byte, policy SigningPolicy) ([]byte
 		Extensions:         cr.Extensions,
 		ExtraExtensions:    cr.ExtraExtensions,
 	}
-	if err := policy.apply(tmpl, ca.Certificate.NotAfter); err != nil {
+	if err := policy.apply(tmpl, ca.Certificate.NotAfter, durationHint); err != nil {
 		return nil, err
 	}
 

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	capi "k8s.io/api/certificates/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // SigningPolicy validates a CertificateRequest before it's signed by the
@@ -31,7 +32,7 @@ import (
 type SigningPolicy interface {
 	// not-exporting apply forces signing policy implementations to be internal
 	// to this package.
-	apply(template *x509.Certificate, signerNotAfter time.Time) error
+	apply(template *x509.Certificate, signerNotAfter time.Time, durationHint *metav1.Duration) error
 }
 
 // PermissiveSigningPolicy is the signing policy historically used by the local
@@ -65,7 +66,7 @@ type PermissiveSigningPolicy struct {
 	Now func() time.Time
 }
 
-func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, signerNotAfter time.Time) error {
+func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, signerNotAfter time.Time, durationHint *metav1.Duration) error {
 	var now time.Time
 	if p.Now != nil {
 		now = p.Now()
@@ -74,6 +75,9 @@ func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, signerNotAfter ti
 	}
 
 	ttl := p.TTL
+	if durationHint != nil && durationHint.Duration < ttl && durationHint.Duration > 0 {
+		ttl = durationHint.Duration
+	}
 
 	usage, extUsages, err := keyUsagesFromStrings(p.Usages)
 	if err != nil {
