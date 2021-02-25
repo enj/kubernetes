@@ -25,6 +25,7 @@ import (
 	"k8s.io/kubernetes/plugin/pkg/admission/alwayspullimages"
 	"k8s.io/kubernetes/plugin/pkg/admission/antiaffinity"
 	certapproval "k8s.io/kubernetes/plugin/pkg/admission/certificates/approval"
+	certnotafter "k8s.io/kubernetes/plugin/pkg/admission/certificates/notafter"
 	certsigning "k8s.io/kubernetes/plugin/pkg/admission/certificates/signing"
 	certsubjectrestriction "k8s.io/kubernetes/plugin/pkg/admission/certificates/subjectrestriction"
 	"k8s.io/kubernetes/plugin/pkg/admission/defaulttolerationseconds"
@@ -90,6 +91,7 @@ var AllOrderedPlugins = []string{
 	certapproval.PluginName,                 // CertificateApproval
 	certsigning.PluginName,                  // CertificateSigning
 	certsubjectrestriction.PluginName,       // CertificateSubjectRestriction
+	certnotafter.PluginName,                 // CertificateStrictNotAfter
 	defaultingressclass.PluginName,          // DefaultIngressClass
 	denyserviceexternalips.PluginName,       // DenyServiceExternalIPs
 
@@ -136,6 +138,7 @@ func RegisterAllAdmissionPlugins(plugins *admission.Plugins) {
 	certapproval.Register(plugins)
 	certsigning.Register(plugins)
 	certsubjectrestriction.Register(plugins)
+	certnotafter.Register(plugins)
 }
 
 // DefaultOffAdmissionPlugins get admission plugins off by default for kube-apiserver.

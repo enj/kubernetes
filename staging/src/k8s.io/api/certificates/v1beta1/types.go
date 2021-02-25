@@ -36,18 +36,17 @@ type CertificateSigningRequest struct {
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
-	// The certificate request itself and any additional information.
-	// +optional
-	Spec CertificateSigningRequestSpec `json:"spec,omitempty" protobuf:"bytes,2,opt,name=spec"`
+	// spec contains the certificate request, and is immutable after creation.
+	// Only the request, signerName, notAfterHint, and usages fields can be set on creation.
+	// Other fields are derived by Kubernetes and cannot be modified by users.
+	Spec CertificateSigningRequestSpec `json:"spec" protobuf:"bytes,2,opt,name=spec"`
 
 	// Derived information about the request.
 	// +optional
 	Status CertificateSigningRequestStatus `json:"status,omitempty" protobuf:"bytes,3,opt,name=status"`
 }
 
-// This information is immutable after the request is created. Only the Request
-// and Usages fields can be set on creation, other fields are derived by
-// Kubernetes and cannot be modified by users.
+// CertificateSigningRequestSpec contains the certificate request.
 type CertificateSigningRequestSpec struct {
 	// Base64-encoded PKCS#10 CSR data
 	// +listType=atomic
