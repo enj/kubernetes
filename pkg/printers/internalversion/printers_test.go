@@ -3804,6 +3804,7 @@ func TestPrintCertificateSigningRequest(t *testing.T) {
 			// Columns: Name, Age, Requestor, Condition
 			expected: []metav1.TableRow{{Cells: []interface{}{"csr2", "0s", "<none>", "CSR Requestor", "Approved"}}},
 		},
+		// TODO fix and add
 		// Basic CSR with Spec and SignerName set
 		{
 			csr: certificates.CertificateSigningRequest{

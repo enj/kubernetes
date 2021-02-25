@@ -57,6 +57,16 @@ type PermissiveSigningPolicy struct {
 }
 
 func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, usages []capi.KeyUsage, caNotAfter, csrNotAfter time.Time) error {
+	if p.TTL <= 0 || p.Backdate < 0 {
+		return fmt.Errorf("invalid ttl=%s or backdate=%s", p.TTL, p.Backdate)
+	}
+
+	backdate := p.Backdate
+	if backdate == 0 {
+		// TODO maybe
+		// backdate = 5 * time.Minute
+	}
+
 	now := time.Now()
 	if p.Now != nil {
 		now = p.Now()
@@ -68,14 +78,14 @@ func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, usages []capi.Key
 	}
 	tmpl.KeyUsage = usage
 	tmpl.ExtKeyUsage = extUsages
-	tmpl.NotBefore = now.Add(-p.Backdate)
+	tmpl.NotBefore = now.Add(-backdate)
 	tmpl.NotAfter = now.Add(p.TTL)
 
 	if !tmpl.NotAfter.Before(caNotAfter) {
 		tmpl.NotAfter = caNotAfter
 	}
 
-	if !csrNotAfter.IsZero() && csrNotAfter.Before(tmpl.NotAfter) {
+	if !csrNotAfter.IsZero() && csrNotAfter.Before(tmpl.NotAfter) && csrNotAfter.After(now) {
 		tmpl.NotAfter = csrNotAfter
 	}
 

@@ -44,7 +44,7 @@ type CertificateSigningRequest struct {
 	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
 	// spec contains the certificate request, and is immutable after creation.
-	// Only the request, signerName, and usages fields can be set on creation.
+	// Only the request, signerName, notAfterHint, and usages fields can be set on creation.
 	// Other fields are derived by Kubernetes and cannot be modified by users.
 	Spec CertificateSigningRequestSpec `json:"spec" protobuf:"bytes,2,opt,name=spec"`
 

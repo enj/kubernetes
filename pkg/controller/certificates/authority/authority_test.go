@@ -178,6 +178,16 @@ func TestCertificateAuthority(t *testing.T) {
 				BasicConstraintsValid: true,
 			},
 		},
+		{
+			name:     "cannot request not after before now",
+			policy:   PermissiveSigningPolicy{TTL: time.Hour, Backdate: 5 * time.Minute, Now: func() time.Time { return now }},
+			notAfter: metav1.NewTime(now.Add(-time.Minute)),
+			want: x509.Certificate{
+				NotBefore:             now.Add(-5 * time.Minute),
+				NotAfter:              now.Add(1 * time.Hour),
+				BasicConstraintsValid: true,
+			},
+		},
 	}
 
 	crKey, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)

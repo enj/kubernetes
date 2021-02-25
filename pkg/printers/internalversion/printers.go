@@ -412,6 +412,7 @@ func AddHandlers(h printers.PrintHandler) {
 		{Name: "Name", Type: "string", Format: "name", Description: metav1.ObjectMeta{}.SwaggerDoc()["name"]},
 		{Name: "Age", Type: "string", Description: metav1.ObjectMeta{}.SwaggerDoc()["creationTimestamp"]},
 		{Name: "SignerName", Type: "string", Description: certificatesv1beta1.CertificateSigningRequestSpec{}.SwaggerDoc()["signerName"]},
+		{Name: "NotAfterHint", Type: "string", Description: certificatesv1beta1.CertificateSigningRequestSpec{}.SwaggerDoc()["notAfterHint"]},
 		{Name: "Requestor", Type: "string", Description: certificatesv1beta1.CertificateSigningRequestSpec{}.SwaggerDoc()["request"]},
 		{Name: "Condition", Type: "string", Description: certificatesv1beta1.CertificateSigningRequestStatus{}.SwaggerDoc()["conditions"]},
 	}
@@ -1885,7 +1886,11 @@ func printCertificateSigningRequest(obj *certificates.CertificateSigningRequest,
 	if obj.Spec.SignerName != "" {
 		signerName = obj.Spec.SignerName
 	}
-	row.Cells = append(row.Cells, obj.Name, translateTimestampSince(obj.CreationTimestamp), signerName, obj.Spec.Username, status)
+	notAfterHint := "<none>"
+	if !obj.Spec.NotAfterHint.IsZero() {
+		notAfterHint = obj.Spec.NotAfterHint.UTC().String()
+	}
+	row.Cells = append(row.Cells, obj.Name, translateTimestampSince(obj.CreationTimestamp), signerName, notAfterHint, obj.Spec.Username, status)
 	return []metav1.TableRow{row}, nil
 }
 
