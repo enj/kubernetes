@@ -26,6 +26,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -258,6 +259,32 @@ func TestValidateCertificateSigningRequestCreate(t *testing.T) {
 					Usages:     validUsages,
 					Request:    newCSRPEM(t),
 					SignerName: maxLengthSignerName,
+				},
+			},
+			errs: field.ErrorList{},
+		},
+		"too short duration": {
+			csr: capi.CertificateSigningRequest{
+				ObjectMeta: validObjectMeta,
+				Spec: capi.CertificateSigningRequestSpec{
+					Usages:       validUsages,
+					Request:      newCSRPEM(t),
+					SignerName:   validSignerName,
+					DurationHint: &metav1.Duration{Duration: time.Minute},
+				},
+			},
+			errs: field.ErrorList{
+				field.Invalid(specPath.Child("durationHint"), time.Minute, "may not specify a duration less than 5 minutes"),
+			},
+		},
+		"valid duration": {
+			csr: capi.CertificateSigningRequest{
+				ObjectMeta: validObjectMeta,
+				Spec: capi.CertificateSigningRequestSpec{
+					Usages:       validUsages,
+					Request:      newCSRPEM(t),
+					SignerName:   validSignerName,
+					DurationHint: &metav1.Duration{Duration: 10 * time.Minute},
 				},
 			},
 			errs: field.ErrorList{},

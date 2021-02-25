@@ -22,6 +22,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"strings"
+	"time"
 
 	v1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -204,6 +205,10 @@ func validateCertificateSigningRequest(csr *certificates.CertificateSigningReque
 		allErrs = append(allErrs, field.Invalid(specPath.Child("signerName"), csr.Spec.SignerName, "the legacy signerName is not allowed via this API version"))
 	} else {
 		allErrs = append(allErrs, ValidateCertificateSigningRequestSignerName(specPath.Child("signerName"), csr.Spec.SignerName)...)
+	}
+	const min = 5 * time.Minute
+	if csr.Spec.DurationHint != nil && csr.Spec.DurationHint.Duration < min {
+		allErrs = append(allErrs, field.Invalid(specPath.Child("durationHint"), csr.Spec.DurationHint.Duration, "may not specify a duration less than 5 minutes"))
 	}
 	allErrs = append(allErrs, validateConditions(field.NewPath("status", "conditions"), csr, opts)...)
 
