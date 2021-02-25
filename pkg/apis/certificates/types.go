@@ -68,6 +68,11 @@ type CertificateSigningRequestSpec struct {
 	//  6. Whether or not requests for CA certificates are allowed.
 	SignerName string
 
+	// durationHint is a hint to the signer in regards to when the issued certificate should expire.
+	// The signer may or may not honor this field.  The well-known kubernetes signers will honor this field
+	// as long as the requested duration is not later than the maximum duration they will honor.
+	DurationHint *metav1.Duration
+
 	// usages specifies a set of usage contexts the key will be
 	// valid for.
 	// See: https://tools.ietf.org/html/rfc5280#section-4.2.1.3

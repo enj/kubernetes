@@ -23,6 +23,7 @@ import (
 	"time"
 
 	capi "k8s.io/api/certificates/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // SigningPolicy validates a CertificateRequest before it's signed by the
@@ -31,7 +32,7 @@ import (
 type SigningPolicy interface {
 	// not-exporting apply forces signing policy implementations to be internal
 	// to this package.
-	apply(template *x509.Certificate, usages []capi.KeyUsage, signerNotAfter time.Time) error
+	apply(template *x509.Certificate, usages []capi.KeyUsage, signerNotAfter time.Time, durationHint *metav1.Duration) error
 }
 
 // PermissiveSigningPolicy is the signing policy historically used by the local
@@ -62,7 +63,11 @@ type PermissiveSigningPolicy struct {
 	Now func() time.Time
 }
 
-func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, usages []capi.KeyUsage, signerNotAfter time.Time) error {
+func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, usages []capi.KeyUsage, signerNotAfter time.Time, durationHint *metav1.Duration) error {
+	if p.TTL <= 0 || p.Backdate < 0 {
+		return fmt.Errorf("invalid ttl=%s or backdate=%s", p.TTL, p.Backdate)
+	}
+
 	now := time.Now()
 	if p.Now != nil {
 		now = p.Now()
@@ -82,6 +87,14 @@ func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, usages []capi.Key
 	// do not backdate the end time if we consider this to be a short lived certificate
 	if ttl < p.Short {
 		tmpl.NotAfter = now.Add(ttl)
+	}
+
+	if !tmpl.NotAfter.Before(signerNotAfter) {
+		tmpl.NotAfter = signerNotAfter
+	}
+
+	if durationHint != nil && durationHint.Duration < p.TTL && durationHint.Duration > 0 { // TODO 0 check should be 5 mins?
+		tmpl.NotAfter = now.Add(durationHint.Duration)
 	}
 
 	tmpl.ExtraExtensions = nil
