@@ -36,18 +36,17 @@ type CertificateSigningRequest struct {
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 
-	// The certificate request itself and any additional information.
-	// +optional
-	Spec CertificateSigningRequestSpec `json:"spec,omitempty" protobuf:"bytes,2,opt,name=spec"`
+	// spec contains the certificate request, and is immutable after creation.
+	// Only the request, signerName, notAfterHint, and usages fields can be set on creation.
+	// Other fields are derived by Kubernetes and cannot be modified by users.
+	Spec CertificateSigningRequestSpec `json:"spec" protobuf:"bytes,2,opt,name=spec"`
 
 	// Derived information about the request.
 	// +optional
 	Status CertificateSigningRequestStatus `json:"status,omitempty" protobuf:"bytes,3,opt,name=status"`
 }
 
-// This information is immutable after the request is created. Only the Request
-// and Usages fields can be set on creation, other fields are derived by
-// Kubernetes and cannot be modified by users.
+// CertificateSigningRequestSpec contains the certificate request.
 type CertificateSigningRequestSpec struct {
 	// Base64-encoded PKCS#10 CSR data
 	// +listType=atomic
@@ -65,6 +64,11 @@ type CertificateSigningRequestSpec struct {
 	// You can select on this field using `spec.signerName`.
 	// +optional
 	SignerName *string `json:"signerName,omitempty" protobuf:"bytes,7,opt,name=signerName"`
+
+	// notAfterHint is a hint to the signer in regards to when the issued certificate should expire.
+	// The signer may or may not honor this field.  The well-known kubernetes signers will honor this field
+	// as long as the requested notAfter time is not later than the maximum notAfter time they will honor.
+	NotAfterHint metav1.Time `json:"notAfterHint,omitempty" protobuf:"bytes,8,opt,name=notAfterHint"`
 
 	// allowedUsages specifies a set of usage contexts the key will be
 	// valid for.

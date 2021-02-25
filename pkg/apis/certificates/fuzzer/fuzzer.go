@@ -17,8 +17,11 @@ limitations under the License.
 package fuzzer
 
 import (
+	"time"
+
 	fuzz "github.com/google/gofuzz"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtimeserializer "k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/kubernetes/pkg/apis/certificates"
 	api "k8s.io/kubernetes/pkg/apis/core"
@@ -31,6 +34,7 @@ var Funcs = func(codecs runtimeserializer.CodecFactory) []interface{} {
 			c.FuzzNoCustom(obj) // fuzz self without calling this function again
 			obj.Usages = []certificates.KeyUsage{certificates.UsageKeyEncipherment}
 			obj.SignerName = "example.com/custom-sample-signer"
+			obj.NotAfterHint = metav1.Date(2000, time.January, 2, 3, 4, 5, 0, time.UTC)
 		},
 		func(obj *certificates.CertificateSigningRequestCondition, c fuzz.Continue) {
 			c.FuzzNoCustom(obj) // fuzz self without calling this function again

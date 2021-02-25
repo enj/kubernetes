@@ -31,6 +31,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	capi "k8s.io/api/certificates/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/diff"
 )
 
@@ -71,6 +72,7 @@ func TestCertificateAuthority(t *testing.T) {
 		policy   SigningPolicy
 		usages   []capi.KeyUsage
 		mutateCA func(ca *CertificateAuthority)
+		notAfter metav1.Time
 
 		want    x509.Certificate
 		wantErr string
@@ -156,6 +158,46 @@ func TestCertificateAuthority(t *testing.T) {
 			},
 			wantErr: "the signer has expired: NotAfter=" + now.String(),
 		},
+		{
+			name:     "can request earlier not after",
+			policy:   PermissiveSigningPolicy{TTL: time.Hour, Backdate: 5 * time.Minute, Now: func() time.Time { return now }},
+			notAfter: metav1.NewTime(now.Add(30 * time.Minute)),
+			want: x509.Certificate{
+				NotBefore:             now.Add(-5 * time.Minute),
+				NotAfter:              now.Add(30 * time.Minute),
+				BasicConstraintsValid: true,
+			},
+		},
+		{
+			name:     "cannot request later not after",
+			policy:   PermissiveSigningPolicy{TTL: time.Hour, Backdate: 5 * time.Minute, Now: func() time.Time { return now }},
+			notAfter: metav1.NewTime(now.Add(3 * time.Hour)),
+			want: x509.Certificate{
+				NotBefore:             now.Add(-5 * time.Minute),
+				NotAfter:              now.Add(1 * time.Hour),
+				BasicConstraintsValid: true,
+			},
+		},
+		{
+			name:     "cannot request not after before now",
+			policy:   PermissiveSigningPolicy{TTL: time.Hour, Backdate: 5 * time.Minute, Now: func() time.Time { return now }},
+			notAfter: metav1.NewTime(now.Add(-time.Minute)),
+			want: x509.Certificate{
+				NotBefore:             now.Add(-5 * time.Minute),
+				NotAfter:              now.Add(1 * time.Hour),
+				BasicConstraintsValid: true,
+			},
+		},
+		{
+			name:    "invalid ttl",
+			policy:  PermissiveSigningPolicy{Backdate: time.Minute},
+			wantErr: "invalid ttl=0s or backdate=1m0s",
+		},
+		{
+			name:    "invalid backdate",
+			policy:  PermissiveSigningPolicy{TTL: time.Minute, Backdate: -time.Minute},
+			wantErr: "invalid ttl=1m0s or backdate=-1m0s",
+		},
 	}
 
 	crKey, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
@@ -165,8 +207,10 @@ func TestCertificateAuthority(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			caCertShallowCopy := *caCert
+
 			ca := &CertificateAuthority{
-				Certificate: caCert,
+				Certificate: &caCertShallowCopy,
 				PrivateKey:  caKey,
 			}
 
@@ -179,7 +223,7 @@ func TestCertificateAuthority(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			certDER, err := ca.Sign(csr, test.policy, test.usages)
+			certDER, err := ca.Sign(csr, test.policy, test.usages, test.notAfter)
 			if len(test.wantErr) > 0 {
 				if errStr := errString(err); test.wantErr != errStr {
 					t.Fatalf("expected error %s but got %s", test.wantErr, errStr)

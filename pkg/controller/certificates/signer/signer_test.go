@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	capi "k8s.io/api/certificates/v1"
 	"k8s.io/apimachinery/pkg/util/clock"
@@ -66,7 +67,10 @@ func TestSigner(t *testing.T) {
 		capi.UsageKeyEncipherment,
 		capi.UsageServerAuth,
 		capi.UsageClientAuth,
-	})
+	},
+		// requesting a notAfter that is later than now+TTL is ignored
+		metav1.NewTime(fakeClock.Now().Add(3*time.Hour)),
+	)
 	if err != nil {
 		t.Fatalf("failed to sign CSR: %v", err)
 	}
