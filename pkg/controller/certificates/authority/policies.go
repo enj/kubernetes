@@ -31,7 +31,7 @@ import (
 type SigningPolicy interface {
 	// not-exporting apply forces signing policy implementations to be internal
 	// to this package.
-	apply(template *x509.Certificate, usages []capi.KeyUsage) error
+	apply(template *x509.Certificate, usages []capi.KeyUsage, caNotAfter, csrNotAfter time.Time) error
 }
 
 // PermissiveSigningPolicy is the signing policy historically used by the local
@@ -56,7 +56,11 @@ type PermissiveSigningPolicy struct {
 	Now func() time.Time
 }
 
-func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, usages []capi.KeyUsage) error {
+func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, usages []capi.KeyUsage, caNotAfter, csrNotAfter time.Time) error {
+	if p.TTL <= 0 || p.Backdate < 0 {
+		return fmt.Errorf("invalid ttl=%s or backdate=%s", p.TTL, p.Backdate)
+	}
+
 	now := time.Now()
 	if p.Now != nil {
 		now = p.Now()
@@ -71,10 +75,22 @@ func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, usages []capi.Key
 	tmpl.NotBefore = now.Add(-p.Backdate)
 	tmpl.NotAfter = now.Add(p.TTL)
 
+	if !tmpl.NotAfter.Before(caNotAfter) {
+		tmpl.NotAfter = caNotAfter
+	}
+
+	if !csrNotAfter.IsZero() && csrNotAfter.Before(tmpl.NotAfter) && csrNotAfter.After(now) {
+		tmpl.NotAfter = csrNotAfter
+	}
+
 	tmpl.ExtraExtensions = nil
 	tmpl.Extensions = nil
 	tmpl.BasicConstraintsValid = true
 	tmpl.IsCA = false
+
+	if !tmpl.NotBefore.Before(caNotAfter) || !now.Before(caNotAfter) {
+		return fmt.Errorf("the signer has expired: NotAfter=%v", caNotAfter)
+	}
 
 	return nil
 }
