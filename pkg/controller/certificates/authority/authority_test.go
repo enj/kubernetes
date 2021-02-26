@@ -188,6 +188,16 @@ func TestCertificateAuthority(t *testing.T) {
 				BasicConstraintsValid: true,
 			},
 		},
+		{
+			name:    "invalid ttl",
+			policy:  PermissiveSigningPolicy{Backdate: time.Minute},
+			wantErr: "invalid ttl=0s or backdate=1m0s",
+		},
+		{
+			name:    "invalid backdate",
+			policy:  PermissiveSigningPolicy{TTL: time.Minute, Backdate: -time.Minute},
+			wantErr: "invalid ttl=1m0s or backdate=-1m0s",
+		},
 	}
 
 	crKey, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
