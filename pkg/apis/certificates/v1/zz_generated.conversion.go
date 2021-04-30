@@ -25,6 +25,7 @@ import (
 
 	v1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	conversion "k8s.io/apimachinery/pkg/conversion"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	certificates "k8s.io/kubernetes/pkg/apis/certificates"
@@ -178,6 +179,7 @@ func Convert_certificates_CertificateSigningRequestList_To_v1_CertificateSigning
 func autoConvert_v1_CertificateSigningRequestSpec_To_certificates_CertificateSigningRequestSpec(in *v1.CertificateSigningRequestSpec, out *certificates.CertificateSigningRequestSpec, s conversion.Scope) error {
 	out.Request = *(*[]byte)(unsafe.Pointer(&in.Request))
 	out.SignerName = in.SignerName
+	out.DurationHint = (*metav1.Duration)(unsafe.Pointer(in.DurationHint))
 	out.Usages = *(*[]certificates.KeyUsage)(unsafe.Pointer(&in.Usages))
 	out.Username = in.Username
 	out.UID = in.UID
@@ -194,6 +196,7 @@ func Convert_v1_CertificateSigningRequestSpec_To_certificates_CertificateSigning
 func autoConvert_certificates_CertificateSigningRequestSpec_To_v1_CertificateSigningRequestSpec(in *certificates.CertificateSigningRequestSpec, out *v1.CertificateSigningRequestSpec, s conversion.Scope) error {
 	out.Request = *(*[]byte)(unsafe.Pointer(&in.Request))
 	out.SignerName = in.SignerName
+	out.DurationHint = (*metav1.Duration)(unsafe.Pointer(in.DurationHint))
 	out.Usages = *(*[]v1.KeyUsage)(unsafe.Pointer(&in.Usages))
 	out.Username = in.Username
 	out.UID = in.UID

@@ -20,18 +20,20 @@ package v1beta1
 
 import (
 	v1beta1 "k8s.io/api/certificates/v1beta1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // CertificateSigningRequestSpecApplyConfiguration represents an declarative configuration of the CertificateSigningRequestSpec type for use
 // with apply.
 type CertificateSigningRequestSpecApplyConfiguration struct {
-	Request    []byte                        `json:"request,omitempty"`
-	SignerName *string                       `json:"signerName,omitempty"`
-	Usages     []v1beta1.KeyUsage            `json:"usages,omitempty"`
-	Username   *string                       `json:"username,omitempty"`
-	UID        *string                       `json:"uid,omitempty"`
-	Groups     []string                      `json:"groups,omitempty"`
-	Extra      map[string]v1beta1.ExtraValue `json:"extra,omitempty"`
+	Request      []byte                        `json:"request,omitempty"`
+	SignerName   *string                       `json:"signerName,omitempty"`
+	DurationHint *v1.Duration                  `json:"durationHint,omitempty"`
+	Usages       []v1beta1.KeyUsage            `json:"usages,omitempty"`
+	Username     *string                       `json:"username,omitempty"`
+	UID          *string                       `json:"uid,omitempty"`
+	Groups       []string                      `json:"groups,omitempty"`
+	Extra        map[string]v1beta1.ExtraValue `json:"extra,omitempty"`
 }
 
 // CertificateSigningRequestSpecApplyConfiguration constructs an declarative configuration of the CertificateSigningRequestSpec type for use with
@@ -55,6 +57,14 @@ func (b *CertificateSigningRequestSpecApplyConfiguration) WithRequest(values ...
 // If called multiple times, the SignerName field is set to the value of the last call.
 func (b *CertificateSigningRequestSpecApplyConfiguration) WithSignerName(value string) *CertificateSigningRequestSpecApplyConfiguration {
 	b.SignerName = &value
+	return b
+}
+
+// WithDurationHint sets the DurationHint field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DurationHint field is set to the value of the last call.
+func (b *CertificateSigningRequestSpecApplyConfiguration) WithDurationHint(value v1.Duration) *CertificateSigningRequestSpecApplyConfiguration {
+	b.DurationHint = &value
 	return b
 }
 
