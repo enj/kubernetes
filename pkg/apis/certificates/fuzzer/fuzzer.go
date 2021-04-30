@@ -34,7 +34,7 @@ var Funcs = func(codecs runtimeserializer.CodecFactory) []interface{} {
 			c.FuzzNoCustom(obj) // fuzz self without calling this function again
 			obj.Usages = []certificates.KeyUsage{certificates.UsageKeyEncipherment}
 			obj.SignerName = "example.com/custom-sample-signer"
-			obj.NotAfterHint = metav1.Date(2000, time.January, 2, 3, 4, 5, 0, time.UTC)
+			obj.DurationHint = &metav1.Duration{Duration: time.Hour + time.Minute + time.Second + time.Millisecond + time.Millisecond + time.Nanosecond}
 		},
 		func(obj *certificates.CertificateSigningRequestCondition, c fuzz.Continue) {
 			c.FuzzNoCustom(obj) // fuzz self without calling this function again

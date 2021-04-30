@@ -3694,7 +3694,7 @@ func (p *CertificateSigningRequestDescriber) Describe(namespace, name string, de
 		metadata     metav1.ObjectMeta
 		status       string
 		signerName   string
-		notAfterHint metav1.Time
+		durationHint *metav1.Duration
 		username     string
 		events       *corev1.EventList
 	)
@@ -3708,7 +3708,7 @@ func (p *CertificateSigningRequestDescriber) Describe(namespace, name string, de
 		}
 		status = extractCSRStatus(conditionTypes, csr.Status.Certificate)
 		signerName = csr.Spec.SignerName
-		notAfterHint = csr.Spec.NotAfterHint
+		durationHint = csr.Spec.DurationHint
 		username = csr.Spec.Username
 		if describerSettings.ShowEvents {
 			events, _ = searchEvents(p.client.CoreV1(), csr, describerSettings.ChunkSize)
@@ -3724,7 +3724,7 @@ func (p *CertificateSigningRequestDescriber) Describe(namespace, name string, de
 		if csr.Spec.SignerName != nil {
 			signerName = *csr.Spec.SignerName
 		}
-		notAfterHint = csr.Spec.NotAfterHint
+		durationHint = csr.Spec.DurationHint
 		username = csr.Spec.Username
 		if describerSettings.ShowEvents {
 			events, _ = searchEvents(p.client.CoreV1(), csr, describerSettings.ChunkSize)
@@ -3738,10 +3738,10 @@ func (p *CertificateSigningRequestDescriber) Describe(namespace, name string, de
 		return "", fmt.Errorf("Error parsing CSR: %v", err)
 	}
 
-	return describeCertificateSigningRequest(metadata, signerName, notAfterHint, username, cr, status, events)
+	return describeCertificateSigningRequest(metadata, signerName, durationHint, username, cr, status, events)
 }
 
-func describeCertificateSigningRequest(csr metav1.ObjectMeta, signerName string, notAfterHint metav1.Time, username string, cr *x509.CertificateRequest, status string, events *corev1.EventList) (string, error) {
+func describeCertificateSigningRequest(csr metav1.ObjectMeta, signerName string, durationHint *metav1.Duration, username string, cr *x509.CertificateRequest, status string, events *corev1.EventList) (string, error) {
 	printListHelper := func(w PrefixWriter, prefix, name string, values []string) {
 		if len(values) == 0 {
 			return
@@ -3761,8 +3761,8 @@ func describeCertificateSigningRequest(csr metav1.ObjectMeta, signerName string,
 		if len(signerName) > 0 {
 			w.Write(LEVEL_0, "Signer:\t%s\n", signerName)
 		}
-		if !notAfterHint.IsZero() {
-			w.Write(LEVEL_0, "NotAfterHint:\t%s\n", notAfterHint.UTC().String())
+		if durationHint != nil {
+			w.Write(LEVEL_0, "DurationHint:\t%s\n", duration.HumanDuration(durationHint.Duration))
 		}
 		w.Write(LEVEL_0, "Status:\t%s\n", status)
 

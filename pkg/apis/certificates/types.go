@@ -68,10 +68,10 @@ type CertificateSigningRequestSpec struct {
 	//  6. Whether or not requests for CA certificates are allowed.
 	SignerName string
 
-	// notAfterHint is a hint to the signer in regards to when the issued certificate should expire.
+	// durationHint is a hint to the signer in regards to when the issued certificate should expire.
 	// The signer may or may not honor this field.  The well-known kubernetes signers will honor this field
 	// as long as the requested notAfter time is not later than the maximum notAfter time they will honor.
-	NotAfterHint metav1.Time
+	DurationHint *metav1.Duration
 
 	// usages specifies a set of usage contexts the key will be
 	// valid for.

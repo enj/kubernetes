@@ -3836,7 +3836,7 @@ func TestPrintCertificateSigningRequest(t *testing.T) {
 				Spec: certificates.CertificateSigningRequestSpec{
 					Username:     "CSR Requestor",
 					SignerName:   "example.com/test-signer",
-					NotAfterHint: metav1.Date(1337, time.January, 1, 0, 0, 0, 0, time.UTC),
+					DurationHint: metav1.Date(1337, time.January, 1, 0, 0, 0, 0, time.UTC),
 				},
 				Status: certificates.CertificateSigningRequestStatus{
 					Conditions: []certificates.CertificateSigningRequestCondition{

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package notafter
+package duration
 
 import (
 	"bytes"
@@ -29,7 +29,7 @@ import (
 	api "k8s.io/kubernetes/pkg/apis/certificates"
 )
 
-const PluginName = "CertificateStrictNotAfter"
+const PluginName = "CertificateStrictDuration"
 
 func Register(plugins *admission.Plugins) {
 	plugins.Register(PluginName, func(config io.Reader) (admission.Interface, error) {
@@ -51,7 +51,7 @@ func NewPlugin() *Plugin {
 
 var csrGroupResource = api.Resource("certificatesigningrequests")
 
-// Validate verifies that the signer respects the notAfterHint field if it is specified.
+// Validate verifies that the signer respects the durationHint field if it is specified.
 func (p *Plugin) Validate(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) error {
 	// Ignore all calls to anything other than 'certificatesigningrequests/status'.
 	// Ignore all operations other than UPDATE.
@@ -71,11 +71,11 @@ func (p *Plugin) Validate(ctx context.Context, a admission.Attributes, o admissi
 	// always use the oldCSR in checks below, only use newCSR via the newCSR.Status.Certificate field
 
 	// TODO should this plugin be enabled by default in an audit only mode where it emits warnings
-	//  when a CSR is created with no notAfterHint set and when a signer does not honor the notAfterHint?
+	//  when a CSR is created with no durationHint set and when a signer does not honor the durationHint?
 
-	// the original requester did not specify a notAfterHint thus there is nothing for us to validate
-	// TODO should this plugin take a parameter as config that requires the notAfterHint field to be set by all clients?
-	if oldCSR.Spec.NotAfterHint.IsZero() {
+	// the original requester did not specify a durationHint thus there is nothing for us to validate
+	// TODO should this plugin take a parameter as config that requires the durationHint field to be set by all clients?
+	if oldCSR.Spec.DurationHint == nil {
 		return nil
 	}
 
@@ -96,18 +96,20 @@ func (p *Plugin) Validate(ctx context.Context, a admission.Attributes, o admissi
 
 	// we only validate the first cert (the issued cert) and ignore any intermediate certs
 	// TODO should this be a mutating admission plugin so that it can set a terminal CertificateFailed condition?
-	if certs[0].NotAfter.After(oldCSR.Spec.NotAfterHint.Time) {
-		klog.V(4).InfoS("cannot sign CSR with too late notAfter date",
+	end := certs[0].NotAfter
+	start := certs[0].NotBefore
+	if duration := end.Sub(start); duration > oldCSR.Spec.DurationHint.Duration {
+		klog.V(4).InfoS("cannot sign CSR with too long duration",
 			"user", a.GetUserInfo().GetName(),
 			"csrName", oldCSR.Name,
-			"notAfterHint", oldCSR.Spec.NotAfterHint.UTC().String(),
-			"actualNotAfter", certs[0].NotAfter.UTC().String(),
+			"durationHint", oldCSR.Spec.DurationHint.Duration.String(),
+			"actualDuration", duration.String(),
 		)
-		return admission.NewForbidden(a, fmt.Errorf("user %s cannot sign CSR %s with a notAfter date later than %s but attempted %s",
+		return admission.NewForbidden(a, fmt.Errorf("user %s cannot sign CSR %s with a duration longer than %s but attempted %s",
 			a.GetUserInfo().GetName(),
 			oldCSR.Name,
-			oldCSR.Spec.NotAfterHint.UTC().String(),
-			certs[0].NotAfter.UTC().String(),
+			oldCSR.Spec.DurationHint.Duration.String(),
+			duration.String(),
 		))
 	}
 

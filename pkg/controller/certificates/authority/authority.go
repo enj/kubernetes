@@ -43,7 +43,7 @@ type CertificateAuthority struct {
 
 // Sign signs a certificate request, applying a SigningPolicy and returns a DER
 // encoded x509 certificate.
-func (ca *CertificateAuthority) Sign(crDER []byte, policy SigningPolicy, usages []capi.KeyUsage, notAfter metav1.Time) ([]byte, error) {
+func (ca *CertificateAuthority) Sign(crDER []byte, policy SigningPolicy, usages []capi.KeyUsage, durationHint *metav1.Duration) ([]byte, error) {
 	cr, err := x509.ParseCertificateRequest(crDER)
 	if err != nil {
 		return nil, fmt.Errorf("unable to parse certificate request: %v", err)
@@ -69,7 +69,7 @@ func (ca *CertificateAuthority) Sign(crDER []byte, policy SigningPolicy, usages 
 		Extensions:         cr.Extensions,
 		ExtraExtensions:    cr.ExtraExtensions,
 	}
-	if err := policy.apply(tmpl, usages, ca.Certificate.NotAfter, notAfter.Time); err != nil {
+	if err := policy.apply(tmpl, usages, ca.Certificate.NotAfter, durationHint); err != nil {
 		return nil, err
 	}
 

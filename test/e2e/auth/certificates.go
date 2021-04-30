@@ -82,7 +82,7 @@ var _ = SIGDescribe("Certificates API [Privileged:ClusterAdmin]", func() {
 				},
 				SignerName: certificatesv1.KubeAPIServerClientSignerName,
 				// TODO: should we check notAfter of the resulting certificate?
-				NotAfterHint: metav1.NewTime(time.Now().Add(time.Hour)),
+				DurationHint: &metav1.Duration{Duration: time.Hour},
 			},
 		}
 
@@ -210,7 +210,7 @@ var _ = SIGDescribe("Certificates API [Privileged:ClusterAdmin]", func() {
 				Request:    csrData,
 				SignerName: signerName,
 				// TODO: should we check notAfter of the resulting certificate?
-				NotAfterHint: metav1.NewTime(time.Now().Add(time.Hour)),
+				DurationHint: &metav1.Duration{Duration: time.Hour},
 				Usages:       []certificatesv1.KeyUsage{certificatesv1.UsageDigitalSignature, certificatesv1.UsageKeyEncipherment, certificatesv1.UsageServerAuth},
 			},
 		}
