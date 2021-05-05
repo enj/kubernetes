@@ -114,8 +114,8 @@ type isRequestForSignerFunc func(req *x509.CertificateRequest, usages []capi.Key
 type signer struct {
 	caProvider *caProvider
 
-	client  clientset.Interface
-	certTTL time.Duration
+	client clientset.Interface
+	policy authority.SigningPolicy
 
 	signerName           string
 	isRequestForSignerFn isRequestForSignerFunc
@@ -132,9 +132,13 @@ func newSigner(signerName, caFile, caKeyFile string, client clientset.Interface,
 	}
 
 	ret := &signer{
-		caProvider:           caProvider,
-		client:               client,
-		certTTL:              certificateDuration,
+		caProvider: caProvider,
+		client:     client,
+		policy: authority.PermissiveSigningPolicy{
+			TTL:      certificateDuration,
+			Backdate: 5 * time.Minute,
+			Short:    8 * time.Hour, // 5 minutes of backdating is roughly 1% of 8 hours
+		},
 		signerName:           signerName,
 		isRequestForSignerFn: isRequestForSignerFn,
 	}
@@ -190,10 +194,7 @@ func (s *signer) sign(x509cr *x509.CertificateRequest, usages []capi.KeyUsage) (
 	if err != nil {
 		return nil, err
 	}
-	der, err := currCA.Sign(x509cr.Raw, authority.PermissiveSigningPolicy{
-		TTL:    s.certTTL,
-		Usages: usages,
-	})
+	der, err := currCA.Sign(x509cr.Raw, s.policy, usages)
 	if err != nil {
 		return nil, err
 	}
