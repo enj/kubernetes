@@ -46,7 +46,7 @@ import (
 // RequestCertificate will either use an existing (if this process has run
 // before but not to completion) or create a certificate signing request using the
 // PEM encoded CSR and send it to API server.
-func RequestCertificate(client clientset.Interface, csrData []byte, name string, signerName string, usages []certificatesv1.KeyUsage, privateKey interface{}) (reqName string, reqUID types.UID, err error) {
+func RequestCertificate(client clientset.Interface, csrData []byte, name, signerName string, duration time.Duration, usages []certificatesv1.KeyUsage, privateKey interface{}) (reqName string, reqUID types.UID, err error) {
 	csr := &certificatesv1.CertificateSigningRequest{
 		// Username, UID, Groups will be injected by API server.
 		TypeMeta: metav1.TypeMeta{Kind: "CertificateSigningRequest"},
@@ -61,6 +61,9 @@ func RequestCertificate(client clientset.Interface, csrData []byte, name string,
 	}
 	if len(csr.Name) == 0 {
 		csr.GenerateName = "csr-"
+	}
+	if duration != 0 {
+		csr.Spec.DurationHint = &metav1.Duration{Duration: duration}
 	}
 
 	reqName, reqUID, err = create(client, csr)
@@ -307,7 +310,7 @@ func ensureCompatible(new, orig *certificatesv1.CertificateSigningRequest, priva
 	if len(new.Spec.SignerName) > 0 && len(orig.Spec.SignerName) > 0 && new.Spec.SignerName != orig.Spec.SignerName {
 		return fmt.Errorf("csr signerNames differ: new %q, orig: %q", new.Spec.SignerName, orig.Spec.SignerName)
 	}
-	// TODO do we need a check for notAfterHint here?
+	// TODO do we need a check for durationHint here?
 	//  Update TestEnsureCompatible if we do make a change
 	signer, ok := privateKey.(crypto.Signer)
 	if !ok {

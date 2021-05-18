@@ -68,8 +68,8 @@ func TestSigner(t *testing.T) {
 		capi.UsageServerAuth,
 		capi.UsageClientAuth,
 	},
-		// requesting a notAfter that is later than now+TTL is ignored
-		metav1.NewTime(fakeClock.Now().Add(3*time.Hour)),
+		// requesting a duration that is greater than TTL is ignored
+		&metav1.Duration{Duration: 3 * time.Hour},
 	)
 	if err != nil {
 		t.Fatalf("failed to sign CSR: %v", err)
