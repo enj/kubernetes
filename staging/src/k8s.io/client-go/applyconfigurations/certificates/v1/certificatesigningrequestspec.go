@@ -19,19 +19,21 @@ limitations under the License.
 package v1
 
 import (
-	v1 "k8s.io/api/certificates/v1"
+	certificatesv1 "k8s.io/api/certificates/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // CertificateSigningRequestSpecApplyConfiguration represents an declarative configuration of the CertificateSigningRequestSpec type for use
 // with apply.
 type CertificateSigningRequestSpecApplyConfiguration struct {
-	Request    []byte                   `json:"request,omitempty"`
-	SignerName *string                  `json:"signerName,omitempty"`
-	Usages     []v1.KeyUsage            `json:"usages,omitempty"`
-	Username   *string                  `json:"username,omitempty"`
-	UID        *string                  `json:"uid,omitempty"`
-	Groups     []string                 `json:"groups,omitempty"`
-	Extra      map[string]v1.ExtraValue `json:"extra,omitempty"`
+	Request      []byte                               `json:"request,omitempty"`
+	SignerName   *string                              `json:"signerName,omitempty"`
+	DurationHint *v1.Duration                         `json:"durationHint,omitempty"`
+	Usages       []certificatesv1.KeyUsage            `json:"usages,omitempty"`
+	Username     *string                              `json:"username,omitempty"`
+	UID          *string                              `json:"uid,omitempty"`
+	Groups       []string                             `json:"groups,omitempty"`
+	Extra        map[string]certificatesv1.ExtraValue `json:"extra,omitempty"`
 }
 
 // CertificateSigningRequestSpecApplyConfiguration constructs an declarative configuration of the CertificateSigningRequestSpec type for use with
@@ -58,10 +60,18 @@ func (b *CertificateSigningRequestSpecApplyConfiguration) WithSignerName(value s
 	return b
 }
 
+// WithDurationHint sets the DurationHint field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DurationHint field is set to the value of the last call.
+func (b *CertificateSigningRequestSpecApplyConfiguration) WithDurationHint(value v1.Duration) *CertificateSigningRequestSpecApplyConfiguration {
+	b.DurationHint = &value
+	return b
+}
+
 // WithUsages adds the given value to the Usages field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the Usages field.
-func (b *CertificateSigningRequestSpecApplyConfiguration) WithUsages(values ...v1.KeyUsage) *CertificateSigningRequestSpecApplyConfiguration {
+func (b *CertificateSigningRequestSpecApplyConfiguration) WithUsages(values ...certificatesv1.KeyUsage) *CertificateSigningRequestSpecApplyConfiguration {
 	for i := range values {
 		b.Usages = append(b.Usages, values[i])
 	}
@@ -98,9 +108,9 @@ func (b *CertificateSigningRequestSpecApplyConfiguration) WithGroups(values ...s
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, the entries provided by each call will be put on the Extra field,
 // overwriting an existing map entries in Extra field with the same key.
-func (b *CertificateSigningRequestSpecApplyConfiguration) WithExtra(entries map[string]v1.ExtraValue) *CertificateSigningRequestSpecApplyConfiguration {
+func (b *CertificateSigningRequestSpecApplyConfiguration) WithExtra(entries map[string]certificatesv1.ExtraValue) *CertificateSigningRequestSpecApplyConfiguration {
 	if b.Extra == nil && len(entries) > 0 {
-		b.Extra = make(map[string]v1.ExtraValue, len(entries))
+		b.Extra = make(map[string]certificatesv1.ExtraValue, len(entries))
 	}
 	for k, v := range entries {
 		b.Extra[k] = v

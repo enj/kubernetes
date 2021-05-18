@@ -21,6 +21,7 @@ limitations under the License.
 package v1beta1
 
 import (
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -114,6 +115,11 @@ func (in *CertificateSigningRequestSpec) DeepCopyInto(out *CertificateSigningReq
 	if in.SignerName != nil {
 		in, out := &in.SignerName, &out.SignerName
 		*out = new(string)
+		**out = **in
+	}
+	if in.DurationHint != nil {
+		in, out := &in.DurationHint, &out.DurationHint
+		*out = new(v1.Duration)
 		**out = **in
 	}
 	if in.Usages != nil {
