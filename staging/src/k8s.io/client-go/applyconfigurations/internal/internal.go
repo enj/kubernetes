@@ -2789,6 +2789,9 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: io.k8s.api.certificates.v1.CertificateSigningRequestSpec
   map:
     fields:
+    - name: durationHint
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Duration
     - name: extra
       type:
         map:
@@ -2885,6 +2888,9 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: io.k8s.api.certificates.v1beta1.CertificateSigningRequestSpec
   map:
     fields:
+    - name: durationHint
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Duration
     - name: extra
       type:
         map:
@@ -10595,6 +10601,8 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: propagationPolicy
       type:
         scalar: string
+- name: io.k8s.apimachinery.pkg.apis.meta.v1.Duration
+  scalar: string
 - name: io.k8s.apimachinery.pkg.apis.meta.v1.FieldsV1
   map:
     elementType:
