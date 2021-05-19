@@ -64,16 +64,15 @@ type PermissiveSigningPolicy struct {
 }
 
 func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, usages []capi.KeyUsage, signerNotAfter time.Time, durationHint *metav1.Duration) error {
-	if p.TTL <= 0 || p.Backdate < 0 {
-		return fmt.Errorf("invalid ttl=%s or backdate=%s", p.TTL, p.Backdate)
-	}
-
 	now := time.Now()
 	if p.Now != nil {
 		now = p.Now()
 	}
 
 	ttl := p.TTL
+	if durationHint != nil && durationHint.Duration < ttl && durationHint.Duration > 0 {
+		ttl = durationHint.Duration
+	}
 
 	usage, extUsages, err := keyUsagesFromStrings(usages)
 	if err != nil {
@@ -87,14 +86,6 @@ func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, usages []capi.Key
 	// do not backdate the end time if we consider this to be a short lived certificate
 	if ttl < p.Short {
 		tmpl.NotAfter = now.Add(ttl)
-	}
-
-	if !tmpl.NotAfter.Before(signerNotAfter) {
-		tmpl.NotAfter = signerNotAfter
-	}
-
-	if durationHint != nil && durationHint.Duration < p.TTL && durationHint.Duration > 0 { // TODO 0 check should be 5 mins?
-		tmpl.NotAfter = now.Add(durationHint.Duration)
 	}
 
 	tmpl.ExtraExtensions = nil
