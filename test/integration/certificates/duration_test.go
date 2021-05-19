@@ -106,6 +106,12 @@ func TestCSRDurationHint(t *testing.T) {
 			wantError:    "",
 		},
 		{
+			name:         "longer duration than certTTL",
+			duration:     48 * time.Hour,
+			wantDuration: 24 * time.Hour,
+			wantError:    "",
+		},
+		{
 			name:         "slightly shorter duration set",
 			duration:     20 * time.Hour,
 			wantDuration: 20 * time.Hour,
