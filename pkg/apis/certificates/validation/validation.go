@@ -208,7 +208,7 @@ func validateCertificateSigningRequest(csr *certificates.CertificateSigningReque
 	}
 	const min = 5 * time.Minute
 	if csr.Spec.DurationHint != nil && csr.Spec.DurationHint.Duration < min {
-		allErrs = append(allErrs, field.Invalid(specPath.Child("durationHint"), csr.Spec.DurationHint, "may not specify a duration less than 5 minutes"))
+		allErrs = append(allErrs, field.Invalid(specPath.Child("durationHint"), csr.Spec.DurationHint.Duration, "may not specify a duration less than 5 minutes"))
 	}
 	allErrs = append(allErrs, validateConditions(field.NewPath("status", "conditions"), csr, opts)...)
 

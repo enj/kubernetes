@@ -274,7 +274,7 @@ func TestValidateCertificateSigningRequestCreate(t *testing.T) {
 				},
 			},
 			errs: field.ErrorList{
-				field.Invalid(specPath.Child("durationHint"), &metav1.Duration{Duration: time.Minute}, "may not specify a duration less than 5 minutes"),
+				field.Invalid(specPath.Child("durationHint"), time.Minute, "may not specify a duration less than 5 minutes"),
 			},
 		},
 		"valid duration": {
