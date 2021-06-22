@@ -39,27 +39,23 @@ type SigningPolicy interface {
 //
 //  * It forwards all SANs from the original signing request.
 //  * It sets allowed usages as configured in the policy.
-//  * It sets NotBefore based on the Backdate configured in the policy.
-//  * It sets NotAfter based on the TTL and Backdate configured in the policy.
-//    Short lived certificates ignore Backdate and only use TTL.
-//    NotAfter is truncated to the expiration date of the signer.
 //  * It zeros all extensions.
 //  * It sets BasicConstraints to true.
 //  * It sets IsCA to false.
 //  * It validates that the signer has not expired.
-//
-// All certificates set NotBefore = Now() - Backdate.
-// Long-lived certificates set NotAfter = Now() + TTL - Backdate.
-// Short-lived certificates set NotAfter = Now() + TTL.
+//  * It sets NotBefore and NotAfter:
+//    All certificates set NotBefore = Now() - Backdate.
+//    Long-lived certificates set NotAfter = Now() + TTL - Backdate.
+//    Short-lived certificates set NotAfter = Now() + TTL.
+//    All certificates truncate NotAfter to the expiration date of the signer.
 type PermissiveSigningPolicy struct {
-	// TTL is the certificate TTL. Now and TTL and Backdate are used to calculate the
-	// NotAfter value of the certificate.  Backdate is ignored when TTL is less than Short.
+	// TTL is used in certificate NotAfter calculation as described above.
 	TTL time.Duration
 
 	// Usages are the allowed usages of a certificate.
 	Usages []capi.KeyUsage
 
-	// Backdate and Now are used to calculate the NotBefore value of the certificate.
+	// Backdate is used in certificate NotBefore calculation as described above.
 	Backdate time.Duration
 
 	// Short is the duration used to determine if the lifetime of a certificate should be considered short.
@@ -85,6 +81,12 @@ func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, signerNotAfter ti
 	}
 	tmpl.KeyUsage = usage
 	tmpl.ExtKeyUsage = extUsages
+
+	tmpl.ExtraExtensions = nil
+	tmpl.Extensions = nil
+	tmpl.BasicConstraintsValid = true
+	tmpl.IsCA = false
+
 	tmpl.NotBefore = now.Add(-p.Backdate)
 
 	if ttl < p.Short {
@@ -94,17 +96,12 @@ func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, signerNotAfter ti
 		tmpl.NotAfter = now.Add(ttl - p.Backdate)
 	}
 
-	tmpl.ExtraExtensions = nil
-	tmpl.Extensions = nil
-	tmpl.BasicConstraintsValid = true
-	tmpl.IsCA = false
+	if !tmpl.NotAfter.Before(signerNotAfter) {
+		tmpl.NotAfter = signerNotAfter
+	}
 
 	if !tmpl.NotBefore.Before(signerNotAfter) {
 		return fmt.Errorf("the signer has expired: NotAfter=%v", signerNotAfter)
-	}
-
-	if !tmpl.NotAfter.Before(signerNotAfter) {
-		tmpl.NotAfter = signerNotAfter
 	}
 
 	if !now.Before(signerNotAfter) {
