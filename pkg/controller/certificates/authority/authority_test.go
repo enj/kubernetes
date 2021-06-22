@@ -70,7 +70,6 @@ func TestCertificateAuthority(t *testing.T) {
 		name     string
 		cr       x509.CertificateRequest
 		policy   SigningPolicy
-		usages   []capi.KeyUsage
 		mutateCA func(ca *CertificateAuthority)
 
 		want    x509.Certificate
@@ -89,8 +88,7 @@ func TestCertificateAuthority(t *testing.T) {
 		},
 		{
 			name:   "key usage",
-			policy: PermissiveSigningPolicy{TTL: time.Hour, Now: nowFunc},
-			usages: []capi.KeyUsage{"signing"},
+			policy: PermissiveSigningPolicy{TTL: time.Hour, Usages: []capi.KeyUsage{"signing"}, Now: nowFunc},
 			want: x509.Certificate{
 				NotBefore:             now,
 				NotAfter:              now.Add(1 * time.Hour),
@@ -100,8 +98,7 @@ func TestCertificateAuthority(t *testing.T) {
 		},
 		{
 			name:   "ext key usage",
-			policy: PermissiveSigningPolicy{TTL: time.Hour, Now: nowFunc},
-			usages: []capi.KeyUsage{"client auth"},
+			policy: PermissiveSigningPolicy{TTL: time.Hour, Usages: []capi.KeyUsage{"client auth"}, Now: nowFunc},
 			want: x509.Certificate{
 				NotBefore:             now,
 				NotAfter:              now.Add(1 * time.Hour),
@@ -217,7 +214,7 @@ func TestCertificateAuthority(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			certDER, err := ca.Sign(csr, test.policy, test.usages)
+			certDER, err := ca.Sign(csr, test.policy)
 			if len(test.wantErr) > 0 {
 				if errStr := errString(err); test.wantErr != errStr {
 					t.Fatalf("expected error %s but got %s", test.wantErr, errStr)

@@ -114,8 +114,8 @@ type isRequestForSignerFunc func(req *x509.CertificateRequest, usages []capi.Key
 type signer struct {
 	caProvider *caProvider
 
-	client clientset.Interface
-	policy authority.SigningPolicy
+	client  clientset.Interface
+	certTTL time.Duration
 
 	signerName           string
 	isRequestForSignerFn isRequestForSignerFunc
@@ -132,13 +132,9 @@ func newSigner(signerName, caFile, caKeyFile string, client clientset.Interface,
 	}
 
 	ret := &signer{
-		caProvider: caProvider,
-		client:     client,
-		policy: authority.PermissiveSigningPolicy{
-			TTL:      certificateDuration,
-			Backdate: 5 * time.Minute,
-			Short:    8 * time.Hour, // 5 minutes of backdating is roughly 1% of 8 hours
-		},
+		caProvider:           caProvider,
+		client:               client,
+		certTTL:              certificateDuration,
 		signerName:           signerName,
 		isRequestForSignerFn: isRequestForSignerFn,
 	}
@@ -177,7 +173,7 @@ func (s *signer) handle(csr *capi.CertificateSigningRequest) error {
 		// Ignore requests for kubernetes.io signerNames we don't recognize
 		return nil
 	}
-	cert, err := s.sign(x509cr, csr.Spec.Usages)
+	cert, err := s.sign(x509cr, csr.Spec.Usages, nil)
 	if err != nil {
 		return fmt.Errorf("error auto signing csr: %v", err)
 	}
@@ -189,12 +185,18 @@ func (s *signer) handle(csr *capi.CertificateSigningRequest) error {
 	return nil
 }
 
-func (s *signer) sign(x509cr *x509.CertificateRequest, usages []capi.KeyUsage) ([]byte, error) {
+func (s *signer) sign(x509cr *x509.CertificateRequest, usages []capi.KeyUsage, now func() time.Time) ([]byte, error) {
 	currCA, err := s.caProvider.currentCA()
 	if err != nil {
 		return nil, err
 	}
-	der, err := currCA.Sign(x509cr.Raw, s.policy, usages)
+	der, err := currCA.Sign(x509cr.Raw, authority.PermissiveSigningPolicy{
+		TTL:      s.certTTL,
+		Usages:   usages,
+		Backdate: 5 * time.Minute, // this must always be less than the minimum TTL requested by a user
+		Short:    8 * time.Hour,   // 5 minutes of backdating is roughly 1% of 8 hours
+		Now:      now,
+	})
 	if err != nil {
 		return nil, err
 	}

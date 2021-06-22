@@ -37,7 +37,6 @@ import (
 	"k8s.io/client-go/util/cert"
 	capihelper "k8s.io/kubernetes/pkg/apis/certificates/v1"
 	"k8s.io/kubernetes/pkg/controller/certificates"
-	"k8s.io/kubernetes/pkg/controller/certificates/authority"
 )
 
 func TestSigner(t *testing.T) {
@@ -47,10 +46,6 @@ func TestSigner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create signer: %v", err)
 	}
-
-	policy := s.policy.(authority.PermissiveSigningPolicy)
-	policy.Now = fakeClock.Now
-	s.policy = policy
 
 	csrb, err := ioutil.ReadFile("./testdata/kubelet.csr")
 	if err != nil {
@@ -66,7 +61,7 @@ func TestSigner(t *testing.T) {
 		capi.UsageKeyEncipherment,
 		capi.UsageServerAuth,
 		capi.UsageClientAuth,
-	})
+	}, fakeClock.Now)
 	if err != nil {
 		t.Fatalf("failed to sign CSR: %v", err)
 	}

@@ -31,14 +31,14 @@ import (
 type SigningPolicy interface {
 	// not-exporting apply forces signing policy implementations to be internal
 	// to this package.
-	apply(template *x509.Certificate, usages []capi.KeyUsage, signerNotAfter time.Time) error
+	apply(template *x509.Certificate, signerNotAfter time.Time) error
 }
 
 // PermissiveSigningPolicy is the signing policy historically used by the local
 // signer.
 //
 //  * It forwards all SANs from the original signing request.
-//  * It sets allowed usages as configured in the policy and based on the requested usages.
+//  * It sets allowed usages as configured in the policy.
 //  * It sets NotBefore based on the Backdate configured in the policy.
 //  * It sets NotAfter based on the TTL and Backdate configured in the policy.
 //    Short lived certificates ignore Backdate and only use TTL.
@@ -47,10 +47,17 @@ type SigningPolicy interface {
 //  * It sets BasicConstraints to true.
 //  * It sets IsCA to false.
 //  * It validates that the signer has not expired.
+//
+// All certificates set NotBefore = Now() - Backdate.
+// Long-lived certificates set NotAfter = Now() + TTL - Backdate.
+// Short-lived certificates set NotAfter = Now() + TTL.
 type PermissiveSigningPolicy struct {
 	// TTL is the certificate TTL. Now and TTL and Backdate are used to calculate the
 	// NotAfter value of the certificate.  Backdate is ignored when TTL is less than Short.
 	TTL time.Duration
+
+	// Usages are the allowed usages of a certificate.
+	Usages []capi.KeyUsage
 
 	// Backdate and Now are used to calculate the NotBefore value of the certificate.
 	Backdate time.Duration
@@ -62,26 +69,29 @@ type PermissiveSigningPolicy struct {
 	Now func() time.Time
 }
 
-func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, usages []capi.KeyUsage, signerNotAfter time.Time) error {
-	now := time.Now()
+func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, signerNotAfter time.Time) error {
+	var now time.Time
 	if p.Now != nil {
 		now = p.Now()
+	} else {
+		now = time.Now()
 	}
 
 	ttl := p.TTL
 
-	usage, extUsages, err := keyUsagesFromStrings(usages)
+	usage, extUsages, err := keyUsagesFromStrings(p.Usages)
 	if err != nil {
 		return err
 	}
 	tmpl.KeyUsage = usage
 	tmpl.ExtKeyUsage = extUsages
 	tmpl.NotBefore = now.Add(-p.Backdate)
-	tmpl.NotAfter = now.Add(ttl - p.Backdate)
 
-	// do not backdate the end time if we consider this to be a short lived certificate
 	if ttl < p.Short {
+		// do not backdate the end time if we consider this to be a short lived certificate
 		tmpl.NotAfter = now.Add(ttl)
+	} else {
+		tmpl.NotAfter = now.Add(ttl - p.Backdate)
 	}
 
 	tmpl.ExtraExtensions = nil
