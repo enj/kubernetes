@@ -173,7 +173,7 @@ func (s *signer) handle(csr *capi.CertificateSigningRequest) error {
 		// Ignore requests for kubernetes.io signerNames we don't recognize
 		return nil
 	}
-	cert, err := s.sign(x509cr, csr.Spec.Usages, nil, csr.Spec.DurationHint)
+	cert, err := s.sign(x509cr, csr.Spec.Usages, csr.Spec.DurationHint, nil)
 	if err != nil {
 		return fmt.Errorf("error auto signing csr: %v", err)
 	}
@@ -185,7 +185,7 @@ func (s *signer) handle(csr *capi.CertificateSigningRequest) error {
 	return nil
 }
 
-func (s *signer) sign(x509cr *x509.CertificateRequest, usages []capi.KeyUsage, now func() time.Time,  durationHint *metav1.Duration) ([]byte, error) {
+func (s *signer) sign(x509cr *x509.CertificateRequest, usages []capi.KeyUsage, durationHint *metav1.Duration, now func() time.Time) ([]byte, error) {
 	currCA, err := s.caProvider.currentCA()
 	if err != nil {
 		return nil, err
@@ -196,7 +196,7 @@ func (s *signer) sign(x509cr *x509.CertificateRequest, usages []capi.KeyUsage, n
 		Backdate: 5 * time.Minute, // this must always be less than the minimum TTL requested by a user
 		Short:    8 * time.Hour,   // 5 minutes of backdating is roughly 1% of 8 hours
 		Now:      now,
-	},  durationHint *metav1.Duration)
+	}, durationHint)
 	if err != nil {
 		return nil, err
 	}

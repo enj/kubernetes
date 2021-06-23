@@ -29,8 +29,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	capi "k8s.io/api/certificates/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/client-go/kubernetes/fake"
@@ -62,9 +62,10 @@ func TestSigner(t *testing.T) {
 		capi.UsageKeyEncipherment,
 		capi.UsageServerAuth,
 		capi.UsageClientAuth,
-	}, fakeClock.Now,
+	},
 		// requesting a duration that is greater than TTL is ignored
 		&metav1.Duration{Duration: 3 * time.Hour},
+		fakeClock.Now,
 	)
 	if err != nil {
 		t.Fatalf("failed to sign CSR: %v", err)
