@@ -73,6 +73,7 @@ func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, signerNotAfter ti
 		now = time.Now()
 	}
 
+	// TODO fix this junk
 	duration := p.TTL
 	if expirationSeconds != nil {
 		if requestedDuration := time.Duration(*expirationSeconds) * time.Second; requestedDuration < duration && requestedDuration > 0 {
