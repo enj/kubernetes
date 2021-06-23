@@ -2807,6 +2807,9 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: io.k8s.api.certificates.v1.CertificateSigningRequestSpec
   map:
     fields:
+    - name: expirationSeconds
+      type:
+        scalar: numeric
     - name: extra
       type:
         map:
@@ -2903,6 +2906,9 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: io.k8s.api.certificates.v1beta1.CertificateSigningRequestSpec
   map:
     fields:
+    - name: expirationSeconds
+      type:
+        scalar: numeric
     - name: extra
       type:
         map:
