@@ -412,7 +412,7 @@ func AddHandlers(h printers.PrintHandler) {
 		{Name: "Name", Type: "string", Format: "name", Description: metav1.ObjectMeta{}.SwaggerDoc()["name"]},
 		{Name: "Age", Type: "string", Description: metav1.ObjectMeta{}.SwaggerDoc()["creationTimestamp"]},
 		{Name: "SignerName", Type: "string", Description: certificatesv1beta1.CertificateSigningRequestSpec{}.SwaggerDoc()["signerName"]},
-		{Name: "DurationHint", Type: "string", Description: certificatesv1beta1.CertificateSigningRequestSpec{}.SwaggerDoc()["durationHint"]},
+		{Name: "RequestedDuration", Type: "string", Description: certificatesv1beta1.CertificateSigningRequestSpec{}.SwaggerDoc()["expirationSeconds"]},
 		{Name: "Requestor", Type: "string", Description: certificatesv1beta1.CertificateSigningRequestSpec{}.SwaggerDoc()["request"]},
 		{Name: "Condition", Type: "string", Description: certificatesv1beta1.CertificateSigningRequestStatus{}.SwaggerDoc()["conditions"]},
 	}
@@ -1904,11 +1904,11 @@ func printCertificateSigningRequest(obj *certificates.CertificateSigningRequest,
 	if obj.Spec.SignerName != "" {
 		signerName = obj.Spec.SignerName
 	}
-	durationHint := "<none>"
-	if obj.Spec.DurationHint != nil {
-		durationHint = duration.HumanDuration(obj.Spec.DurationHint.Duration)
+	requestedDuration := "<none>"
+	if obj.Spec.ExpirationSeconds != nil {
+		requestedDuration = duration.HumanDuration(time.Duration(*obj.Spec.ExpirationSeconds) * time.Second)
 	}
-	row.Cells = append(row.Cells, obj.Name, translateTimestampSince(obj.CreationTimestamp), signerName, durationHint, obj.Spec.Username, status)
+	row.Cells = append(row.Cells, obj.Name, translateTimestampSince(obj.CreationTimestamp), signerName, requestedDuration, obj.Spec.Username, status)
 	return []metav1.TableRow{row}, nil
 }
 

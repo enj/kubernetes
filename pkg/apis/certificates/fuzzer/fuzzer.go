@@ -21,10 +21,10 @@ import (
 
 	fuzz "github.com/google/gofuzz"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtimeserializer "k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/kubernetes/pkg/apis/certificates"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/utils/pointer"
 )
 
 // Funcs returns the fuzzer functions for the certificates api group.
@@ -34,7 +34,7 @@ var Funcs = func(codecs runtimeserializer.CodecFactory) []interface{} {
 			c.FuzzNoCustom(obj) // fuzz self without calling this function again
 			obj.Usages = []certificates.KeyUsage{certificates.UsageKeyEncipherment}
 			obj.SignerName = "example.com/custom-sample-signer"
-			obj.DurationHint = &metav1.Duration{Duration: time.Hour + time.Minute + time.Second + time.Millisecond + time.Microsecond + time.Nanosecond}
+			obj.ExpirationSeconds = pointer.Int32(int32((time.Hour + time.Minute + time.Second) / time.Second))
 		},
 		func(obj *certificates.CertificateSigningRequestCondition, c fuzz.Continue) {
 			c.FuzzNoCustom(obj) // fuzz self without calling this function again

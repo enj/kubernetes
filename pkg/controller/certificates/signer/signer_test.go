@@ -30,7 +30,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	capi "k8s.io/api/certificates/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/client-go/kubernetes/fake"
@@ -38,6 +37,7 @@ import (
 	"k8s.io/client-go/util/cert"
 	capihelper "k8s.io/kubernetes/pkg/apis/certificates/v1"
 	"k8s.io/kubernetes/pkg/controller/certificates"
+	"k8s.io/utils/pointer"
 )
 
 func TestSigner(t *testing.T) {
@@ -64,7 +64,7 @@ func TestSigner(t *testing.T) {
 		capi.UsageClientAuth,
 	},
 		// requesting a duration that is greater than TTL is ignored
-		&metav1.Duration{Duration: 3 * time.Hour},
+		pointer.Int32(int32(3*time.Hour/time.Second)),
 		fakeClock.Now,
 	)
 	if err != nil {

@@ -206,9 +206,9 @@ func validateCertificateSigningRequest(csr *certificates.CertificateSigningReque
 	} else {
 		allErrs = append(allErrs, ValidateCertificateSigningRequestSignerName(specPath.Child("signerName"), csr.Spec.SignerName)...)
 	}
-	const min = 5 * time.Minute
-	if csr.Spec.DurationHint != nil && csr.Spec.DurationHint.Duration < min {
-		allErrs = append(allErrs, field.Invalid(specPath.Child("durationHint"), csr.Spec.DurationHint.Duration, "may not specify a duration less than 5 minutes"))
+	const min = int32(10 * time.Minute / time.Second)
+	if csr.Spec.ExpirationSeconds != nil && *csr.Spec.ExpirationSeconds < min {
+		allErrs = append(allErrs, field.Invalid(specPath.Child("expirationSeconds"), *csr.Spec.ExpirationSeconds, "may not specify a duration less than 600 seconds (10 minutes)"))
 	}
 	allErrs = append(allErrs, validateConditions(field.NewPath("status", "conditions"), csr, opts)...)
 

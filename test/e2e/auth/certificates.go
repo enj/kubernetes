@@ -38,6 +38,7 @@ import (
 	"k8s.io/client-go/util/cert"
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/utils"
+	"k8s.io/utils/pointer"
 
 	"github.com/onsi/ginkgo"
 )
@@ -82,7 +83,7 @@ var _ = SIGDescribe("Certificates API [Privileged:ClusterAdmin]", func() {
 				},
 				SignerName: certificatesv1.KubeAPIServerClientSignerName,
 				// TODO: should we check notAfter of the resulting certificate?
-				DurationHint: &metav1.Duration{Duration: time.Hour},
+				ExpirationSeconds: pointer.Int32(int32(time.Hour / time.Second)),
 			},
 		}
 
@@ -210,8 +211,8 @@ var _ = SIGDescribe("Certificates API [Privileged:ClusterAdmin]", func() {
 				Request:    csrData,
 				SignerName: signerName,
 				// TODO: should we check notAfter of the resulting certificate?
-				DurationHint: &metav1.Duration{Duration: time.Hour},
-				Usages:       []certificatesv1.KeyUsage{certificatesv1.UsageDigitalSignature, certificatesv1.UsageKeyEncipherment, certificatesv1.UsageServerAuth},
+				ExpirationSeconds: pointer.Int32(int32(time.Hour / time.Second)),
+				Usages:            []certificatesv1.KeyUsage{certificatesv1.UsageDigitalSignature, certificatesv1.UsageKeyEncipherment, certificatesv1.UsageServerAuth},
 			},
 		}
 

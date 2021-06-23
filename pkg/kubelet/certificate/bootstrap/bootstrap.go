@@ -344,7 +344,7 @@ func requestNodeCertificate(ctx context.Context, client clientset.Interface, pri
 		return nil, err
 	}
 
-	var duration time.Duration // TODO: pick a good value for the CSR durationHint field and/or allow it to be configured
+	var duration *time.Duration // TODO: pick a good value for the CSR durationHint field and/or allow it to be configured
 	reqName, reqUID, err := csr.RequestCertificate(client, csrData, name, certificatesv1.KubeAPIServerClientKubeletSignerName, duration, usages, privateKey)
 	if err != nil {
 		return nil, err

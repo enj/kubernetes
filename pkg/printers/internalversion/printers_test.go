@@ -4044,9 +4044,9 @@ func TestPrintCertificateSigningRequest(t *testing.T) {
 					CreationTimestamp: metav1.Time{Time: time.Now().Add(1.9e9)},
 				},
 				Spec: certificates.CertificateSigningRequestSpec{
-					Username:     "CSR Requestor",
-					SignerName:   "example.com/test-signer",
-					DurationHint: &metav1.Duration{Duration: 7*24*time.Hour + time.Hour}, // a little bit more than a week
+					Username:          "CSR Requestor",
+					SignerName:        "example.com/test-signer",
+					ExpirationSeconds: &metav1.Duration{Duration: 7*24*time.Hour + time.Hour}, // a little bit more than a week
 				},
 				Status: certificates.CertificateSigningRequestStatus{
 					Conditions: []certificates.CertificateSigningRequestCondition{

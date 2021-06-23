@@ -23,7 +23,6 @@ import (
 	"time"
 
 	capi "k8s.io/api/certificates/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // SigningPolicy validates a CertificateRequest before it's signed by the
@@ -32,7 +31,7 @@ import (
 type SigningPolicy interface {
 	// not-exporting apply forces signing policy implementations to be internal
 	// to this package.
-	apply(template *x509.Certificate, signerNotAfter time.Time, durationHint *metav1.Duration) error
+	apply(template *x509.Certificate, signerNotAfter time.Time, expirationSeconds *int32) error
 }
 
 // PermissiveSigningPolicy is the signing policy historically used by the local
@@ -66,7 +65,7 @@ type PermissiveSigningPolicy struct {
 	Now func() time.Time
 }
 
-func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, signerNotAfter time.Time, durationHint *metav1.Duration) error {
+func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, signerNotAfter time.Time, expirationSeconds *int32) error {
 	var now time.Time
 	if p.Now != nil {
 		now = p.Now()
@@ -74,9 +73,11 @@ func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, signerNotAfter ti
 		now = time.Now()
 	}
 
-	ttl := p.TTL
-	if durationHint != nil && durationHint.Duration < ttl && durationHint.Duration > 0 {
-		ttl = durationHint.Duration
+	duration := p.TTL
+	if expirationSeconds != nil {
+		if requestedDuration := time.Duration(*expirationSeconds) * time.Second; requestedDuration < duration && requestedDuration > 0 {
+			duration = requestedDuration
+		}
 	}
 
 	usage, extUsages, err := keyUsagesFromStrings(p.Usages)
@@ -93,11 +94,11 @@ func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, signerNotAfter ti
 
 	tmpl.NotBefore = now.Add(-p.Backdate)
 
-	if ttl < p.Short {
+	if duration < p.Short {
 		// do not backdate the end time if we consider this to be a short lived certificate
-		tmpl.NotAfter = now.Add(ttl)
+		tmpl.NotAfter = now.Add(duration)
 	} else {
-		tmpl.NotAfter = now.Add(ttl - p.Backdate)
+		tmpl.NotAfter = now.Add(duration - p.Backdate)
 	}
 
 	if !tmpl.NotAfter.Before(signerNotAfter) {

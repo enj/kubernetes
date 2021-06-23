@@ -267,10 +267,10 @@ func TestValidateCertificateSigningRequestCreate(t *testing.T) {
 			csr: capi.CertificateSigningRequest{
 				ObjectMeta: validObjectMeta,
 				Spec: capi.CertificateSigningRequestSpec{
-					Usages:       validUsages,
-					Request:      newCSRPEM(t),
-					SignerName:   validSignerName,
-					DurationHint: &metav1.Duration{Duration: time.Minute},
+					Usages:            validUsages,
+					Request:           newCSRPEM(t),
+					SignerName:        validSignerName,
+					ExpirationSeconds: &metav1.Duration{Duration: time.Minute},
 				},
 			},
 			errs: field.ErrorList{
@@ -281,10 +281,10 @@ func TestValidateCertificateSigningRequestCreate(t *testing.T) {
 			csr: capi.CertificateSigningRequest{
 				ObjectMeta: validObjectMeta,
 				Spec: capi.CertificateSigningRequestSpec{
-					Usages:       validUsages,
-					Request:      newCSRPEM(t),
-					SignerName:   validSignerName,
-					DurationHint: &metav1.Duration{Duration: 10 * time.Minute},
+					Usages:            validUsages,
+					Request:           newCSRPEM(t),
+					SignerName:        validSignerName,
+					ExpirationSeconds: &metav1.Duration{Duration: 10 * time.Minute},
 				},
 			},
 			errs: field.ErrorList{},
