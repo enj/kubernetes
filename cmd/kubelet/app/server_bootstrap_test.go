@@ -306,7 +306,7 @@ func (s *csrSimulator) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		der, err := ca.Sign(cr.Raw, authority.PermissiveSigningPolicy{
 			TTL:      time.Hour,
 			Backdate: s.backdate,
-		}, nil, nil)
+		}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
