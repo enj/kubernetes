@@ -28,8 +28,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
+	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/storage/names"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/apis/certificates"
 	"k8s.io/kubernetes/pkg/apis/certificates/validation"
@@ -91,9 +93,13 @@ func (csrStrategy) PrepareForCreate(ctx context.Context, obj runtime.Object) {
 		if extra := user.GetExtra(); len(extra) > 0 {
 			csr.Spec.Extra = map[string]certificates.ExtraValue{}
 			for k, v := range extra {
-				csr.Spec.Extra[k] = certificates.ExtraValue(v)
+				csr.Spec.Extra[k] = v
 			}
 		}
+	}
+	// clear expirationSeconds if the CSRDuration feature is disabled
+	if !utilfeature.DefaultFeatureGate.Enabled(features.CSRDuration) {
+		csr.Spec.ExpirationSeconds = nil
 	}
 
 	// Be explicit that users cannot create pre-approved certificate requests.

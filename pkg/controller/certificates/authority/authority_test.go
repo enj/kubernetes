@@ -29,10 +29,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-
 	capi "k8s.io/api/certificates/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/diff"
+	"k8s.io/client-go/util/certificate/csr"
 )
 
 func TestCertificateAuthority(t *testing.T) {
@@ -72,7 +71,6 @@ func TestCertificateAuthority(t *testing.T) {
 		cr       x509.CertificateRequest
 		policy   SigningPolicy
 		mutateCA func(ca *CertificateAuthority)
-		duration *metav1.Duration
 
 		want    x509.Certificate
 		wantErr string
@@ -184,9 +182,8 @@ func TestCertificateAuthority(t *testing.T) {
 			wantErr: "the signer has expired: NotAfter=" + now.String(),
 		},
 		{
-			name:     "can request shorter duration than TTL",
-			policy:   PermissiveSigningPolicy{TTL: time.Hour, Now: func() time.Time { return now }},
-			duration: &metav1.Duration{Duration: 30 * time.Minute},
+			name:   "can request shorter duration than TTL",
+			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(30 * time.Minute), Now: func() time.Time { return now }},
 			want: x509.Certificate{
 				NotBefore:             now,
 				NotAfter:              now.Add(30 * time.Minute),
@@ -194,9 +191,8 @@ func TestCertificateAuthority(t *testing.T) {
 			},
 		},
 		{
-			name:     "can request shorter duration than TTL with backdate",
-			policy:   PermissiveSigningPolicy{TTL: time.Hour, Backdate: 5 * time.Minute, Now: func() time.Time { return now }},
-			duration: &metav1.Duration{Duration: 30 * time.Minute},
+			name:   "can request shorter duration than TTL with backdate",
+			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(30 * time.Minute), Backdate: 5 * time.Minute, Now: func() time.Time { return now }},
 			want: x509.Certificate{
 				NotBefore:             now.Add(-5 * time.Minute),
 				NotAfter:              now.Add(25 * time.Minute),
@@ -204,9 +200,8 @@ func TestCertificateAuthority(t *testing.T) {
 			},
 		},
 		{
-			name:     "can request shorter duration than TTL with short",
-			policy:   PermissiveSigningPolicy{TTL: time.Hour, Backdate: 5 * time.Minute, Short: 8 * time.Hour, Now: func() time.Time { return now }},
-			duration: &metav1.Duration{Duration: 30 * time.Minute},
+			name:   "can request shorter duration than TTL with short",
+			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(30 * time.Minute), Backdate: 5 * time.Minute, Short: 8 * time.Hour, Now: func() time.Time { return now }},
 			want: x509.Certificate{
 				NotBefore:             now.Add(-5 * time.Minute),
 				NotAfter:              now.Add(30 * time.Minute),
@@ -214,9 +209,8 @@ func TestCertificateAuthority(t *testing.T) {
 			},
 		},
 		{
-			name:     "cannot request longer duration than TTL",
-			policy:   PermissiveSigningPolicy{TTL: time.Hour, Now: func() time.Time { return now }},
-			duration: &metav1.Duration{Duration: 3 * time.Hour},
+			name:   "cannot request longer duration than TTL",
+			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(3 * time.Hour), Now: func() time.Time { return now }},
 			want: x509.Certificate{
 				NotBefore:             now,
 				NotAfter:              now.Add(time.Hour),
@@ -224,9 +218,8 @@ func TestCertificateAuthority(t *testing.T) {
 			},
 		},
 		{
-			name:     "cannot request longer duration than TTL with backdate",
-			policy:   PermissiveSigningPolicy{TTL: time.Hour, Backdate: 5 * time.Minute, Now: func() time.Time { return now }},
-			duration: &metav1.Duration{Duration: 3 * time.Hour},
+			name:   "cannot request longer duration than TTL with backdate",
+			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(3 * time.Hour), Backdate: 5 * time.Minute, Now: func() time.Time { return now }},
 			want: x509.Certificate{
 				NotBefore:             now.Add(-5 * time.Minute),
 				NotAfter:              now.Add(55 * time.Minute),
@@ -234,9 +227,8 @@ func TestCertificateAuthority(t *testing.T) {
 			},
 		},
 		{
-			name:     "cannot request longer duration than TTL with short",
-			policy:   PermissiveSigningPolicy{TTL: time.Hour, Backdate: 5 * time.Minute, Short: 8 * time.Hour, Now: func() time.Time { return now }},
-			duration: &metav1.Duration{Duration: 3 * time.Hour},
+			name:   "cannot request longer duration than TTL with short",
+			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(3 * time.Hour), Backdate: 5 * time.Minute, Short: 8 * time.Hour, Now: func() time.Time { return now }},
 			want: x509.Certificate{
 				NotBefore:             now.Add(-5 * time.Minute),
 				NotAfter:              now.Add(1 * time.Hour),
@@ -244,9 +236,8 @@ func TestCertificateAuthority(t *testing.T) {
 			},
 		},
 		{
-			name:     "cannot request negative duration",
-			policy:   PermissiveSigningPolicy{TTL: time.Hour, Now: func() time.Time { return now }},
-			duration: &metav1.Duration{Duration: -time.Minute},
+			name:   "cannot request negative duration",
+			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(-time.Minute), Now: func() time.Time { return now }},
 			want: x509.Certificate{
 				NotBefore:             now,
 				NotAfter:              now.Add(time.Hour),
@@ -254,9 +245,8 @@ func TestCertificateAuthority(t *testing.T) {
 			},
 		},
 		{
-			name:     "cannot request negative duration with backdate",
-			policy:   PermissiveSigningPolicy{TTL: time.Hour, Backdate: 5 * time.Minute, Now: func() time.Time { return now }},
-			duration: &metav1.Duration{Duration: -time.Minute},
+			name:   "cannot request negative duration with backdate",
+			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(-time.Minute), Backdate: 5 * time.Minute, Now: func() time.Time { return now }},
 			want: x509.Certificate{
 				NotBefore:             now.Add(-5 * time.Minute),
 				NotAfter:              now.Add(55 * time.Minute),
@@ -264,15 +254,15 @@ func TestCertificateAuthority(t *testing.T) {
 			},
 		},
 		{
-			name:     "cannot request negative duration with short",
-			policy:   PermissiveSigningPolicy{TTL: time.Hour, Backdate: 5 * time.Minute, Short: 8 * time.Hour, Now: func() time.Time { return now }},
-			duration: &metav1.Duration{Duration: -time.Minute},
+			name:   "cannot request negative duration with short",
+			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(-time.Minute), Backdate: 5 * time.Minute, Short: 8 * time.Hour, Now: func() time.Time { return now }},
 			want: x509.Certificate{
 				NotBefore:             now.Add(-5 * time.Minute),
 				NotAfter:              now.Add(1 * time.Hour),
 				BasicConstraintsValid: true,
 			},
 		},
+		// TODO feature gate test
 		{
 			name:   "expired ca with backdate",
 			policy: PermissiveSigningPolicy{TTL: time.Hour, Backdate: 5 * time.Minute, Now: nowFunc},
@@ -306,7 +296,7 @@ func TestCertificateAuthority(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			certDER, err := ca.Sign(csr, test.policy, test.duration)
+			certDER, err := ca.Sign(csr, test.policy)
 			if len(test.wantErr) > 0 {
 				if errStr := errString(err); test.wantErr != errStr {
 					t.Fatalf("expected error %s but got %s", test.wantErr, errStr)

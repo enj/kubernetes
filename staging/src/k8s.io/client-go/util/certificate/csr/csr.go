@@ -63,7 +63,7 @@ func RequestCertificate(client clientset.Interface, csrData []byte, name, signer
 		csr.GenerateName = "csr-"
 	}
 	if duration != nil {
-		csr.Spec.ExpirationSeconds = pointer.Int32(int32(*duration / time.Second))
+		csr.Spec.ExpirationSeconds = DurationToExpirationSeconds(*duration)
 	}
 
 	reqName, reqUID, err = create(client, csr)
@@ -88,7 +88,13 @@ func RequestCertificate(client clientset.Interface, csrData []byte, name, signer
 	}
 }
 
-// TODO helpers here
+func DurationToExpirationSeconds(duration time.Duration) *int32 {
+	return pointer.Int32(int32(duration / time.Second))
+}
+
+func ExpirationSecondsToDuration(expirationSeconds int32) time.Duration {
+	return time.Duration(expirationSeconds) * time.Second
+}
 
 func get(client clientset.Interface, name string) (*certificatesv1.CertificateSigningRequest, error) {
 	v1req, v1err := client.CertificatesV1().CertificateSigningRequests().Get(context.TODO(), name, metav1.GetOptions{})

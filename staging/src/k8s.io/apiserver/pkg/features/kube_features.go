@@ -164,6 +164,12 @@ const (
 	//
 	// Assigns each kube-apiserver an ID in a cluster.
 	APIServerIdentity featuregate.Feature = "APIServerIdentity"
+
+	// owner: @enj
+	// beta: v1.22
+	//
+	// Allows clients to request a duration for certificates issued via the Kubernetes CSR API.
+	CSRDuration featuregate.Feature = "CSRDuration"
 )
 
 func init() {
@@ -191,4 +197,5 @@ var defaultKubernetesFeatureGates = map[featuregate.Feature]featuregate.FeatureS
 	WarningHeaders:           {Default: true, PreRelease: featuregate.GA, LockToDefault: true},
 	EfficientWatchResumption: {Default: true, PreRelease: featuregate.Beta},
 	APIServerIdentity:        {Default: false, PreRelease: featuregate.Alpha},
+	CSRDuration:              {Default: true, PreRelease: featuregate.Beta},
 }

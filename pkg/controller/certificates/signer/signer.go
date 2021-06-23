@@ -191,12 +191,13 @@ func (s *signer) sign(x509cr *x509.CertificateRequest, usages []capi.KeyUsage, e
 		return nil, err
 	}
 	der, err := currCA.Sign(x509cr.Raw, authority.PermissiveSigningPolicy{
-		TTL:      s.certTTL,
-		Usages:   usages,
-		Backdate: 5 * time.Minute, // this must always be less than the minimum TTL requested by a user
-		Short:    8 * time.Hour,   // 5 minutes of backdating is roughly 1% of 8 hours
-		Now:      now,
-	}, expirationSeconds)
+		TTL:               s.certTTL,
+		ExpirationSeconds: expirationSeconds,
+		Usages:            usages,
+		Backdate:          5 * time.Minute, // this must always be less than the minimum TTL requested by a user
+		Short:             8 * time.Hour,   // 5 minutes of backdating is roughly 1% of 8 hours
+		Now:               now,
+	})
 	if err != nil {
 		return nil, err
 	}
