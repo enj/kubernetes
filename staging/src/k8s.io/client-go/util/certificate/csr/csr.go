@@ -318,7 +318,7 @@ func ensureCompatible(new, orig *certificatesv1.CertificateSigningRequest, priva
 	if len(new.Spec.SignerName) > 0 && len(orig.Spec.SignerName) > 0 && new.Spec.SignerName != orig.Spec.SignerName {
 		return fmt.Errorf("csr signerNames differ: new %q, orig: %q", new.Spec.SignerName, orig.Spec.SignerName)
 	}
-	// TODO do we need a check for durationHint here?
+	// TODO do we need a check for expirationSeconds here?
 	//  Update TestEnsureCompatible if we do make a change
 	signer, ok := privateKey.(crypto.Signer)
 	if !ok {
