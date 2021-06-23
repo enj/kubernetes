@@ -48,6 +48,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/duration"
 	"k8s.io/apimachinery/pkg/util/sets"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/client-go/util/certificate/csr"
 	"k8s.io/kubernetes/pkg/apis/admissionregistration"
 	"k8s.io/kubernetes/pkg/apis/apiserverinternal"
 	"k8s.io/kubernetes/pkg/apis/apps"
@@ -1906,7 +1907,7 @@ func printCertificateSigningRequest(obj *certificates.CertificateSigningRequest,
 	}
 	requestedDuration := "<none>"
 	if obj.Spec.ExpirationSeconds != nil {
-		requestedDuration = duration.HumanDuration(time.Duration(*obj.Spec.ExpirationSeconds) * time.Second)
+		requestedDuration = duration.HumanDuration(csr.ExpirationSecondsToDuration(*obj.Spec.ExpirationSeconds))
 	}
 	row.Cells = append(row.Cells, obj.Name, translateTimestampSince(obj.CreationTimestamp), signerName, requestedDuration, obj.Spec.Username, status)
 	return []metav1.TableRow{row}, nil

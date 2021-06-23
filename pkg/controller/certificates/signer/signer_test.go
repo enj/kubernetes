@@ -35,9 +35,9 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	testclient "k8s.io/client-go/testing"
 	"k8s.io/client-go/util/cert"
+	"k8s.io/client-go/util/certificate/csr"
 	capihelper "k8s.io/kubernetes/pkg/apis/certificates/v1"
 	"k8s.io/kubernetes/pkg/controller/certificates"
-	"k8s.io/utils/pointer"
 )
 
 func TestSigner(t *testing.T) {
@@ -64,7 +64,7 @@ func TestSigner(t *testing.T) {
 		capi.UsageClientAuth,
 	},
 		// requesting a duration that is greater than TTL is ignored
-		pointer.Int32(int32(3*time.Hour/time.Second)),
+		csr.DurationToExpirationSeconds(3*time.Hour),
 		fakeClock.Now,
 	)
 	if err != nil {

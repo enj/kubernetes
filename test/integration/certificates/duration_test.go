@@ -45,7 +45,7 @@ import (
 	"k8s.io/kubernetes/test/integration/framework"
 )
 
-func TestCSRDurationHint(t *testing.T) {
+func TestCSRDuration(t *testing.T) {
 	t.Parallel()
 
 	s := kubeapiservertesting.StartTestServerOrDie(t, nil, nil, framework.SharedEtcd())
@@ -168,7 +168,7 @@ func TestCSRDurationHint(t *testing.T) {
 			}
 
 			csrName, csrUID, errReq := csr.RequestCertificate(client, csrData, tt.csrName, certificatesv1.KubeAPIServerClientSignerName,
-				tt.duration, []certificatesv1.KeyUsage{certificatesv1.UsageClientAuth}, privateKey)
+				&tt.duration, []certificatesv1.KeyUsage{certificatesv1.UsageClientAuth}, privateKey)
 
 			if diff := cmp.Diff(tt.wantError, errStr(errReq)); len(diff) > 0 {
 				t.Fatalf("CSR input duration %v err diff (-want, +got):\n%s", tt.duration, diff)
@@ -186,7 +186,7 @@ func TestCSRDurationHint(t *testing.T) {
 				{
 					Type:    certificatesv1.CertificateApproved,
 					Status:  v1.ConditionTrue,
-					Reason:  "TestCSRDurationHint",
+					Reason:  "TestCSRDuration",
 					Message: t.Name(),
 				},
 			}

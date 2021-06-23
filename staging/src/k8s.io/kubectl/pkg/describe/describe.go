@@ -33,7 +33,6 @@ import (
 	"unicode"
 
 	"github.com/fatih/camelcase"
-	"k8s.io/apimachinery/pkg/runtime"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
@@ -60,6 +59,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/duration"
@@ -72,6 +72,7 @@ import (
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/reference"
+	utilcsr "k8s.io/client-go/util/certificate/csr"
 	"k8s.io/klog/v2"
 	"k8s.io/kubectl/pkg/scheme"
 	"k8s.io/kubectl/pkg/util/certificate"
@@ -3762,7 +3763,7 @@ func describeCertificateSigningRequest(csr metav1.ObjectMeta, signerName string,
 			w.Write(LEVEL_0, "Signer:\t%s\n", signerName)
 		}
 		if expirationSeconds != nil {
-			w.Write(LEVEL_0, "Requested Duration:\t%s\n", duration.HumanDuration(time.Duration(*expirationSeconds)*time.Second))
+			w.Write(LEVEL_0, "Requested Duration:\t%s\n", duration.HumanDuration(utilcsr.ExpirationSecondsToDuration(*expirationSeconds)))
 		}
 		w.Write(LEVEL_0, "Status:\t%s\n", status)
 

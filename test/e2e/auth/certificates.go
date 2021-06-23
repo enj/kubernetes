@@ -25,6 +25,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/onsi/ginkgo"
+
 	certificatesv1 "k8s.io/api/certificates/v1"
 	v1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -36,11 +38,9 @@ import (
 	certificatesclient "k8s.io/client-go/kubernetes/typed/certificates/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/cert"
+	"k8s.io/client-go/util/certificate/csr"
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/utils"
-	"k8s.io/utils/pointer"
-
-	"github.com/onsi/ginkgo"
 )
 
 var _ = SIGDescribe("Certificates API [Privileged:ClusterAdmin]", func() {
@@ -83,7 +83,7 @@ var _ = SIGDescribe("Certificates API [Privileged:ClusterAdmin]", func() {
 				},
 				SignerName: certificatesv1.KubeAPIServerClientSignerName,
 				// TODO: should we check notAfter of the resulting certificate?
-				ExpirationSeconds: pointer.Int32(int32(time.Hour / time.Second)),
+				ExpirationSeconds: csr.DurationToExpirationSeconds(time.Hour),
 			},
 		}
 
@@ -211,7 +211,7 @@ var _ = SIGDescribe("Certificates API [Privileged:ClusterAdmin]", func() {
 				Request:    csrData,
 				SignerName: signerName,
 				// TODO: should we check notAfter of the resulting certificate?
-				ExpirationSeconds: pointer.Int32(int32(time.Hour / time.Second)),
+				ExpirationSeconds: csr.DurationToExpirationSeconds(time.Hour),
 				Usages:            []certificatesv1.KeyUsage{certificatesv1.UsageDigitalSignature, certificatesv1.UsageKeyEncipherment, certificatesv1.UsageServerAuth},
 			},
 		}
