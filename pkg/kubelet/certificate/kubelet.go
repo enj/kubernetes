@@ -104,10 +104,10 @@ func NewKubeletServerCertificateManager(kubeClient clientset.Interface, kubeCfg 
 	}
 
 	m, err := certificate.NewManager(&certificate.Config{
-		ClientsetFn: clientsetFn,
-		GetTemplate: getTemplate,
-		SignerName:  certificates.KubeletServingSignerName,
-		Duration:    nil, // TODO: pick a good value for the CSR expirationSeconds field and/or allow it to be configured
+		ClientsetFn:                  clientsetFn,
+		GetTemplate:                  getTemplate,
+		SignerName:                   certificates.KubeletServingSignerName,
+		RequestedCertificateLifetime: nil, // TODO: pick a good value for the CSR expirationSeconds field and/or allow it to be configured
 		Usages: []certificates.KeyUsage{
 			// https://tools.ietf.org/html/rfc5280#section-4.2.1.3
 			//
@@ -229,8 +229,8 @@ func NewKubeletClientCertificateManager(
 				Organization: []string{"system:nodes"},
 			},
 		},
-		SignerName: certificates.KubeAPIServerClientKubeletSignerName,
-		Duration:   nil, // TODO: pick a good value for the CSR expirationSeconds field and/or allow it to be configured
+		SignerName:                   certificates.KubeAPIServerClientKubeletSignerName,
+		RequestedCertificateLifetime: nil, // TODO: pick a good value for the CSR expirationSeconds field and/or allow it to be configured
 		Usages: []certificates.KeyUsage{
 			// https://tools.ietf.org/html/rfc5280#section-4.2.1.3
 			//
