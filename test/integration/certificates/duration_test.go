@@ -88,6 +88,9 @@ func TestCSRDuration(t *testing.T) {
 	informerFactory.Start(stopCh)
 	go c.Run(1, stopCh)
 
+	// TODO metrics + unit tests
+	// TODO feature gate disabled with this test, maybe
+
 	tests := []struct {
 		name, csrName          string
 		duration, wantDuration time.Duration
