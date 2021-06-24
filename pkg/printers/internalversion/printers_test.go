@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/diff"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/util/certificate/csr"
 	"k8s.io/kubernetes/pkg/apis/apiserverinternal"
 	"k8s.io/kubernetes/pkg/apis/apps"
 	"k8s.io/kubernetes/pkg/apis/autoscaling"
@@ -3990,7 +3991,7 @@ func TestPrintCertificateSigningRequest(t *testing.T) {
 				Spec:   certificates.CertificateSigningRequestSpec{},
 				Status: certificates.CertificateSigningRequestStatus{},
 			},
-			// Columns: Name, Age, Requestor, Condition
+			// Columns: Name, Age, SignerName, RequestedDuration, Requestor, Condition
 			expected: []metav1.TableRow{{Cells: []interface{}{"csr1", "0s", "<none>", "<none>", "", "Pending"}}},
 		},
 		// Basic CSR with Spec and Status=Approved.
@@ -4011,7 +4012,7 @@ func TestPrintCertificateSigningRequest(t *testing.T) {
 					},
 				},
 			},
-			// Columns: Name, Age, Requestor, Condition
+			// Columns: Name, Age, SignerName, RequestedDuration, Requestor, Condition
 			expected: []metav1.TableRow{{Cells: []interface{}{"csr2", "0s", "<none>", "<none>", "CSR Requestor", "Approved"}}},
 		},
 		// Basic CSR with Spec and SignerName set
@@ -4033,10 +4034,10 @@ func TestPrintCertificateSigningRequest(t *testing.T) {
 					},
 				},
 			},
-			// Columns: Name, Age, Requestor, Condition
+			// Columns: Name, Age, SignerName, RequestedDuration, Requestor, Condition
 			expected: []metav1.TableRow{{Cells: []interface{}{"csr2", "0s", "example.com/test-signer", "<none>", "CSR Requestor", "Approved"}}},
 		},
-		// Basic CSR with Spec, SignerName and DurationHint set
+		// Basic CSR with Spec, SignerName and ExpirationSeconds set
 		{
 			csr: certificates.CertificateSigningRequest{
 				ObjectMeta: metav1.ObjectMeta{
@@ -4046,7 +4047,7 @@ func TestPrintCertificateSigningRequest(t *testing.T) {
 				Spec: certificates.CertificateSigningRequestSpec{
 					Username:          "CSR Requestor",
 					SignerName:        "example.com/test-signer",
-					ExpirationSeconds: &metav1.Duration{Duration: 7*24*time.Hour + time.Hour}, // a little bit more than a week
+					ExpirationSeconds: csr.DurationToExpirationSeconds(7*24*time.Hour + time.Hour), // a little bit more than a week
 				},
 				Status: certificates.CertificateSigningRequestStatus{
 					Conditions: []certificates.CertificateSigningRequestCondition{
@@ -4056,6 +4057,7 @@ func TestPrintCertificateSigningRequest(t *testing.T) {
 					},
 				},
 			},
+			// Columns: Name, Age, SignerName, RequestedDuration, Requestor, Condition
 			expected: []metav1.TableRow{{Cells: []interface{}{"csr2", "0s", "example.com/test-signer", "7d1h", "CSR Requestor", "Approved"}}},
 		},
 		// Basic CSR with Spec and Status=Approved; certificate issued.
@@ -4077,7 +4079,7 @@ func TestPrintCertificateSigningRequest(t *testing.T) {
 					Certificate: []byte("cert data"),
 				},
 			},
-			// Columns: Name, Age, Requestor, Condition
+			// Columns: Name, Age, SignerName, RequestedDuration, Requestor, Condition
 			expected: []metav1.TableRow{{Cells: []interface{}{"csr2", "0s", "<none>", "<none>", "CSR Requestor", "Approved,Issued"}}},
 		},
 		// Basic CSR with Spec and Status=Denied.
@@ -4098,7 +4100,7 @@ func TestPrintCertificateSigningRequest(t *testing.T) {
 					},
 				},
 			},
-			// Columns: Name, Age, Requestor, Condition
+			// Columns: Name, Age, SignerName, RequestedDuration, Requestor, Condition
 			expected: []metav1.TableRow{{Cells: []interface{}{"csr3", "0s", "<none>", "<none>", "CSR Requestor", "Denied"}}},
 		},
 	}

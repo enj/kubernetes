@@ -137,17 +137,33 @@ func TestCSRDuration(t *testing.T) {
 		},
 		{
 			name:         "shortest duration set",
-			duration:     5 * time.Minute,
-			wantDuration: 5*time.Minute + 5*time.Minute,
+			duration:     10 * time.Minute,
+			wantDuration: 10*time.Minute + 5*time.Minute,
 			wantError:    "",
 		},
 		{
-			name:         "too short duration set",
-			csrName:      "invalid-csr",
+			name:         "just too short duration set",
+			csrName:      "invalid-csr-001",
+			duration:     10*time.Minute - time.Second,
+			wantDuration: 0,
+			wantError: `cannot create certificate signing request: ` +
+				`CertificateSigningRequest.certificates.k8s.io "invalid-csr-001" is invalid: spec.expirationSeconds: Invalid value: 599: may not specify a duration less than 600 seconds (10 minutes)`,
+		},
+		{
+			name:         "really too short duration set",
+			csrName:      "invalid-csr-002",
 			duration:     3 * time.Minute,
 			wantDuration: 0,
 			wantError: `cannot create certificate signing request: ` +
-				`CertificateSigningRequest.certificates.k8s.io "invalid-csr" is invalid: spec.durationHint: Invalid value: 3m0s: may not specify a duration less than 5 minutes`,
+				`CertificateSigningRequest.certificates.k8s.io "invalid-csr-002" is invalid: spec.expirationSeconds: Invalid value: 180: may not specify a duration less than 600 seconds (10 minutes)`,
+		},
+		{
+			name:         "negative duration set",
+			csrName:      "invalid-csr-003",
+			duration:     -7 * time.Minute,
+			wantDuration: 0,
+			wantError: `cannot create certificate signing request: ` +
+				`CertificateSigningRequest.certificates.k8s.io "invalid-csr-003" is invalid: spec.expirationSeconds: Invalid value: -420: may not specify a duration less than 600 seconds (10 minutes)`,
 		},
 	}
 	for _, tt := range tests {
@@ -168,7 +184,7 @@ func TestCSRDuration(t *testing.T) {
 			}
 
 			csrName, csrUID, errReq := csr.RequestCertificate(client, csrData, tt.csrName, certificatesv1.KubeAPIServerClientSignerName,
-				&tt.duration, []certificatesv1.KeyUsage{certificatesv1.UsageClientAuth}, privateKey)
+				durationPtr(tt.duration), []certificatesv1.KeyUsage{certificatesv1.UsageClientAuth}, privateKey)
 
 			if diff := cmp.Diff(tt.wantError, errStr(errReq)); len(diff) > 0 {
 				t.Fatalf("CSR input duration %v err diff (-want, +got):\n%s", tt.duration, diff)
@@ -223,6 +239,13 @@ func TestCSRDuration(t *testing.T) {
 			}
 		})
 	}
+}
+
+func durationPtr(duration time.Duration) *time.Duration {
+	if duration == 0 {
+		return nil
+	}
+	return &duration
 }
 
 func errStr(err error) string {
