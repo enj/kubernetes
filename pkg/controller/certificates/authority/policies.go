@@ -47,16 +47,16 @@ type SigningPolicy interface {
 //  * It sets IsCA to false.
 //  * It validates that the signer has not expired.
 //  * It sets NotBefore and NotAfter:
+//    duration = min(TTL, ExpirationSeconds)
 //    All certificates set NotBefore = Now() - Backdate.
-//    Long-lived certificates set NotAfter = Now() + TTL - Backdate.
-//    Short-lived certificates set NotAfter = Now() + TTL.
+//    Long-lived certificates set NotAfter = Now() + duration - Backdate.
+//    Short-lived certificates set NotAfter = Now() + duration.
 //    All certificates truncate NotAfter to the expiration date of the signer.
 type PermissiveSigningPolicy struct {
 	// TTL is used in certificate NotAfter calculation as described above.
 	TTL time.Duration
 
 	// ExpirationSeconds is used in certificate NotAfter calculation as described above.
-	// TODO
 	ExpirationSeconds *int32
 
 	// Usages are the allowed usages of a certificate.

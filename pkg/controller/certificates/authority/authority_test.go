@@ -31,7 +31,10 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	capi "k8s.io/api/certificates/v1"
 	"k8s.io/apimachinery/pkg/util/diff"
+	"k8s.io/apiserver/pkg/features"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/util/certificate/csr"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
 )
 
 func TestCertificateAuthority(t *testing.T) {
@@ -72,8 +75,9 @@ func TestCertificateAuthority(t *testing.T) {
 		policy   SigningPolicy
 		mutateCA func(ca *CertificateAuthority)
 
-		want    x509.Certificate
-		wantErr string
+		want             x509.Certificate
+		wantGateDisabled *x509.Certificate
+		wantErr          string
 	}{
 		{
 			name:   "ca info",
@@ -189,6 +193,11 @@ func TestCertificateAuthority(t *testing.T) {
 				NotAfter:              now.Add(30 * time.Minute),
 				BasicConstraintsValid: true,
 			},
+			wantGateDisabled: &x509.Certificate{
+				NotBefore:             now,
+				NotAfter:              now.Add(time.Hour),
+				BasicConstraintsValid: true,
+			},
 		},
 		{
 			name:   "can request shorter duration than TTL with backdate",
@@ -198,6 +207,11 @@ func TestCertificateAuthority(t *testing.T) {
 				NotAfter:              now.Add(25 * time.Minute),
 				BasicConstraintsValid: true,
 			},
+			wantGateDisabled: &x509.Certificate{
+				NotBefore:             now.Add(-5 * time.Minute),
+				NotAfter:              now.Add(55 * time.Minute),
+				BasicConstraintsValid: true,
+			},
 		},
 		{
 			name:   "can request shorter duration than TTL with short",
@@ -205,6 +219,11 @@ func TestCertificateAuthority(t *testing.T) {
 			want: x509.Certificate{
 				NotBefore:             now.Add(-5 * time.Minute),
 				NotAfter:              now.Add(30 * time.Minute),
+				BasicConstraintsValid: true,
+			},
+			wantGateDisabled: &x509.Certificate{
+				NotBefore:             now.Add(-5 * time.Minute),
+				NotAfter:              now.Add(time.Hour),
 				BasicConstraintsValid: true,
 			},
 		},
@@ -262,7 +281,6 @@ func TestCertificateAuthority(t *testing.T) {
 				BasicConstraintsValid: true,
 			},
 		},
-		// TODO feature gate test
 		{
 			name:   "expired ca with backdate",
 			policy: PermissiveSigningPolicy{TTL: time.Hour, Backdate: 5 * time.Minute, Now: nowFunc},
@@ -279,7 +297,9 @@ func TestCertificateAuthority(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
+		test := test
+
+		f := func(t *testing.T, wantOverride *x509.Certificate) {
 			caCertShallowCopy := *caCert
 
 			ca := &CertificateAuthority{
@@ -327,9 +347,26 @@ func TestCertificateAuthority(t *testing.T) {
 					return ((x == nil) && (y == nil)) || x.String() == y.String()
 				}),
 			}
-			if !cmp.Equal(*cert, test.want, opts) {
-				t.Errorf("unexpected diff: %v", cmp.Diff(*cert, test.want, opts))
+			want := test.want
+			if wantOverride != nil {
+				want = *wantOverride
 			}
+			if !cmp.Equal(*cert, want, opts) {
+				t.Errorf("unexpected diff: %v", cmp.Diff(*cert, want, opts))
+			}
+		}
+
+		// regular tests
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel() // these are safe to run in parallel but not the feature gate disabled tests
+
+			f(t, nil)
+		})
+
+		// same tests with the feature gate disabled
+		t.Run("feature gate disabled - "+test.name, func(t *testing.T) {
+			t.Cleanup(featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.CSRDuration, false))
+			f(t, test.wantGateDisabled)
 		})
 	}
 }
