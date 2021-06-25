@@ -117,8 +117,6 @@ label:<name:"signerName" value:"kubernetes.io/kube-apiserver-client" > counter:<
 	informerFactory.Start(stopCh)
 	go c.Run(1, stopCh)
 
-	// TODO feature gate disabled with this test, maybe
-
 	tests := []struct {
 		name, csrName          string
 		duration, wantDuration time.Duration
