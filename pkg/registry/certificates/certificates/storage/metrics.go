@@ -92,51 +92,55 @@ func countCSRDurationMetric(requested, honored counterVecMetric) genericregistry
 	return func(ctx context.Context, obj runtime.Object, old runtime.Object, options *metav1.UpdateOptions) (genericregistry.FinishFunc, error) {
 		return func(ctx context.Context, success bool) {
 			if !success {
-				return
+				return // ignore failures
 			}
 
 			if dryrun.IsDryRun(options.DryRun) {
-				return
+				return // ignore things that would not get persisted
 			}
 
 			if !utilfeature.DefaultFeatureGate.Enabled(features.CSRDuration) {
 				return
 			}
 
-			newCSR := obj.(*certificates.CertificateSigningRequest)
 			oldCSR := old.(*certificates.CertificateSigningRequest)
 
+			// if the old CSR already has a certificate, do not double count it
 			if len(oldCSR.Status.Certificate) > 0 {
 				return
 			}
 
-			if len(newCSR.Status.Certificate) == 0 {
-				return
-			}
-
 			if oldCSR.Spec.ExpirationSeconds == nil {
-				return
+				return // ignore CSRs that are not using the CSR duration feature
 			}
 
-			// TODO add comments
-			// TODO add unit tests
+			issuedCert := obj.(*certificates.CertificateSigningRequest).Status.Certificate
+
+			// new CSR has no issued certificate yet so do not count it.
+			// note that this means that we will ignore CSRs that set a duration
+			// but never get approved/signed.  this is fine because the point
+			// of these metrics is to understand if the duration is honored
+			// by the signer.  we are not checking the behavior of the approver.
+			if len(issuedCert) == 0 {
+				return
+			}
 
 			signer := compressSignerName(oldCSR.Spec.SignerName)
 
+			// at this point we know that this CSR is going to be persisted and
+			// the cert was just issued and the client requested a duration
 			requested.WithLabelValues(signer).Inc()
 
-			certs, err := cert.ParseCertsPEM(newCSR.Status.Certificate)
+			certs, err := cert.ParseCertsPEM(issuedCert)
 			if err != nil {
-				utilruntime.HandleError(fmt.Errorf("metrics recording failed to parse certificate for CSR %s: %w", newCSR.Name, err))
+				utilruntime.HandleError(fmt.Errorf("metrics recording failed to parse certificate for CSR %s: %w", oldCSR.Name, err))
 				return
 			}
 
+			// now we check to see if the signer honored the requested duration
 			certificate := certs[0]
-
 			wantDuration := csr.ExpirationSecondsToDuration(*oldCSR.Spec.ExpirationSeconds)
-
 			actualDuration := certificate.NotAfter.Sub(certificate.NotBefore)
-
 			if isDurationHonored(wantDuration, actualDuration) {
 				honored.WithLabelValues(signer).Inc()
 			}

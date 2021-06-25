@@ -9,6 +9,8 @@ import (
 	"k8s.io/utils/pointer"
 )
 
+// TODO add unit tests
+
 func Test_countCSRDurationMetric(t *testing.T) {
 	tests := []struct {
 		name                       string
