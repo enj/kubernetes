@@ -10,13 +10,6 @@ import (
 )
 
 func Test_countCSRDurationMetric(t *testing.T) {
-	requested := csrDurationRequested
-	honored := csrDurationHonored
-	t.Cleanup(func() {
-		csrDurationRequested = requested
-		csrDurationHonored = honored
-	})
-
 	tests := []struct {
 		name                       string
 		setup                      func(*testing.T)
@@ -52,10 +45,7 @@ func Test_countCSRDurationMetric(t *testing.T) {
 			testReq := &testCounterVecMetric{}
 			testHon := &testCounterVecMetric{}
 
-			csrDurationRequested = testReq
-			csrDurationHonored = testHon
-
-			finishFunc, err := countCSRDurationMetric(nil, tt.obj, tt.old, tt.options)
+			finishFunc, err := countCSRDurationMetric(testReq, testHon)(nil, tt.obj, tt.old, tt.options)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -82,7 +72,6 @@ func Test_countCSRDurationMetric(t *testing.T) {
 }
 
 type testCounterVecMetric struct {
-	metrics.Registerable
 	metrics.CounterMetric
 
 	signer string

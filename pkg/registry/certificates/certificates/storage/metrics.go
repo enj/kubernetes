@@ -30,7 +30,7 @@ const (
 
 var (
 	// csrDurationRequested counts and categorizes how many certificates were issued when the client requested a duration.
-	csrDurationRequested counterVecMetric = metrics.NewCounterVec(
+	csrDurationRequested = metrics.NewCounterVec(
 		&metrics.CounterOpts{
 			Namespace:      namespace,
 			Subsystem:      subsystem,
@@ -42,7 +42,7 @@ var (
 	)
 
 	// csrDurationHonored counts and categorizes how many certificates were issued when the client requested a duration and the signer honored it.
-	csrDurationHonored counterVecMetric = metrics.NewCounterVec(
+	csrDurationHonored = metrics.NewCounterVec(
 		&metrics.CounterOpts{
 			Namespace:      namespace,
 			Subsystem:      subsystem,
@@ -64,6 +64,5 @@ func init() {
 var registerMetricsOnce sync.Once
 
 type counterVecMetric interface {
-	metrics.Registerable
 	WithLabelValues(...string) metrics.CounterMetric
 }
