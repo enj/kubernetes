@@ -143,7 +143,7 @@ func isDurationHonored(want time.Duration, got time.Duration) bool {
 		delta = -delta
 	}
 
-	// 5% of want
+	// short-lived cert backdating + 5% of want
 	// TODO should we have an upper limit on the 5%?
 	maxDelta := 5*time.Minute + (want / 20)
 
