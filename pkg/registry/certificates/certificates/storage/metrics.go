@@ -24,8 +24,8 @@ import (
 )
 
 const (
-	namespace = "kube_apiserver"
-	subsystem = "csr_duration"
+	namespace = "apiserver"
+	subsystem = "certificates_registry"
 )
 
 var (
@@ -35,7 +35,7 @@ var (
 			Namespace:      namespace,
 			Subsystem:      subsystem,
 			Name:           "csr_duration_requested",
-			Help:           "Total number of issued CSRs with a requested duration sliced by signer",
+			Help:           "Total number of issued CSRs with a requested duration, sliced by signer",
 			StabilityLevel: metrics.ALPHA,
 		},
 		[]string{"signerName"},
@@ -47,7 +47,7 @@ var (
 			Namespace:      namespace,
 			Subsystem:      subsystem,
 			Name:           "csr_duration_honored",
-			Help:           "Total number of issued CSRs with a requested duration that was honored sliced by signer",
+			Help:           "Total number of issued CSRs with a requested duration that was honored, sliced by signer",
 			StabilityLevel: metrics.ALPHA,
 		},
 		[]string{"signerName"},
