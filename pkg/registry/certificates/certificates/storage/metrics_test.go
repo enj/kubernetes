@@ -23,7 +23,7 @@ func Test_countCSRDurationMetric(t *testing.T) {
 		success                    bool
 		obj, old                   *certificates.CertificateSigningRequest
 		options                    *metav1.UpdateOptions
-		wantLabel                  string
+		wantSigner                 string
 		wantRequested, wantHonored bool
 	}{
 		{
@@ -42,7 +42,7 @@ func Test_countCSRDurationMetric(t *testing.T) {
 				},
 			},
 			options:       &metav1.UpdateOptions{},
-			wantLabel:     "foo",
+			wantSigner:    "foo",
 			wantRequested: true,
 			wantHonored:   false,
 		},
@@ -62,12 +62,12 @@ func Test_countCSRDurationMetric(t *testing.T) {
 
 			finishFunc(nil, tt.success)
 
-			if got := testReq.label; tt.wantRequested && tt.wantLabel != got {
-				t.Errorf("requested label: want %v, got %v", tt.wantLabel, got)
+			if got := testReq.signer; tt.wantRequested && tt.wantSigner != got {
+				t.Errorf("requested signer: want %v, got %v", tt.wantSigner, got)
 			}
 
-			if got := testHon.label; tt.wantHonored && tt.wantLabel != got {
-				t.Errorf("honored label: want %v, got %v", tt.wantLabel, got)
+			if got := testHon.signer; tt.wantHonored && tt.wantSigner != got {
+				t.Errorf("honored signer: want %v, got %v", tt.wantSigner, got)
 			}
 
 			if got := testReq.called; tt.wantRequested != got {
@@ -85,7 +85,7 @@ type testCounterVecMetric struct {
 	metrics.Registerable
 	metrics.CounterMetric
 
-	label  string
+	signer string
 	called bool
 }
 
@@ -94,17 +94,17 @@ func (m *testCounterVecMetric) WithLabelValues(lv ...string) metrics.CounterMetr
 		panic(lv)
 	}
 
-	if len(m.label) != 0 {
+	if len(m.signer) != 0 {
 		panic("unexpected multiple WithLabelValues() calls")
 	}
 
-	label := lv[0]
+	signer := lv[0]
 
-	if len(label) == 0 {
-		panic("invalid empty label")
+	if len(signer) == 0 {
+		panic("invalid empty signer")
 	}
 
-	m.label = label
+	m.signer = signer
 	return m
 }
 
