@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -76,6 +78,11 @@ func init() {
 }
 
 var registerMetricsOnce sync.Once
+
+func TestCollectMetrics(ch chan<- prometheus.Metric) {
+	csrDurationRequested.Collect(ch)
+	csrDurationHonored.Collect(ch)
+}
 
 type counterVecMetric interface {
 	WithLabelValues(...string) metrics.CounterMetric
