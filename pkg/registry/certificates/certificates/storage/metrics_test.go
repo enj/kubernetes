@@ -35,7 +35,7 @@ func Test_countCSRDurationMetric(t *testing.T) {
 				},
 			},
 			options:       &metav1.UpdateOptions{},
-			wantSigner:    "foo",
+			wantSigner:    "other",
 			wantRequested: true,
 			wantHonored:   false,
 		},

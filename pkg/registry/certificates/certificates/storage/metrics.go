@@ -17,10 +17,24 @@ limitations under the License.
 package storage
 
 import (
+	"context"
+	"fmt"
+	"strings"
 	"sync"
+	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apiserver/pkg/features"
+	genericregistry "k8s.io/apiserver/pkg/registry/generic/registry"
+	"k8s.io/apiserver/pkg/util/dryrun"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/client-go/util/cert"
+	"k8s.io/client-go/util/certificate/csr"
 	"k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
+	"k8s.io/kubernetes/pkg/apis/certificates"
 )
 
 const (
@@ -65,4 +79,81 @@ var registerMetricsOnce sync.Once
 
 type counterVecMetric interface {
 	WithLabelValues(...string) metrics.CounterMetric
+}
+
+func countCSRDurationMetric(requested, honored counterVecMetric) genericregistry.BeginUpdateFunc {
+	return func(ctx context.Context, obj runtime.Object, old runtime.Object, options *metav1.UpdateOptions) (genericregistry.FinishFunc, error) {
+		return func(ctx context.Context, success bool) {
+			if !success {
+				return
+			}
+
+			if dryrun.IsDryRun(options.DryRun) {
+				return
+			}
+
+			if !utilfeature.DefaultFeatureGate.Enabled(features.CSRDuration) {
+				return
+			}
+
+			newCSR := obj.(*certificates.CertificateSigningRequest)
+			oldCSR := old.(*certificates.CertificateSigningRequest)
+
+			if len(oldCSR.Status.Certificate) > 0 {
+				return
+			}
+
+			if len(newCSR.Status.Certificate) == 0 {
+				return
+			}
+
+			if oldCSR.Spec.ExpirationSeconds == nil {
+				return
+			}
+
+			// TODO add comments
+			// TODO add unit tests
+
+			signer := compressSignerName(oldCSR.Spec.SignerName)
+
+			requested.WithLabelValues(signer).Inc()
+
+			certs, err := cert.ParseCertsPEM(newCSR.Status.Certificate)
+			if err != nil {
+				utilruntime.HandleError(fmt.Errorf("metrics recording failed to parse certificate for CSR %s: %w", newCSR.Name, err))
+				return
+			}
+
+			certificate := certs[0]
+
+			wantDuration := csr.ExpirationSecondsToDuration(*oldCSR.Spec.ExpirationSeconds)
+
+			actualDuration := certificate.NotAfter.Sub(certificate.NotBefore)
+
+			if isDurationHonored(wantDuration, actualDuration) {
+				honored.WithLabelValues(signer).Inc()
+			}
+		}, nil
+	}
+}
+
+func isDurationHonored(want time.Duration, got time.Duration) bool {
+	delta := want - got
+	if delta < 0 {
+		delta = -delta
+	}
+
+	// 5% of want
+	// TODO should we have an upper limit on the 5%?
+	maxDelta := 5*time.Minute + (want / 20)
+
+	return delta < maxDelta
+}
+
+func compressSignerName(name string) string {
+	if strings.HasPrefix(name, "kubernetes.io/") {
+		return name
+	}
+
+	return "other"
 }
