@@ -23,6 +23,9 @@ import (
 	"time"
 
 	capi "k8s.io/api/certificates/v1"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/client-go/util/certificate/csr"
+	"k8s.io/kubernetes/pkg/features"
 )
 
 // SigningPolicy validates a CertificateRequest before it's signed by the
@@ -44,13 +47,17 @@ type SigningPolicy interface {
 //  * It sets IsCA to false.
 //  * It validates that the signer has not expired.
 //  * It sets NotBefore and NotAfter:
+//    duration = min(TTL, ExpirationSeconds)
 //    All certificates set NotBefore = Now() - Backdate.
-//    Long-lived certificates set NotAfter = Now() + TTL - Backdate.
-//    Short-lived certificates set NotAfter = Now() + TTL.
+//    Long-lived certificates set NotAfter = Now() + duration - Backdate.
+//    Short-lived certificates set NotAfter = Now() + duration.
 //    All certificates truncate NotAfter to the expiration date of the signer.
 type PermissiveSigningPolicy struct {
 	// TTL is used in certificate NotAfter calculation as described above.
 	TTL time.Duration
+
+	// ExpirationSeconds is used in certificate NotAfter calculation as described above.
+	ExpirationSeconds *int32
 
 	// Usages are the allowed usages of a certificate.
 	Usages []capi.KeyUsage
@@ -73,8 +80,6 @@ func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, signerNotAfter ti
 		now = time.Now()
 	}
 
-	ttl := p.TTL
-
 	usage, extUsages, err := keyUsagesFromStrings(p.Usages)
 	if err != nil {
 		return err
@@ -89,11 +94,11 @@ func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, signerNotAfter ti
 
 	tmpl.NotBefore = now.Add(-p.Backdate)
 
-	if ttl < p.Short {
+	if duration := p.duration(); duration < p.Short {
 		// do not backdate the end time if we consider this to be a short lived certificate
-		tmpl.NotAfter = now.Add(ttl)
+		tmpl.NotAfter = now.Add(duration)
 	} else {
-		tmpl.NotAfter = now.Add(ttl - p.Backdate)
+		tmpl.NotAfter = now.Add(duration - p.Backdate)
 	}
 
 	if !tmpl.NotAfter.Before(signerNotAfter) {
@@ -109,6 +114,22 @@ func (p PermissiveSigningPolicy) apply(tmpl *x509.Certificate, signerNotAfter ti
 	}
 
 	return nil
+}
+
+func (p PermissiveSigningPolicy) duration() time.Duration {
+	if !utilfeature.DefaultFeatureGate.Enabled(features.CSRDuration) {
+		return p.TTL
+	}
+
+	if p.ExpirationSeconds == nil {
+		return p.TTL
+	}
+
+	if requestedDuration := csr.ExpirationSecondsToDuration(*p.ExpirationSeconds); requestedDuration < p.TTL && requestedDuration > 0 {
+		return requestedDuration
+	}
+
+	return p.TTL
 }
 
 var keyUsageDict = map[capi.KeyUsage]x509.KeyUsage{

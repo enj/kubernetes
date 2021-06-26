@@ -35,6 +35,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	testclient "k8s.io/client-go/testing"
 	"k8s.io/client-go/util/cert"
+	"k8s.io/client-go/util/certificate/csr"
 	capihelper "k8s.io/kubernetes/pkg/apis/certificates/v1"
 	"k8s.io/kubernetes/pkg/controller/certificates"
 )
@@ -61,7 +62,11 @@ func TestSigner(t *testing.T) {
 		capi.UsageKeyEncipherment,
 		capi.UsageServerAuth,
 		capi.UsageClientAuth,
-	}, fakeClock.Now)
+	},
+		// requesting a duration that is greater than TTL is ignored
+		csr.DurationToExpirationSeconds(3*time.Hour),
+		fakeClock.Now,
+	)
 	if err != nil {
 		t.Fatalf("failed to sign CSR: %v", err)
 	}

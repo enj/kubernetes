@@ -721,6 +721,12 @@ const (
 	//
 	// Enables the use of `RuntimeDefault` as the default seccomp profile for all workloads.
 	SeccompDefault featuregate.Feature = "SeccompDefault"
+
+	// owner: @enj
+	// beta: v1.22
+	//
+	// Allows clients to request a duration for certificates issued via the Kubernetes CSR API.
+	CSRDuration featuregate.Feature = "CSRDuration"
 )
 
 func init() {
@@ -829,6 +835,7 @@ var defaultKubernetesFeatureGates = map[featuregate.Feature]featuregate.FeatureS
 	StatefulSetMinReadySeconds:                     {Default: false, PreRelease: featuregate.Alpha},
 	ExpandedDNSConfig:                              {Default: false, PreRelease: featuregate.Alpha},
 	SeccompDefault:                                 {Default: false, PreRelease: featuregate.Alpha},
+	CSRDuration:                                    {Default: true, PreRelease: featuregate.Beta},
 
 	// inherited features from generic apiserver, relisted here to get a conflict if it is changed
 	// unintentionally on either side:
