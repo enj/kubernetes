@@ -25,21 +25,23 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/onsi/ginkgo"
+
 	certificatesv1 "k8s.io/api/certificates/v1"
 	v1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	types "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	certificatesclient "k8s.io/client-go/kubernetes/typed/certificates/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/cert"
+	"k8s.io/client-go/util/certificate/csr"
 	"k8s.io/kubernetes/test/e2e/framework"
 	"k8s.io/kubernetes/test/utils"
-
-	"github.com/onsi/ginkgo"
 )
 
 var _ = SIGDescribe("Certificates API [Privileged:ClusterAdmin]", func() {
@@ -80,7 +82,8 @@ var _ = SIGDescribe("Certificates API [Privileged:ClusterAdmin]", func() {
 					certificatesv1.UsageKeyEncipherment,
 					certificatesv1.UsageClientAuth,
 				},
-				SignerName: certificatesv1.KubeAPIServerClientSignerName,
+				SignerName:        certificatesv1.KubeAPIServerClientSignerName,
+				ExpirationSeconds: csr.DurationToExpirationSeconds(time.Hour),
 			},
 		}
 
@@ -159,6 +162,12 @@ var _ = SIGDescribe("Certificates API [Privileged:ClusterAdmin]", func() {
 		rcfg.TLSClientConfig.CertData = csr.Status.Certificate
 		rcfg.TLSClientConfig.KeyData = pkpem
 
+		certs, err := cert.ParseCertsPEM(csr.Status.Certificate)
+		framework.ExpectNoError(err)
+		framework.ExpectEqual(len(certs), 1, "expected a single cert, got %#v", certs)
+		cert := certs[0]
+		framework.ExpectEqual(cert.NotAfter.Sub(cert.NotBefore), time.Hour+5*time.Minute, "unexpected cert duration: %s", dynamiccertificates.GetHumanCertDetail(cert))
+
 		newClient, err := certificatesclient.NewForConfig(rcfg)
 		framework.ExpectNoError(err)
 
@@ -205,9 +214,10 @@ var _ = SIGDescribe("Certificates API [Privileged:ClusterAdmin]", func() {
 		csrTemplate := &certificatesv1.CertificateSigningRequest{
 			ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-example-csr-"},
 			Spec: certificatesv1.CertificateSigningRequestSpec{
-				Request:    csrData,
-				SignerName: signerName,
-				Usages:     []certificatesv1.KeyUsage{certificatesv1.UsageDigitalSignature, certificatesv1.UsageKeyEncipherment, certificatesv1.UsageServerAuth},
+				Request:           csrData,
+				SignerName:        signerName,
+				ExpirationSeconds: csr.DurationToExpirationSeconds(time.Hour),
+				Usages:            []certificatesv1.KeyUsage{certificatesv1.UsageDigitalSignature, certificatesv1.UsageKeyEncipherment, certificatesv1.UsageServerAuth},
 			},
 		}
 
@@ -280,6 +290,7 @@ var _ = SIGDescribe("Certificates API [Privileged:ClusterAdmin]", func() {
 		gottenCSR, err := csrClient.Get(context.TODO(), createdCSR.Name, metav1.GetOptions{})
 		framework.ExpectNoError(err)
 		framework.ExpectEqual(gottenCSR.UID, createdCSR.UID)
+		framework.ExpectEqual(gottenCSR.Spec.ExpirationSeconds, csr.DurationToExpirationSeconds(time.Hour))
 
 		ginkgo.By("listing")
 		csrs, err := csrClient.List(context.TODO(), metav1.ListOptions{FieldSelector: "spec.signerName=" + signerName})
