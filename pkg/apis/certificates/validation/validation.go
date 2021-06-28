@@ -22,7 +22,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"strings"
-	"time"
 
 	v1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -206,8 +205,7 @@ func validateCertificateSigningRequest(csr *certificates.CertificateSigningReque
 	} else {
 		allErrs = append(allErrs, ValidateCertificateSigningRequestSignerName(specPath.Child("signerName"), csr.Spec.SignerName)...)
 	}
-	const min = int32(10 * time.Minute / time.Second)
-	if csr.Spec.ExpirationSeconds != nil && *csr.Spec.ExpirationSeconds < min {
+	if csr.Spec.ExpirationSeconds != nil && *csr.Spec.ExpirationSeconds < 600 {
 		allErrs = append(allErrs, field.Invalid(specPath.Child("expirationSeconds"), *csr.Spec.ExpirationSeconds, "may not specify a duration less than 600 seconds (10 minutes)"))
 	}
 	allErrs = append(allErrs, validateConditions(field.NewPath("status", "conditions"), csr, opts)...)

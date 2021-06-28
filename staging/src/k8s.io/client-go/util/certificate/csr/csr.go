@@ -46,7 +46,7 @@ import (
 // RequestCertificate will either use an existing (if this process has run
 // before but not to completion) or create a certificate signing request using the
 // PEM encoded CSR and send it to API server.  An optional requestedDuration may be passed
-// to set the expirationSeconds field on the CSR to control the lifetime of the issued
+// to set the spec.expirationSeconds field on the CSR to control the lifetime of the issued
 // certificate.  This is not guaranteed as the signer may choose to ignore the request.
 func RequestCertificate(client clientset.Interface, csrData []byte, name, signerName string, requestedDuration *time.Duration, usages []certificatesv1.KeyUsage, privateKey interface{}) (reqName string, reqUID types.UID, err error) {
 	csr := &certificatesv1.CertificateSigningRequest{
