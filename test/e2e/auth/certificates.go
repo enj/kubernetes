@@ -290,7 +290,8 @@ var _ = SIGDescribe("Certificates API [Privileged:ClusterAdmin]", func() {
 		gottenCSR, err := csrClient.Get(context.TODO(), createdCSR.Name, metav1.GetOptions{})
 		framework.ExpectNoError(err)
 		framework.ExpectEqual(gottenCSR.UID, createdCSR.UID)
-		framework.ExpectEqual(gottenCSR.Spec.ExpirationSeconds, csr.DurationToExpirationSeconds(time.Hour))
+		// TODO(enj): check for expirationSeconds field persistence once the feature is GA
+		//  framework.ExpectEqual(gottenCSR.Spec.ExpirationSeconds, csr.DurationToExpirationSeconds(time.Hour))
 
 		ginkgo.By("listing")
 		csrs, err := csrClient.List(context.TODO(), metav1.ListOptions{FieldSelector: "spec.signerName=" + signerName})
