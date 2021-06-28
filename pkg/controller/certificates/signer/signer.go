@@ -115,7 +115,7 @@ type signer struct {
 	caProvider *caProvider
 
 	client  clientset.Interface
-	certTTL time.Duration
+	certTTL time.Duration // max TTL; individual requests may request shorter certs by setting spec.expirationSeconds
 
 	signerName           string
 	isRequestForSignerFn isRequestForSignerFunc
