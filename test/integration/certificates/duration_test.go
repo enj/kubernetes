@@ -26,30 +26,34 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/prometheus/client_golang/prometheus"
-	dto "github.com/prometheus/client_model/go"
 
 	certificatesv1 "k8s.io/api/certificates/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured/unstructuredscheme"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	certutil "k8s.io/client-go/util/cert"
 	"k8s.io/client-go/util/certificate/csr"
 	"k8s.io/client-go/util/keyutil"
 	kubeapiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
 	"k8s.io/kubernetes/pkg/controller/certificates/signer"
-	certificatestore "k8s.io/kubernetes/pkg/registry/certificates/certificates/storage"
 	"k8s.io/kubernetes/test/integration/framework"
 )
 
 func TestCSRDuration(t *testing.T) {
 	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	t.Cleanup(cancel)
 
 	s := kubeapiservertesting.StartTestServerOrDie(t, nil, nil, framework.SharedEtcd())
 	t.Cleanup(s.TearDownFn)
@@ -57,23 +61,26 @@ func TestCSRDuration(t *testing.T) {
 	// assert that the metrics we collect during the test run match expectations
 	// we have 7 valid test cases below that request a duration of which 6 should have their duration honored
 	wantMetricStrings := []string{
-		`Desc{fqName: "apiserver_certificates_registry_csr_duration_requested", help: "[ALPHA] Total number of issued CSRs with a requested duration, sliced by signer", constLabels: {}, variableLabels: [signerName]}
-label:<name:"signerName" value:"kubernetes.io/kube-apiserver-client" > counter:<value:7 > `,
-		`Desc{fqName: "apiserver_certificates_registry_csr_duration_honored", help: "[ALPHA] Total number of issued CSRs with a requested duration that was honored, sliced by signer", constLabels: {}, variableLabels: [signerName]}
-label:<name:"signerName" value:"kubernetes.io/kube-apiserver-client" > counter:<value:6 > `,
+		`apiserver_certificates_registry_csr_duration_honored{signerName="kubernetes.io/kube-apiserver-client"} 6`,
+		`apiserver_certificates_registry_csr_duration_requested{signerName="kubernetes.io/kube-apiserver-client"} 7`,
 	}
 	t.Cleanup(func() {
-		metrics := make(chan prometheus.Metric, 1000)
-		certificatestore.TestCollectMetrics(metrics)
-		close(metrics)
+		copyConfig := rest.CopyConfig(s.ClientConfig)
+		copyConfig.GroupVersion = &schema.GroupVersion{}
+		copyConfig.NegotiatedSerializer = unstructuredscheme.NewUnstructuredNegotiatedSerializer()
+		rc, err := rest.RESTClientFor(copyConfig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := rc.Get().AbsPath("/metrics").DoRaw(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
 		var gotMetricStrings []string
-		for metric := range metrics {
-			data := &dto.Metric{}
-			if err := metric.Write(data); err != nil {
-				t.Errorf("%s failed to write metric: %v", metric.Desc().String(), err)
-				continue
+		for _, line := range strings.Split(string(body), "\n") {
+			if strings.HasPrefix(line, "apiserver_certificates_registry_csr_duration_") {
+				gotMetricStrings = append(gotMetricStrings, line)
 			}
-			gotMetricStrings = append(gotMetricStrings, metric.Desc().String()+"\n"+data.String())
 		}
 		if diff := cmp.Diff(wantMetricStrings, gotMetricStrings); diff != "" {
 			t.Errorf("unexpected metrics diff (-want +got): %s", diff)
@@ -199,9 +206,6 @@ label:<name:"signerName" value:"kubernetes.io/kube-apiserver-client" > counter:<
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			t.Cleanup(cancel)
 
 			privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			if err != nil {
