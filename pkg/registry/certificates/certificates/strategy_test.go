@@ -36,10 +36,10 @@ import (
 
 func TestStrategyCreate(t *testing.T) {
 	tests := map[string]struct {
-		ctx         context.Context
-		setup       func(*testing.T)
-		obj         runtime.Object
-		expectedObj runtime.Object
+		ctx                context.Context
+		disableFeatureGate bool
+		obj                runtime.Object
+		expectedObj        runtime.Object
 	}{
 		"no user in context, no user in obj": {
 			ctx: genericapirequest.NewContext(),
@@ -134,10 +134,8 @@ func TestStrategyCreate(t *testing.T) {
 			},
 		},
 		"expirationSeconds set with gate disabled": {
-			ctx: genericapirequest.NewContext(),
-			setup: func(t *testing.T) {
-				t.Cleanup(featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.CSRDuration, false))
-			},
+			ctx:                genericapirequest.NewContext(),
+			disableFeatureGate: true,
 			obj: &certapi.CertificateSigningRequest{
 				Spec: certapi.CertificateSigningRequestSpec{
 					ExpirationSeconds: pointer.Int32(5678),
@@ -155,8 +153,8 @@ func TestStrategyCreate(t *testing.T) {
 	for k, tc := range tests {
 		tc := tc
 		t.Run(k, func(t *testing.T) {
-			if tc.setup != nil {
-				tc.setup(t)
+			if tc.disableFeatureGate {
+				defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.CSRDuration, false)()
 			}
 			obj := tc.obj
 			Strategy.PrepareForCreate(tc.ctx, obj)

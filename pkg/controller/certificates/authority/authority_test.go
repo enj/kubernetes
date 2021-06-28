@@ -366,7 +366,7 @@ func TestCertificateAuthority(t *testing.T) {
 
 		// same tests with the feature gate disabled
 		t.Run("feature gate disabled - "+test.name, func(t *testing.T) {
-			t.Cleanup(featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.CSRDuration, false))
+			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.CSRDuration, false)()
 			f(t, test.wantGateDisabled)
 		})
 	}

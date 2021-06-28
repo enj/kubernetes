@@ -50,7 +50,7 @@ func Test_countCSRDurationMetric(t *testing.T) {
 
 	tests := []struct {
 		name                       string
-		setup                      func(*testing.T)
+		disableFeatureGate         bool
 		success                    bool
 		obj, old                   *certificates.CertificateSigningRequest
 		options                    *metav1.UpdateOptions
@@ -59,7 +59,6 @@ func Test_countCSRDurationMetric(t *testing.T) {
 	}{
 		{
 			name:    "cert parse failure",
-			setup:   nil,
 			success: true,
 			obj: &certificates.CertificateSigningRequest{
 				Status: certificates.CertificateSigningRequestStatus{
@@ -79,7 +78,6 @@ func Test_countCSRDurationMetric(t *testing.T) {
 		},
 		{
 			name:    "kube signer honors duration exactly",
-			setup:   nil,
 			success: true,
 			obj: &certificates.CertificateSigningRequest{
 				Status: certificates.CertificateSigningRequestStatus{
@@ -99,7 +97,6 @@ func Test_countCSRDurationMetric(t *testing.T) {
 		},
 		{
 			name:    "signer honors duration exactly",
-			setup:   nil,
 			success: true,
 			obj: &certificates.CertificateSigningRequest{
 				Status: certificates.CertificateSigningRequestStatus{
@@ -119,7 +116,6 @@ func Test_countCSRDurationMetric(t *testing.T) {
 		},
 		{
 			name:    "signer honors duration but just a little bit less",
-			setup:   nil,
 			success: true,
 			obj: &certificates.CertificateSigningRequest{
 				Status: certificates.CertificateSigningRequestStatus{
@@ -139,7 +135,6 @@ func Test_countCSRDurationMetric(t *testing.T) {
 		},
 		{
 			name:    "signer honors duration but just a little bit more",
-			setup:   nil,
 			success: true,
 			obj: &certificates.CertificateSigningRequest{
 				Status: certificates.CertificateSigningRequestStatus{
@@ -159,7 +154,6 @@ func Test_countCSRDurationMetric(t *testing.T) {
 		},
 		{
 			name:    "honors duration lower bound",
-			setup:   nil,
 			success: true,
 			obj: &certificates.CertificateSigningRequest{
 				Status: certificates.CertificateSigningRequestStatus{
@@ -179,7 +173,6 @@ func Test_countCSRDurationMetric(t *testing.T) {
 		},
 		{
 			name:    "does not honor duration just outside of lower bound",
-			setup:   nil,
 			success: true,
 			obj: &certificates.CertificateSigningRequest{
 				Status: certificates.CertificateSigningRequestStatus{
@@ -199,7 +192,6 @@ func Test_countCSRDurationMetric(t *testing.T) {
 		},
 		{
 			name:    "honors duration upper bound",
-			setup:   nil,
 			success: true,
 			obj: &certificates.CertificateSigningRequest{
 				Status: certificates.CertificateSigningRequestStatus{
@@ -219,7 +211,6 @@ func Test_countCSRDurationMetric(t *testing.T) {
 		},
 		{
 			name:    "does not honor duration just outside of upper bound",
-			setup:   nil,
 			success: true,
 			obj: &certificates.CertificateSigningRequest{
 				Status: certificates.CertificateSigningRequestStatus{
@@ -239,7 +230,6 @@ func Test_countCSRDurationMetric(t *testing.T) {
 		},
 		{
 			name:    "failed update is ignored",
-			setup:   nil,
 			success: false,
 			obj: &certificates.CertificateSigningRequest{
 				Status: certificates.CertificateSigningRequestStatus{
@@ -259,7 +249,6 @@ func Test_countCSRDurationMetric(t *testing.T) {
 		},
 		{
 			name:    "dry run is ignored",
-			setup:   nil,
 			success: true,
 			obj: &certificates.CertificateSigningRequest{
 				Status: certificates.CertificateSigningRequestStatus{
@@ -278,11 +267,9 @@ func Test_countCSRDurationMetric(t *testing.T) {
 			wantHonored:   false,
 		},
 		{
-			name: "no metrics when feature gate is turned off",
-			setup: func(t *testing.T) {
-				t.Cleanup(featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.CSRDuration, false))
-			},
-			success: true,
+			name:               "no metrics when feature gate is turned off",
+			disableFeatureGate: true,
+			success:            true,
 			obj: &certificates.CertificateSigningRequest{
 				Status: certificates.CertificateSigningRequestStatus{
 					Certificate: createCert(t, time.Hour, caPrivateKey, caCert),
@@ -301,7 +288,6 @@ func Test_countCSRDurationMetric(t *testing.T) {
 		},
 		{
 			name:    "old CSR already has a cert so it is ignored",
-			setup:   nil,
 			success: true,
 			obj: &certificates.CertificateSigningRequest{
 				Status: certificates.CertificateSigningRequestStatus{
@@ -324,7 +310,6 @@ func Test_countCSRDurationMetric(t *testing.T) {
 		},
 		{
 			name:    "CSRs with no duration are ignored",
-			setup:   nil,
 			success: true,
 			obj: &certificates.CertificateSigningRequest{
 				Status: certificates.CertificateSigningRequestStatus{
@@ -344,7 +329,6 @@ func Test_countCSRDurationMetric(t *testing.T) {
 		},
 		{
 			name:    "unissued CSRs are ignored",
-			setup:   nil,
 			success: true,
 			obj: &certificates.CertificateSigningRequest{
 				Status: certificates.CertificateSigningRequestStatus{
@@ -366,8 +350,8 @@ func Test_countCSRDurationMetric(t *testing.T) {
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.setup != nil {
-				tt.setup(t)
+			if tt.disableFeatureGate {
+				defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.CSRDuration, false)()
 			} else {
 				t.Parallel()
 			}
