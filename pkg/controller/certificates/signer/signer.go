@@ -30,11 +30,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	certificatesinformers "k8s.io/client-go/informers/certificates/v1"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/certificate/csr"
 	capihelper "k8s.io/kubernetes/pkg/apis/certificates"
 	"k8s.io/kubernetes/pkg/controller/certificates"
 	"k8s.io/kubernetes/pkg/controller/certificates/authority"
+	"k8s.io/kubernetes/pkg/features"
 )
 
 type CSRSigningController struct {
@@ -191,17 +194,34 @@ func (s *signer) sign(x509cr *x509.CertificateRequest, usages []capi.KeyUsage, e
 		return nil, err
 	}
 	der, err := currCA.Sign(x509cr.Raw, authority.PermissiveSigningPolicy{
-		TTL:               s.certTTL,
-		ExpirationSeconds: expirationSeconds,
-		Usages:            usages,
-		Backdate:          5 * time.Minute, // this must always be less than the minimum TTL requested by a user
-		Short:             8 * time.Hour,   // 5 minutes of backdating is roughly 1% of 8 hours
-		Now:               now,
+		TTL:      s.duration(expirationSeconds),
+		Usages:   usages,
+		Backdate: 5 * time.Minute, // this must always be less than the minimum TTL requested by a user (see sanity check requestedDuration below)
+		Short:    8 * time.Hour,   // 5 minutes of backdating is roughly 1% of 8 hours
+		Now:      now,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), nil
+}
+
+func (s *signer) duration(expirationSeconds *int32) time.Duration {
+	if !utilfeature.DefaultFeatureGate.Enabled(features.CSRDuration) {
+		return s.certTTL
+	}
+
+	if expirationSeconds == nil {
+		return s.certTTL
+	}
+
+	// honor requested duration is if it is less than the default TTL
+	// use 10 min (2x hard coded backdate above) as a sanity check lower bound
+	if requestedDuration := csr.ExpirationSecondsToDuration(*expirationSeconds); requestedDuration < s.certTTL && requestedDuration >= 10*time.Minute {
+		return requestedDuration
+	}
+
+	return s.certTTL
 }
 
 // getCSRVerificationFuncForSignerName is a function that provides reliable mapping of signer names to verification so that
