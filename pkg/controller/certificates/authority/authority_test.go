@@ -32,10 +32,6 @@ import (
 
 	capi "k8s.io/api/certificates/v1"
 	"k8s.io/apimachinery/pkg/util/diff"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/client-go/util/certificate/csr"
-	featuregatetesting "k8s.io/component-base/featuregate/testing"
-	"k8s.io/kubernetes/pkg/features"
 )
 
 func TestCertificateAuthority(t *testing.T) {
@@ -76,9 +72,8 @@ func TestCertificateAuthority(t *testing.T) {
 		policy   SigningPolicy
 		mutateCA func(ca *CertificateAuthority)
 
-		want             x509.Certificate
-		wantGateDisabled *x509.Certificate
-		wantErr          string
+		want    x509.Certificate
+		wantErr string
 	}{
 		{
 			name:   "ca info",
@@ -187,102 +182,6 @@ func TestCertificateAuthority(t *testing.T) {
 			wantErr: "the signer has expired: NotAfter=" + now.String(),
 		},
 		{
-			name:   "can request shorter duration than TTL",
-			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(30 * time.Minute), Now: func() time.Time { return now }},
-			want: x509.Certificate{
-				NotBefore:             now,
-				NotAfter:              now.Add(30 * time.Minute),
-				BasicConstraintsValid: true,
-			},
-			wantGateDisabled: &x509.Certificate{
-				NotBefore:             now,
-				NotAfter:              now.Add(time.Hour),
-				BasicConstraintsValid: true,
-			},
-		},
-		{
-			name:   "can request shorter duration than TTL with backdate",
-			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(30 * time.Minute), Backdate: 5 * time.Minute, Now: func() time.Time { return now }},
-			want: x509.Certificate{
-				NotBefore:             now.Add(-5 * time.Minute),
-				NotAfter:              now.Add(25 * time.Minute),
-				BasicConstraintsValid: true,
-			},
-			wantGateDisabled: &x509.Certificate{
-				NotBefore:             now.Add(-5 * time.Minute),
-				NotAfter:              now.Add(55 * time.Minute),
-				BasicConstraintsValid: true,
-			},
-		},
-		{
-			name:   "can request shorter duration than TTL with short",
-			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(30 * time.Minute), Backdate: 5 * time.Minute, Short: 8 * time.Hour, Now: func() time.Time { return now }},
-			want: x509.Certificate{
-				NotBefore:             now.Add(-5 * time.Minute),
-				NotAfter:              now.Add(30 * time.Minute),
-				BasicConstraintsValid: true,
-			},
-			wantGateDisabled: &x509.Certificate{
-				NotBefore:             now.Add(-5 * time.Minute),
-				NotAfter:              now.Add(time.Hour),
-				BasicConstraintsValid: true,
-			},
-		},
-		{
-			name:   "cannot request longer duration than TTL",
-			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(3 * time.Hour), Now: func() time.Time { return now }},
-			want: x509.Certificate{
-				NotBefore:             now,
-				NotAfter:              now.Add(time.Hour),
-				BasicConstraintsValid: true,
-			},
-		},
-		{
-			name:   "cannot request longer duration than TTL with backdate",
-			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(3 * time.Hour), Backdate: 5 * time.Minute, Now: func() time.Time { return now }},
-			want: x509.Certificate{
-				NotBefore:             now.Add(-5 * time.Minute),
-				NotAfter:              now.Add(55 * time.Minute),
-				BasicConstraintsValid: true,
-			},
-		},
-		{
-			name:   "cannot request longer duration than TTL with short",
-			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(3 * time.Hour), Backdate: 5 * time.Minute, Short: 8 * time.Hour, Now: func() time.Time { return now }},
-			want: x509.Certificate{
-				NotBefore:             now.Add(-5 * time.Minute),
-				NotAfter:              now.Add(1 * time.Hour),
-				BasicConstraintsValid: true,
-			},
-		},
-		{
-			name:   "cannot request negative duration",
-			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(-time.Minute), Now: func() time.Time { return now }},
-			want: x509.Certificate{
-				NotBefore:             now,
-				NotAfter:              now.Add(time.Hour),
-				BasicConstraintsValid: true,
-			},
-		},
-		{
-			name:   "cannot request negative duration with backdate",
-			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(-time.Minute), Backdate: 5 * time.Minute, Now: func() time.Time { return now }},
-			want: x509.Certificate{
-				NotBefore:             now.Add(-5 * time.Minute),
-				NotAfter:              now.Add(55 * time.Minute),
-				BasicConstraintsValid: true,
-			},
-		},
-		{
-			name:   "cannot request negative duration with short",
-			policy: PermissiveSigningPolicy{TTL: time.Hour, ExpirationSeconds: csr.DurationToExpirationSeconds(-time.Minute), Backdate: 5 * time.Minute, Short: 8 * time.Hour, Now: func() time.Time { return now }},
-			want: x509.Certificate{
-				NotBefore:             now.Add(-5 * time.Minute),
-				NotAfter:              now.Add(1 * time.Hour),
-				BasicConstraintsValid: true,
-			},
-		},
-		{
 			name:   "expired ca with backdate",
 			policy: PermissiveSigningPolicy{TTL: time.Hour, Backdate: 5 * time.Minute, Now: nowFunc},
 			mutateCA: func(ca *CertificateAuthority) {
@@ -298,9 +197,7 @@ func TestCertificateAuthority(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
-
-		f := func(t *testing.T, wantOverride *x509.Certificate) {
+		t.Run(test.name, func(t *testing.T) {
 			caCertShallowCopy := *caCert
 
 			ca := &CertificateAuthority{
@@ -348,26 +245,9 @@ func TestCertificateAuthority(t *testing.T) {
 					return ((x == nil) && (y == nil)) || x.String() == y.String()
 				}),
 			}
-			want := test.want
-			if wantOverride != nil {
-				want = *wantOverride
+			if !cmp.Equal(*cert, test.want, opts) {
+				t.Errorf("unexpected diff: %v", cmp.Diff(*cert, test.want, opts))
 			}
-			if !cmp.Equal(*cert, want, opts) {
-				t.Errorf("unexpected diff: %v", cmp.Diff(*cert, want, opts))
-			}
-		}
-
-		// regular tests
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel() // these are safe to run in parallel but not the feature gate disabled tests
-
-			f(t, nil)
-		})
-
-		// same tests with the feature gate disabled
-		t.Run("feature gate disabled - "+test.name, func(t *testing.T) {
-			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.CSRDuration, false)()
-			f(t, test.wantGateDisabled)
 		})
 	}
 }
