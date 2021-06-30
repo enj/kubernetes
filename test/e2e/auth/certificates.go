@@ -214,10 +214,11 @@ var _ = SIGDescribe("Certificates API [Privileged:ClusterAdmin]", func() {
 		csrTemplate := &certificatesv1.CertificateSigningRequest{
 			ObjectMeta: metav1.ObjectMeta{GenerateName: "e2e-example-csr-"},
 			Spec: certificatesv1.CertificateSigningRequestSpec{
-				Request:           csrData,
-				SignerName:        signerName,
-				ExpirationSeconds: csr.DurationToExpirationSeconds(time.Hour),
-				Usages:            []certificatesv1.KeyUsage{certificatesv1.UsageDigitalSignature, certificatesv1.UsageKeyEncipherment, certificatesv1.UsageServerAuth},
+				Request:    csrData,
+				SignerName: signerName,
+				// TODO(enj): check for expirationSeconds field persistence once the feature is GA
+				//  ExpirationSeconds: csr.DurationToExpirationSeconds(time.Hour),
+				Usages: []certificatesv1.KeyUsage{certificatesv1.UsageDigitalSignature, certificatesv1.UsageKeyEncipherment, certificatesv1.UsageServerAuth},
 			},
 		}
 
