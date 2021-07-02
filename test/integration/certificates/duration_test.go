@@ -61,8 +61,8 @@ func TestCSRDuration(t *testing.T) {
 	// assert that the metrics we collect during the test run match expectations
 	// we have 7 valid test cases below that request a duration of which 6 should have their duration honored
 	wantMetricStrings := []string{
-		`apiserver_certificates_registry_csr_duration_honored{signerName="kubernetes.io/kube-apiserver-client"} 6`,
-		`apiserver_certificates_registry_csr_duration_requested{signerName="kubernetes.io/kube-apiserver-client"} 7`,
+		`apiserver_certificates_registry_csr_honored_duration_total{signerName="kubernetes.io/kube-apiserver-client"} 6`,
+		`apiserver_certificates_registry_csr_requested_duration_total{signerName="kubernetes.io/kube-apiserver-client"} 7`,
 	}
 	t.Cleanup(func() {
 		copyConfig := rest.CopyConfig(s.ClientConfig)
@@ -78,7 +78,7 @@ func TestCSRDuration(t *testing.T) {
 		}
 		var gotMetricStrings []string
 		for _, line := range strings.Split(string(body), "\n") {
-			if strings.HasPrefix(line, "apiserver_certificates_registry_csr_duration_") {
+			if strings.HasPrefix(line, "apiserver_certificates_registry_") {
 				gotMetricStrings = append(gotMetricStrings, line)
 			}
 		}

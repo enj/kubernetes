@@ -27,7 +27,9 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	certutil "k8s.io/client-go/util/cert"
 	"k8s.io/client-go/util/certificate/csr"
@@ -52,7 +54,7 @@ func Test_countCSRDurationMetric(t *testing.T) {
 		name                       string
 		disableFeatureGate         bool
 		success                    bool
-		obj, old                   *certificates.CertificateSigningRequest
+		obj, old                   runtime.Object
 		options                    *metav1.UpdateOptions
 		wantSigner                 string
 		wantRequested, wantHonored bool
@@ -335,6 +337,64 @@ func Test_countCSRDurationMetric(t *testing.T) {
 					Certificate: nil,
 				},
 			},
+			old: &certificates.CertificateSigningRequest{
+				Spec: certificates.CertificateSigningRequestSpec{
+					SignerName:        "pandas",
+					ExpirationSeconds: csr.DurationToExpirationSeconds(time.Hour),
+				},
+			},
+			options:       &metav1.UpdateOptions{},
+			wantSigner:    "",
+			wantRequested: false,
+			wantHonored:   false,
+		},
+		{
+			name:    "invalid data - nil old object",
+			success: true,
+			obj: &certificates.CertificateSigningRequest{
+				Status: certificates.CertificateSigningRequestStatus{
+					Certificate: createCert(t, time.Hour, caPrivateKey, caCert),
+				},
+			},
+			old:           nil,
+			options:       &metav1.UpdateOptions{},
+			wantSigner:    "",
+			wantRequested: false,
+			wantHonored:   false,
+		},
+		{
+			name:    "invalid data - nil new object",
+			success: true,
+			obj:     nil,
+			old: &certificates.CertificateSigningRequest{
+				Spec: certificates.CertificateSigningRequestSpec{
+					SignerName:        "pandas",
+					ExpirationSeconds: csr.DurationToExpirationSeconds(time.Hour),
+				},
+			},
+			options:       &metav1.UpdateOptions{},
+			wantSigner:    "",
+			wantRequested: false,
+			wantHonored:   false,
+		},
+		{
+			name:    "invalid data - junk old object",
+			success: true,
+			obj: &certificates.CertificateSigningRequest{
+				Status: certificates.CertificateSigningRequestStatus{
+					Certificate: createCert(t, time.Hour, caPrivateKey, caCert),
+				},
+			},
+			old:           &corev1.Pod{},
+			options:       &metav1.UpdateOptions{},
+			wantSigner:    "",
+			wantRequested: false,
+			wantHonored:   false,
+		},
+		{
+			name:    "invalid data - junk new object",
+			success: true,
+			obj:     &corev1.Pod{},
 			old: &certificates.CertificateSigningRequest{
 				Spec: certificates.CertificateSigningRequestSpec{
 					SignerName:        "pandas",

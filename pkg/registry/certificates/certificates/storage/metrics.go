@@ -48,7 +48,7 @@ var (
 		&metrics.CounterOpts{
 			Namespace:      namespace,
 			Subsystem:      subsystem,
-			Name:           "csr_duration_requested",
+			Name:           "csr_requested_duration_total",
 			Help:           "Total number of issued CSRs with a requested duration, sliced by signer (only kubernetes.io signer names are specifically identified)",
 			StabilityLevel: metrics.ALPHA,
 		},
@@ -60,7 +60,7 @@ var (
 		&metrics.CounterOpts{
 			Namespace:      namespace,
 			Subsystem:      subsystem,
-			Name:           "csr_duration_honored",
+			Name:           "csr_honored_duration_total",
 			Help:           "Total number of issued CSRs with a requested duration that was honored, sliced by signer (only kubernetes.io signer names are specifically identified)",
 			StabilityLevel: metrics.ALPHA,
 		},
@@ -82,7 +82,7 @@ type counterVecMetric interface {
 }
 
 func countCSRDurationMetric(requested, honored counterVecMetric) genericregistry.BeginUpdateFunc {
-	return func(ctx context.Context, obj runtime.Object, old runtime.Object, options *metav1.UpdateOptions) (genericregistry.FinishFunc, error) {
+	return func(ctx context.Context, obj, old runtime.Object, options *metav1.UpdateOptions) (genericregistry.FinishFunc, error) {
 		return func(ctx context.Context, success bool) {
 			if !success {
 				return // ignore failures
@@ -96,7 +96,10 @@ func countCSRDurationMetric(requested, honored counterVecMetric) genericregistry
 				return
 			}
 
-			oldCSR := old.(*certificates.CertificateSigningRequest)
+			oldCSR, ok := old.(*certificates.CertificateSigningRequest)
+			if !ok {
+				return
+			}
 
 			// if the old CSR already has a certificate, do not double count it
 			if len(oldCSR.Status.Certificate) > 0 {
@@ -107,7 +110,11 @@ func countCSRDurationMetric(requested, honored counterVecMetric) genericregistry
 				return // ignore CSRs that are not using the CSR duration feature
 			}
 
-			issuedCert := obj.(*certificates.CertificateSigningRequest).Status.Certificate
+			newCSR, ok := obj.(*certificates.CertificateSigningRequest)
+			if !ok {
+				return
+			}
+			issuedCert := newCSR.Status.Certificate
 
 			// new CSR has no issued certificate yet so do not count it.
 			// note that this means that we will ignore CSRs that set a duration
@@ -141,14 +148,13 @@ func countCSRDurationMetric(requested, honored counterVecMetric) genericregistry
 	}
 }
 
-func isDurationHonored(want time.Duration, got time.Duration) bool {
+func isDurationHonored(want, got time.Duration) bool {
 	delta := want - got
 	if delta < 0 {
 		delta = -delta
 	}
 
 	// short-lived cert backdating + 5% of want
-	// TODO should we have an upper limit on the 5%?
 	maxDelta := 5*time.Minute + (want / 20)
 
 	return delta < maxDelta
