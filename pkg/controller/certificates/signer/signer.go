@@ -217,11 +217,17 @@ func (s *signer) duration(expirationSeconds *int32) time.Duration {
 
 	// honor requested duration is if it is less than the default TTL
 	// use 10 min (2x hard coded backdate above) as a sanity check lower bound
-	if requestedDuration := csr.ExpirationSecondsToDuration(*expirationSeconds); requestedDuration < s.certTTL && requestedDuration >= 10*time.Minute {
+	const min = 10 * time.Minute
+	switch requestedDuration := csr.ExpirationSecondsToDuration(*expirationSeconds); {
+	case requestedDuration > s.certTTL:
+		return s.certTTL
+
+	case requestedDuration < min:
+		return min
+
+	default:
 		return requestedDuration
 	}
-
-	return s.certTTL
 }
 
 // getCSRVerificationFuncForSignerName is a function that provides reliable mapping of signer names to verification so that

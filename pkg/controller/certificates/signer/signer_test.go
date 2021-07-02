@@ -381,14 +381,14 @@ func Test_signer_duration(t *testing.T) {
 			name:              "cannot request negative duration",
 			certTTL:           time.Hour,
 			expirationSeconds: csr.DurationToExpirationSeconds(-time.Minute),
-			wantGateEnabled:   time.Hour,
+			wantGateEnabled:   10 * time.Minute,
 			wantGateDisabled:  time.Hour,
 		},
 		{
 			name:              "cannot request duration less than 10 mins",
 			certTTL:           time.Hour,
 			expirationSeconds: csr.DurationToExpirationSeconds(10*time.Minute - time.Second),
-			wantGateEnabled:   time.Hour,
+			wantGateEnabled:   10 * time.Minute,
 			wantGateDisabled:  time.Hour,
 		},
 		{
