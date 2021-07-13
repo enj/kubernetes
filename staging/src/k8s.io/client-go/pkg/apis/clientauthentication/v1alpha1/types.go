@@ -66,6 +66,17 @@ type ExecCredentialStatus struct {
 	ClientCertificateData string `json:"clientCertificateData,omitempty"`
 	// PEM-encoded private key for the above certificate.
 	ClientKeyData string `json:"clientKeyData,omitempty" datapolicy:"security-key"`
+	// TODO docs
+	ProxyConfig *ProxyConfig `json:"proxyConfig,omitempty"`
+}
+
+// TODO docs
+type ProxyConfig struct {
+	// assumes https://127.0.0.1:port
+	// required
+	Port int32 `json:"port"`
+	// required
+	CertificateAuthorityData []byte `json:"certificate-authority-data"`
 }
 
 // Response defines metadata about a failed request, including HTTP status code and

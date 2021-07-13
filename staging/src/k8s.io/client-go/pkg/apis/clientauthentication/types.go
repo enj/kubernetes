@@ -73,6 +73,17 @@ type ExecCredentialStatus struct {
 	// PEM-encoded client TLS private key.
 	// +optional
 	ClientKeyData string `datapolicy:"secret-key"`
+	// TODO docs
+	ProxyConfig *ProxyConfig
+}
+
+// TODO docs
+type ProxyConfig struct {
+	// assumes https://127.0.0.1:port
+	// required
+	Port int32
+	// required
+	CertificateAuthorityData []byte
 }
 
 // Response defines metadata about a failed request, including HTTP status code and
