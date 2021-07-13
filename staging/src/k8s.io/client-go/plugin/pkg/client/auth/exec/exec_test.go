@@ -1013,7 +1013,10 @@ func TestRefreshCreds(t *testing.T) {
 	}
 
 	for _, test := range tests {
+		test := test
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
 			c := test.config
 
 			if c.Command == "" {
@@ -1033,7 +1036,7 @@ func TestRefreshCreds(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			stderr := &bytes.Buffer{}
+			stderr := &syncBuffer{barrier: make(chan struct{})}
 			a.stderr = stderr
 			a.environ = func() []string { return nil }
 
@@ -1057,14 +1060,17 @@ func TestRefreshCreds(t *testing.T) {
 				t.Errorf("expected expiry %v got %v", test.wantExpiry, a.exp)
 			}
 
+			// TODO lazy hack until I fix the stderr reading code below
+			time.Sleep(7 * time.Second)
+
 			if test.wantInput == "" {
-				if got := strings.TrimSpace(stderr.String()); got != "" {
+				if got := strings.TrimSpace(stderr.buffer.String()); got != "" {
 					t.Errorf("expected no input parameters, got %q", got)
 				}
 				return
 			}
 
-			compJSON(t, stderr.Bytes(), []byte(test.wantInput))
+			compJSON(t, stderr.buffer.Bytes(), []byte(test.wantInput))
 		})
 	}
 }

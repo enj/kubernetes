@@ -23,11 +23,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/apimachinery/pkg/runtime/serializer/streaming"
 	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/client-go/pkg/apis/clientauthentication"
 	"k8s.io/client-go/pkg/apis/clientauthentication/install"
@@ -279,6 +283,8 @@ type Authenticator struct {
 type credentials struct {
 	token string           `datapolicy:"token"`
 	cert  *tls.Certificate `datapolicy:"secret-key"`
+
+	proxyConfig *clientauthentication.ProxyConfig
 }
 
 // UpdateTransportConfig updates the transport.Config to use credentials
@@ -313,7 +319,40 @@ func (a *Authenticator) UpdateTransportConfig(c *transport.Config) error {
 
 	c.Dial = d.DialContext
 
+	var defaultProxy func(*http.Request) (*url.URL, error)
+	if c.Proxy != nil {
+		defaultProxy = c.Proxy
+	} else {
+		defaultProxy = http.ProxyFromEnvironment
+	}
+
+	c.Proxy = (&proxyHandler{a: a, defaultProxy: defaultProxy}).proxy
+
+	// TODO replace with a callback that handles reading the proxy CA
+	c.TLS.Insecure = true
+
 	return nil
+}
+
+type proxyHandler struct {
+	a            *Authenticator
+	defaultProxy func(*http.Request) (*url.URL, error)
+}
+
+func (p *proxyHandler) proxy(r *http.Request) (*url.URL, error) {
+	creds, err := p.a.getCreds()
+	if err != nil {
+		return nil, err
+	}
+
+	if creds.proxyConfig == nil {
+		return p.defaultProxy(r)
+	}
+
+	return &url.URL{
+		Scheme: "https",
+		Host:   "127.0.0.1:" + strconv.Itoa(int(creds.proxyConfig.Port)),
+	}, nil
 }
 
 type roundTripper struct {
@@ -423,7 +462,7 @@ func (a *Authenticator) refreshCredsLocked(r *clientauthentication.Response) err
 	}
 	env = append(env, fmt.Sprintf("%s=%s", execInfoEnv, data))
 
-	stdout := &bytes.Buffer{}
+	stdout := &syncBuffer{barrier: make(chan struct{})}
 	cmd := exec.Command(a.cmd, a.args...)
 	cmd.Env = env
 	cmd.Stderr = a.stderr
@@ -432,19 +471,70 @@ func (a *Authenticator) refreshCredsLocked(r *clientauthentication.Response) err
 		cmd.Stdin = a.stdin
 	}
 
-	err = cmd.Run()
-	incrementCallsMetric(err)
-	if err != nil {
-		return a.wrapCmdRunErrorLocked(err)
+	startErr := cmd.Start()
+	incrementCallsMetric(startErr)
+	if startErr != nil {
+		return a.wrapCmdRunErrorLocked(startErr)
 	}
 
-	_, gvk, err := codecs.UniversalDecoder(a.group).Decode(stdout.Bytes(), nil, cred)
+	n := runtime.NewClientNegotiator(codecs, schema.GroupVersion{ /* unused */ })
+	_, _, framer, err := n.StreamDecoder(runtime.ContentTypeJSON, nil)
 	if err != nil {
-		return fmt.Errorf("decoding stdout: %v", err)
+		panic(err)
 	}
-	if gvk.Group != a.group.Group || gvk.Version != a.group.Version {
-		return fmt.Errorf("exec plugin is configured to use API version %s, plugin returned version %s",
-			a.group, schema.GroupVersion{Group: gvk.Group, Version: gvk.Version})
+
+	waitCh := make(chan error)
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+
+	type decodeData struct {
+		cred *clientauthentication.ExecCredential
+		gvk  *schema.GroupVersionKind
+		err  error
+	}
+	decodeCh := make(chan decodeData)
+	go func() {
+		// time.Sleep(1 * time.Second)
+		out := *cred
+		frameReader := framer.NewFrameReader(ioutil.NopCloser(stdout))
+		_, gvk, err := streaming.NewDecoder(frameReader, codecs.UniversalDecoder(a.group)).Decode(nil, &out)
+		decodeCh <- decodeData{cred: &out, gvk: gvk, err: err}
+	}()
+
+	var doneWaiting bool
+outer:
+	for {
+		select {
+		case waitErr := <-waitCh:
+			incrementCallsMetric(waitErr)
+			if waitErr != nil {
+				return a.wrapCmdRunErrorLocked(waitErr)
+			}
+			doneWaiting = true
+
+		case dd := <-decodeCh:
+			if dd.err != nil {
+				return fmt.Errorf("decoding stdout: %v", dd.err)
+			}
+			if dd.gvk.Group != a.group.Group || dd.gvk.Version != a.group.Version {
+				return fmt.Errorf("exec plugin is configured to use API version %s, plugin returned version %s",
+					a.group, schema.GroupVersion{Group: dd.gvk.Group, Version: dd.gvk.Version})
+			}
+
+			cred = dd.cred
+			break outer
+		}
+	}
+
+	if !doneWaiting {
+		go func() {
+			waitErr := <-waitCh
+			incrementCallsMetric(waitErr)
+			if waitErr != nil {
+				klog.V(2).Infof("waiting process did not exit cleanly: %v", waitErr)
+			}
+		}()
 	}
 
 	if cred.Status == nil {
@@ -484,12 +574,14 @@ func (a *Authenticator) refreshCredsLocked(r *clientauthentication.Response) err
 		}
 		newCreds.cert = &cert
 	}
+	// TODO validate this data
+	newCreds.proxyConfig = cred.Status.ProxyConfig
 
 	oldCreds := a.cachedCreds
 	a.cachedCreds = newCreds
 	// Only close all connections when TLS cert rotates. Token rotation doesn't
 	// need the extra noise.
-	if oldCreds != nil && !reflect.DeepEqual(oldCreds.cert, a.cachedCreds.cert) {
+	if oldCreds != nil && !reflect.DeepEqual(oldCreds.cert, a.cachedCreds.cert) { // TODO close connections if CA changes?
 		// Can be nil if the exec auth plugin only returned token auth.
 		if oldCreds.cert != nil && oldCreds.cert.Leaf != nil {
 			metrics.ClientCertRotationAge.Observe(time.Since(oldCreds.cert.Leaf.NotBefore))
@@ -535,4 +627,28 @@ func (a *Authenticator) wrapCmdRunErrorLocked(err error) error {
 	default:
 		return fmt.Errorf("exec: %v", err)
 	}
+}
+
+type syncBuffer struct {
+	buffer bytes.Buffer
+	mutex  sync.Mutex
+
+	barrier     chan struct{}
+	barrierOnce sync.Once
+}
+
+func (b *syncBuffer) Write(p []byte) (n int, err error) {
+	b.barrierOnce.Do(func() {
+		close(b.barrier)
+	})
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	return b.buffer.Write(p)
+}
+
+func (b *syncBuffer) Read(p []byte) (n int, err error) {
+	<-b.barrier
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	return b.buffer.Read(p)
 }
