@@ -571,7 +571,10 @@ outer:
 		}
 		newCreds.cert = &cert
 	}
-	// TODO validate this data
+	// TODO validate this data -> no expiration, must have client cert, no token?
+	//  if proxy quits, make the creds expired, and close connections
+	//  when proxyConfig is specified, re-entering this method would occur on 401 or if we expired the creds
+	//  we could kill the proxy and then run again?
 	newCreds.proxyConfig = cred.Status.ProxyConfig
 
 	switch {
