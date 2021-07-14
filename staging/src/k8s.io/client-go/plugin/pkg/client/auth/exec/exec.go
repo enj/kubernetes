@@ -209,6 +209,7 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 		interactiveFunc: func() (bool, error) { return isInteractive(isTerminalFunc, config) },
 		now:             time.Now,
 		environ:         os.Environ,
+		callsMetric:     metrics.ExecPluginCalls,
 
 		defaultDialer: defaultDialer,
 		connTracker:   connTracker,
@@ -271,6 +272,7 @@ type Authenticator struct {
 	interactiveFunc func() (bool, error)
 	now             func() time.Time
 	environ         func() []string
+	callsMetric     metrics.CallsMetric
 
 	// defaultDialer is used for clients which don't specify a custom dialer
 	defaultDialer *connrotation.Dialer
@@ -478,7 +480,7 @@ func (a *Authenticator) refreshCredsLocked(r *clientauthentication.Response) err
 	}
 
 	startErr := cmd.Start()
-	incrementCallsMetric(startErr)
+	incrementCallsMetric(a.callsMetric, startErr)
 	if startErr != nil {
 		return a.wrapCmdRunErrorLocked(startErr)
 	}
@@ -510,7 +512,7 @@ outer:
 	for {
 		select {
 		case waitErr := <-waitCh:
-			incrementCallsMetric(waitErr)
+			incrementCallsMetric(a.callsMetric, waitErr)
 			if waitErr != nil {
 				return a.wrapCmdRunErrorLocked(waitErr)
 			}
@@ -533,7 +535,7 @@ outer:
 	if !doneWaiting {
 		go func() {
 			waitErr := <-waitCh
-			incrementCallsMetric(waitErr)
+			incrementCallsMetric(a.callsMetric, waitErr)
 			if waitErr != nil {
 				klog.V(2).Infof("waiting process did not exit cleanly: %v", waitErr)
 			}

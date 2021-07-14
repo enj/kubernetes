@@ -90,22 +90,22 @@ func (c *certificateExpirationTracker) set(a *Authenticator, t time.Time) {
 // incrementCallsMetric increments a global metrics counter for the number of calls to an exec
 // plugin, partitioned by exit code. The provided err should be the return value from
 // exec.Cmd.Run().
-func incrementCallsMetric(err error) {
+func incrementCallsMetric(callsMetric metrics.CallsMetric, err error) {
 	execExitError := &exec.ExitError{}
 	execError := &exec.Error{}
 	pathError := &fs.PathError{}
 	switch {
 	case err == nil: // Binary execution succeeded.
-		metrics.ExecPluginCalls.Increment(successExitCode, noError)
+		callsMetric.Increment(successExitCode, noError)
 
 	case errors.As(err, &execExitError): // Binary execution failed (see "os/exec".Cmd.Run()).
-		metrics.ExecPluginCalls.Increment(execExitError.ExitCode(), pluginExecutionError)
+		callsMetric.Increment(execExitError.ExitCode(), pluginExecutionError)
 
 	case errors.As(err, &execError), errors.As(err, &pathError): // Binary does not exist (see exec.Error, fs.PathError).
-		metrics.ExecPluginCalls.Increment(failureExitCode, pluginNotFoundError)
+		callsMetric.Increment(failureExitCode, pluginNotFoundError)
 
 	default: // We don't know about this error type.
 		klog.V(2).InfoS("unexpected exec plugin return error type", "type", reflect.TypeOf(err).String(), "err", err)
-		metrics.ExecPluginCalls.Increment(failureExitCode, clientInternalError)
+		callsMetric.Increment(failureExitCode, clientInternalError)
 	}
 }

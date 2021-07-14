@@ -26,7 +26,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"k8s.io/client-go/pkg/apis/clientauthentication"
 	"k8s.io/client-go/tools/clientcmd/api"
-	"k8s.io/client-go/tools/metrics"
 )
 
 type mockExpiryGauge struct {
@@ -120,20 +119,15 @@ func (f *mockCallsMetricCounter) Increment(exitCode int, errorType string) {
 }
 
 func TestCallsMetric(t *testing.T) {
-	const (
-		goodOutput = `{
+	const goodOutput = `{
 			"kind": "ExecCredential",
 			"apiVersion": "client.authentication.k8s.io/v1beta1",
 			"status": {
 				"token": "foo-bar"
 			}
 		}`
-	)
 
 	callsMetricCounter := &mockCallsMetricCounter{}
-	originalExecPluginCalls := metrics.ExecPluginCalls
-	t.Cleanup(func() { metrics.ExecPluginCalls = originalExecPluginCalls })
-	metrics.ExecPluginCalls = callsMetricCounter
 
 	exitCodes := []int{0, 1, 2, 0}
 	var wantCallsMetrics []mockCallsMetric
@@ -153,6 +147,7 @@ func TestCallsMetric(t *testing.T) {
 			t.Fatal(err)
 		}
 		a.stderr = io.Discard
+		a.callsMetric = callsMetricCounter
 
 		// Run refresh creds twice so that our test validates that the metrics are set correctly twice
 		// in a row with the same authenticator.
@@ -187,6 +182,7 @@ func TestCallsMetric(t *testing.T) {
 			t.Fatal(err)
 		}
 		a.stderr = io.Discard
+		a.callsMetric = callsMetricCounter
 		if err := a.refreshCredsLocked(&clientauthentication.Response{}); err == nil {
 			t.Fatal("expected the authenticator to fail because the plugin does not exist")
 		}
