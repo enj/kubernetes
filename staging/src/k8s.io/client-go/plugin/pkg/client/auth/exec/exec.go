@@ -41,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/runtime/serializer/streaming"
 	"k8s.io/apimachinery/pkg/util/clock"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/pkg/apis/clientauthentication"
 	"k8s.io/client-go/pkg/apis/clientauthentication/install"
 	clientauthenticationv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
@@ -61,11 +62,18 @@ It looks like you are trying to use a client-go credential plugin that is not in
 To learn more about this feature, consult the documentation available at:
       https://kubernetes.io/docs/reference/access-authn-authz/authentication/#client-go-credential-plugins`
 
-var scheme = runtime.NewScheme()
-var codecs = serializer.NewCodecFactory(scheme)
+var codecs serializer.CodecFactory
+var framer runtime.Framer
 
 func init() {
+	scheme := runtime.NewScheme()
 	install.Install(scheme)
+	codecs = serializer.NewCodecFactory(scheme)
+
+	var err error
+	negotiator := runtime.NewClientNegotiator(codecs, schema.GroupVersion{ /* unused */ })
+	_, _, framer, err = negotiator.StreamDecoder(runtime.ContentTypeJSON, nil)
+	utilruntime.Must(err)
 }
 
 var (
@@ -473,12 +481,6 @@ func (a *Authenticator) refreshCredsLocked(r *clientauthentication.Response) err
 	incrementCallsMetric(startErr)
 	if startErr != nil {
 		return a.wrapCmdRunErrorLocked(startErr)
-	}
-
-	n := runtime.NewClientNegotiator(codecs, schema.GroupVersion{ /* unused */ })
-	_, _, framer, err := n.StreamDecoder(runtime.ContentTypeJSON, nil)
-	if err != nil {
-		panic(err)
 	}
 
 	waitCh := make(chan error)
