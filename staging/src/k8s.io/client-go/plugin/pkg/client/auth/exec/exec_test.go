@@ -27,7 +27,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -1013,10 +1013,7 @@ func TestRefreshCreds(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
 			c := test.config
 
 			if c.Command == "" {
@@ -1036,9 +1033,19 @@ func TestRefreshCreds(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			stderr := &syncBuffer{barrier: make(chan struct{})}
-			a.stderr = stderr
+			stderrRead, stderrWrite := io.Pipe()
+			a.stderr = stderrWrite
 			a.environ = func() []string { return nil }
+
+			// begin reading in a separate go routine since writes to pipe block until read
+			stderrCh := make(chan []byte)
+			go func() {
+				stderr, err := io.ReadAll(stderrRead)
+				if err != nil {
+					t.Error(err) // should always be nil because we Close without error below and ReadAll ignores EOF
+				}
+				stderrCh <- stderr
+			}()
 
 			if err := a.refreshCredsLocked(test.response); err != nil {
 				if !test.wantErr {
@@ -1060,17 +1067,21 @@ func TestRefreshCreds(t *testing.T) {
 				t.Errorf("expected expiry %v got %v", test.wantExpiry, a.exp)
 			}
 
-			// TODO lazy hack until I fix the stderr reading code below
-			time.Sleep(7 * time.Second)
+			// assume these are all non-proxy tests and thus are done writing to stderr
+			// close the writer so that the reader unblocks
+			if err := stderrWrite.Close(); err != nil {
+				t.Fatal(err) // should always be nil per go doc
+			}
+			stderr := <-stderrCh
 
 			if test.wantInput == "" {
-				if got := strings.TrimSpace(stderr.buffer.String()); got != "" {
+				if got := strings.TrimSpace(string(stderr)); got != "" {
 					t.Errorf("expected no input parameters, got %q", got)
 				}
 				return
 			}
 
-			compJSON(t, stderr.buffer.Bytes(), []byte(test.wantInput))
+			compJSON(t, stderr, []byte(test.wantInput))
 		})
 	}
 }
@@ -1118,7 +1129,7 @@ func TestRoundTripper(t *testing.T) {
 	}
 	a.environ = environ
 	a.now = now
-	a.stderr = ioutil.Discard
+	a.stderr = io.Discard
 
 	tc := &transport.Config{}
 	if err := a.UpdateTransportConfig(tc); err != nil {
@@ -1274,7 +1285,7 @@ func TestTLSCredentials(t *testing.T) {
 		return []string{"TEST_OUTPUT=" + string(data)}
 	}
 	a.now = func() time.Time { return now }
-	a.stderr = ioutil.Discard
+	a.stderr = io.Discard
 
 	// We're not interested in server's cert, this test is about client cert.
 	tc := &transport.Config{TLS: transport.TLSConfig{Insecure: true}}
@@ -1357,7 +1368,7 @@ func TestConcurrentUpdateTransportConfig(t *testing.T) {
 	}
 	a.environ = environ
 	a.now = now
-	a.stderr = ioutil.Discard
+	a.stderr = io.Discard
 
 	stopCh := make(chan struct{})
 	defer close(stopCh)

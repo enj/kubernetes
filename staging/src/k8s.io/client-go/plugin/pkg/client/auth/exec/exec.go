@@ -17,13 +17,11 @@ limitations under the License.
 package exec
 
 import (
-	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -462,11 +460,11 @@ func (a *Authenticator) refreshCredsLocked(r *clientauthentication.Response) err
 	}
 	env = append(env, fmt.Sprintf("%s=%s", execInfoEnv, data))
 
-	stdout := &syncBuffer{barrier: make(chan struct{})}
+	stdoutRead, stdoutWrite := io.Pipe()
 	cmd := exec.Command(a.cmd, a.args...)
 	cmd.Env = env
 	cmd.Stderr = a.stderr
-	cmd.Stdout = stdout
+	cmd.Stdout = stdoutWrite
 	if interactive {
 		cmd.Stdin = a.stdin
 	}
@@ -495,9 +493,12 @@ func (a *Authenticator) refreshCredsLocked(r *clientauthentication.Response) err
 	}
 	decodeCh := make(chan decodeData)
 	go func() {
-		// time.Sleep(1 * time.Second)
+		defer func() {
+			_ = stdoutRead.Close() // should always return nil per go doc
+		}()
+
 		out := *cred
-		frameReader := framer.NewFrameReader(ioutil.NopCloser(stdout))
+		frameReader := framer.NewFrameReader(stdoutRead)
 		_, gvk, err := streaming.NewDecoder(frameReader, codecs.UniversalDecoder(a.group)).Decode(nil, &out)
 		decodeCh <- decodeData{cred: &out, gvk: gvk, err: err}
 	}()
@@ -627,28 +628,4 @@ func (a *Authenticator) wrapCmdRunErrorLocked(err error) error {
 	default:
 		return fmt.Errorf("exec: %v", err)
 	}
-}
-
-type syncBuffer struct {
-	buffer bytes.Buffer
-	mutex  sync.Mutex
-
-	barrier     chan struct{}
-	barrierOnce sync.Once
-}
-
-func (b *syncBuffer) Write(p []byte) (n int, err error) {
-	b.barrierOnce.Do(func() {
-		close(b.barrier)
-	})
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-	return b.buffer.Write(p)
-}
-
-func (b *syncBuffer) Read(p []byte) (n int, err error) {
-	<-b.barrier
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-	return b.buffer.Read(p)
 }
