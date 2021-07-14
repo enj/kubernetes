@@ -197,7 +197,7 @@ func TestCallsMetric(t *testing.T) {
 	callsMetricComparer := cmp.Comparer(func(a, b mockCallsMetric) bool {
 		return a.exitCode == b.exitCode && a.errorType == b.errorType
 	})
-	actuallCallsMetrics := callsMetricCounter.calls // TODO this is racing against async code in refreshCredsLocked
+	actuallCallsMetrics := callsMetricCounter.calls // assume this exec plugin does not run a proxy
 	if diff := cmp.Diff(wantCallsMetrics, actuallCallsMetrics, callsMetricComparer); diff != "" {
 		t.Fatalf("got unexpected metrics calls; -want, +got:\n%s", diff)
 	}

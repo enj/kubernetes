@@ -534,16 +534,6 @@ outer:
 		}
 	}
 
-	if !doneWaiting {
-		go func() {
-			waitErr := <-waitCh
-			incrementCallsMetric(a.callsMetric, waitErr)
-			if waitErr != nil {
-				klog.V(2).Infof("waiting process did not exit cleanly: %v", waitErr)
-			}
-		}()
-	}
-
 	if cred.Status == nil {
 		return fmt.Errorf("exec plugin didn't return a status field")
 	}
@@ -583,6 +573,24 @@ outer:
 	}
 	// TODO validate this data
 	newCreds.proxyConfig = cred.Status.ProxyConfig
+
+	switch {
+	case !doneWaiting && cred.Status.ProxyConfig == nil: // this plugin does not need to run as a proxy, wait for it complete
+		waitErr := <-waitCh
+		incrementCallsMetric(a.callsMetric, waitErr)
+		if waitErr != nil {
+			return a.wrapCmdRunErrorLocked(waitErr)
+		}
+
+	case !doneWaiting: // this plugin runs as a proxy so exit errors are informational
+		go func() {
+			waitErr := <-waitCh
+			incrementCallsMetric(a.callsMetric, waitErr)
+			if waitErr != nil {
+				klog.V(2).Infof("waiting process did not exit cleanly: %v", waitErr) // TODO close connections?
+			}
+		}()
+	}
 
 	oldCreds := a.cachedCreds
 	a.cachedCreds = newCreds
