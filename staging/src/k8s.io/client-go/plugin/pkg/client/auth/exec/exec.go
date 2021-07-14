@@ -482,8 +482,8 @@ func (a *Authenticator) refreshCredsLocked(r *clientauthentication.Response) err
 	}
 
 	startErr := cmd.Start()
-	incrementCallsMetric(a.callsMetric, startErr)
 	if startErr != nil {
+		incrementCallsMetric(a.callsMetric, startErr) // only increment success metric on Wait
 		return a.wrapCmdRunErrorLocked(startErr)
 	}
 

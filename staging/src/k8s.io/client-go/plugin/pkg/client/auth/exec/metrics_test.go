@@ -131,42 +131,44 @@ func TestCallsMetric(t *testing.T) {
 
 	exitCodes := []int{0, 1, 2, 0}
 	var wantCallsMetrics []mockCallsMetric
-	for _, exitCode := range exitCodes {
-		c := api.ExecConfig{
-			Command:    "./testdata/test-plugin.sh",
-			APIVersion: "client.authentication.k8s.io/v1beta1",
-			Env: []api.ExecEnvVar{
-				{Name: "TEST_EXIT_CODE", Value: fmt.Sprintf("%d", exitCode)},
-				{Name: "TEST_OUTPUT", Value: goodOutput},
-			},
-			InteractiveMode: api.IfAvailableExecInteractiveMode,
-		}
+	for i, exitCode := range exitCodes {
+		t.Run(fmt.Sprintf("exit code test #%d with code %d", i, exitCode), func(t *testing.T) {
+			c := api.ExecConfig{
+				Command:    "./testdata/test-plugin.sh",
+				APIVersion: "client.authentication.k8s.io/v1beta1",
+				Env: []api.ExecEnvVar{
+					{Name: "TEST_EXIT_CODE", Value: fmt.Sprintf("%d", exitCode)},
+					{Name: "TEST_OUTPUT", Value: goodOutput},
+				},
+				InteractiveMode: api.IfAvailableExecInteractiveMode,
+			}
 
-		a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &c, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		a.stderr = io.Discard
-		a.callsMetric = callsMetricCounter
+			a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &c, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.stderr = io.Discard
+			a.callsMetric = callsMetricCounter
 
-		// Run refresh creds twice so that our test validates that the metrics are set correctly twice
-		// in a row with the same authenticator.
-		refreshCreds := func() {
-			if err := a.refreshCredsLocked(&clientauthentication.Response{}); (err == nil) != (exitCode == 0) {
-				if err != nil {
-					t.Fatalf("wanted no error, but got %q", err.Error())
-				} else {
-					t.Fatal("wanted error, but got nil")
+			// Run refresh creds twice so that our test validates that the metrics are set correctly twice
+			// in a row with the same authenticator.
+			refreshCreds := func() {
+				if err := a.refreshCredsLocked(&clientauthentication.Response{}); (err == nil) != (exitCode == 0) {
+					if err != nil {
+						t.Fatalf("wanted no error, but got %q", err.Error())
+					} else {
+						t.Fatal("wanted error, but got nil")
+					}
 				}
+				mockCallsMetric := mockCallsMetric{exitCode: exitCode, errorType: "no_error"}
+				if exitCode != 0 {
+					mockCallsMetric.errorType = "plugin_execution_error"
+				}
+				wantCallsMetrics = append(wantCallsMetrics, mockCallsMetric)
 			}
-			mockCallsMetric := mockCallsMetric{exitCode: exitCode, errorType: "no_error"}
-			if exitCode != 0 {
-				mockCallsMetric.errorType = "plugin_execution_error"
-			}
-			wantCallsMetrics = append(wantCallsMetrics, mockCallsMetric)
-		}
-		refreshCreds()
-		refreshCreds()
+			refreshCreds()
+			refreshCreds()
+		})
 	}
 
 	// Run some iterations of the authenticator where the exec plugin fails to run to test special
@@ -195,7 +197,7 @@ func TestCallsMetric(t *testing.T) {
 	callsMetricComparer := cmp.Comparer(func(a, b mockCallsMetric) bool {
 		return a.exitCode == b.exitCode && a.errorType == b.errorType
 	})
-	actuallCallsMetrics := callsMetricCounter.calls
+	actuallCallsMetrics := callsMetricCounter.calls // TODO this is racing against async code in refreshCredsLocked
 	if diff := cmp.Diff(wantCallsMetrics, actuallCallsMetrics, callsMetricComparer); diff != "" {
 		t.Fatalf("got unexpected metrics calls; -want, +got:\n%s", diff)
 	}
