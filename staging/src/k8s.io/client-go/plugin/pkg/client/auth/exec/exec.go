@@ -337,6 +337,8 @@ func (a *Authenticator) UpdateTransportConfig(c *transport.Config) error {
 	c.Proxy = (&proxyHandler{a: a, defaultProxy: defaultProxy}).proxy
 
 	// TODO replace with a callback that handles reading the proxy CA
+	c.TLS.CAFile = ""
+	c.TLS.CAData = nil
 	c.TLS.Insecure = true
 
 	return nil
