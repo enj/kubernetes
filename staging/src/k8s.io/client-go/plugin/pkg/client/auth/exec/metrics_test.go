@@ -18,6 +18,7 @@ package exec
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -107,10 +108,13 @@ type mockCallsMetric struct {
 }
 
 type mockCallsMetricCounter struct {
+	mutex sync.Mutex
 	calls []mockCallsMetric
 }
 
 func (f *mockCallsMetricCounter) Increment(exitCode int, errorType string) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
 	f.calls = append(f.calls, mockCallsMetric{exitCode: exitCode, errorType: errorType})
 }
 
