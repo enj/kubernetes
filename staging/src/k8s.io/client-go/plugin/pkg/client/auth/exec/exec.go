@@ -520,7 +520,7 @@ done:
 			break
 		}
 		if waitErr != nil {
-			break
+			break // do not wait for decoding if the binary failed to run
 		}
 
 		select {
@@ -546,7 +546,7 @@ done:
 			asyncWaitErr := <-waitCh
 			incrementCallsMetric(a.callsMetric, asyncWaitErr)
 			if asyncWaitErr != nil { // this plugin runs as a proxy so exit errors are informational
-				klog.V(2).Infof("waiting process did not exit cleanly: %v", asyncWaitErr) // TODO close connections?
+				klog.V(2).Infof("waiting process did not exit cleanly: %v", a.wrapCmdRunErrorLocked(asyncWaitErr)) // TODO close connections?
 			}
 		}()
 	}
