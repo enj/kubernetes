@@ -519,6 +519,9 @@ done:
 		if doneWaiting && doneDecoding {
 			break
 		}
+		if waitErr != nil {
+			break
+		}
 
 		select {
 		case waitErr = <-waitCh:
