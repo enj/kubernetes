@@ -493,9 +493,9 @@ func (a *Authenticator) refreshCredsLocked(r *clientauthentication.Response) err
 	}()
 
 	type decodeData struct {
-		cred *clientauthentication.ExecCredential
-		gvk  *schema.GroupVersionKind
-		err  error
+		status *clientauthentication.ExecCredentialStatus
+		gvk    *schema.GroupVersionKind
+		err    error
 	}
 	decodeCh := make(chan decodeData)
 	go func() {
@@ -503,36 +503,60 @@ func (a *Authenticator) refreshCredsLocked(r *clientauthentication.Response) err
 			_ = stdoutRead.Close() // should always return nil per go doc
 		}()
 
-		out := *cred
+		out := &clientauthentication.ExecCredential{}
 		frameReader := framer.NewFrameReader(stdoutRead)
-		_, gvk, err := streaming.NewDecoder(frameReader, codecs.UniversalDecoder(a.group)).Decode(nil, &out)
-		decodeCh <- decodeData{cred: &out, gvk: gvk, err: err}
+		_, gvk, err := streaming.NewDecoder(frameReader, codecs.UniversalDecoder(a.group)).Decode(nil, out)
+		decodeCh <- decodeData{status: out.Status, gvk: gvk, err: err}
 	}()
 
-	var doneWaiting bool
-outer:
+	var (
+		doneWaiting, doneDecoding bool
+		waitErr                   error
+		dd                        decodeData
+	)
+done:
 	for {
+		if doneWaiting && doneDecoding {
+			break
+		}
+
 		select {
-		case waitErr := <-waitCh:
-			incrementCallsMetric(a.callsMetric, waitErr)
-			if waitErr != nil {
-				return a.wrapCmdRunErrorLocked(waitErr)
-			}
+		case waitErr = <-waitCh:
 			doneWaiting = true
 
-		case dd := <-decodeCh:
-			if dd.err != nil {
-				return fmt.Errorf("decoding stdout: %v", dd.err)
-			}
-			if dd.gvk.Group != a.group.Group || dd.gvk.Version != a.group.Version {
-				return fmt.Errorf("exec plugin is configured to use API version %s, plugin returned version %s",
-					a.group, schema.GroupVersion{Group: dd.gvk.Group, Version: dd.gvk.Version})
-			}
+		case dd = <-decodeCh:
+			doneDecoding = true
 
-			cred = dd.cred
-			break outer
+			if dd.status != nil && dd.status.ProxyConfig != nil {
+				break done // this plugin needs to run as a proxy, do not wait for it complete
+			}
 		}
 	}
+
+	if doneWaiting {
+		incrementCallsMetric(a.callsMetric, waitErr)
+		if waitErr != nil {
+			return a.wrapCmdRunErrorLocked(waitErr)
+		}
+	} else {
+		go func() {
+			asyncWaitErr := <-waitCh
+			incrementCallsMetric(a.callsMetric, asyncWaitErr)
+			if asyncWaitErr != nil { // this plugin runs as a proxy so exit errors are informational
+				klog.V(2).Infof("waiting process did not exit cleanly: %v", asyncWaitErr) // TODO close connections?
+			}
+		}()
+	}
+
+	if dd.err != nil {
+		return fmt.Errorf("decoding stdout: %v", dd.err)
+	}
+	if dd.gvk.Group != a.group.Group || dd.gvk.Version != a.group.Version {
+		return fmt.Errorf("exec plugin is configured to use API version %s, plugin returned version %s",
+			a.group, schema.GroupVersion{Group: dd.gvk.Group, Version: dd.gvk.Version})
+	}
+
+	cred.Status = dd.status
 
 	if cred.Status == nil {
 		return fmt.Errorf("exec plugin didn't return a status field")
@@ -576,24 +600,6 @@ outer:
 	//  when proxyConfig is specified, re-entering this method would occur on 401 or if we expired the creds
 	//  we could kill the proxy and then run again?
 	newCreds.proxyConfig = cred.Status.ProxyConfig
-
-	switch {
-	case !doneWaiting && cred.Status.ProxyConfig == nil: // this plugin does not need to run as a proxy, wait for it complete
-		waitErr := <-waitCh
-		incrementCallsMetric(a.callsMetric, waitErr)
-		if waitErr != nil {
-			return a.wrapCmdRunErrorLocked(waitErr)
-		}
-
-	case !doneWaiting: // this plugin runs as a proxy so exit errors are informational
-		go func() {
-			waitErr := <-waitCh
-			incrementCallsMetric(a.callsMetric, waitErr)
-			if waitErr != nil {
-				klog.V(2).Infof("waiting process did not exit cleanly: %v", waitErr) // TODO close connections?
-			}
-		}()
-	}
 
 	oldCreds := a.cachedCreds
 	a.cachedCreds = newCreds
