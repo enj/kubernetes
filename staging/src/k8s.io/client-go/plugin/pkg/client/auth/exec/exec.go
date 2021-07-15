@@ -519,13 +519,14 @@ done:
 		if doneWaiting && doneDecoding {
 			break
 		}
-		if waitErr != nil {
-			break // do not wait for decoding if the binary failed to run
-		}
 
 		select {
 		case waitErr = <-waitCh:
 			doneWaiting = true
+
+			if waitErr != nil {
+				break done // do not wait for decoding if the binary failed to run
+			}
 
 		case dd = <-decodeCh:
 			doneDecoding = true
