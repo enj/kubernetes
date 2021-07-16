@@ -359,6 +359,8 @@ func (p *proxyHandler) proxy(r *http.Request) (*url.URL, error) {
 		return p.defaultProxy(r)
 	}
 
+	klog.Errorf("PROXY override to %d", creds.proxyConfig.Port)
+
 	return &url.URL{
 		Scheme: "https",
 		Host:   "127.0.0.1:" + strconv.Itoa(int(creds.proxyConfig.Port)),
