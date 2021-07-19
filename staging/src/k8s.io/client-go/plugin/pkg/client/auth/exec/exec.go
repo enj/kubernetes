@@ -348,6 +348,9 @@ func (a *Authenticator) UpdateTransportConfig(c *transport.Config) error {
 		if creds.proxyConfig != nil && address == a.clusterAddr {
 			address = "127.0.0.1:" + strconv.Itoa(int(creds.proxyConfig.Port))
 		}
+		if creds.proxyConfig != nil {
+			klog.Errorf("SAW %q %q", network, address)
+		}
 		return d.DialContext(ctx, network, address)
 	}
 
