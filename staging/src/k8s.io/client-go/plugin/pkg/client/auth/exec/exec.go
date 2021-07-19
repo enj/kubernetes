@@ -384,6 +384,8 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	if creds.proxyConfig != nil {
+		klog.Errorf("PROXY override to %d", creds.proxyConfig.Port)
+
 		req.URL.Scheme = "https"
 		req.URL.Host = "127.0.0.1:" + strconv.Itoa(int(creds.proxyConfig.Port))
 
