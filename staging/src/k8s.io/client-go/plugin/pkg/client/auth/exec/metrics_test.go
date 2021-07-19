@@ -143,7 +143,7 @@ func TestCallsMetric(t *testing.T) {
 				InteractiveMode: api.IfAvailableExecInteractiveMode,
 			}
 
-			a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &c, nil)
+			a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &c, &clientauthentication.Cluster{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -179,7 +179,7 @@ func TestCallsMetric(t *testing.T) {
 			APIVersion:      "client.authentication.k8s.io/v1beta1",
 			InteractiveMode: api.IfAvailableExecInteractiveMode,
 		}
-		a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &c, nil)
+		a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &c, &clientauthentication.Cluster{})
 		if err != nil {
 			t.Fatal(err)
 		}

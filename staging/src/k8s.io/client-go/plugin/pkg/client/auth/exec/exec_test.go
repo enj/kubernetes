@@ -1028,6 +1028,10 @@ func TestRefreshCreds(t *testing.T) {
 				})
 			}
 
+			if test.cluster == nil {
+				test.cluster = &clientauthentication.Cluster{}
+			}
+
 			a, err := newAuthenticator(newCache(), func(_ int) bool { return test.isTerminal }, &c, test.cluster)
 			if err != nil {
 				t.Fatal(err)
@@ -1123,7 +1127,7 @@ func TestRoundTripper(t *testing.T) {
 		APIVersion:      "client.authentication.k8s.io/v1alpha1",
 		InteractiveMode: api.IfAvailableExecInteractiveMode,
 	}
-	a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &c, nil)
+	a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &c, &clientauthentication.Cluster{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1229,7 +1233,7 @@ func TestAuthorizationHeaderPresentCancelsExecAction(t *testing.T) {
 			a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &api.ExecConfig{
 				Command:    "./testdata/test-plugin.sh",
 				APIVersion: "client.authentication.k8s.io/v1alpha1",
-			}, nil)
+			}, &clientauthentication.Cluster{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1272,7 +1276,7 @@ func TestTLSCredentials(t *testing.T) {
 		Command:         "./testdata/test-plugin.sh",
 		APIVersion:      "client.authentication.k8s.io/v1alpha1",
 		InteractiveMode: api.IfAvailableExecInteractiveMode,
-	}, nil)
+	}, &clientauthentication.Cluster{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1362,7 +1366,7 @@ func TestConcurrentUpdateTransportConfig(t *testing.T) {
 		Command:    "./testdata/test-plugin.sh",
 		APIVersion: "client.authentication.k8s.io/v1alpha1",
 	}
-	a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &c, nil)
+	a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &c, &clientauthentication.Cluster{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1430,7 +1434,7 @@ func TestInstallHintRateLimit(t *testing.T) {
 				InstallHint:     "some install hint",
 				InteractiveMode: api.IfAvailableExecInteractiveMode,
 			}
-			a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &c, nil)
+			a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &c, &clientauthentication.Cluster{})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -41,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/runtime/serializer/streaming"
 	"k8s.io/apimachinery/pkg/util/clock"
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/pkg/apis/clientauthentication"
 	"k8s.io/client-go/pkg/apis/clientauthentication/install"
@@ -184,6 +185,15 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 		return nil, fmt.Errorf("exec plugin: invalid apiVersion %q", config.APIVersion)
 	}
 
+	clusterURL, err := url.Parse(cluster.Server)
+	if err != nil {
+		return nil, fmt.Errorf("exec plugin: failed to parse cluster URL %q: %w", cluster.Server, err)
+	}
+	clusterPath := clusterURL.Path
+	if !strings.HasSuffix(clusterPath, "/") {
+		clusterPath += "/"
+	}
+
 	connTracker := connrotation.NewConnectionTracker()
 	defaultDialer := connrotation.NewDialerWithTracker(
 		(&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
@@ -195,6 +205,7 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 		args:               config.Args,
 		group:              gv,
 		cluster:            cluster,
+		clusterPath:        clusterPath,
 		provideClusterInfo: config.ProvideClusterInfo,
 
 		installHint: config.InstallHint,
@@ -258,6 +269,7 @@ type Authenticator struct {
 	group              schema.GroupVersion
 	env                []string
 	cluster            *clientauthentication.Cluster
+	clusterPath        string
 	provideClusterInfo bool
 
 	// Used to avoid log spew by rate limiting install hint printing. We didn't do
@@ -327,14 +339,21 @@ func (a *Authenticator) UpdateTransportConfig(c *transport.Config) error {
 
 	c.Dial = d.DialContext
 
-	var defaultProxy func(*http.Request) (*url.URL, error)
-	if c.Proxy != nil {
-		defaultProxy = c.Proxy
-	} else {
-		defaultProxy = http.ProxyFromEnvironment
+	defaultProxy := c.Proxy
+	if defaultProxy == nil {
+		defaultProxy = utilnet.NewProxierWithNoProxyCIDR(http.ProxyFromEnvironment)
 	}
 
-	c.Proxy = (&proxyHandler{a: a, defaultProxy: defaultProxy}).proxy
+	c.Proxy = func(req *http.Request) (*url.URL, error) {
+		creds, err := a.getCreds()
+		if err != nil {
+			return nil, fmt.Errorf("proxy func failed to get credentials: %v", err)
+		}
+		if creds.proxyConfig == nil {
+			return defaultProxy(req)
+		}
+		return nil, nil // no proxy when using exec proxy since that is delegated to the plugin
+	}
 
 	// TODO replace with a callback that handles reading the proxy CA
 	c.TLS.CAFile = ""
@@ -342,29 +361,6 @@ func (a *Authenticator) UpdateTransportConfig(c *transport.Config) error {
 	c.TLS.Insecure = true
 
 	return nil
-}
-
-type proxyHandler struct {
-	a            *Authenticator
-	defaultProxy func(*http.Request) (*url.URL, error)
-}
-
-func (p *proxyHandler) proxy(r *http.Request) (*url.URL, error) {
-	creds, err := p.a.getCreds()
-	if err != nil {
-		return nil, err
-	}
-
-	if creds.proxyConfig == nil {
-		return p.defaultProxy(r)
-	}
-
-	klog.Errorf("PROXY override to %d", creds.proxyConfig.Port)
-
-	return &url.URL{
-		Scheme: "https",
-		Host:   "127.0.0.1:" + strconv.Itoa(int(creds.proxyConfig.Port)),
-	}, nil
 }
 
 type roundTripper struct {
@@ -385,6 +381,17 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	if creds.token != "" {
 		req.Header.Set("Authorization", "Bearer "+creds.token)
+	}
+
+	if creds.proxyConfig != nil {
+		req.URL.Scheme = "https"
+		req.URL.Host = "127.0.0.1:" + strconv.Itoa(int(creds.proxyConfig.Port))
+
+		if len(r.a.clusterPath) != 0 {
+			path := req.URL.Path
+			path = "/" + strings.TrimPrefix(path, r.a.clusterPath)
+			req.URL.Path = path
+		}
 	}
 
 	res, err := r.base.RoundTrip(req)
@@ -534,7 +541,7 @@ done:
 			doneDecoding = true
 
 			if dd.status != nil && dd.status.ProxyConfig != nil {
-				break done // this plugin needs to run as a proxy, do not wait for it complete
+				break done // this plugin needs to run as a proxy, do not wait for it to complete
 			}
 		}
 	}
