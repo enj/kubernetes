@@ -88,6 +88,7 @@ func TLSConfigFor(c *Config) (*tls.Config, error) {
 	}
 
 	if c.HasCACallback() {
+		// TODO decide if this is too early in the callstack and we need to do InsecureSkipVerify + VerifyConnection instead
 		rootCAs, err := c.TLS.GetCA()
 		if err != nil {
 			return nil, fmt.Errorf("unable to load dynamic root certificates: %w", err)
