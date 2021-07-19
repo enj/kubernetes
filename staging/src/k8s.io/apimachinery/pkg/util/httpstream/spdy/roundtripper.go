@@ -39,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/httpstream"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/third_party/forked/golang/netutil"
+	"k8s.io/klog/v2"
 )
 
 // SpdyRoundTripper knows how to upgrade an HTTP request to one that supports
@@ -233,6 +234,8 @@ func (s *SpdyRoundTripper) dial(req *http.Request) (net.Conn, error) {
 
 // dialWithoutProxy dials the host specified by url, using TLS if appropriate.
 func (s *SpdyRoundTripper) dialWithoutProxy(ctx context.Context, url *url.URL) (net.Conn, error) {
+	klog.Errorf("SPDY SAW:   %s", url.String())
+
 	dialAddr := netutil.CanonicalAddr(url)
 
 	if url.Scheme == "http" {
