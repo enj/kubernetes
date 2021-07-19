@@ -35,7 +35,7 @@ import (
 // or transport level security defined by the provided Config.
 func New(config *Config) (http.RoundTripper, error) {
 	// Set transport level security
-	if config.Transport != nil && (config.HasCA() || config.HasCertAuth() || config.HasCertCallback() || config.TLS.Insecure) {
+	if config.Transport != nil && (config.HasCA() || config.HasCertAuth() || config.HasCertCallback() || config.HasCACallback() || config.TLS.Insecure) {
 		return nil, fmt.Errorf("using a custom transport with TLS certificate options or the insecure flag is not allowed")
 	}
 
@@ -59,7 +59,7 @@ func New(config *Config) (http.RoundTripper, error) {
 // TLSConfigFor returns a tls.Config that will provide the transport level security defined
 // by the provided Config. Will return nil if no transport level security is requested.
 func TLSConfigFor(c *Config) (*tls.Config, error) {
-	if !(c.HasCA() || c.HasCertAuth() || c.HasCertCallback() || c.TLS.Insecure || len(c.TLS.ServerName) > 0 || len(c.TLS.NextProtos) > 0) {
+	if !(c.HasCA() || c.HasCertAuth() || c.HasCertCallback() || c.HasCACallback() || c.TLS.Insecure || len(c.TLS.ServerName) > 0 || len(c.TLS.NextProtos) > 0) {
 		return nil, nil
 	}
 	if c.HasCA() && c.TLS.Insecure {
@@ -83,6 +83,14 @@ func TLSConfigFor(c *Config) (*tls.Config, error) {
 		rootCAs, err := rootCertPool(c.TLS.CAData)
 		if err != nil {
 			return nil, fmt.Errorf("unable to load root certificates: %w", err)
+		}
+		tlsConfig.RootCAs = rootCAs
+	}
+
+	if c.HasCACallback() {
+		rootCAs, err := c.TLS.GetCA()
+		if err != nil {
+			return nil, fmt.Errorf("unable to load dynamic root certificates: %w", err)
 		}
 		tlsConfig.RootCAs = rootCAs
 	}

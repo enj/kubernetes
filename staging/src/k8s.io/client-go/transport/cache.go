@@ -133,7 +133,7 @@ func tlsConfigKey(c *Config) (tlsCacheKey, bool, error) {
 		return tlsCacheKey{}, false, err
 	}
 
-	if c.TLS.GetCert != nil || c.Dial != nil || c.Proxy != nil {
+	if c.TLS.GetCA != nil || c.TLS.GetCert != nil || c.Dial != nil || c.Proxy != nil {
 		// cannot determine equality for functions
 		return tlsCacheKey{}, false, nil
 	}

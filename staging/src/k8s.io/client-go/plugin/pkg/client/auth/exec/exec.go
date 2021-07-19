@@ -43,7 +43,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/clock"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/apimachinery/third_party/forked/golang/netutil"
 	"k8s.io/client-go/pkg/apis/clientauthentication"
 	"k8s.io/client-go/pkg/apis/clientauthentication/install"
 	clientauthenticationv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
@@ -194,6 +193,13 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 	if !strings.HasSuffix(clusterPath, "/") {
 		clusterPath += "/"
 	}
+	var clusterCA *x509.CertPool
+	if len(cluster.CertificateAuthorityData) > 0 {
+		clusterCA = x509.NewCertPool()
+		if ok := clusterCA.AppendCertsFromPEM(cluster.CertificateAuthorityData); !ok {
+			return nil, errors.New("invalid server CA data")
+		}
+	}
 
 	connTracker := connrotation.NewConnectionTracker()
 	defaultDialer := connrotation.NewDialerWithTracker(
@@ -206,7 +212,7 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 		args:               config.Args,
 		group:              gv,
 		cluster:            cluster,
-		clusterAddr:        netutil.CanonicalAddr(clusterURL),
+		clusterCA:          clusterCA,
 		clusterPath:        clusterPath,
 		provideClusterInfo: config.ProvideClusterInfo,
 
@@ -266,13 +272,14 @@ func isInteractive(isTerminalFunc func(int) bool, config *api.ExecConfig) (bool,
 // The plugin input and output are defined by the API group client.authentication.k8s.io.
 type Authenticator struct {
 	// Set by the config
-	cmd                      string
-	args                     []string
-	group                    schema.GroupVersion
-	env                      []string
-	cluster                  *clientauthentication.Cluster
-	clusterAddr, clusterPath string
-	provideClusterInfo       bool
+	cmd                string
+	args               []string
+	group              schema.GroupVersion
+	env                []string
+	cluster            *clientauthentication.Cluster
+	clusterCA          *x509.CertPool
+	clusterPath        string
+	provideClusterInfo bool
 
 	// Used to avoid log spew by rate limiting install hint printing. We didn't do
 	// this by interval based rate limiting alone since that way may have prevented
@@ -306,7 +313,12 @@ type credentials struct {
 	token string           `datapolicy:"token"`
 	cert  *tls.Certificate `datapolicy:"secret-key"`
 
-	proxyConfig *clientauthentication.ProxyConfig
+	proxyConfig *proxyConfig
+}
+
+type proxyConfig struct {
+	port int32
+	ca   *x509.CertPool
 }
 
 // UpdateTransportConfig updates the transport.Config to use credentials
@@ -357,10 +369,22 @@ func (a *Authenticator) UpdateTransportConfig(c *transport.Config) error {
 		return nil, nil // no proxy when using exec proxy since that is delegated to the plugin
 	}
 
-	// TODO replace with a callback that handles reading the proxy CA
+	if c.TLS.GetCA != nil {
+		return errors.New("cannot add TLS root CA callback: transport.Config.TLS.GetCA already set")
+	}
+	c.TLS.GetCA = func() (*x509.CertPool, error) {
+		creds, err := a.getCreds()
+		if err != nil {
+			return nil, fmt.Errorf("ca func failed to get credentials: %v", err)
+		}
+		if creds.proxyConfig == nil {
+			return a.clusterCA, nil
+		}
+		return creds.proxyConfig.ca, nil
+	}
+	// make sure GetCA gets called
 	c.TLS.CAFile = ""
 	c.TLS.CAData = nil
-	c.TLS.Insecure = true
 
 	return nil
 }
@@ -387,10 +411,10 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	// TODO: check req.URL against cluster info before mutating URL here
 	if creds.proxyConfig != nil {
-		klog.Errorf("PROXY override to %d", creds.proxyConfig.Port)
+		klog.Errorf("PROXY override to %d", creds.proxyConfig.port)
 
 		req.URL.Scheme = "https"
-		req.URL.Host = "127.0.0.1:" + strconv.Itoa(int(creds.proxyConfig.Port))
+		req.URL.Host = "127.0.0.1:" + strconv.Itoa(int(creds.proxyConfig.port))
 
 		if len(r.a.clusterPath) != 0 {
 			path := req.URL.Path
@@ -617,7 +641,19 @@ done:
 	//  if proxy quits, make the creds expired, and close connections
 	//  when proxyConfig is specified, re-entering this method would occur on 401 or if we expired the creds
 	//  we could kill the proxy and then run again?
-	newCreds.proxyConfig = cred.Status.ProxyConfig
+	//  also need to make sure proxy process dies when kubectl dies
+	if p := cred.Status.ProxyConfig; p != nil {
+		newCreds.proxyConfig = &proxyConfig{
+			port: p.Port,
+			ca:   nil,
+		}
+		if len(p.CertificateAuthorityData) > 0 {
+			newCreds.proxyConfig.ca = x509.NewCertPool()
+			if ok := newCreds.proxyConfig.ca.AppendCertsFromPEM(p.CertificateAuthorityData); !ok {
+				return errors.New("exec plugin returned invalid proxy CA data")
+			}
+		}
+	}
 
 	oldCreds := a.cachedCreds
 	a.cachedCreds = newCreds
