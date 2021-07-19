@@ -200,6 +200,14 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 			return nil, errors.New("invalid server CA data")
 		}
 	}
+	clusterProxy := utilnet.NewProxierWithNoProxyCIDR(http.ProxyFromEnvironment)
+	if len(cluster.ProxyURL) > 0 {
+		proxyURL, err := url.Parse(cluster.ProxyURL)
+		if err != nil {
+			return nil, fmt.Errorf("exec plugin: failed to parse cluster proxy URL %q: %w", cluster.ProxyURL, err)
+		}
+		clusterProxy = http.ProxyURL(proxyURL)
+	}
 
 	connTracker := connrotation.NewConnectionTracker()
 	defaultDialer := connrotation.NewDialerWithTracker(
@@ -213,6 +221,7 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 		group:              gv,
 		cluster:            cluster,
 		clusterCA:          clusterCA,
+		clusterProxy:       clusterProxy,
 		clusterPath:        clusterPath,
 		provideClusterInfo: config.ProvideClusterInfo,
 
@@ -278,6 +287,7 @@ type Authenticator struct {
 	env                []string
 	cluster            *clientauthentication.Cluster
 	clusterCA          *x509.CertPool
+	clusterProxy       func(*http.Request) (*url.URL, error)
 	clusterPath        string
 	provideClusterInfo bool
 
@@ -335,7 +345,7 @@ func (a *Authenticator) UpdateTransportConfig(c *transport.Config) error {
 	}
 
 	c.Wrap(func(rt http.RoundTripper) http.RoundTripper {
-		return &roundTripper{a, rt}
+		return &roundTripper{a: a, base: rt}
 	})
 
 	if c.TLS.GetCert != nil {
@@ -353,36 +363,13 @@ func (a *Authenticator) UpdateTransportConfig(c *transport.Config) error {
 
 	c.Dial = d.DialContext
 
-	defaultProxy := c.Proxy
-	if defaultProxy == nil {
-		defaultProxy = utilnet.NewProxierWithNoProxyCIDR(http.ProxyFromEnvironment)
-	}
-
-	c.Proxy = func(req *http.Request) (*url.URL, error) {
-		creds, err := a.getCreds()
-		if err != nil {
-			return nil, fmt.Errorf("proxy func failed to get credentials: %v", err)
-		}
-		if creds.proxyConfig == nil {
-			return defaultProxy(req)
-		}
-		return nil, nil // no proxy when using exec proxy since that is delegated to the plugin
-	}
+	c.Proxy = a.proxy
 
 	if c.TLS.GetCA != nil {
 		return errors.New("cannot add TLS root CA callback: transport.Config.TLS.GetCA already set")
 	}
-	c.TLS.GetCA = func() (*x509.CertPool, error) {
-		creds, err := a.getCreds()
-		if err != nil {
-			return nil, fmt.Errorf("ca func failed to get credentials: %v", err)
-		}
-		if creds.proxyConfig == nil {
-			return a.clusterCA, nil
-		}
-		return creds.proxyConfig.ca, nil
-	}
-	// make sure GetCA gets called
+	c.TLS.GetCA = a.ca
+	// make sure our ca func gets called
 	c.TLS.CAFile = ""
 	c.TLS.CAData = nil
 
@@ -452,6 +439,28 @@ func (a *Authenticator) cert() (*tls.Certificate, error) {
 		return nil, err
 	}
 	return creds.cert, nil
+}
+
+func (a *Authenticator) ca() (*x509.CertPool, error) {
+	creds, err := a.getCreds()
+	if err != nil {
+		return nil, fmt.Errorf("ca func failed to get credentials: %v", err)
+	}
+	if creds.proxyConfig == nil {
+		return a.clusterCA, nil
+	}
+	return creds.proxyConfig.ca, nil
+}
+
+func (a *Authenticator) proxy(req *http.Request) (*url.URL, error) {
+	creds, err := a.getCreds()
+	if err != nil {
+		return nil, fmt.Errorf("proxy func failed to get credentials: %v", err)
+	}
+	if creds.proxyConfig == nil {
+		return a.clusterProxy(req)
+	}
+	return nil, nil // no proxy when using exec proxy since that is delegated to the plugin
 }
 
 func (a *Authenticator) getCreds() (*credentials, error) {
