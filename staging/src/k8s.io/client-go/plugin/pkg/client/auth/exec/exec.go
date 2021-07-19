@@ -17,6 +17,7 @@ limitations under the License.
 package exec
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -43,6 +44,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/clock"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/third_party/forked/golang/netutil"
 	"k8s.io/client-go/pkg/apis/clientauthentication"
 	"k8s.io/client-go/pkg/apis/clientauthentication/install"
 	clientauthenticationv1 "k8s.io/client-go/pkg/apis/clientauthentication/v1"
@@ -205,6 +207,7 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 		args:               config.Args,
 		group:              gv,
 		cluster:            cluster,
+		clusterAddr:        netutil.CanonicalAddr(clusterURL),
 		clusterPath:        clusterPath,
 		provideClusterInfo: config.ProvideClusterInfo,
 
@@ -264,13 +267,13 @@ func isInteractive(isTerminalFunc func(int) bool, config *api.ExecConfig) (bool,
 // The plugin input and output are defined by the API group client.authentication.k8s.io.
 type Authenticator struct {
 	// Set by the config
-	cmd                string
-	args               []string
-	group              schema.GroupVersion
-	env                []string
-	cluster            *clientauthentication.Cluster
-	clusterPath        string
-	provideClusterInfo bool
+	cmd                      string
+	args                     []string
+	group                    schema.GroupVersion
+	env                      []string
+	cluster                  *clientauthentication.Cluster
+	clusterAddr, clusterPath string
+	provideClusterInfo       bool
 
 	// Used to avoid log spew by rate limiting install hint printing. We didn't do
 	// this by interval based rate limiting alone since that way may have prevented
@@ -337,7 +340,16 @@ func (a *Authenticator) UpdateTransportConfig(c *transport.Config) error {
 		d = a.defaultDialer
 	}
 
-	c.Dial = d.DialContext
+	c.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		creds, err := a.getCreds()
+		if err != nil {
+			return nil, fmt.Errorf("dial func failed to get credentials: %v", err)
+		}
+		if creds.proxyConfig != nil && address == a.clusterAddr {
+			address = "127.0.0.1:" + strconv.Itoa(int(creds.proxyConfig.Port))
+		}
+		return d.DialContext(ctx, network, address)
+	}
 
 	defaultProxy := c.Proxy
 	if defaultProxy == nil {
@@ -386,8 +398,9 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if creds.proxyConfig != nil {
 		klog.Errorf("PROXY override to %d", creds.proxyConfig.Port)
 
-		req.URL.Scheme = "https"
-		req.URL.Host = "127.0.0.1:" + strconv.Itoa(int(creds.proxyConfig.Port))
+		if req.URL.Scheme != "https" {
+			return nil, fmt.Errorf("exec proxy saw non https scheme %q", req.URL.Scheme)
+		}
 
 		if len(r.a.clusterPath) != 0 {
 			path := req.URL.Path
