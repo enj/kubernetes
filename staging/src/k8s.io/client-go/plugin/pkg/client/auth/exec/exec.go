@@ -395,12 +395,12 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		req.Header.Set("Authorization", "Bearer "+creds.token)
 	}
 
+	// TODO: check req.URL against cluster info before mutating URL here
 	if creds.proxyConfig != nil {
 		klog.Errorf("PROXY override to %d", creds.proxyConfig.Port)
 
-		if req.URL.Scheme != "https" {
-			return nil, fmt.Errorf("exec proxy saw non https scheme %q", req.URL.Scheme)
-		}
+		req.URL.Scheme = "https"
+		req.URL.Host = "127.0.0.1:" + strconv.Itoa(int(creds.proxyConfig.Port))
 
 		if len(r.a.clusterPath) != 0 {
 			path := req.URL.Path
