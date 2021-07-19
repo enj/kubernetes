@@ -17,7 +17,6 @@ limitations under the License.
 package exec
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -340,19 +339,7 @@ func (a *Authenticator) UpdateTransportConfig(c *transport.Config) error {
 		d = a.defaultDialer
 	}
 
-	c.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
-		creds, err := a.getCreds()
-		if err != nil {
-			return nil, fmt.Errorf("dial func failed to get credentials: %v", err)
-		}
-		if creds.proxyConfig != nil && address == a.clusterAddr {
-			address = "127.0.0.1:" + strconv.Itoa(int(creds.proxyConfig.Port))
-		}
-		if creds.proxyConfig != nil {
-			klog.Errorf("SAW %q %q", network, address)
-		}
-		return d.DialContext(ctx, network, address)
-	}
+	c.Dial = d.DialContext
 
 	defaultProxy := c.Proxy
 	if defaultProxy == nil {
