@@ -314,9 +314,10 @@ type Authenticator struct {
 	//
 	// The mutex also guards calling the plugin. Since the plugin could be
 	// interactive we want to make sure it's only called once.
-	mu          sync.Mutex
-	cachedCreds *credentials
-	exp         time.Time
+	mu                   sync.Mutex
+	cachedCreds          *credentials
+	exp                  time.Time
+	certUsed, certFailed bool
 }
 
 type credentials struct {
@@ -388,6 +389,10 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		return r.base.RoundTrip(req)
 	}
 
+	if r.a.getCertFailed() {
+		return nil, errors.New("exec plugin proxy short circuit: did not request client certificate for mTLS")
+	}
+
 	creds, err := r.a.getCreds()
 	if err != nil {
 		return nil, fmt.Errorf("getting credentials: %v", err)
@@ -396,7 +401,6 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		req.Header.Set("Authorization", "Bearer "+creds.token)
 	}
 
-	// TODO: check req.URL against cluster info before mutating URL here
 	if creds.proxyConfig != nil {
 		klog.Errorf("PROXY override to %d", creds.proxyConfig.port)
 
@@ -414,6 +418,13 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// after the fact verification is meh but at least it prevents real usage of a broken proxy
+	if creds.proxyConfig != nil && !r.a.getCertUsed() {
+		r.a.setCertFailed()
+		return nil, errors.New("exec plugin proxy did not request client certificate for mTLS")
+	}
+
 	if res.StatusCode == http.StatusUnauthorized {
 		resp := &clientauthentication.Response{
 			Header: res.Header,
@@ -433,11 +444,25 @@ func (a *Authenticator) credsExpired() bool {
 	return a.now().After(a.exp)
 }
 
-func (a *Authenticator) cert() (*tls.Certificate, error) {
+func (a *Authenticator) cert(acceptableCAs [][]byte) (*tls.Certificate, error) {
 	creds, err := a.getCreds()
 	if err != nil {
 		return nil, err
 	}
+
+	klog.Errorf("SAW acceptableCAs %d", len(acceptableCAs))
+
+	// TODO make sure it is the same CA as the the proxy config CA, if given
+	if creds.proxyConfig != nil {
+		if len(acceptableCAs) == 0 {
+			return nil, errors.New("exec plugin proxy did not request client certificate for mTLS")
+		}
+
+		if creds.cert != nil {
+			a.setCertUsed()
+		}
+	}
+
 	return creds.cert, nil
 }
 
@@ -461,6 +486,34 @@ func (a *Authenticator) proxy(req *http.Request) (*url.URL, error) {
 		return a.clusterProxy(req)
 	}
 	return nil, nil // no proxy when using exec proxy since that is delegated to the plugin
+}
+
+func (a *Authenticator) getCertFailed() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	return a.certFailed
+}
+
+func (a *Authenticator) setCertFailed() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.certFailed = true
+}
+
+func (a *Authenticator) getCertUsed() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	return a.certUsed
+}
+
+func (a *Authenticator) setCertUsed() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.certUsed = true
 }
 
 func (a *Authenticator) getCreds() (*credentials, error) {
