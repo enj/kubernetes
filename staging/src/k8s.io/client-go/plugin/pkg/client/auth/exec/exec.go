@@ -314,10 +314,11 @@ type Authenticator struct {
 	//
 	// The mutex also guards calling the plugin. Since the plugin could be
 	// interactive we want to make sure it's only called once.
-	mu                   sync.Mutex
-	cachedCreds          *credentials
-	exp                  time.Time
-	certUsed, certFailed bool
+	mu          sync.Mutex
+	cachedCreds *credentials
+	exp         time.Time
+	proxyCertUsed,
+	proxyCertFailed bool
 }
 
 type credentials struct {
@@ -389,7 +390,7 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		return r.base.RoundTrip(req)
 	}
 
-	if r.a.getCertFailed() {
+	if r.a.getProxyCertFailed() {
 		return nil, errors.New("exec plugin proxy short circuit: did not request client certificate for mTLS")
 	}
 
@@ -420,8 +421,8 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	// after the fact verification is meh but at least it prevents real usage of a broken proxy
-	if creds.proxyConfig != nil && !r.a.getCertUsed() {
-		r.a.setCertFailed()
+	if creds.proxyConfig != nil && !r.a.getProxyCertUsed() {
+		r.a.setProxyCertFailed()
 		return nil, errors.New("exec plugin proxy did not request client certificate for mTLS")
 	}
 
@@ -459,7 +460,7 @@ func (a *Authenticator) cert(acceptableCAs [][]byte) (*tls.Certificate, error) {
 		}
 
 		if creds.cert != nil {
-			a.setCertUsed()
+			a.setProxyCertUsed()
 		}
 	}
 
@@ -488,32 +489,32 @@ func (a *Authenticator) proxy(req *http.Request) (*url.URL, error) {
 	return nil, nil // no proxy when using exec proxy since that is delegated to the plugin
 }
 
-func (a *Authenticator) getCertFailed() bool {
+func (a *Authenticator) getProxyCertFailed() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	return a.certFailed
+	return a.proxyCertFailed
 }
 
-func (a *Authenticator) setCertFailed() {
+func (a *Authenticator) setProxyCertFailed() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.certFailed = true
+	a.proxyCertFailed = true
 }
 
-func (a *Authenticator) getCertUsed() bool {
+func (a *Authenticator) getProxyCertUsed() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	return a.certUsed
+	return a.proxyCertUsed
 }
 
-func (a *Authenticator) setCertUsed() {
+func (a *Authenticator) setProxyCertUsed() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	a.certUsed = true
+	a.proxyCertUsed = true
 }
 
 func (a *Authenticator) getCreds() (*credentials, error) {
@@ -707,7 +708,6 @@ done:
 	if p := cred.Status.ProxyConfig; p != nil {
 		newCreds.proxyConfig = &proxyConfig{
 			port: p.Port,
-			ca:   nil,
 		}
 		if len(p.CertificateAuthorityData) > 0 {
 			newCreds.proxyConfig.ca = x509.NewCertPool()
