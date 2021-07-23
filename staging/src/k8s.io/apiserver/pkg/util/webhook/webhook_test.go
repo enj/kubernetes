@@ -520,7 +520,7 @@ func TestRequestTimeout(t *testing.T) {
 
 	var requestTimeout = 10 * time.Millisecond
 
-	wh, err := newGenericWebhook(runtime.NewScheme(), scheme.Codecs, configFile, groupVersions, retryBackoff, requestTimeout, nil)
+	wh, err := newGenericWebhook(runtime.NewScheme(), scheme.Codecs, configFile, groupVersions, retryBackoff, requestTimeout)
 	if err != nil {
 		t.Fatalf("failed to create the webhook: %v", err)
 	}

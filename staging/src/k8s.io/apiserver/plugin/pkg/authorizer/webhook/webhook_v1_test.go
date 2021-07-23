@@ -194,7 +194,7 @@ current-context: default
 				return fmt.Errorf("failed to execute test template: %v", err)
 			}
 			// Create a new authorizer
-			sarClient, err := subjectAccessReviewInterfaceFromKubeconfig(p, "v1", testRetryBackoff, nil)
+			sarClient, err := subjectAccessReviewInterfaceFromConfig(p, "v1", testRetryBackoff, nil)
 			if err != nil {
 				return fmt.Errorf("error building sar client: %v", err)
 			}
@@ -333,7 +333,7 @@ func newV1Authorizer(callbackURL string, clientCert, clientKey, ca []byte, cache
 	if err := json.NewEncoder(tempfile).Encode(config); err != nil {
 		return nil, err
 	}
-	sarClient, err := subjectAccessReviewInterfaceFromKubeconfig(p, "v1", testRetryBackoff, nil)
+	sarClient, err := subjectAccessReviewInterfaceFromConfig(p, "v1", testRetryBackoff, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error building sar client: %v", err)
 	}
