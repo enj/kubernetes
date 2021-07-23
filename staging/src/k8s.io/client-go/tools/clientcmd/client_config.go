@@ -21,7 +21,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"unicode"
@@ -173,11 +172,6 @@ func (config *DirectClientConfig) ClientConfig() (*restclient.Config, error) {
 		clientConfig.Timeout = timeout
 	}
 
-	if u, err := url.ParseRequestURI(clientConfig.Host); err == nil && u.Opaque == "" && len(u.Path) > 1 {
-		u.RawQuery = ""
-		u.Fragment = ""
-		clientConfig.Host = u.String()
-	}
 	if len(configAuthInfo.Impersonate) > 0 {
 		clientConfig.Impersonate = restclient.ImpersonationConfig{
 			UserName: configAuthInfo.Impersonate,

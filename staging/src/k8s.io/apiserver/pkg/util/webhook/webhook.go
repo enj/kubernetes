@@ -20,6 +20,8 @@ package webhook
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/url"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -107,6 +109,8 @@ func newGenericWebhook(scheme *runtime.Scheme, codecFactory serializer.CodecFact
 
 	clientConfig.Wrap(x509metrics.NewMissingSANRoundTripperWrapperConstructor(x509MissingSANCounter))
 
+	maybeAddStaticQueryRoundTripper(clientConfig)
+
 	restClient, err := rest.UnversionedRESTClientFor(clientConfig)
 	if err != nil {
 		return nil, err
@@ -173,4 +177,48 @@ func LoadKubeconfig(kubeConfigFile string, customDial utilnet.DialFunc) (*rest.C
 	clientConfig.Dial = customDial
 
 	return clientConfig, nil
+}
+
+func maybeAddStaticQueryRoundTripper(config *rest.Config) {
+	hostURL, err := url.Parse(config.Host)
+	if err != nil {
+		return
+	}
+
+	if len(hostURL.RawQuery) == 0 {
+		return
+	}
+
+	query := hostURL.Query()
+	if len(query) == 0 {
+		return
+	}
+
+	config.Wrap(func(rt http.RoundTripper) http.RoundTripper {
+		return &queryRoundTripper{query: query, delegate: rt}
+	})
+}
+
+var _ utilnet.RoundTripperWrapper = &queryRoundTripper{}
+
+type queryRoundTripper struct {
+	query    url.Values
+	delegate http.RoundTripper
+}
+
+func (r *queryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	query := req.URL.Query()
+	for k, vv := range r.query {
+		query.Del(k)
+		for _, v := range vv {
+			query.Add(k, v)
+		}
+	}
+	req.URL.RawQuery = query.Encode()
+
+	return r.delegate.RoundTrip(req)
+}
+
+func (r *queryRoundTripper) WrappedRoundTripper() http.RoundTripper {
+	return r.delegate
 }
