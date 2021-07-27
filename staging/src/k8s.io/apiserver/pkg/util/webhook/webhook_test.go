@@ -35,6 +35,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -890,4 +892,176 @@ func getSingleCounterValueFromRegistry(t *testing.T, r metrics.Gatherer, name st
 	}
 
 	return -1
+}
+
+func TestQueryRoundTripper(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	t.Cleanup(cancel)
+
+	tests := []struct {
+		name      string
+		extra     string
+		wantPath  string
+		wantQuery url.Values
+	}{
+		{
+			name:     "none",
+			extra:    "",
+			wantPath: "/",
+			wantQuery: url.Values{
+				"timeout": []string{"30s"},
+			},
+		},
+		{
+			name:     "path only",
+			extra:    "/a-fancy-path",
+			wantPath: "/a-fancy-path",
+			wantQuery: url.Values{
+				"timeout": []string{"30s"},
+			},
+		},
+		{
+			name:     "query only",
+			extra:    "/?type=panda",
+			wantPath: "/",
+			wantQuery: url.Values{
+				"type":    []string{"panda"},
+				"timeout": []string{"30s"},
+			},
+		},
+		{
+			name:     "query only with typo (missing leading slash)",
+			extra:    "?bad=data",
+			wantPath: "/",
+			wantQuery: url.Values{
+				"bad":     []string{"data"},
+				"timeout": []string{"30s"},
+			},
+		},
+		{
+			name:     "path and query",
+			extra:    "/a-simple-path-here?a=good",
+			wantPath: "/a-simple-path-here",
+			wantQuery: url.Values{
+				"a":       []string{"good"},
+				"timeout": []string{"30s"},
+			},
+		},
+		{
+			name:     "path and query with typo (multiple leading slash)",
+			extra:    "//really?bad=time",
+			wantPath: "/really",
+			wantQuery: url.Values{
+				"bad":     []string{"time"},
+				"timeout": []string{"30s"},
+			},
+		},
+		{
+			name:     "path and multiple query",
+			extra:    "/a-simple-path-here?a=good&b=red",
+			wantPath: "/a-simple-path-here",
+			wantQuery: url.Values{
+				"a":       []string{"good"},
+				"b":       []string{"red"},
+				"timeout": []string{"30s"},
+			},
+		},
+		{
+			name:     "duplicate query",
+			extra:    "/?a=good&b=red&b=green",
+			wantPath: "/",
+			wantQuery: url.Values{
+				"a":       []string{"good"},
+				"b":       []string{"red", "green"},
+				"timeout": []string{"30s"},
+			},
+		},
+		{
+			name:     "duplicate query with overwrite",
+			extra:    "/?a=good&b=red&b=green&timeout=mine",
+			wantPath: "/",
+			wantQuery: url.Values{
+				"a":       []string{"good"},
+				"b":       []string{"red", "green"},
+				"timeout": []string{"mine"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			urlCh := make(chan *url.URL, 1)
+			handler := func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"status": "OK",
+				})
+				urlCh <- r.URL
+			}
+
+			server, err := newTestServer(clientCert, clientKey, caCert, handler)
+			if err != nil {
+				t.Fatalf("failed to create server: %v", err)
+			}
+			defer server.Close()
+
+			configFile, err := newKubeConfigFile(v1.Config{
+				Clusters: []v1.NamedCluster{
+					{
+						Cluster: v1.Cluster{
+							Server:                   server.URL + tt.extra,
+							CertificateAuthorityData: caCert,
+						},
+					},
+				},
+				AuthInfos: []v1.NamedAuthInfo{
+					{
+						AuthInfo: v1.AuthInfo{
+							ClientCertificateData: clientCert,
+							ClientKeyData:         clientKey,
+						},
+					},
+				},
+			})
+			if err != nil {
+				t.Fatalf("failed to create the client config file: %v", err)
+			}
+			defer func() {
+				_ = os.Remove(configFile)
+			}()
+
+			config, err := LoadKubeconfig(configFile, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wh, err := NewGenericWebhook(runtime.NewScheme(), scheme.Codecs, config, groupVersions, retryBackoff)
+			if err != nil {
+				t.Fatalf("failed to create the webhook: %v", err)
+			}
+
+			gotBody, err := wh.RestClient.Post().DoRaw(ctx)
+			if err != nil {
+				t.Errorf("unexpected request error: %v", err)
+			}
+
+			gotURL := <-urlCh
+
+			if diff := cmp.Diff(`{"status":"OK"}`+"\n", string(gotBody)); diff != "" {
+				t.Errorf("body: -want, +got:\n %s", diff)
+			}
+
+			if diff := cmp.Diff(tt.wantPath, gotURL.Path); diff != "" {
+				t.Errorf("path: -want, +got:\n %s", diff)
+			}
+
+			if diff := cmp.Diff(tt.wantQuery, gotURL.Query()); diff != "" {
+				t.Errorf("query: -want, +got:\n %s", diff)
+			}
+		})
+	}
 }
