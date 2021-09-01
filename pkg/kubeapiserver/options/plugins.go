@@ -75,7 +75,7 @@ var AllOrderedPlugins = []string{
 	nodetaint.PluginName,                    // TaintNodesByCondition
 	alwayspullimages.PluginName,             // AlwaysPullImages
 	imagepolicy.PluginName,                  // ImagePolicyWebhook
-	podsecurity.PluginName,                  // PodSecurity - before PodSecurityPolicy so audit/warn get exercised even if PodSecurityPolicy denies
+	podsecurity.PluginName,                  // PodSecurity - before PodSecurityPolicy so audit/warn get exercised even if PodSecurityPolicy denies  // note
 	podsecuritypolicy.PluginName,            // PodSecurityPolicy
 	podnodeselector.PluginName,              // PodNodeSelector
 	podpriority.PluginName,                  // Priority
@@ -161,7 +161,7 @@ func DefaultOffAdmissionPlugins() sets.String {
 		certsigning.PluginName,                  // CertificateSigning
 		certsubjectrestriction.PluginName,       // CertificateSubjectRestriction
 		defaultingressclass.PluginName,          // DefaultIngressClass
-		podsecurity.PluginName,                  // PodSecurity
+		podsecurity.PluginName,                  // PodSecurity  // on but feature gated to off
 	)
 
 	return sets.NewString(AllOrderedPlugins...).Difference(defaultOnPlugins)

@@ -48,10 +48,10 @@ import (
 	"k8s.io/kubernetes/pkg/apis/batch"
 	"k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/features"
-	podsecurityadmission "k8s.io/pod-security-admission/admission"
-	podsecurityconfigloader "k8s.io/pod-security-admission/admission/api/load"
-	podsecurityadmissionapi "k8s.io/pod-security-admission/api"
-	"k8s.io/pod-security-admission/policy"
+	podsecurityadmission "k8s.io/pod-security-admission/admission"             // note distinct k8s repo to allow for webhook implementation of PSA
+	podsecurityconfigloader "k8s.io/pod-security-admission/admission/api/load" // .
+	podsecurityadmissionapi "k8s.io/pod-security-admission/api"                // .
+	"k8s.io/pod-security-admission/policy"                                     // . another note: generated test pods to allow external implementations
 )
 
 // PluginName is a string with the name of the plugin
@@ -89,7 +89,7 @@ func newPlugin(reader io.Reader) (*Plugin, error) {
 		return nil, err
 	}
 
-	evaluator, err := policy.NewEvaluator(policy.DefaultChecks())
+	evaluator, err := policy.NewEvaluator(policy.DefaultChecks()) // the meat of the plugin is here
 	if err != nil {
 		return nil, fmt.Errorf("could not create PodSecurityRegistry: %w", err)
 	}
@@ -99,7 +99,7 @@ func newPlugin(reader io.Reader) (*Plugin, error) {
 		delegate: &podsecurityadmission.Admission{
 			Configuration:    config,
 			Evaluator:        evaluator,
-			Metrics:          nil, // TODO: wire to default prometheus metrics
+			Metrics:          nil, // TODO: wire to default prometheus metrics  ~> good place to get involved?
 			PodSpecExtractor: podsecurityadmission.DefaultPodSpecExtractor{},
 		},
 	}, nil
@@ -136,12 +136,12 @@ func (p *Plugin) updateDelegate() {
 }
 
 func (c *Plugin) InspectFeatureGates(featureGates featuregate.FeatureGate) {
-	c.enabled = featureGates.Enabled(features.PodSecurity)
+	c.enabled = featureGates.Enabled(features.PodSecurity) // alpha feature is gated
 	c.inspectedFeatureGates = true
 }
 
 // ValidateInitialization ensures all required options are set
-func (p *Plugin) ValidateInitialization() error {
+func (p *Plugin) ValidateInitialization() error { // admission is all about dependancy injection
 	if !p.inspectedFeatureGates {
 		return fmt.Errorf("%s did not see feature gates", PluginName)
 	}
@@ -166,15 +166,17 @@ func (p *Plugin) Validate(ctx context.Context, a admission.Attributes, o admissi
 		return nil
 	}
 	gr := a.GetResource().GroupResource()
+	// anything built-in with a pod spec or namespaces+pods
+	// means does not handle custom resources with embedded pod specs ~> use pod templates
 	if !applicableResources[gr] && !p.delegate.PodSpecExtractor.HasPodSpec(gr) {
 		return nil
 	}
 
 	result := p.delegate.Validate(ctx, &lazyConvertingAttributes{Attributes: a})
-	for _, w := range result.Warnings {
+	for _, w := range result.Warnings { // warnings are user facing
 		warning.AddWarning(ctx, "", w)
 	}
-	for k, v := range result.AuditAnnotations {
+	for k, v := range result.AuditAnnotations { // audit log facing
 		audit.AddAuditAnnotation(ctx, podsecurityadmissionapi.AuditAnnotationPrefix+k, v)
 	}
 	if !result.Allowed {
@@ -200,7 +202,7 @@ func (p *Plugin) Validate(ctx context.Context, a admission.Attributes, o admissi
 	return nil
 }
 
-type lazyConvertingAttributes struct {
+type lazyConvertingAttributes struct { // conversion is expensive
 	admission.Attributes
 
 	convertObjectOnce    sync.Once
@@ -244,7 +246,7 @@ func convert(in runtime.Object) (runtime.Object, error) {
 	case *core.ReplicationController:
 		out = &corev1.ReplicationController{}
 	case *core.PodTemplate:
-		out = &corev1.PodTemplate{}
+		out = &corev1.PodTemplate{} // does anyone use this?
 	case *apps.ReplicaSet:
 		out = &appsv1.ReplicaSet{}
 	case *apps.Deployment:
