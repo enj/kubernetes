@@ -84,7 +84,7 @@ var _ genericadmissioninit.WantsExternalKubeClientSet = &Plugin{}
 
 // newPlugin creates a new admission plugin.
 func newPlugin(reader io.Reader) (*Plugin, error) {
-	config, err := podsecurityconfigloader.LoadFromReader(reader)
+	config, err := podsecurityconfigloader.LoadFromReader(reader) // internal config with defaulting
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func newPlugin(reader io.Reader) (*Plugin, error) {
 	}
 
 	return &Plugin{
-		Handler: admission.NewHandler(admission.Create, admission.Update),
+		Handler: admission.NewHandler(admission.Create, admission.Update), // the verbs this plugin cares about
 		delegate: &podsecurityadmission.Admission{
 			Configuration:    config,
 			Evaluator:        evaluator,
@@ -172,6 +172,7 @@ func (p *Plugin) Validate(ctx context.Context, a admission.Attributes, o admissi
 		return nil
 	}
 
+	// delegate does all the real work
 	result := p.delegate.Validate(ctx, &lazyConvertingAttributes{Attributes: a})
 	for _, w := range result.Warnings { // warnings are user facing
 		warning.AddWarning(ctx, "", w)
@@ -246,7 +247,7 @@ func convert(in runtime.Object) (runtime.Object, error) {
 	case *core.ReplicationController:
 		out = &corev1.ReplicationController{}
 	case *core.PodTemplate:
-		out = &corev1.PodTemplate{} // does anyone use this?
+		out = &corev1.PodTemplate{} // does anyone use this?  <-- if only
 	case *apps.ReplicaSet:
 		out = &appsv1.ReplicaSet{}
 	case *apps.Deployment:

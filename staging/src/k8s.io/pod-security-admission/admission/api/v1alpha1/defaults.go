@@ -25,6 +25,8 @@ func addDefaultingFuncs(scheme *runtime.Scheme) error {
 	return RegisterDefaults(scheme)
 }
 
+// defaulting
+
 func SetDefaults_PodSecurityDefaults(obj *PodSecurityDefaults) {
 	if len(obj.Enforce) == 0 {
 		obj.Enforce = string(api.LevelPrivileged)

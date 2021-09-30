@@ -74,7 +74,7 @@ type PodLister interface {
 }
 
 // PodSpecExtractor extracts a PodSpec from pod-controller resources that embed a PodSpec.
-// This interface can be extended to enforce policy on CRDs for custom pod-controllers.
+// This interface can be extended to enforce policy on CRDs for custom pod-controllers.  <-- would work nicely out of tree
 type PodSpecExtractor interface {
 	// HasPodSpec returns true if the given resource type MAY contain an extractable PodSpec.
 	HasPodSpec(schema.GroupResource) bool
@@ -84,6 +84,7 @@ type PodSpecExtractor interface {
 	ExtractPodSpec(runtime.Object) (*metav1.ObjectMeta, *corev1.PodSpec, error)
 }
 
+// this list + pods/ns is the complete list
 var defaultPodSpecResources = map[schema.GroupResource]bool{
 	corev1.Resource("pods"):                   true,
 	corev1.Resource("replicationcontrollers"): true,
@@ -200,7 +201,7 @@ func (a *Admission) Validate(ctx context.Context, attrs Attributes) *admissionv1
 	var response *admissionv1.AdmissionResponse
 	switch attrs.GetResource().GroupResource() {
 	case namespacesResource:
-		response = a.ValidateNamespace(ctx, attrs)
+		response = a.ValidateNamespace(ctx, attrs) // distinct logic for namespace and pod
 	case podsResource:
 		response = a.ValidatePod(ctx, attrs)
 	default:
