@@ -149,7 +149,7 @@ func addCheck(f func() Check) {
 	// add to experimental or versioned list
 	c := f()
 	if len(c.Versions) == 1 && c.Versions[0].MinimumVersion == (api.Version{}) {
-		experimentalChecks = append(experimentalChecks, f)
+		experimentalChecks = append(experimentalChecks, f) // checks not yet assigned to a version are experimental
 	} else {
 		defaultChecks = append(defaultChecks, f)
 	}

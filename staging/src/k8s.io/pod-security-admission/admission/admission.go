@@ -203,9 +203,9 @@ func (a *Admission) Validate(ctx context.Context, attrs Attributes) *admissionv1
 	case namespacesResource:
 		response = a.ValidateNamespace(ctx, attrs) // distinct logic for namespace and pod
 	case podsResource:
-		response = a.ValidatePod(ctx, attrs)
+		response = a.ValidatePod(ctx, attrs) // TODO look at this
 	default:
-		response = a.ValidatePodController(ctx, attrs)
+		response = a.ValidatePodController(ctx, attrs) // TODO look at this
 	}
 
 	// TODO: record metrics.
@@ -226,7 +226,7 @@ func (a *Admission) ValidateNamespace(ctx context.Context, attrs Attributes) *ad
 		klog.ErrorS(err, "failed to get object")
 		return internalErrorResponse("failed to get object")
 	}
-	namespace, ok := obj.(*corev1.Namespace)
+	namespace, ok := obj.(*corev1.Namespace) // uses external types because internal types not available out of k/k
 	if !ok {
 		klog.InfoS("failed to assert namespace type", "type", reflect.TypeOf(obj))
 		return badRequestResponse("failed to decode namespace")
@@ -236,7 +236,7 @@ func (a *Admission) ValidateNamespace(ctx context.Context, attrs Attributes) *ad
 
 	switch attrs.GetOperation() {
 	case admissionv1.Create:
-		// require valid labels on create
+		// require valid labels on create  // ratchet towards correctness
 		if newErr != nil {
 			return invalidResponse(newErr.Error())
 		}
@@ -256,11 +256,12 @@ func (a *Admission) ValidateNamespace(ctx context.Context, attrs Attributes) *ad
 		}
 		oldPolicy, oldErr := a.PolicyToEvaluate(oldNamespace.Labels)
 
-		// require valid labels on update if they have changed
+		// require valid labels on update if they have changed  // ratchet towards correctness
 		if newErr != nil && (oldErr == nil || newErr.Error() != oldErr.Error()) {
 			return invalidResponse(newErr.Error())
 		}
 
+		// no need to do work if nothing relevant has changed:
 		// Skip dry-running pods:
 		// * if the enforce policy is unchanged
 		// * if the new enforce policy is privileged
@@ -280,7 +281,7 @@ func (a *Admission) ValidateNamespace(ctx context.Context, attrs Attributes) *ad
 			return sharedAllowedResponse()
 		}
 		response := allowedResponse()
-		response.Warnings = a.EvaluatePodsInNamespace(ctx, namespace.Name, newPolicy.Enforce)
+		response.Warnings = a.EvaluatePodsInNamespace(ctx, namespace.Name, newPolicy.Enforce) // this is just a warning related to pods in the namespace
 		return response
 
 	default:
@@ -440,8 +441,9 @@ func (a *Admission) EvaluatePod(ctx context.Context, nsPolicy api.Policy, nsPoli
 	return response
 }
 
+// TODO read this
 func (a *Admission) EvaluatePodsInNamespace(ctx context.Context, namespace string, enforce api.LevelVersion) []string {
-	timeout := namespacePodCheckTimeout
+	timeout := namespacePodCheckTimeout // one second!!
 	if deadline, ok := ctx.Deadline(); ok {
 		timeRemaining := time.Duration(0.9 * float64(time.Until(deadline))) // Leave a little time to respond.
 		if timeout > timeRemaining {

@@ -89,6 +89,8 @@ func newPlugin(reader io.Reader) (*Plugin, error) {
 		return nil, err
 	}
 
+	// TODO look at evaluator and default checks
+	// TODO look through sig auth board for open work items for PSA
 	evaluator, err := policy.NewEvaluator(policy.DefaultChecks()) // the meat of the plugin is here
 	if err != nil {
 		return nil, fmt.Errorf("could not create PodSecurityRegistry: %w", err)
