@@ -203,9 +203,9 @@ func (a *Admission) Validate(ctx context.Context, attrs Attributes) *admissionv1
 	case namespacesResource:
 		response = a.ValidateNamespace(ctx, attrs) // distinct logic for namespace and pod
 	case podsResource:
-		response = a.ValidatePod(ctx, attrs) // TODO look at this
+		response = a.ValidatePod(ctx, attrs)
 	default:
-		response = a.ValidatePodController(ctx, attrs) // TODO look at this
+		response = a.ValidatePodController(ctx, attrs)
 	}
 
 	// TODO: record metrics.
@@ -323,7 +323,7 @@ func (a *Admission) ValidatePod(ctx context.Context, attrs Attributes) *admissio
 	}
 	nsPolicy, nsPolicyErr := a.PolicyToEvaluate(namespace.Labels)
 	if nsPolicyErr == nil && nsPolicy.Enforce.Level == api.LevelPrivileged && nsPolicy.Warn.Level == api.LevelPrivileged && nsPolicy.Audit.Level == api.LevelPrivileged {
-		return sharedAllowedResponse()
+		return sharedAllowedResponse() // nothing to do here
 	}
 
 	obj, err := attrs.GetObject()
@@ -331,7 +331,7 @@ func (a *Admission) ValidatePod(ctx context.Context, attrs Attributes) *admissio
 		klog.ErrorS(err, "failed to decode object")
 		return badRequestResponse("failed to decode object")
 	}
-	pod, ok := obj.(*corev1.Pod)
+	pod, ok := obj.(*corev1.Pod) // external type!
 	if !ok {
 		klog.InfoS("failed to assert pod type", "type", reflect.TypeOf(obj))
 		return badRequestResponse("failed to decode pod")
@@ -347,12 +347,12 @@ func (a *Admission) ValidatePod(ctx context.Context, attrs Attributes) *admissio
 			klog.InfoS("failed to assert old pod type", "type", reflect.TypeOf(oldObj))
 			return badRequestResponse("failed to decode old pod")
 		}
-		if !isSignificantPodUpdate(pod, oldPod) {
+		if !isSignificantPodUpdate(pod, oldPod) { // a more subtle skip is involved here
 			// Nothing we care about changed, so always allow the update.
 			return sharedAllowedResponse()
 		}
 	}
-	return a.EvaluatePod(ctx, nsPolicy, nsPolicyErr, &pod.ObjectMeta, &pod.Spec, true)
+	return a.EvaluatePod(ctx, nsPolicy, nsPolicyErr, &pod.ObjectMeta, &pod.Spec, true) // not the same as Evaluator.EvaluatePod, does enforce
 }
 
 // ValidatePodController evaluates a pod controller create or update request against the effective policy for the namespace.
@@ -392,7 +392,7 @@ func (a *Admission) ValidatePodController(ctx context.Context, attrs Attributes)
 		// if a controller with an optional pod spec does not contain a pod spec, skip validation
 		return sharedAllowedResponse()
 	}
-	return a.EvaluatePod(ctx, nsPolicy, nsPolicyErr, podMetadata, podSpec, false)
+	return a.EvaluatePod(ctx, nsPolicy, nsPolicyErr, podMetadata, podSpec, false) // not enforcing
 }
 
 // EvaluatePod evaluates the given policy against the given pod(-like) object.
@@ -441,7 +441,6 @@ func (a *Admission) EvaluatePod(ctx context.Context, nsPolicy api.Policy, nsPoli
 	return response
 }
 
-// TODO read this
 func (a *Admission) EvaluatePodsInNamespace(ctx context.Context, namespace string, enforce api.LevelVersion) []string {
 	timeout := namespacePodCheckTimeout // one second!!
 	if deadline, ok := ctx.Deadline(); ok {
@@ -461,7 +460,7 @@ func (a *Admission) EvaluatePodsInNamespace(ctx context.Context, namespace strin
 	}
 
 	var warnings []string
-	if len(pods) > namespaceMaxPodsToCheck {
+	if len(pods) > namespaceMaxPodsToCheck { // do not take forever
 		warnings = append(warnings, fmt.Sprintf("Large namespace: only checking the first %d of %d pods", namespaceMaxPodsToCheck, len(pods)))
 		pods = pods[0:namespaceMaxPodsToCheck]
 	}
@@ -471,7 +470,7 @@ func (a *Admission) EvaluatePodsInNamespace(ctx context.Context, namespace strin
 		if a.exemptRuntimeClass(pod.Spec.RuntimeClassName) {
 			continue
 		}
-		r := policy.AggregateCheckResults(a.Evaluator.EvaluatePod(enforce, &pod.ObjectMeta, &pod.Spec))
+		r := policy.AggregateCheckResults(a.Evaluator.EvaluatePod(enforce, &pod.ObjectMeta, &pod.Spec)) // EvaluatePod has most of the logic
 		if !r.Allowed {
 			// TODO: consider aggregating results (e.g. multiple pods failed for the same reasons)
 			warnings = append(warnings, fmt.Sprintf("%s: %s", pod.Name, r.ForbiddenReason()))
@@ -534,6 +533,7 @@ func internalErrorResponse(msg string) *admissionv1.AdmissionResponse {
 // isSignificantPodUpdate determines whether a pod update should trigger a policy evaluation.
 // Relevant mutable pod fields as of 1.21 are image and seccomp annotations:
 // * https://github.com/kubernetes/kubernetes/blob/release-1.21/pkg/apis/core/validation/validation.go#L3947-L3949
+// woof this looks kinda painful to maintain over time
 func isSignificantPodUpdate(pod, oldPod *corev1.Pod) bool {
 	if pod.Annotations[corev1.SeccompPodAnnotationKey] != oldPod.Annotations[corev1.SeccompPodAnnotationKey] {
 		return true

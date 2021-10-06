@@ -57,6 +57,7 @@ func NewEvaluator(checks []Check) (Evaluator, error) {
 	return r, nil
 }
 
+// TODO read
 func (r *checkRegistry) EvaluatePod(lv api.LevelVersion, podMetadata *metav1.ObjectMeta, podSpec *corev1.PodSpec) []CheckResult {
 	if lv.Level == api.LevelPrivileged {
 		return nil
@@ -77,6 +78,7 @@ func (r *checkRegistry) EvaluatePod(lv api.LevelVersion, podMetadata *metav1.Obj
 	return results
 }
 
+// TODO read
 func validateChecks(checks []Check) error {
 	ids := map[string]bool{}
 	for _, check := range checks {
@@ -110,6 +112,7 @@ func validateChecks(checks []Check) error {
 	return nil
 }
 
+// TODO read
 func populate(r *checkRegistry, validChecks []Check) {
 	// Find the max(MinimumVersion) across all checks.
 	for _, c := range validChecks {
@@ -128,6 +131,7 @@ func populate(r *checkRegistry, validChecks []Check) {
 	}
 }
 
+// TODO read
 func inflateVersions(check Check, versions map[api.Version][]CheckPodFn, maxVersion api.Version) {
 	for i, c := range check.Versions {
 		var nextVersion api.Version
