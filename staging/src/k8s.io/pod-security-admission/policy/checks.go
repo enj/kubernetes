@@ -140,6 +140,7 @@ func AggregateCheckResults(results []CheckResult) AggregateCheckResult {
 	}
 }
 
+// ::NOTE:: global registry of functions that return a copy of the check
 var (
 	defaultChecks      []func() Check
 	experimentalChecks []func() Check
@@ -149,7 +150,7 @@ func addCheck(f func() Check) {
 	// add to experimental or versioned list
 	c := f()
 	if len(c.Versions) == 1 && c.Versions[0].MinimumVersion == (api.Version{}) {
-		experimentalChecks = append(experimentalChecks, f)
+		experimentalChecks = append(experimentalChecks, f) // ::NOTE:: checks not yet assigned to a version are experimental
 	} else {
 		defaultChecks = append(defaultChecks, f)
 	}
@@ -161,7 +162,7 @@ func addCheck(f func() Check) {
 func DefaultChecks() []Check {
 	retval := make([]Check, 0, len(defaultChecks))
 	for _, f := range defaultChecks {
-		retval = append(retval, f())
+		retval = append(retval, f()) // ::NOTE:: new copy per function call
 	}
 	return retval
 }

@@ -1,3 +1,5 @@
+# ::NOTE:: leads to fixture generation
+
 apiVersion: v1
 kind: Pod
 metadata:

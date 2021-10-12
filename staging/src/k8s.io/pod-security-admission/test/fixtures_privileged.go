@@ -31,6 +31,8 @@ containerFields: []string{
 
 */
 
+// ::NOTE:: generate the fixture
+
 func init() {
 	fixtureData_1_0 := fixtureGenerator{
 		generatePass: func(p *corev1.Pod) []*corev1.Pod {
@@ -46,7 +48,7 @@ func init() {
 		generateFail: func(p *corev1.Pod) []*corev1.Pod {
 			p = ensureSecurityContext(p)
 			return []*corev1.Pod{
-				// privileged set to true in container
+				// privileged set to true in container  // ::NOTE:: ends up as fail case 0 in the YAML
 				tweak(p, func(p *corev1.Pod) {
 					p.Spec.Containers[0].SecurityContext.Privileged = pointer.BoolPtr(true)
 					p.Spec.Containers[0].SecurityContext.AllowPrivilegeEscalation = nil
@@ -60,6 +62,7 @@ func init() {
 		},
 	}
 
+	// ::NOTE:: register the fixture
 	registerFixtureGenerator(
 		fixtureKey{level: api.LevelBaseline, version: api.MajorMinorVersion(1, 0), check: "privileged"},
 		fixtureData_1_0,

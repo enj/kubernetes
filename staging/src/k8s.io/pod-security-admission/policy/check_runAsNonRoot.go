@@ -25,6 +25,8 @@ import (
 	"k8s.io/pod-security-admission/api"
 )
 
+// ::NOTE:: a more complicated check
+
 /*
 Containers must be required to run as non-root users.
 

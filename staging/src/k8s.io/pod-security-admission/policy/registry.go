@@ -62,14 +62,14 @@ func (r *checkRegistry) EvaluatePod(lv api.LevelVersion, podMetadata *metav1.Obj
 		return nil
 	}
 	if r.maxVersion.Older(lv.Version) {
-		lv.Version = r.maxVersion
+		lv.Version = r.maxVersion // ::NOTE:: if you ask for version 10 and the max we know about is 5, just assume you mean version 5
 	}
 	results := []CheckResult{}
-	for _, check := range r.baselineChecks[lv.Version] {
-		results = append(results, check(podMetadata, podSpec))
+	for _, check := range r.baselineChecks[lv.Version] { // ::NOTE:: always run baseline checks
+		results = append(results, check(podMetadata, podSpec)) // ::NOTE:: no short-circuit
 	}
 	if lv.Level == api.LevelBaseline {
-		return results
+		return results // ::NOTE:: only run restricted checks if level == restricted
 	}
 	for _, check := range r.restrictedChecks[lv.Version] {
 		results = append(results, check(podMetadata, podSpec))
@@ -77,6 +77,7 @@ func (r *checkRegistry) EvaluatePod(lv api.LevelVersion, podMetadata *metav1.Obj
 	return results
 }
 
+// ::NOTE:: runs all the checks per NewEvaluator comment
 func validateChecks(checks []Check) error {
 	ids := map[string]bool{}
 	for _, check := range checks {
@@ -139,6 +140,7 @@ func inflateVersions(check Check, versions map[api.Version][]CheckPodFn, maxVers
 		}
 		// Iterate over all versions from the minimum of the current check, to the minimum of the
 		// next check, or the maxVersion++.
+		// ::NOTE:: this makes it so that checks are not missing for particular versions  1,5,9 --> 1..5..9
 		for v := c.MinimumVersion; v.Older(nextVersion); v = api.MajorMinorVersion(1, v.Minor()+1) {
 			versions[v] = append(versions[v], check.Versions[i].CheckPod)
 		}

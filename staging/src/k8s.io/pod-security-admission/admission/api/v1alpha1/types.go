@@ -37,7 +37,7 @@ type PodSecurityDefaults struct {
 	WarnVersion    string `json:"warn-version,omitempty"`
 }
 
-type PodSecurityExemptions struct {
+type PodSecurityExemptions struct { // ::NOTE:: hard coded exemptions
 	Usernames      []string `json:"usernames,omitempty"`
 	Namespaces     []string `json:"namespaces,omitempty"`
 	RuntimeClasses []string `json:"runtimeClasses,omitempty"`
