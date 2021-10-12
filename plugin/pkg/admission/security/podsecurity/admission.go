@@ -100,7 +100,7 @@ func newPlugin(reader io.Reader) (*Plugin, error) {
 		delegate: &podsecurityadmission.Admission{
 			Configuration:    config,
 			Evaluator:        evaluator,
-			Metrics:          nil, // TODO: wire to default prometheus metrics  ~> good place to get involved?
+			Metrics:          nil, // wire to default prometheus metrics ~> I think someone has a PR open for this
 			PodSpecExtractor: podsecurityadmission.DefaultPodSpecExtractor{},
 		},
 	}, nil

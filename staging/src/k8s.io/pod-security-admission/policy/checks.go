@@ -118,7 +118,6 @@ const UnknownForbiddenReason = "unknown forbidden reason"
 
 // AggregateCheckPod runs all the checks and aggregates the forbidden results into a single CheckResult.
 // The aggregated reason is a comma-separated
-// TODO read
 func AggregateCheckResults(results []CheckResult) AggregateCheckResult {
 	var (
 		reasons []string
@@ -147,7 +146,6 @@ var (
 	experimentalChecks []func() Check
 )
 
-// TODO read callers
 func addCheck(f func() Check) {
 	// add to experimental or versioned list
 	c := f()
