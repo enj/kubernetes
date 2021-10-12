@@ -141,6 +141,7 @@ func AggregateCheckResults(results []CheckResult) AggregateCheckResult {
 	}
 }
 
+// global registry of functions that return a copy of the check
 var (
 	defaultChecks      []func() Check
 	experimentalChecks []func() Check
@@ -163,7 +164,7 @@ func addCheck(f func() Check) {
 func DefaultChecks() []Check {
 	retval := make([]Check, 0, len(defaultChecks))
 	for _, f := range defaultChecks {
-		retval = append(retval, f())
+		retval = append(retval, f()) // new copy per function call
 	}
 	return retval
 }

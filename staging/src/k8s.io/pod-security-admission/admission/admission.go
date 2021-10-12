@@ -81,6 +81,7 @@ type PodSpecExtractor interface {
 	// ExtractPodSpec returns a pod spec and metadata to evaluate from the object.
 	// An error returned here does not block admission of the pod-spec-containing object and is not returned to the user.
 	// If the object has no pod spec, return `nil, nil, nil`.
+	// comment is wrong, error fails admission
 	ExtractPodSpec(runtime.Object) (*metav1.ObjectMeta, *corev1.PodSpec, error)
 }
 

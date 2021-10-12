@@ -24,6 +24,8 @@ import (
 	"k8s.io/pod-security-admission/api"
 )
 
+// the canonical check
+
 /*
 Privileged Pods disable most security mechanisms and must be disallowed.
 
@@ -46,7 +48,7 @@ func CheckPrivileged() Check {
 		Level: api.LevelBaseline,
 		Versions: []VersionedCheck{
 			{
-				MinimumVersion: api.MajorMinorVersion(1, 0),
+				MinimumVersion: api.MajorMinorVersion(1, 0), // literally applies to all kube versions
 				CheckPod:       privileged_1_0,
 			},
 		},

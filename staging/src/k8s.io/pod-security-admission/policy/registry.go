@@ -57,20 +57,19 @@ func NewEvaluator(checks []Check) (Evaluator, error) {
 	return r, nil
 }
 
-// TODO read
 func (r *checkRegistry) EvaluatePod(lv api.LevelVersion, podMetadata *metav1.ObjectMeta, podSpec *corev1.PodSpec) []CheckResult {
 	if lv.Level == api.LevelPrivileged {
 		return nil
 	}
 	if r.maxVersion.Older(lv.Version) {
-		lv.Version = r.maxVersion
+		lv.Version = r.maxVersion // if you ask for version 10 and the max we know about is 5, just assume you mean version 5
 	}
 	results := []CheckResult{}
-	for _, check := range r.baselineChecks[lv.Version] {
-		results = append(results, check(podMetadata, podSpec))
+	for _, check := range r.baselineChecks[lv.Version] { // always run baseline checks
+		results = append(results, check(podMetadata, podSpec)) // note: no short-circuit
 	}
 	if lv.Level == api.LevelBaseline {
-		return results
+		return results // only run restricted checks if level == restricted
 	}
 	for _, check := range r.restrictedChecks[lv.Version] {
 		results = append(results, check(podMetadata, podSpec))
@@ -78,7 +77,7 @@ func (r *checkRegistry) EvaluatePod(lv api.LevelVersion, podMetadata *metav1.Obj
 	return results
 }
 
-// TODO read
+// runs all the checks per NewEvaluator comment
 func validateChecks(checks []Check) error {
 	ids := map[string]bool{}
 	for _, check := range checks {
@@ -112,7 +111,6 @@ func validateChecks(checks []Check) error {
 	return nil
 }
 
-// TODO read
 func populate(r *checkRegistry, validChecks []Check) {
 	// Find the max(MinimumVersion) across all checks.
 	for _, c := range validChecks {
@@ -131,7 +129,6 @@ func populate(r *checkRegistry, validChecks []Check) {
 	}
 }
 
-// TODO read
 func inflateVersions(check Check, versions map[api.Version][]CheckPodFn, maxVersion api.Version) {
 	for i, c := range check.Versions {
 		var nextVersion api.Version
@@ -143,6 +140,7 @@ func inflateVersions(check Check, versions map[api.Version][]CheckPodFn, maxVers
 		}
 		// Iterate over all versions from the minimum of the current check, to the minimum of the
 		// next check, or the maxVersion++.
+		// this makes it so that checks are not missing for particular versions  1,5,9 --> 1..5..9
 		for v := c.MinimumVersion; v.Older(nextVersion); v = api.MajorMinorVersion(1, v.Minor()+1) {
 			versions[v] = append(versions[v], check.Versions[i].CheckPod)
 		}
