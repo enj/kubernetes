@@ -353,13 +353,13 @@ func (r *roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 			Code:   int32(res.StatusCode),
 		}
 		if err := r.a.maybeRefreshCreds(creds, resp); err != nil {
-			klog.Errorf("refreshing credentials: %v", err)
+			klog.ErrorS(err, "refreshing credentials")
 		}
 	}
 	return res, nil
 }
 
-func (a *Authenticator) credsExpired() bool {
+func (a *Authenticator) credsExpiredLocked() bool {
 	if a.exp.IsZero() {
 		return false
 	}
@@ -378,7 +378,7 @@ func (a *Authenticator) getCreds() (*credentials, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.cachedCreds != nil && !a.credsExpired() {
+	if a.cachedCreds != nil && !a.credsExpiredLocked() {
 		return a.cachedCreds, nil
 	}
 
@@ -507,6 +507,17 @@ func (a *Authenticator) refreshCredsLocked(r *clientauthentication.Response) err
 	expiry := time.Time{}
 	if a.cachedCreds.cert != nil && a.cachedCreds.cert.Leaf != nil {
 		expiry = a.cachedCreds.cert.Leaf.NotAfter
+
+		// this method will be invoked twice for the same request if we consider the
+		// expirationTimestamp to be in the past.  if this happens when cert based
+		// auth is being used and the exec plugin returns a new cert for each invocation,
+		// we will accidentally close the in-flight connection because we think that the
+		// cert rotated (even though we never used the first cert at all).
+		if a.credsExpiredLocked() {
+			klog.InfoS("certificate was marked expired when issued, ignoring expiration until unauthorized",
+				"expirationTimestamp", a.exp.String())
+			a.exp = time.Time{}
+		}
 	}
 	expirationMetrics.set(a, expiry)
 	return nil
