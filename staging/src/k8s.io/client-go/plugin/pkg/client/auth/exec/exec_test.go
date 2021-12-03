@@ -18,6 +18,7 @@ package exec
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -27,7 +28,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -1037,7 +1038,7 @@ func TestRefreshCreds(t *testing.T) {
 			a.stderr = stderr
 			a.environ = func() []string { return nil }
 
-			if err := a.refreshCredsLocked(test.response); err != nil {
+			if _, err := a.refreshCredsLocked(test.response); err != nil {
 				if !test.wantErr {
 					t.Errorf("get token %v", err)
 				} else if !strings.Contains(err.Error(), test.wantErrSubstr) {
@@ -1112,7 +1113,7 @@ func TestRoundTripper(t *testing.T) {
 	}
 	a.environ = environ
 	a.now = now
-	a.stderr = ioutil.Discard
+	a.stderr = io.Discard
 
 	tc := &transport.Config{}
 	if err := a.UpdateTransportConfig(tc); err != nil {
@@ -1219,7 +1220,7 @@ func TestAuthorizationHeaderPresentCancelsExecAction(t *testing.T) {
 
 			// UpdateTransportConfig returns error on existing TLS certificate callback, unless a bearer token is present in the
 			// transport config, in which case it takes precedence
-			cert := func() (*tls.Certificate, error) {
+			cert := func(context.Context) (*tls.Certificate, error) {
 				return nil, nil
 			}
 			tc := &transport.Config{TLS: transport.TLSConfig{Insecure: true, GetCert: cert}}
@@ -1268,32 +1269,32 @@ func TestTLSCredentials(t *testing.T) {
 		return []string{"TEST_OUTPUT=" + string(data)}
 	}
 	a.now = func() time.Time { return now }
-	a.stderr = ioutil.Discard
+	a.stderr = io.Discard
 
 	// We're not interested in server's cert, this test is about client cert.
 	tc := &transport.Config{TLS: transport.TLSConfig{Insecure: true}}
 	if err := a.UpdateTransportConfig(tc); err != nil {
 		t.Fatal(err)
 	}
+	tlsCfg, err := transport.New(tc)
+	if err != nil {
+		t.Fatal("TLSConfigFor:", err)
+	}
 
 	get := func(t *testing.T, desc string, wantErr bool) {
 		t.Run(desc, func(t *testing.T) {
-			tlsCfg, err := transport.TLSConfigFor(tc)
-			if err != nil {
-				t.Fatal("TLSConfigFor:", err)
-			}
-			client := http.Client{
-				Transport: &http.Transport{TLSClientConfig: tlsCfg},
-			}
-			resp, err := client.Get(server.URL)
+			req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+			resp, err := tlsCfg.RoundTrip(req)
 			switch {
 			case err != nil && !wantErr:
 				t.Errorf("got client.Get error: %q, want nil", err)
 			case err == nil && wantErr:
 				t.Error("got nil client.Get error, want non-nil")
 			}
-			if err == nil {
-				resp.Body.Close()
+			if resp != nil && resp.Body != nil {
+				// drain and close body to reuse http keep-alive TCP connections
+				_, _ = io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
 			}
 		})
 	}
@@ -1351,7 +1352,7 @@ func TestConcurrentUpdateTransportConfig(t *testing.T) {
 	}
 	a.environ = environ
 	a.now = now
-	a.stderr = ioutil.Discard
+	a.stderr = io.Discard
 
 	stopCh := make(chan struct{})
 	defer close(stopCh)
@@ -1426,7 +1427,7 @@ func TestInstallHintRateLimit(t *testing.T) {
 
 			count := 0
 			for i := 0; i < test.calls; i++ {
-				err := a.refreshCredsLocked(&clientauthentication.Response{})
+				_, err := a.refreshCredsLocked(&clientauthentication.Response{})
 				if strings.Contains(err.Error(), c.InstallHint) {
 					count++
 				}

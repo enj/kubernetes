@@ -105,7 +105,7 @@ func TLSConfigFor(c *Config) (*tls.Config, error) {
 	}
 
 	if c.HasCertAuth() || c.HasCertCallback() {
-		tlsConfig.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+		tlsConfig.GetClientCertificate = func(cri *tls.CertificateRequestInfo) (*tls.Certificate, error) {
 			// Note: static key/cert data always take precedence over cert
 			// callback.
 			if staticCert != nil {
@@ -116,7 +116,7 @@ func TLSConfigFor(c *Config) (*tls.Config, error) {
 				return dynamicCertLoader()
 			}
 			if c.HasCertCallback() {
-				cert, err := c.TLS.GetCert()
+				cert, err := c.TLS.GetCert(cri.Context())
 				if err != nil {
 					return nil, err
 				}
