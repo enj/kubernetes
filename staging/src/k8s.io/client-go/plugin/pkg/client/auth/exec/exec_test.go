@@ -1276,15 +1276,17 @@ func TestTLSCredentials(t *testing.T) {
 	if err := a.UpdateTransportConfig(tc); err != nil {
 		t.Fatal(err)
 	}
-	tlsCfg, err := transport.New(tc)
+	rt, err := transport.New(tc)
 	if err != nil {
 		t.Fatal("TLSConfigFor:", err)
+	}
+	client := http.Client{
+		Transport: rt,
 	}
 
 	get := func(t *testing.T, desc string, wantErr bool) {
 		t.Run(desc, func(t *testing.T) {
-			req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
-			resp, err := tlsCfg.RoundTrip(req)
+			resp, err := client.Get(server.URL)
 			switch {
 			case err != nil && !wantErr:
 				t.Errorf("got client.Get error: %q, want nil", err)

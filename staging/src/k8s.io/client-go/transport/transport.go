@@ -116,7 +116,11 @@ func TLSConfigFor(c *Config) (*tls.Config, error) {
 				return dynamicCertLoader()
 			}
 			if c.HasCertCallback() {
-				cert, err := c.TLS.GetCert(cri.Context())
+				ctx := context.Background()
+				if cri != nil { // cri can be nil, ex: when called through dynamicClientCert.processNextWorkItem
+					ctx = cri.Context()
+				}
+				cert, err := c.TLS.GetCert(ctx)
 				if err != nil {
 					return nil, err
 				}

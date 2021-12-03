@@ -397,6 +397,9 @@ func (a *Authenticator) cert(ctx context.Context) (*tls.Certificate, error) {
 		return nil, err
 	}
 	if connClosed {
+		// If we close the underlying TCP connection in the process of starting the TLS handshake,
+		// there is no point in letting the handshake continue.  At least this way we provide a
+		// better error message then "write tcp host:port->host:port use of closed network connection"
 		return nil, fmt.Errorf("failing TLS handshake due to certificate rotation")
 	}
 	return creds.cert, nil
