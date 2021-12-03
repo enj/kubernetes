@@ -1480,3 +1480,87 @@ func genClientCert(t *testing.T) ([]byte, []byte) {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certRaw}),
 		pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyRaw})
 }
+
+func TestTLSCredentialsCallsAndRotation(t *testing.T) {
+	now := time.Now()
+
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "ok")
+	}))
+	server.TLS = &tls.Config{
+		ClientAuth: tls.RequireAnyClientCert,
+	}
+	server.StartTLS()
+	defer server.Close()
+
+	a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &api.ExecConfig{
+		Command:         "./testdata/test-plugin.sh",
+		APIVersion:      "client.authentication.k8s.io/v1alpha1",
+		InteractiveMode: api.IfAvailableExecInteractiveMode,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outputCalls int
+	a.environ = func() []string {
+		outputCalls++
+		cert, key := genClientCert(t)
+		output := &clientauthentication.ExecCredential{
+			Status: &clientauthentication.ExecCredentialStatus{
+				ClientCertificateData: string(cert),
+				ClientKeyData:         string(key),
+				ExpirationTimestamp:   &v1.Time{Time: now.Add(-3 * time.Hour)},
+			},
+		}
+		data, err := runtime.Encode(codecs.LegacyCodec(a.group), output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return []string{"TEST_OUTPUT=" + string(data)}
+	}
+	a.now = func() time.Time { return now }
+	a.stderr = io.Discard
+
+	caBundle := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: server.Certificate().Raw,
+	})
+	tc := &transport.Config{TLS: transport.TLSConfig{CAData: caBundle}}
+	if err := a.UpdateTransportConfig(tc); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := transport.New(tc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var getCalls int
+	get := func(t *testing.T, name string, wantErr bool) {
+		t.Run(name, func(t *testing.T) {
+			getCalls++
+			req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := rt.RoundTrip(req)
+			switch {
+			case err != nil && !wantErr:
+				t.Errorf("got client.Get error: %q, want nil", err)
+			case err == nil && wantErr:
+				t.Error("got nil client.Get error, want non-nil")
+			}
+			if resp != nil && resp.Body != nil {
+				// drain and close body to reuse http keep-alive TCP connections
+				_, _ = io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+			}
+		})
+	}
+
+	get(t, "valid TLS cert", false)
+	get(t, "valid TLS cert again", false)
+
+	if want, got := getCalls, outputCalls; want != got {
+		t.Errorf("unexpected exec call count: want=%d, got=%d", want, got)
+	}
+}
