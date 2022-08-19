@@ -68,7 +68,7 @@ type Config struct {
 	WrapTransport WrapperFunc
 
 	// Dial specifies the dial function for creating unencrypted TCP connections.
-	Dial func(ctx context.Context, network, address string) (net.Conn, error)
+	Dial *DialHolder
 
 	// Proxy is the proxy func to be used for all requests made by this
 	// transport. If Proxy is nil, http.ProxyFromEnvironment is used. If Proxy
@@ -76,6 +76,10 @@ type Config struct {
 	//
 	// socks5 proxying does not currently support spdy streaming endpoints.
 	Proxy func(*http.Request) (*url.URL, error)
+}
+
+type DialHolder struct {
+	F func(ctx context.Context, network, address string) (net.Conn, error)
 }
 
 // ImpersonationConfig has all the available impersonation options
@@ -143,5 +147,9 @@ type TLSConfig struct {
 	// To use only http/1.1, set to ["http/1.1"].
 	NextProtos []string
 
-	GetCert func() (*tls.Certificate, error) // Callback that returns a TLS client certificate. CertData, CertFile, KeyData and KeyFile supercede this field.
+	GetCert *CertHolder // Callback that returns a TLS client certificate. CertData, CertFile, KeyData and KeyFile supercede this field.
+}
+
+type CertHolder struct {
+	F func() (*tls.Certificate, error)
 }

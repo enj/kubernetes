@@ -207,6 +207,9 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 		a.env = append(a.env, env.Name+"="+env.Value)
 	}
 
+	a.getCert = &transport.CertHolder{F: a.cert}
+	a.dial = &transport.DialHolder{F: a.defaultDialer.DialContext}
+
 	return c.put(key, a), nil
 }
 
@@ -273,6 +276,10 @@ type Authenticator struct {
 	mu          sync.Mutex
 	cachedCreds *credentials
 	exp         time.Time
+
+	// TODO
+	getCert *transport.CertHolder
+	dial    *transport.DialHolder
 }
 
 type credentials struct {
@@ -300,17 +307,16 @@ func (a *Authenticator) UpdateTransportConfig(c *transport.Config) error {
 	if c.HasCertCallback() {
 		return errors.New("can't add TLS certificate callback: transport.Config.TLS.GetCert already set")
 	}
-	c.TLS.GetCert = a.cert
+	c.TLS.GetCert = a.getCert
 
-	var d *connrotation.Dialer
 	if c.Dial != nil {
 		// if c has a custom dialer, we have to wrap it
-		d = connrotation.NewDialerWithTracker(c.Dial, a.connTracker)
+		// TODO make caching for this work too
+		d := connrotation.NewDialerWithTracker(c.Dial.F, a.connTracker)
+		c.Dial = &transport.DialHolder{F: d.DialContext}
 	} else {
-		d = a.defaultDialer
+		c.Dial = a.dial
 	}
-
-	c.Dial = d.DialContext
 
 	return nil
 }
