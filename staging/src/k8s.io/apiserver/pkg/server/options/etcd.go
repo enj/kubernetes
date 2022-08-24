@@ -194,13 +194,14 @@ func (s *EtcdOptions) ApplyTo(c *server.Config) error {
 	if s == nil {
 		return nil
 	}
+
 	if err := s.addEtcdHealthEndpoint(c); err != nil {
 		return err
 	}
 	transformerOverrides := make(map[schema.GroupResource]value.Transformer)
 	if len(s.EncryptionProviderConfigFilepath) > 0 {
 		var err error
-		transformerOverrides, err = encryptionconfig.GetTransformerOverrides(s.EncryptionProviderConfigFilepath)
+		transformerOverrides, err = encryptionconfig.GetTransformerOverrides(s.EncryptionProviderConfigFilepath, c.DrainedNotify())
 		if err != nil {
 			return err
 		}
@@ -246,7 +247,7 @@ func (s *EtcdOptions) addEtcdHealthEndpoint(c *server.Config) error {
 	}))
 
 	if s.EncryptionProviderConfigFilepath != "" {
-		kmsPluginHealthzChecks, err := encryptionconfig.GetKMSPluginHealthzCheckers(s.EncryptionProviderConfigFilepath)
+		kmsPluginHealthzChecks, err := encryptionconfig.GetKMSPluginHealthzCheckers(s.EncryptionProviderConfigFilepath, c.DrainedNotify())
 		if err != nil {
 			return err
 		}

@@ -142,7 +142,7 @@ func (c *completedStorageFactoryConfig) New() (*serverstorage.DefaultStorageFact
 		storageFactory.SetEtcdLocation(groupResource, servers)
 	}
 	if len(c.EncryptionProviderConfigFilepath) != 0 {
-		transformerOverrides, err := encryptionconfig.GetTransformerOverrides(c.EncryptionProviderConfigFilepath)
+		transformerOverrides, err := encryptionconfig.GetTransformerOverrides(c.EncryptionProviderConfigFilepath, nil) // TODO fix
 		if err != nil {
 			return nil, err
 		}

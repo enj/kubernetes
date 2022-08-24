@@ -116,7 +116,7 @@ func (t *testKMSv2EnvelopeService) Status(ctx context.Context) (*envelopekmsv2.S
 }
 
 // The factory method to create mock envelope service.
-func newMockEnvelopeService(endpoint string, timeout time.Duration) (envelope.Service, error) {
+func newMockEnvelopeService(ctx context.Context, endpoint string, timeout time.Duration) (envelope.Service, error) {
 	return &testEnvelopeService{nil}, nil
 }
 
@@ -126,7 +126,7 @@ func newMockErrorEnvelopeService(endpoint string, timeout time.Duration) (envelo
 }
 
 // The factory method to create mock envelope kmsv2 service.
-func newMockEnvelopeKMSv2Service(endpoint string, timeout time.Duration) (envelopekmsv2.Service, error) {
+func newMockEnvelopeKMSv2Service(ctx context.Context, endpoint string, timeout time.Duration) (envelopekmsv2.Service, error) {
 	return &testKMSv2EnvelopeService{nil}, nil
 }
 
@@ -281,11 +281,14 @@ func TestEncryptionProviderConfigCorrect(t *testing.T) {
 func TestKMSPluginHealthz(t *testing.T) {
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2, true)()
 
-	service, err := envelope.NewGRPCService("unix:///tmp/testprovider.sock", 3*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	service, err := envelope.NewGRPCService(ctx, "unix:///tmp/testprovider.sock", 3*time.Second)
 	if err != nil {
 		t.Fatalf("Could not initialize envelopeService, error: %v", err)
 	}
-	serviceKMSv2, err := envelopekmsv2.NewGRPCService("unix:///tmp/testprovider.sock", 3*time.Second)
+	serviceKMSv2, err := envelopekmsv2.NewGRPCService(ctx, "unix:///tmp/testprovider.sock", 3*time.Second)
 	if err != nil {
 		t.Fatalf("Could not initialize kmsv2 envelopeService, error: %v", err)
 	}
@@ -404,7 +407,10 @@ func TestKMSPluginHealthzTTL(t *testing.T) {
 }
 
 func TestKMSv2PluginHealthzTTL(t *testing.T) {
-	service, _ := newMockEnvelopeKMSv2Service("unix:///tmp/testprovider.sock", 3*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	service, _ := newMockEnvelopeKMSv2Service(ctx, "unix:///tmp/testprovider.sock", 3*time.Second)
 	errService, _ := newMockErrorEnvelopeKMSv2Service("unix:///tmp/testprovider.sock", 3*time.Second)
 
 	testCases := []struct {

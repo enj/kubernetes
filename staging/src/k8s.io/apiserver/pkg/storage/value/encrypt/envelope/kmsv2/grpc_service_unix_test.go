@@ -54,7 +54,10 @@ func TestKMSPluginLateStart(t *testing.T) {
 	callTimeout := 3 * time.Second
 	s := newEndpoint()
 
-	service, err := NewGRPCService(s.endpoint, callTimeout)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	service, err := NewGRPCService(ctx, s.endpoint, callTimeout)
 	if err != nil {
 		t.Fatalf("failed to create envelope service, error: %v", err)
 	}
@@ -72,7 +75,7 @@ func TestKMSPluginLateStart(t *testing.T) {
 
 	data := []byte("test data")
 	uid := string(uuid.NewUUID())
-	_, err = service.Encrypt(context.Background(), uid, data)
+	_, err = service.Encrypt(ctx, uid, data)
 	if err != nil {
 		t.Fatalf("failed when execute encrypt, error: %v", err)
 	}
@@ -131,12 +134,15 @@ func TestTimeouts(t *testing.T) {
 			testCompletedWG.Add(1)
 			defer testCompletedWG.Done()
 
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+
 			kubeAPIServerWG.Add(1)
 			go func() {
 				// Simulating late start of kube-apiserver - plugin is up before kube-apiserver, if requested by the testcase.
 				time.Sleep(tt.kubeAPIServerDelay)
 
-				service, err = NewGRPCService(socketName.endpoint, tt.callTimeout)
+				service, err = NewGRPCService(ctx, socketName.endpoint, tt.callTimeout)
 				if err != nil {
 					t.Fatalf("failed to create envelope service, error: %v", err)
 				}
@@ -165,7 +171,7 @@ func TestTimeouts(t *testing.T) {
 			}()
 
 			kubeAPIServerWG.Wait()
-			_, err = service.Encrypt(context.Background(), uid, data)
+			_, err = service.Encrypt(ctx, uid, data)
 
 			if err == nil && tt.wantErr != "" {
 				t.Fatalf("got nil, want %s", tt.wantErr)
@@ -203,14 +209,16 @@ func TestIntermittentConnectionLoss(t *testing.T) {
 		t.Fatalf("Failed to start kms-plugin, err: %v", err)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
 	//  connect to kms plugin
-	service, err := NewGRPCService(endpoint.endpoint, timeout)
+	service, err := NewGRPCService(ctx, endpoint.endpoint, timeout)
 	if err != nil {
 		t.Fatalf("failed to create envelope service, error: %v", err)
 	}
 	defer destroyService(service)
 
-	ctx := context.Background()
 	_, err = service.Encrypt(ctx, uid, data)
 	if err != nil {
 		t.Fatalf("failed when execute encrypt, error: %v", err)
@@ -269,14 +277,16 @@ func TestGRPCService(t *testing.T) {
 	}
 	defer f.CleanUp()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
 	// Create the gRPC client service.
-	service, err := NewGRPCService(endpoint.endpoint, 1*time.Second)
+	service, err := NewGRPCService(ctx, endpoint.endpoint, 1*time.Second)
 	if err != nil {
 		t.Fatalf("failed to create envelope service, error: %v", err)
 	}
 	defer destroyService(service)
 
-	ctx := context.Background()
 	// Call service to encrypt data.
 	data := []byte("test data")
 	uid := string(uuid.NewUUID())
@@ -311,14 +321,16 @@ func TestGRPCServiceConcurrentAccess(t *testing.T) {
 	}
 	defer f.CleanUp()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
 	// Create the gRPC client service.
-	service, err := NewGRPCService(endpoint.endpoint, 15*time.Second)
+	service, err := NewGRPCService(ctx, endpoint.endpoint, 15*time.Second)
 	if err != nil {
 		t.Fatalf("failed to create envelope service, error: %v", err)
 	}
 	defer destroyService(service)
 
-	ctx := context.Background()
 	var wg sync.WaitGroup
 	n := 100
 	wg.Add(n)
@@ -369,6 +381,9 @@ func TestInvalidConfiguration(t *testing.T) {
 	}
 	defer f.CleanUp()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
 	invalidConfigs := []struct {
 		name     string
 		endpoint string
@@ -379,7 +394,7 @@ func TestInvalidConfiguration(t *testing.T) {
 
 	for _, testCase := range invalidConfigs {
 		t.Run(testCase.name, func(t *testing.T) {
-			_, err := NewGRPCService(testCase.endpoint, 1*time.Second)
+			_, err := NewGRPCService(ctx, testCase.endpoint, 1*time.Second)
 			if err == nil {
 				t.Fatalf("should fail to create envelope service for %s.", testCase.name)
 			}

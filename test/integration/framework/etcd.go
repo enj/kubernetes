@@ -198,7 +198,7 @@ func EtcdMain(tests func() int) {
 		// like k8s.io/klog/v2.(*loggingT).flushDaemon()
 		// TODO(#108483): Reduce this number once we address the
 		//   couple remaining issues.
-		if dg := runtime.NumGoroutine() - before; dg <= 15 {
+		if dg := runtime.NumGoroutine() - before; dg <= 10 {
 			return true, nil
 		}
 		// Allow goroutines to schedule and die off.
@@ -208,7 +208,7 @@ func EtcdMain(tests func() int) {
 
 	// It generally takes visibly less than 1s to finish all goroutines.
 	// But we keep the limit higher to account for cpu-starved environments.
-	if err := wait.Poll(100*time.Millisecond, 5*time.Second, checkNumberOfGoroutines); err != nil {
+	if err := wait.Poll(100*time.Millisecond, 15*time.Second, checkNumberOfGoroutines); err != nil {
 		after := runtime.NumGoroutine()
 		klog.Fatalf("unexpected number of goroutines: before: %d after %d", before, after)
 	}
