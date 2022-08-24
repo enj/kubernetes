@@ -63,11 +63,11 @@ func TestTLSConfigKey(t *testing.T) {
 
 	// Make sure config fields that affect the tls config affect the cache key
 	dialer := net.Dialer{}
-	getCert := func() (*tls.Certificate, error) { return nil, nil }
+	getCert := &CertHolder{F: func() (*tls.Certificate, error) { return nil, nil }}
 	uniqueConfigurations := map[string]*Config{
 		"no tls":   {},
-		"dialer":   {Dial: dialer.DialContext},
-		"dialer2":  {Dial: func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil }},
+		"dialer":   {Dial: &DialHolder{F: dialer.DialContext}},
+		"dialer2":  {Dial: &DialHolder{F: func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil }}},
 		"insecure": {TLS: TLSConfig{Insecure: true}},
 		"cadata 1": {TLS: TLSConfig{CAData: []byte{1}}},
 		"cadata 2": {TLS: TLSConfig{CAData: []byte{2}}},
@@ -125,7 +125,7 @@ func TestTLSConfigKey(t *testing.T) {
 		"getCert2": {
 			TLS: TLSConfig{
 				KeyData: []byte{1},
-				GetCert: func() (*tls.Certificate, error) { return nil, nil },
+				GetCert: &CertHolder{F: func() (*tls.Certificate, error) { return nil, nil }},
 			},
 		},
 		"getCert1, key 2": {
