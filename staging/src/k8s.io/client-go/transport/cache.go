@@ -17,6 +17,7 @@ limitations under the License.
 package transport
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -55,6 +56,8 @@ type tlsCacheKey struct {
 	serverName         string
 	nextProtos         string
 	disableCompression bool
+	getCert            *CertHolder
+	dial               *DialHolder
 }
 
 func (t tlsCacheKey) String() string {
@@ -92,8 +95,10 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		return http.DefaultTransport, nil
 	}
 
-	dial := config.Dial
-	if dial == nil {
+	var dial func(ctx context.Context, network, address string) (net.Conn, error)
+	if config.Dial != nil {
+		dial = config.Dial.F
+	} else {
 		dial = (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
@@ -138,7 +143,7 @@ func tlsConfigKey(c *Config) (tlsCacheKey, bool, error) {
 		return tlsCacheKey{}, false, err
 	}
 
-	if c.TLS.GetCert != nil || c.Dial != nil || c.Proxy != nil {
+	if c.Proxy != nil {
 		// cannot determine equality for functions
 		return tlsCacheKey{}, false, nil
 	}
@@ -149,6 +154,8 @@ func tlsConfigKey(c *Config) (tlsCacheKey, bool, error) {
 		serverName:         c.TLS.ServerName,
 		nextProtos:         strings.Join(c.TLS.NextProtos, ","),
 		disableCompression: c.DisableCompression,
+		getCert:            c.TLS.GetCert,
+		dial:               c.Dial,
 	}
 
 	if c.TLS.ReloadTLSFiles {
