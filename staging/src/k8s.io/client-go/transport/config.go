@@ -78,6 +78,7 @@ type Config struct {
 	Proxy func(*http.Request) (*url.URL, error)
 }
 
+// DialHolder is used to make the wrapped function comparable so that it can be used as a map key.
 type DialHolder struct {
 	F func(ctx context.Context, network, address string) (net.Conn, error)
 }
@@ -150,6 +151,7 @@ type TLSConfig struct {
 	GetCert *CertHolder // Callback that returns a TLS client certificate. CertData, CertFile, KeyData and KeyFile supercede this field.
 }
 
+// CertHolder is used to make the wrapped function comparable so that it can be used as a map key.
 type CertHolder struct {
 	F func() (*tls.Certificate, error)
 }

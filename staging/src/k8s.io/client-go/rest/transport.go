@@ -111,7 +111,6 @@ func (c *Config) TransportConfig() (*transport.Config, error) {
 		Proxy: c.Proxy,
 	}
 
-	// TODO c.Dial should probably be a holder as well
 	if c.Dial != nil {
 		conf.Dial = &transport.DialHolder{F: c.Dial}
 	}

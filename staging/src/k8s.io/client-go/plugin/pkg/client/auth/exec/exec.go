@@ -199,16 +199,17 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 		now:             time.Now,
 		environ:         os.Environ,
 
-		defaultDialer: defaultDialer,
-		connTracker:   connTracker,
+		connTracker: connTracker,
 	}
 
 	for _, env := range config.Env {
 		a.env = append(a.env, env.Name+"="+env.Value)
 	}
 
+	// these functions are made comparable and stored in the cache so that repeated clientset
+	// construction with the same rest.Config results in a single TLS cache and Authenticator
 	a.getCert = &transport.CertHolder{F: a.cert}
-	a.dial = &transport.DialHolder{F: a.defaultDialer.DialContext}
+	a.dial = &transport.DialHolder{F: defaultDialer.DialContext}
 
 	return c.put(key, a), nil
 }
@@ -264,8 +265,6 @@ type Authenticator struct {
 	now             func() time.Time
 	environ         func() []string
 
-	// defaultDialer is used for clients which don't specify a custom dialer
-	defaultDialer *connrotation.Dialer
 	// connTracker tracks all connections opened that we need to close when rotating a client certificate
 	connTracker *connrotation.ConnectionTracker
 
@@ -277,9 +276,11 @@ type Authenticator struct {
 	cachedCreds *credentials
 	exp         time.Time
 
-	// TODO
+	// getCert makes Authenticator.cert comparable to support TLS config caching
 	getCert *transport.CertHolder
-	dial    *transport.DialHolder
+	// dial is used for clients which do not specify a custom dialer
+	// it is comparable to support TLS config caching
+	dial *transport.DialHolder
 }
 
 type credentials struct {
@@ -307,15 +308,15 @@ func (a *Authenticator) UpdateTransportConfig(c *transport.Config) error {
 	if c.HasCertCallback() {
 		return errors.New("can't add TLS certificate callback: transport.Config.TLS.GetCert already set")
 	}
-	c.TLS.GetCert = a.getCert
+	c.TLS.GetCert = a.getCert // comparable for TLS config caching
 
 	if c.Dial != nil {
 		// if c has a custom dialer, we have to wrap it
-		// TODO make caching for this work too
+		// TLS config caching is not supported for this config
 		d := connrotation.NewDialerWithTracker(c.Dial.F, a.connTracker)
 		c.Dial = &transport.DialHolder{F: d.DialContext}
 	} else {
-		c.Dial = a.dial
+		c.Dial = a.dial // comparable for TLS config caching
 	}
 
 	return nil

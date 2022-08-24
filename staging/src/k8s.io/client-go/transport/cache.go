@@ -56,8 +56,9 @@ type tlsCacheKey struct {
 	serverName         string
 	nextProtos         string
 	disableCompression bool
-	getCert            *CertHolder
-	dial               *DialHolder
+	// these functions are wrapped to allow them to be used as map keys
+	getCert *CertHolder
+	dial    *DialHolder
 }
 
 func (t tlsCacheKey) String() string {
