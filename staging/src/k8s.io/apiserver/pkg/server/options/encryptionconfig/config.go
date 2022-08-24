@@ -123,11 +123,7 @@ func GetKMSPluginHealthzCheckers(filepath string, stopCh <-chan struct{}) ([]hea
 }
 
 func getKMSPluginProbes(reader io.Reader, stopCh <-chan struct{}) ([]interface{}, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		<-stopCh
-		cancel()
-	}()
+	ctx := stopChToContext(stopCh)
 
 	var result []interface{}
 
@@ -339,11 +335,7 @@ var (
 )
 
 func prefixTransformers(config *apiserverconfig.ResourceConfiguration, stopCh <-chan struct{}) ([]value.PrefixTransformer, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		<-stopCh
-		cancel()
-	}()
+	ctx := stopChToContext(stopCh)
 
 	var result []value.PrefixTransformer
 	for _, provider := range config.Providers {
@@ -549,4 +541,13 @@ func (u unionTransformers) TransformFromStorage(ctx context.Context, data []byte
 
 func (u unionTransformers) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) (out []byte, err error) {
 	return u[0].TransformToStorage(ctx, data, dataCtx)
+}
+
+func stopChToContext(stopCh <-chan struct{}) context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-stopCh
+		cancel()
+	}()
+	return ctx
 }

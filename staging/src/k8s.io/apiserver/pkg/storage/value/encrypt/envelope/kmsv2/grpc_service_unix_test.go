@@ -54,8 +54,7 @@ func TestKMSPluginLateStart(t *testing.T) {
 	callTimeout := 3 * time.Second
 	s := newEndpoint()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	ctx := testContext(t)
 
 	service, err := NewGRPCService(ctx, s.endpoint, callTimeout)
 	if err != nil {
@@ -134,8 +133,7 @@ func TestTimeouts(t *testing.T) {
 			testCompletedWG.Add(1)
 			defer testCompletedWG.Done()
 
-			ctx, cancel := context.WithCancel(context.Background())
-			t.Cleanup(cancel)
+			ctx := testContext(t)
 
 			kubeAPIServerWG.Add(1)
 			go func() {
@@ -209,8 +207,7 @@ func TestIntermittentConnectionLoss(t *testing.T) {
 		t.Fatalf("Failed to start kms-plugin, err: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	ctx := testContext(t)
 
 	//  connect to kms plugin
 	service, err := NewGRPCService(ctx, endpoint.endpoint, timeout)
@@ -277,8 +274,7 @@ func TestGRPCService(t *testing.T) {
 	}
 	defer f.CleanUp()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	ctx := testContext(t)
 
 	// Create the gRPC client service.
 	service, err := NewGRPCService(ctx, endpoint.endpoint, 1*time.Second)
@@ -321,8 +317,7 @@ func TestGRPCServiceConcurrentAccess(t *testing.T) {
 	}
 	defer f.CleanUp()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	ctx := testContext(t)
 
 	// Create the gRPC client service.
 	service, err := NewGRPCService(ctx, endpoint.endpoint, 15*time.Second)
@@ -381,8 +376,7 @@ func TestInvalidConfiguration(t *testing.T) {
 	}
 	defer f.CleanUp()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	ctx := testContext(t)
 
 	invalidConfigs := []struct {
 		name     string
@@ -400,4 +394,10 @@ func TestInvalidConfiguration(t *testing.T) {
 			}
 		})
 	}
+}
+
+func testContext(t *testing.T) context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	return ctx
 }
