@@ -208,7 +208,7 @@ func EtcdMain(tests func() int) {
 
 	// It generally takes visibly less than 1s to finish all goroutines.
 	// But we keep the limit higher to account for cpu-starved environments.
-	if err := wait.Poll(100*time.Millisecond, 15*time.Second, checkNumberOfGoroutines); err != nil {
+	if err := wait.Poll(100*time.Millisecond, 5*time.Second, checkNumberOfGoroutines); err != nil {
 		after := runtime.NumGoroutine()
 		klog.Fatalf("unexpected number of goroutines: before: %d after %d", before, after)
 	}

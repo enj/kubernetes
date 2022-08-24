@@ -194,7 +194,6 @@ func (s *EtcdOptions) ApplyTo(c *server.Config) error {
 	if s == nil {
 		return nil
 	}
-
 	if err := s.addEtcdHealthEndpoint(c); err != nil {
 		return err
 	}
