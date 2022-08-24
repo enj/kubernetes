@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package exec_test
+package exec_test // separate package to prevent circular import
 
 import (
 	"context"
@@ -28,6 +28,10 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
+// TestExecTLSCache asserts the semantics of the TLS cache when exec auth is used.
+//
+//	multiple identical rest configs that use exec auth.
+//	It then creates distinct clientsets for those configs.
 func TestExecTLSCache(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
@@ -52,11 +56,24 @@ func TestExecTLSCache(t *testing.T) {
 	}
 	client2 := clientset.NewForConfigOrDie(config2)
 
+	config3 := &rest.Config{
+		Host: "https://localhost",
+		ExecProvider: &clientcmdapi.ExecConfig{
+			Command:         "./testdata/test-plugin.sh",
+			Args:            []string{"make this exec auth different"},
+			APIVersion:      "client.authentication.k8s.io/v1",
+			InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
+		},
+	}
+	client3 := clientset.NewForConfigOrDie(config3)
+
 	_, _ = client1.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	_, _ = client2.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	_, _ = client3.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
 
 	rt1 := client1.RESTClient().(*rest.RESTClient).Client.Transport
 	rt2 := client2.RESTClient().(*rest.RESTClient).Client.Transport
+	rt3 := client3.RESTClient().(*rest.RESTClient).Client.Transport
 
 	tlsConfig1, err := utilnet.TLSClientConfig(rt1)
 	if err != nil {
@@ -66,12 +83,20 @@ func TestExecTLSCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	tlsConfig3, err := utilnet.TLSClientConfig(rt3)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	if tlsConfig1 == nil || tlsConfig2 == nil {
+	if tlsConfig1 == nil || tlsConfig2 == nil || tlsConfig3 == nil {
 		t.Fatal("expected non-nil TLS configs")
 	}
 
 	if tlsConfig1 != tlsConfig2 {
-		t.Fatal("expected the same TLS config for matching exec config")
+		t.Fatal("expected the same TLS config for matching exec config via rest config")
+	}
+
+	if tlsConfig1 == tlsConfig3 {
+		t.Fatal("expected different TLS config for non-matching exec config via rest config")
 	}
 }
