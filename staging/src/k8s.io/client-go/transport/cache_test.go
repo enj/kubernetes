@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"net"
 	"net/http"
+	"net/url"
 	"testing"
 )
 
@@ -65,6 +66,7 @@ func TestTLSConfigKey(t *testing.T) {
 	dialer := net.Dialer{}
 	getCert := &CertHolder{F: func() (*tls.Certificate, error) { return nil, nil }}
 	uniqueConfigurations := map[string]*Config{
+		"proxy":    {Proxy: func(request *http.Request) (*url.URL, error) { return nil, nil }},
 		"no tls":   {},
 		"dialer":   {Dial: &DialHolder{F: dialer.DialContext}},
 		"dialer2":  {Dial: &DialHolder{F: func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil }}},
@@ -148,6 +150,11 @@ func TestTLSConfigKey(t *testing.T) {
 			if err != nil {
 				t.Errorf("Unexpected error for %q: %v", nameB, err)
 				continue
+			}
+
+			shouldCacheA := valueA.Proxy == nil
+			if shouldCacheA != canCacheA {
+				t.Errorf("Unexpected canCache=false for " + nameA)
 			}
 
 			// Make sure we get the same key on the same config
