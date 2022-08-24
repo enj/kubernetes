@@ -30,8 +30,12 @@ import (
 
 // TestExecTLSCache asserts the semantics of the TLS cache when exec auth is used.
 //
-//	multiple identical rest configs that use exec auth.
-//	It then creates distinct clientsets for those configs.
+// In particular, when:
+//   - multiple identical rest configs exist as distinct objects, and
+//   - these rest configs use exec auth, and
+//   - these rest configs are used to create distinct clientsets, then
+//
+// the underlying TLS config is shared between those clientsets.
 func TestExecTLSCache(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
