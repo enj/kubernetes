@@ -17,11 +17,9 @@ limitations under the License.
 package apiserver
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -33,14 +31,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	genericapiserveroptions "k8s.io/apiserver/pkg/server/options"
-	"k8s.io/client-go/discovery"
 	client "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -94,84 +88,20 @@ func TestAggregatedAPIServer(t *testing.T) {
 
 	go func() {
 		o := sampleserver.NewWardleServerOptions(os.Stdout, os.Stderr)
-
-		// o.RecommendedOptions.Authentication.RemoteKubeConfigFile = "" // NOTE(BEN): do we really want to reset this or not????
-
-		// ensure this is a SAN on the generated cert
+		// ensure this is a SAN on the generated cert for service FQDN
 		o.AlternateDNS = []string{
-			// fully qualified identifier from our service, servicename.namespace.svc.cluster.local...
 			"api.kube-wardle.svc",
 		}
 		o.RecommendedOptions.SecureServing.Listener = listener
-		// ParseIPSloppy is then taking a string and giving back an IP as go struct
-		// this is just type conversion
 		o.RecommendedOptions.SecureServing.BindAddress = netutils.ParseIPSloppy("127.0.0.1")
-		// BEN NOTES
-		// in the authorization webhook.
-		// the service account made a request
-		// and we are figuring out if it is enabled to do the request
-		// by asking the API server
-		// in this request is a body
-		// in the body is a subject access review
-		// but we don't want to parse that out
-		// so instead....
-		o.RecommendedOptions.Authorization.CustomRoundTripperFn = func(rt http.RoundTripper) http.RoundTripper {
-			// NOTES(BEN):
-			// somewhere in this thing, there is an API Service serving an API.
-			// the wardle API.
-			// within this test, we make a service account token
-			// then, use it against the API.
-			// when that aggregated API server sees the identity,
-			// it will make an authorization check to make sure the API server can do what its asking
-			// therefore it will make an authorization call
-			// in this authorization call, it will contain the identity it saw
-			// this identity should contain the UID we are looking for.
-			// once written, we could copy/paste this test back to master and see it fail, to prove we did the right thing.
-
-			// round tripper wrapper we can use to manipulate the request
-			// this is why we made the wrapper at the bottom
-			return rtFunc(func(req *http.Request) (*http.Response, error) {
-				// what we got?
-				// NOTE: to run this:
-				//   make test-integration WHAT=./test/integration/examples KUBE_TEST_ARGS="-v -run Aggregated"
-				//   ulimit -n 60000  # open files <-- ned more file descriptors cuz the test complains
-				t.Log("🐙 🐙 🐙 🐙 🐙 WHAT WE GOT??????? BEN", req.Header)
-				t.Log(request.UserFrom(req.Context()))
-
-				// dance to log stuff...
-				var b bytes.Buffer
-				a, err := io.ReadAll(req.Body)
-				if err != nil {
-					return nil, err
-				}
-				_ = req.Body.Close() // if you don't do this it is bad :(
-				_, _ = b.Write(a)
-				req.Body = io.NopCloser(&b)
-				// yay
-				t.Log("THE BODY >>>>")
-				t.Log(string(a))
-				// Hmm..dont care about hte body then
-				// why doesn't the authorization webhook proper delegated auth?
-				// authentication doesn't seem to be working correctly.... or?
-
-				return rt.RoundTrip(req)
-			})
-		}
-
-		// cmd to start up wardle
 		wardleCmd := sampleserver.NewCommandStartWardleServer(o, stopCh)
-		// for cobra, pretend running a binary
 		wardleCmd.SetArgs([]string{
-			// WHY DO WE HAVE 3 KUBECONFIGS~
-			// might be pointed them to 3 different servers... to do the various jobs.
-			// (prob not a common thing)
 			"--authentication-kubeconfig", wardleToKASKubeConfigFile,
 			"--authorization-kubeconfig", wardleToKASKubeConfigFile,
 			"--etcd-servers", framework.GetEtcdURL(),
 			"--cert-dir", wardleCertDir,
 			"--kubeconfig", wardleToKASKubeConfigFile,
 		})
-		// execute cobra command (vs bash calling executable)
 		if err := wardleCmd.Execute(); err != nil {
 			t.Error(err)
 		}
@@ -182,19 +112,15 @@ func TestAggregatedAPIServer(t *testing.T) {
 	}
 
 	// now we're finally ready to test. These are what's run by default now
-	wardleClient, err := client.NewForConfig(directWardleClientConfig)
-	if err != nil {
-		t.Fatal(err)
-	}
-	testAPIGroupList(t, wardleClient.Discovery().RESTClient())
-	testAPIGroup(t, wardleClient.Discovery().RESTClient())
-	testAPIResourceList(t, wardleClient.Discovery().RESTClient())
+	wardleDirectClient := client.NewForConfigOrDie(directWardleClientConfig)
+	testAPIGroupList(t, wardleDirectClient.Discovery().RESTClient())
+	testAPIGroup(t, wardleDirectClient.Discovery().RESTClient())
+	testAPIResourceList(t, wardleDirectClient.Discovery().RESTClient())
 
 	wardleCA, err := os.ReadFile(directWardleClientConfig.CAFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// This is where we are establishing trust between Wardle & the API Server byassing up the CA BUnde
 	_, err = aggregatorClient.ApiregistrationV1().APIServices().Create(context.TODO(), &apiregistrationv1.APIService{
 		ObjectMeta: metav1.ObjectMeta{Name: "v1alpha1.wardle.example.com"},
 		Spec: apiregistrationv1.APIServiceSpec{
@@ -202,10 +128,8 @@ func TestAggregatedAPIServer(t *testing.T) {
 				Namespace: "kube-wardle",
 				Name:      "api",
 			},
-			Group:   "wardle.example.com",
-			Version: "v1alpha1",
-			// we need to pass the WardleCA to the APIServer so that the API Server
-			// knows to trust Wardle as a new API.
+			Group:                "wardle.example.com",
+			Version:              "v1alpha1",
 			CABundle:             wardleCA,
 			GroupPriorityMinimum: 200,
 			VersionPriority:      200,
@@ -216,7 +140,24 @@ func TestAggregatedAPIServer(t *testing.T) {
 	}
 
 	// wait for the unavailable API service to be processed with updated status
-	err = wait.Poll(100*time.Millisecond, 5*time.Second, func() (done bool, err error) {
+	err = wait.Poll(time.Second, wait.ForeverTestTimeout, func() (done bool, err error) {
+		// TODO clean up and use proper context
+		apiService, err := aggregatorClient.ApiregistrationV1().APIServices().Get(
+			context.TODO(), "v1alpha1.wardle.example.com", metav1.GetOptions{},
+		)
+		if err != nil {
+			return false, err
+		}
+		var available bool
+		for _, condition := range apiService.Status.Conditions {
+			if condition.Type == apiregistrationv1.Available && condition.Status == apiregistrationv1.ConditionTrue {
+				available = true
+				break
+			}
+		}
+		if !available {
+			return false, nil
+		}
 		_, _, err = kubeClient.Discovery().ServerGroupsAndResources()
 		// TODO(BEN): changed this because we now expect it to work................
 		// But we should really check that it is AVAILABLE
@@ -228,27 +169,10 @@ func TestAggregatedAPIServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// TODO : STEPS --> In another PR??
-	// - Enable Aggregator Routing - DONE
-	// - Create Namespace for WardleServer - DONE
-	// - Create The Service - DONE
-	// - Create The Endpoint -
-	// - We have the bits needed for service and endpoint when we bring up wardle, sot his should be doable...
-	// - THEN maybe we can get hte API service into a state where it can function w/o service unavailable
-	//
-	// TODO figure out how to turn on enough of services and dns to run more
-	// Integration tests run API servers & controllers you want (manually)
-	// But Integration tets do NOT have kubelets.
-	// You need a kubelet to get Kube DNS in order to get services.
-	// Adding kubelets moves us into e2e test land, not integration test.
-	// Kubeletse run KubeDNS
-	// Thats how routing works across pods -> KubeDNS resolves services to an IP address
-	// APIServer may run on kubelets
-	// But not always, often API Servers run elsewhere
-	// Kubelet -> KubeDNS -> DNS Lookup -> DNS Resolution
-	// But we have to get around this...
-	//
-	// TODO look up services and endpoints for a refresh
+	// Since ClientCAs are provided by "client-ca::kube-system::extension-apiserver-authentication::client-ca-file" controller
+	// we need to wait until it picks up the configmap (via a lister) otherwise the response might contain an empty result.
+	// The following code waits up to ForeverTestTimeout seconds for ClientCA to show up otherwise it fails
+	// maybe in the future this could be wired into the /readyz EP
 
 	// Now we want to verify that the client CA bundles properly reflect the values for the cluster-authentication
 	var firstKubeCANames []string
@@ -353,7 +277,6 @@ func TestAggregatedAPIServer(t *testing.T) {
 	// }
 }
 
-// NOTE(BEN): what does this do???
 func waitForWardleRunning(t *testing.T, wardleToKASKubeConfig *rest.Config, wardleCertDir string, wardlePort int) (*rest.Config, error) {
 	directWardleClientConfig := rest.AnonymousClientConfig(rest.CopyConfig(wardleToKASKubeConfig))
 	directWardleClientConfig.CAFile = path.Join(wardleCertDir, "apiserver.crt")
@@ -426,33 +349,6 @@ func writeKubeConfigForWardleServerToKASConnection(t *testing.T, kubeClientConfi
 	}
 
 	return wardleToKASKubeConfigFile.Name()
-}
-
-func checkWardleUnavailableDiscoveryError(t *testing.T, err error) bool {
-	if err == nil {
-		t.Log("Discovery call expected to return failed unavailable service")
-		return false
-	}
-	if !discovery.IsGroupDiscoveryFailedError(err) {
-		t.Logf("Unexpected error: %T, %v", err, err)
-		return false
-	}
-	discoveryErr := err.(*discovery.ErrGroupDiscoveryFailed)
-	if len(discoveryErr.Groups) != 1 {
-		t.Logf("Unexpected failed groups: %v", err)
-		return false
-	}
-	groupVersion := schema.GroupVersion{Group: "wardle.example.com", Version: "v1alpha1"}
-	groupVersionErr, ok := discoveryErr.Groups[groupVersion]
-	if !ok {
-		t.Logf("Unexpected failed group version: %v", err)
-		return false
-	}
-	if !apierrors.IsServiceUnavailable(groupVersionErr) {
-		t.Logf("Unexpected failed group version error: %v", err)
-		return false
-	}
-	return true
 }
 
 func createKubeConfig(clientCfg *rest.Config) *clientcmdapi.Config {
@@ -599,14 +495,6 @@ MnVCuBwfwDXCAiEAw/1TA+CjPq9JC5ek1ifR0FybTURjeQqYkKpve1dveps=
 
 `)
 )
-
-var _ http.RoundTripper = rtFunc(nil)
-
-type rtFunc func(*http.Request) (*http.Response, error)
-
-func (f rtFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
-}
 
 type staticURLServiceResolver string
 
