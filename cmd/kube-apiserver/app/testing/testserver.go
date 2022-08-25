@@ -18,7 +18,9 @@ package testing
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"os"
 	"path"
@@ -30,22 +32,24 @@ import (
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
+	options2 "k8s.io/apiserver/pkg/server/options"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apiserver/pkg/registry/generic/registry"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/apiserver/pkg/storageversion"
 	"k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/util/cert"
 	"k8s.io/kube-aggregator/pkg/apiserver"
+
 	"k8s.io/kubernetes/cmd/kube-apiserver/app"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app/options"
+	"k8s.io/kubernetes/cmd/kubeadm/app/util/pkiutil"
 	testutil "k8s.io/kubernetes/test/utils"
-
-	"k8s.io/klog/v2"
 )
 
 // This key is for testing purposes only and is not considered secure.
@@ -60,6 +64,8 @@ type TearDownFunc func()
 
 // TestServerInstanceOptions Instance options the TestServer
 type TestServerInstanceOptions struct {
+	// DisableStorageCleanup Disable the automatic storage cleanup
+	DisableStorageCleanup bool
 	// Enable cert-auth for the kube-apiserver
 	EnableCertAuth bool
 	// Wrap the storage version interface of the created server's generic server.
@@ -86,7 +92,8 @@ type Logger interface {
 // NewDefaultTestServerOptions Default options for TestServer instances
 func NewDefaultTestServerOptions() *TestServerInstanceOptions {
 	return &TestServerInstanceOptions{
-		EnableCertAuth: true,
+		DisableStorageCleanup: false,
+		EnableCertAuth:        true,
 	}
 }
 
@@ -94,41 +101,40 @@ func NewDefaultTestServerOptions() *TestServerInstanceOptions {
 // and location of the tmpdir are returned.
 //
 // Note: we return a tear-down func instead of a stop channel because the later will leak temporary
-//
-//	files that because Golang testing's call to os.Exit will not give a stop channel go routine
-//	enough time to remove temporary files.
+// 		 files that because Golang testing's call to os.Exit will not give a stop channel go routine
+// 		 enough time to remove temporary files.
 func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, customFlags []string, storageConfig *storagebackend.Config) (result TestServer, err error) {
 	if instanceOptions == nil {
 		instanceOptions = NewDefaultTestServerOptions()
 	}
 
-	result.TmpDir, err = os.MkdirTemp("", "kubernetes-kube-apiserver")
-	if err != nil {
-		return result, fmt.Errorf("failed to create temp dir: %v", err)
+	// TODO : Remove TrackStorageCleanup below when PR
+	// https://github.com/kubernetes/kubernetes/pull/50690
+	// merges as that shuts down storage properly
+	if !instanceOptions.DisableStorageCleanup {
+		registry.TrackStorageCleanup()
 	}
 
 	stopCh := make(chan struct{})
-	var errCh chan error
 	tearDown := func() {
-		// Closing stopCh is stopping apiserver and cleaning up
-		// after itself, including shutting down its storage layer.
-		close(stopCh)
-
-		// If the apiserver was started, let's wait for it to
-		// shutdown clearly.
-		if errCh != nil {
-			err, ok := <-errCh
-			if ok && err != nil {
-				klog.Errorf("Failed to shutdown test server clearly: %v", err)
-			}
+		if !instanceOptions.DisableStorageCleanup {
+			registry.CleanupStorage()
 		}
-		os.RemoveAll(result.TmpDir)
+		close(stopCh)
+		if len(result.TmpDir) != 0 {
+			os.RemoveAll(result.TmpDir)
+		}
 	}
 	defer func() {
 		if result.TearDownFn == nil {
 			tearDown()
 		}
 	}()
+
+	result.TmpDir, err = ioutil.TempDir("", "kubernetes-kube-apiserver")
+	if err != nil {
+		return result, fmt.Errorf("failed to create temp dir: %v", err)
+	}
 
 	fs := pflag.NewFlagSet("test", pflag.PanicOnError)
 
@@ -144,20 +150,55 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 	s.SecureServing.ServerCert.CertDirectory = result.TmpDir
 
 	if instanceOptions.EnableCertAuth {
+		reqHeaders := options2.NewDelegatingAuthenticationOptions()
+		s.Authentication.RequestHeader = &reqHeaders.RequestHeader
+
 		// create certificates for aggregation and client-cert auth
 		proxySigningKey, err := testutil.NewPrivateKey()
 		if err != nil {
 			return result, err
 		}
-		proxySigningCert, err := cert.NewSelfSignedCACert(cert.Config{CommonName: "front-proxy-ca"}, proxySigningKey)
+		proxySigningCert, err := cert.NewSelfSignedCACert(cert.Config{CommonName: "front-proxy-ca"}, proxySigningKey) // create CA using private key
 		if err != nil {
 			return result, err
 		}
-		proxyCACertFile := path.Join(s.SecureServing.ServerCert.CertDirectory, "proxy-ca.crt")
-		if err := os.WriteFile(proxyCACertFile, testutil.EncodeCertPEM(proxySigningCert), 0644); err != nil {
+		proxyCACertFile := path.Join(s.SecureServing.ServerCert.CertDirectory, "proxy-ca.crt") // write CA to disk
+		if err := ioutil.WriteFile(proxyCACertFile, testutil.EncodeCertPEM(proxySigningCert), 0644); err != nil {
 			return result, err
 		}
-		s.Authentication.RequestHeader.ClientCAFile = proxyCACertFile
+		s.Authentication.RequestHeader.ClientCAFile = proxyCACertFile // consume file from disk, cli flags take files as input
+		// TODO: this isn't working....
+		s.Authentication.RequestHeader.AllowedNames = []string{"ash-ketchum", "misty", "brock"} // we are going to be specific about what identity is valid
+
+		// DO STUFF HERE...
+		// the part that authenticates teh API server to the backend aggregated API server isn't setup
+		// the API server is not identifying itself
+		// so the Wardle server is ignoring it, it doesn't trust the API server, no proper client cert on this request
+
+		// first take proxySigningCert and make a client certificate for the APIServer (common name has to match one of our defined names above)
+		tenThousandHoursLater := time.Now().Add(10_000 * time.Hour)
+		clientCrtOfAPIServer, signer, err := pkiutil.NewCertAndKey(proxySigningCert, proxySigningKey, &pkiutil.CertConfig{
+			Config: cert.Config{
+				CommonName: "misty",
+				// CommonName: "x-remote-extra-", // hackery... what is going on here???? -> serach the project for this again: x-remote-extra
+				Usages: []x509.ExtKeyUsage{
+					x509.ExtKeyUsageClientAuth,
+				},
+			},
+			NotAfter:           &tenThousandHoursLater,
+			PublicKeyAlgorithm: x509.ECDSA,
+		})
+		if err != nil {
+			return result, err
+		}
+
+		if err := pkiutil.WriteCertAndKey(s.SecureServing.ServerCert.CertDirectory, "misty-crt", clientCrtOfAPIServer, signer); err != nil {
+			return result, err
+		}
+
+		s.ProxyClientKeyFile = path.Join(s.SecureServing.ServerCert.CertDirectory, "misty-crt.key")  // it made this :(
+		s.ProxyClientCertFile = path.Join(s.SecureServing.ServerCert.CertDirectory, "misty-crt.crt") // did it make this?
+
 		clientSigningKey, err := testutil.NewPrivateKey()
 		if err != nil {
 			return result, err
@@ -167,10 +208,13 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 			return result, err
 		}
 		clientCACertFile := path.Join(s.SecureServing.ServerCert.CertDirectory, "client-ca.crt")
-		if err := os.WriteFile(clientCACertFile, testutil.EncodeCertPEM(clientSigningCert), 0644); err != nil {
+		if err := ioutil.WriteFile(clientCACertFile, testutil.EncodeCertPEM(clientSigningCert), 0644); err != nil {
 			return result, err
 		}
 		s.Authentication.ClientCert.ClientCA = clientCACertFile
+
+		t.Logf("STUFF FROM testserver.go for Authentication --------------------- >>>>>>>>>>>>>>>>")
+		t.Logf("%#v\n", s.Authentication.RequestHeader)
 	}
 
 	s.SecureServing.ExternalAddress = s.SecureServing.Listener.Addr().(*net.TCPAddr).IP // use listener addr although it is a loopback device
@@ -189,12 +233,12 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 		return result, err
 	}
 
-	saSigningKeyFile, err := os.CreateTemp("/tmp", "insecure_test_key")
+	saSigningKeyFile, err := ioutil.TempFile("/tmp", "insecure_test_key")
 	if err != nil {
 		t.Fatalf("create temp file failed: %v", err)
 	}
 	defer os.RemoveAll(saSigningKeyFile.Name())
-	if err = os.WriteFile(saSigningKeyFile.Name(), []byte(ecdsaPrivateKey), 0666); err != nil {
+	if err = ioutil.WriteFile(saSigningKeyFile.Name(), []byte(ecdsaPrivateKey), 0666); err != nil {
 		t.Fatalf("write file %s failed: %v", saSigningKeyFile.Name(), err)
 	}
 	s.ServiceAccountSigningKeyFile = saSigningKeyFile.Name()
@@ -212,7 +256,7 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 
 	t.Logf("runtime-config=%v", completedOptions.APIEnablement.RuntimeConfig)
 	t.Logf("Starting kube-apiserver on port %d...", s.SecureServing.BindPort)
-	server, err := app.CreateServerChain(completedOptions)
+	server, err := app.CreateServerChain(completedOptions, stopCh)
 	if err != nil {
 		return result, fmt.Errorf("failed to create server chain: %v", err)
 	}
@@ -220,9 +264,8 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 		server.GenericAPIServer.StorageVersionManager = instanceOptions.StorageVersionWrapFunc(server.GenericAPIServer.StorageVersionManager)
 	}
 
-	errCh = make(chan error)
+	errCh := make(chan error)
 	go func(stopCh <-chan struct{}) {
-		defer close(errCh)
 		prepared, err := server.PrepareRun()
 		if err != nil {
 			errCh <- err
@@ -314,10 +357,7 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 	result.ClientConfig.QPS = 1000
 	result.ClientConfig.Burst = 10000
 	result.ServerOpts = s
-	result.TearDownFn = func() {
-		tearDown()
-		etcdClient.Close()
-	}
+	result.TearDownFn = tearDown
 	result.EtcdClient = etcdClient
 	result.EtcdStoragePrefix = storageConfig.Prefix
 
