@@ -24,6 +24,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"reflect"
@@ -32,11 +33,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	authenticationv1 "k8s.io/api/authentication/v1"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/endpoints/request"
@@ -49,6 +47,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/util/cert"
 	apiregistrationv1 "k8s.io/kube-aggregator/pkg/apis/apiregistration/v1"
+	"k8s.io/kube-aggregator/pkg/apiserver"
 	aggregatorclient "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
 	kastesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
 	"k8s.io/kubernetes/test/integration/framework"
@@ -66,19 +65,18 @@ func TestAggregatedAPIServer(t *testing.T) {
 	stopCh := make(chan struct{})
 	defer close(stopCh)
 
-	// BEN(NOTES):
-	// StartTestServerOrDie will call StartTestServer, which will
-	// start an etcd server and a kube-apiserver.
-	// This is starting up the initial API server
-	//
-	// TEST SERVER IS INCORRECT:
-	// 	testserver.go:177: STUFF FROM testserver.go for Authentication --------------------- >>>>>>>>>>>>>>>>
-	//     testserver.go:178: &options.RequestHeaderAuthenticationOptions{ClientCAFile:"/var/folders/c7/cw70qc6d6sx46p5r0n_lbpwr0000gn/T/kubernetes-kube-apiserver249281036/proxy-ca.crt", UsernameHeaders:[]string(nil), UIDHeaders:[]string(nil), GroupHeaders:[]string(nil), ExtraHeaderPrefixes:[]string(nil), AllowedNames:[]string(nil)}
-	// --- FAIL: TestAggregatedAPIServer (0.30s)
-	// TODO: change how we are starting it up???/
-	testServer := kastesting.StartTestServerOrDie(t, &kastesting.TestServerInstanceOptions{EnableCertAuth: true}, []string{
-		"--enable-aggregator-routing", // TODO: we will remove this later.... we can't use the endpoint based approach.
-	}, framework.SharedEtcd())
+	// we need the wardle port information first to set up the service resolver
+	listener, wardlePort, err := genericapiserveroptions.CreateListener("tcp", "127.0.0.1:0", net.ListenConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	testServer := kastesting.StartTestServerOrDie(t, &kastesting.TestServerInstanceOptions{
+		EnableCertAuth: true,
+		MutateAggregatorFunc: func(aggregator *apiserver.APIAggregator) {
+			aggregator.ServiceResolver = staticURLServiceResolver(fmt.Sprintf("https://127.0.0.1:%d", wardlePort))
+		},
+	}, nil, framework.SharedEtcd())
 	defer testServer.TearDownFn()
 	kubeClientConfig := rest.CopyConfig(testServer.ClientConfig)
 	// force json because everything speaks it
@@ -86,112 +84,13 @@ func TestAggregatedAPIServer(t *testing.T) {
 	kubeClientConfig.AcceptContentTypes = ""
 	kubeClient := client.NewForConfigOrDie(kubeClientConfig)
 	aggregatorClient := aggregatorclient.NewForConfigOrDie(kubeClientConfig)
-
-	// Wardle needs a namespace
-	_, err := kubeClient.CoreV1().Namespaces().Create(context.TODO(), &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "kube-wardle",
-		},
-	}, metav1.CreateOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// wardle needs a service
-	_, err = kubeClient.CoreV1().Services("kube-wardle").Create(context.TODO(), &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "api",
-		},
-		Spec: corev1.ServiceSpec{
-			Ports: []corev1.ServicePort{
-				{
-					// Name: "api-default-port", naming this screws up something...
-					Port: 443,
-				},
-			},
-			Type: corev1.ServiceTypeClusterIP,
-		},
-	}, metav1.CreateOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// wardle needs a service account with a silly name so we can make a service account token
-	saName := "octopus-are-better-than-pandas"
-	// we are happy to write tests here really.
-	_, err = kubeClient.CoreV1().ServiceAccounts(metav1.NamespaceSystem).Create(context.TODO(), &corev1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: saName,
-		},
-	}, metav1.CreateOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// wardle needs a service account token
-	saToken, err := kubeClient.CoreV1().ServiceAccounts(metav1.NamespaceSystem).CreateToken(context.TODO(), saName, &authenticationv1.TokenRequest{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "virtual-obj-no-name-needed",
-		},
-		// just taking the defaults
-		Spec: authenticationv1.TokenRequestSpec{},
-	}, metav1.CreateOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Log("🐙 🐙  WHAT IS THE VALUE OF THE TOKEN")
-	t.Log(saToken.Status.Token)
-
-	saTokenKubeClientConfig := rest.AnonymousClientConfig(testServer.ClientConfig)
-	saTokenKubeClientConfig.BearerToken = saToken.Status.Token
-	saTokenKubeClientConfig.ContentType = runtime.ContentTypeJSON        // the wardle API server does not support protobuf
-	saTokenKubeClientConfig.AcceptContentTypes = runtime.ContentTypeJSON // the wardle API server does not support protobuf
-
-	// client using the wardle token
-	wardleSATokenClient := wardlev1alpha1client.NewForConfigOrDie(saTokenKubeClientConfig)
+	wardleSATokenClient := wardlev1alpha1client.NewForConfigOrDie(kubeClientConfig)
 
 	// start the wardle server to prove we can aggregate it
 	wardleToKASKubeConfigFile := writeKubeConfigForWardleServerToKASConnection(t, rest.CopyConfig(kubeClientConfig))
 	defer os.Remove(wardleToKASKubeConfigFile)
 	wardleCertDir, _ := os.MkdirTemp("", "test-integration-wardle-server")
 	defer os.RemoveAll(wardleCertDir)
-	// :0 means "find me a free port"
-	listener, wardlePort, err := genericapiserveroptions.CreateListener("tcp", "127.0.0.1:0", net.ListenConfig{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// fmt.Println("THE LISTENER THINGY::::::: >>>>>") // nothing gets printed when the test errors
-	// t.Fatal(listener.Addr().String())
-	//
-	// LATEST ERROR:
-	// E0411 10:58:23.203620   94841 controller.go:116] loading OpenAPI spec for "v1alpha1.wardle.example.com" failed with: failed to retrieve openAPI spec, http error: ResponseCode: 503, Body: error trying to reach service: x509: certificate is valid for localhost, not api.kube-wardle.svc
-	// LOOKS LIKE WE ARE GETTING CLOSE, JUST CERTS NOW!
-
-	// endpoint for wardle api server
-	_, err = kubeClient.CoreV1().Endpoints("kube-wardle").Create(context.TODO(), &corev1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "api",
-		},
-		Subsets: []corev1.EndpointSubset{
-			{
-				Addresses: []corev1.EndpointAddress{
-					{
-						IP: "127.0.0.1",
-					},
-				},
-				Ports: []corev1.EndpointPort{
-					{
-						Port:     int32(wardlePort), // has to be the wardle port!
-						Protocol: corev1.ProtocolTCP,
-					},
-				},
-			},
-		},
-	}, metav1.CreateOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	go func() {
 		o := sampleserver.NewWardleServerOptions(os.Stdout, os.Stderr)
@@ -707,4 +606,10 @@ type rtFunc func(*http.Request) (*http.Response, error)
 
 func (f rtFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+type staticURLServiceResolver string
+
+func (u staticURLServiceResolver) ResolveEndpoint(namespace, name string, port int32) (*url.URL, error) {
+	return url.Parse(string(u))
 }

@@ -138,7 +138,8 @@ type APIAggregator struct {
 	lister listers.APIServiceLister
 
 	// Information needed to determine routing for the aggregator
-	serviceResolver ServiceResolver
+	// Exported for integration testing.
+	ServiceResolver ServiceResolver
 
 	// Enable swagger and/or OpenAPI if these configs are non-nil.
 	openAPIConfig *openapicommon.Config
@@ -207,7 +208,7 @@ func (c completedConfig) NewWithDelegate(delegationTarget genericapiserver.Deleg
 		handledGroups:              sets.String{},
 		lister:                     informerFactory.Apiregistration().V1().APIServices().Lister(),
 		APIRegistrationInformers:   informerFactory,
-		serviceResolver:            c.ExtraConfig.ServiceResolver,
+		ServiceResolver:            c.ExtraConfig.ServiceResolver,
 		openAPIConfig:              c.GenericConfig.OpenAPIConfig,
 		openAPIV3Config:            c.GenericConfig.OpenAPIV3Config,
 		egressSelector:             c.GenericConfig.EgressSelector,
@@ -279,7 +280,7 @@ func (c completedConfig) NewWithDelegate(delegationTarget genericapiserver.Deleg
 		apiregistrationClient.ApiregistrationV1(),
 		c.ExtraConfig.ProxyTransport,
 		(func() ([]byte, []byte))(s.proxyCurrentCertKeyContent),
-		s.serviceResolver,
+		s.ServiceResolver,
 		c.GenericConfig.EgressSelector,
 	)
 	if err != nil {
@@ -440,7 +441,7 @@ func (s *APIAggregator) AddAPIService(apiService *v1.APIService) error {
 		localDelegate:              s.delegateHandler,
 		proxyCurrentCertKeyContent: s.proxyCurrentCertKeyContent,
 		proxyTransport:             s.proxyTransport,
-		serviceResolver:            s.serviceResolver,
+		serviceResolver:            s.ServiceResolver,
 		egressSelector:             s.egressSelector,
 	}
 	proxyHandler.updateAPIService(apiService)

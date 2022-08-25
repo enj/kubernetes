@@ -66,6 +66,8 @@ type TestServerInstanceOptions struct {
 	EnableCertAuth bool
 	// Wrap the storage version interface of the created server's generic server.
 	StorageVersionWrapFunc func(storageversion.Manager) storageversion.Manager
+	// Allows for tweaking the aggregator config before running the server.
+	MutateAggregatorFunc func(*apiserver.APIAggregator)
 }
 
 // TestServer return values supplied by kube-test-ApiServer
@@ -258,6 +260,9 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 	}
 	if instanceOptions.StorageVersionWrapFunc != nil {
 		server.GenericAPIServer.StorageVersionManager = instanceOptions.StorageVersionWrapFunc(server.GenericAPIServer.StorageVersionManager)
+	}
+	if instanceOptions.MutateAggregatorFunc != nil {
+		instanceOptions.MutateAggregatorFunc(server)
 	}
 
 	errCh = make(chan error)
