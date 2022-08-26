@@ -19,6 +19,7 @@ package apiserver
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -388,10 +389,11 @@ func (c *AvailableConditionController) sync(key string) error {
 					transport.SetAuthProxyHeaders(newReq, "system:kube-aggregator", []string{"system:masters"}, nil)
 					resp, err := discoveryClient.Do(newReq)
 					if resp != nil {
+						b, _ := io.ReadAll(resp.Body)
 						resp.Body.Close()
 						// we should always been in the 200s or 300s
 						if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-							errCh <- fmt.Errorf("bad status from %v: %v", discoveryURL, resp.StatusCode)
+							errCh <- fmt.Errorf("bad status from %v: %v\n%s", discoveryURL, resp.StatusCode, string(b))
 							return
 						}
 					}
