@@ -26,6 +26,7 @@ import (
 	"os"
 	"path"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -166,30 +167,6 @@ func TestAggregatedAPIServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = kubeClient.CoreV1().Endpoints("default").Create(ctx, &corev1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "kubernetes",
-		},
-		Subsets: []corev1.EndpointSubset{
-			{
-				Addresses: []corev1.EndpointAddress{
-					{
-						IP: "1.2.3.4",
-					},
-				},
-				Ports: []corev1.EndpointPort{
-					{
-						Name:     "https",
-						Port:     int32(wardlePort),
-						Protocol: corev1.ProtocolTCP,
-					},
-				},
-			},
-		},
-	}, metav1.CreateOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	// wait for the API service to be available
 	err = wait.Poll(time.Second, wait.ForeverTestTimeout, func() (done bool, err error) {
@@ -222,8 +199,18 @@ func TestAggregatedAPIServer(t *testing.T) {
 			t.Log("wardle discovery failed", err)
 			return false, nil
 		}
+		if len(apiResources.APIResources) != 2 {
+			t.Log("wardle discovery has wrong resources", apiResources.APIResources)
+			return false, nil
+		}
+		resources := make([]string, 0, 2)
 		for _, resource := range apiResources.APIResources {
-			t.Log(">>>>>>>>>>>>>>>>>>>>", resource.Name)
+			resource := resource
+			resources = append(resources, resource.Name)
+		}
+		sort.Strings(resources)
+		if !reflect.DeepEqual([]string{"fischers", "flunders"}, resources) {
+			return false, fmt.Errorf("unexpected resources: %v", resources)
 		}
 
 		return true, nil
@@ -232,6 +219,7 @@ func TestAggregatedAPIServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// perform various CRUD operations against the wardle resources
 	fischersList, err := wardleClient.Fischers().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		t.Fatal(err)
