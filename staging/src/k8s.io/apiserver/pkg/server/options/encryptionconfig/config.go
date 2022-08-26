@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
@@ -266,6 +267,41 @@ func GetTransformerOverrides(filepath string) (map[schema.GroupResource]value.Tr
 		return nil, fmt.Errorf("error while parsing encryption provider configuration file %q: %v", filepath, err)
 	}
 	return result, nil
+}
+
+// metadata.name is the ID of the API server
+type EncryptionState struct {
+	metav1.TypeMeta `json:",inline"`
+	// +optional
+	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
+
+	Spec EncryptionStateSpec `json:"spec" protobuf:"bytes,2,opt,name=spec"`
+
+	Status EncryptionStateStatus `json:"status,omitempty" protobuf:"bytes,3,opt,name=status"`
+}
+
+// spec is empty
+type EncryptionStateSpec struct{}
+
+type EncryptionStateStatus struct {
+	EncryptionConfigurationHash            string
+	EncryptionConfigurationHashLastUpdated metav1.Time
+
+	Resources []EncryptionStateResource
+}
+
+type EncryptionStateResource struct {
+	Resource schema.GroupResource
+
+	WriteKeyIDHash            string
+	WriteKeyIDHashLastUpdated metav1.Time
+
+	ReadKeyIDHashes            []string
+	ReadKeyIDHashesLastUpdated metav1.Time
+
+	// this is a bit wierd to be per API server since it would be based on etcd scans
+	InUseKeyIDHashes            []string
+	InUseKeyIDHashesLastUpdated metav1.Time
 }
 
 func parseEncryptionConfiguration(f io.Reader) (map[schema.GroupResource]value.Transformer, error) {
