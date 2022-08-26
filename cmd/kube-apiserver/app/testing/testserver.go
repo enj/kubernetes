@@ -148,6 +148,7 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 	s.SecureServing.ServerCert.CertDirectory = result.TmpDir
 
 	if instanceOptions.EnableCertAuth {
+		// set up default headers for request header auth
 		reqHeaders := serveroptions.NewDelegatingAuthenticationOptions()
 		s.Authentication.RequestHeader = &reqHeaders.RequestHeader
 
@@ -156,29 +157,24 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 		if err != nil {
 			return result, err
 		}
-		proxySigningCert, err := cert.NewSelfSignedCACert(cert.Config{CommonName: "front-proxy-ca"}, proxySigningKey) // create CA using private key
+		proxySigningCert, err := cert.NewSelfSignedCACert(cert.Config{CommonName: "front-proxy-ca"}, proxySigningKey)
 		if err != nil {
 			return result, err
 		}
-		proxyCACertFile := path.Join(s.SecureServing.ServerCert.CertDirectory, "proxy-ca.crt") // write CA to disk
+		proxyCACertFile := path.Join(s.SecureServing.ServerCert.CertDirectory, "proxy-ca.crt")
 		if err := os.WriteFile(proxyCACertFile, testutil.EncodeCertPEM(proxySigningCert), 0644); err != nil {
 			return result, err
 		}
-		s.Authentication.RequestHeader.ClientCAFile = proxyCACertFile // consume file from disk, cli flags take files as input
-		// TODO: this isn't working....
-		s.Authentication.RequestHeader.AllowedNames = []string{"ash-ketchum", "misty", "brock"} // we are going to be specific about what identity is valid
+		s.Authentication.RequestHeader.ClientCAFile = proxyCACertFile
 
-		// DO STUFF HERE...
-		// the part that authenticates teh API server to the backend aggregated API server isn't setup
-		// the API server is not identifying itself
-		// so the Wardle server is ignoring it, it doesn't trust the API server, no proper client cert on this request
-
-		// first take proxySigningCert and make a client certificate for the APIServer (common name has to match one of our defined names above)
+		// give the kube api server an "identity" it can use to for request header auth
+		// so that aggregated api servers can understand who the calling user is
+		s.Authentication.RequestHeader.AllowedNames = []string{"ash", "misty", "brock"}
+		// make a client certificate for the api server - common name has to match one of our defined names above
 		tenThousandHoursLater := time.Now().Add(10_000 * time.Hour)
 		clientCrtOfAPIServer, signer, err := pkiutil.NewCertAndKey(proxySigningCert, proxySigningKey, &pkiutil.CertConfig{
 			Config: cert.Config{
 				CommonName: "misty",
-				// CommonName: "x-remote-extra-", // hackery... what is going on here???? -> serach the project for this again: x-remote-extra
 				Usages: []x509.ExtKeyUsage{
 					x509.ExtKeyUsageClientAuth,
 				},
@@ -189,13 +185,11 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 		if err != nil {
 			return result, err
 		}
-
 		if err := pkiutil.WriteCertAndKey(s.SecureServing.ServerCert.CertDirectory, "misty-crt", clientCrtOfAPIServer, signer); err != nil {
 			return result, err
 		}
-
-		s.ProxyClientKeyFile = path.Join(s.SecureServing.ServerCert.CertDirectory, "misty-crt.key")  // it made this :(
-		s.ProxyClientCertFile = path.Join(s.SecureServing.ServerCert.CertDirectory, "misty-crt.crt") // did it make this?
+		s.ProxyClientKeyFile = path.Join(s.SecureServing.ServerCert.CertDirectory, "misty-crt.key")
+		s.ProxyClientCertFile = path.Join(s.SecureServing.ServerCert.CertDirectory, "misty-crt.crt")
 
 		clientSigningKey, err := testutil.NewPrivateKey()
 		if err != nil {
@@ -210,9 +204,6 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 			return result, err
 		}
 		s.Authentication.ClientCert.ClientCA = clientCACertFile
-
-		t.Logf("STUFF FROM testserver.go for Authentication --------------------- >>>>>>>>>>>>>>>>")
-		t.Logf("%#v\n", s.Authentication.RequestHeader)
 	}
 
 	s.SecureServing.ExternalAddress = s.SecureServing.Listener.Addr().(*net.TCPAddr).IP // use listener addr although it is a loopback device
