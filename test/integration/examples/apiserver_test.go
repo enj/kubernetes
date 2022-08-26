@@ -218,19 +218,40 @@ func TestAggregatedAPIServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// perform various CRUD operations against the wardle resources
+	// perform simple CRUD operations against the wardle resources
+	_, err = wardleClient.Fischers().Create(ctx, &wardlev1alpha1.Fischer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "panda",
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	fischersList, err := wardleClient.Fischers().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(fischersList.Items) != 1 {
+		t.Errorf("expected one fischer: %#v", fischersList.Items)
+	}
+	if len(fischersList.ResourceVersion) == 0 {
+		t.Error("expected non-empty resource version for fischer list")
+	}
 
-	t.Log("FISCHERS LIST OF STUFFFFFFF:::::")
-	t.Log(fischersList.Items)
-	t.Log(fischersList.ResourceVersion)
-
-	_, err = wardleClient.Flunders(metav1.NamespaceSystem).List(ctx, metav1.ListOptions{})
+	_, err = wardleClient.Flunders(metav1.NamespaceSystem).Create(ctx, &wardlev1alpha1.Flunder{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "panda",
+		},
+	}, metav1.CreateOptions{})
+	flunderList, err := wardleClient.Flunders(metav1.NamespaceSystem).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(flunderList.Items) != 1 {
+		t.Errorf("expected one flunder: %#v", flunderList.Items)
+	}
+	if len(flunderList.ResourceVersion) == 0 {
+		t.Error("expected non-empty resource version for flunder list")
 	}
 
 	// Since ClientCAs are provided by "client-ca::kube-system::extension-apiserver-authentication::client-ca-file" controller
