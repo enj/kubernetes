@@ -114,7 +114,6 @@ func TestAggregatedAPIServer(t *testing.T) {
 	defer os.Remove(wardleToKASKubeConfigFile)
 	wardleCertDir, _ := os.MkdirTemp("", "test-integration-wardle-server")
 	defer os.RemoveAll(wardleCertDir)
-
 	go func() {
 		o := sampleserver.NewWardleServerOptions(os.Stdout, os.Stderr)
 		// ensure this is a SAN on the generated cert for service FQDN
