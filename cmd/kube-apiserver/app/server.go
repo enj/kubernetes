@@ -657,7 +657,15 @@ func buildServiceResolver(enabledAggregatorRouting bool, hostname string, inform
 	if localHost, err := url.Parse(hostname); err == nil {
 		serviceResolver = aggregatorapiserver.NewLoopbackServiceResolver(serviceResolver, localHost)
 	}
-	return serviceResolver
+	return &MutableServiceResolver{Delegate: serviceResolver}
+}
+
+type MutableServiceResolver struct {
+	Delegate webhook.ServiceResolver // exported field to allow tests to override
+}
+
+func (m *MutableServiceResolver) ResolveEndpoint(namespace, name string, port int32) (*url.URL, error) {
+	return m.Delegate.ResolveEndpoint(namespace, name, port)
 }
 
 func getServiceIPAndRanges(serviceClusterIPRanges string) (net.IP, net.IPNet, net.IPNet, error) {

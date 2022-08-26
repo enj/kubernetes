@@ -44,6 +44,7 @@ import (
 	apiregistrationv1 "k8s.io/kube-aggregator/pkg/apis/apiregistration/v1"
 	"k8s.io/kube-aggregator/pkg/apiserver"
 	aggregatorclient "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
+	"k8s.io/kubernetes/cmd/kube-apiserver/app"
 	kastesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
 	"k8s.io/kubernetes/test/integration/framework"
 	wardlev1alpha1 "k8s.io/sample-apiserver/pkg/apis/wardle/v1alpha1"
@@ -72,7 +73,8 @@ func TestAggregatedAPIServer(t *testing.T) {
 	testServer := kastesting.StartTestServerOrDie(t, &kastesting.TestServerInstanceOptions{
 		EnableCertAuth: true,
 		MutateAggregatorFunc: func(aggregator *apiserver.APIAggregator) {
-			aggregator.ServiceResolver = staticURLServiceResolver(fmt.Sprintf("https://127.0.0.1:%d", wardlePort))
+			// endpoints cannot have loopback IPs so we need to override the resolver itself
+			aggregator.ServiceResolver.(*app.MutableServiceResolver).Delegate = staticURLServiceResolver(fmt.Sprintf("https://127.0.0.1:%d", wardlePort))
 		},
 	}, nil, framework.SharedEtcd())
 	defer testServer.TearDownFn()
@@ -83,6 +85,28 @@ func TestAggregatedAPIServer(t *testing.T) {
 	kubeClient := client.NewForConfigOrDie(kubeClientConfig)
 	aggregatorClient := aggregatorclient.NewForConfigOrDie(kubeClientConfig)
 	wardleClient := wardlev1alpha1client.NewForConfigOrDie(kubeClientConfig)
+
+	// create the bare minimum resources required to be able to get the API service into an available state
+	_, err = kubeClient.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "kube-wardle",
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = kubeClient.CoreV1().Services("kube-wardle").Create(ctx, &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "api",
+		},
+		Spec: corev1.ServiceSpec{
+			ExternalName: "needs-to-be-non-empty",
+			Type:         corev1.ServiceTypeExternalName,
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// start the wardle server to prove we can aggregate it
 	wardleToKASKubeConfigFile := writeKubeConfigForWardleServerToKASConnection(t, rest.CopyConfig(kubeClientConfig))
@@ -129,8 +153,8 @@ func TestAggregatedAPIServer(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "v1alpha1.wardle.example.com"},
 		Spec: apiregistrationv1.APIServiceSpec{
 			Service: &apiregistrationv1.ServiceReference{
-				Namespace: "default",
-				Name:      "kubernetes",
+				Namespace: "kube-wardle",
+				Name:      "api",
 			},
 			Group:                "wardle.example.com",
 			Version:              "v1alpha1",
