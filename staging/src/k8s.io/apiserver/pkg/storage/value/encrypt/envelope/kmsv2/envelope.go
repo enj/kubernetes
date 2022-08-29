@@ -28,9 +28,11 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/apiserver/pkg/server/options/encryptionconfig"
 	"k8s.io/apiserver/pkg/storage/value"
 	kmstypes "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2/v2alpha1"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope/metrics"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/lru"
 )
 
@@ -51,6 +53,8 @@ type Service interface {
 
 type envelopeTransformer struct {
 	envelopeService Service
+
+	keyIDGetter encryptionconfig.KeyIDGetter
 
 	// transformers is a thread-safe LRU cache which caches decrypted DEKs indexed by their encrypted form.
 	transformers *lru.Cache
@@ -87,7 +91,7 @@ type StatusResponse struct {
 // It uses envelopeService to encrypt and decrypt DEKs. Respective DEKs (in encrypted form) are prepended to
 // the data items they encrypt. A cache (of size cacheSize) is maintained to store the most recently
 // used decrypted DEKs in memory.
-func NewEnvelopeTransformer(envelopeService Service, cacheSize int, baseTransformerFunc func(cipher.Block) value.Transformer) (value.Transformer, error) {
+func NewEnvelopeTransformer(envelopeService Service, keyIDGetter encryptionconfig.KeyIDGetter, cacheSize int, baseTransformerFunc func(cipher.Block) value.Transformer) (value.Transformer, error) {
 	var cache *lru.Cache
 
 	if cacheSize > 0 {
@@ -98,6 +102,7 @@ func NewEnvelopeTransformer(envelopeService Service, cacheSize int, baseTransfor
 
 	return &envelopeTransformer{
 		envelopeService:     envelopeService,
+		keyIDGetter:         keyIDGetter,
 		transformers:        cache,
 		baseTransformerFunc: baseTransformerFunc,
 		cacheEnabled:        cacheSize > 0,
@@ -137,7 +142,20 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 		}
 	}
 
-	return transformer.TransformFromStorage(ctx, encryptedObject.EncryptedData, dataCtx)
+	out, stale, err := transformer.TransformFromStorage(ctx, encryptedObject.EncryptedData, dataCtx)
+	if !stale {
+		keyID, err := t.keyIDGetter(ctx)
+		if err != nil {
+			// if we cannot get the key ID, simply assume the data is stale instead of failing the request
+			// this allows us to keep going even if the KMS plugin is transiently unhealthy
+			klog.ErrorS(err, "failed to get key ID")
+			stale = true
+		} else {
+			stale = encryptedObject.KeyID != keyID
+		}
+	}
+
+	return out, stale, err
 }
 
 // TransformToStorage encrypts data to be written to disk using envelope encryption.

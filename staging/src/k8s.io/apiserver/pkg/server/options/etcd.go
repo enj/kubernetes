@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -42,8 +43,7 @@ import (
 type EtcdOptions struct {
 	// The value of Paging on StorageConfig will be overridden by the
 	// calculated feature gate value.
-	StorageConfig                    storagebackend.Config
-	EncryptionProviderConfigFilepath string
+	StorageConfig storagebackend.Config
 
 	EtcdServersOverrides []string
 
@@ -59,6 +59,13 @@ type EtcdOptions struct {
 	DefaultWatchCacheSize int
 	// WatchCacheSizes represents override to a given resource
 	WatchCacheSizes []string
+
+	// TODO comment about being private
+	encryptionProviderConfigFilepath string
+	encryptionProviderConfigOnce     *sync.Once
+	encryptionProviderConfigErr      error
+	transformers                     map[schema.GroupResource]value.Transformer
+	kmsHealthChecks                  []healthz.HealthChecker
 }
 
 var storageTypes = sets.NewString(
@@ -168,7 +175,7 @@ func (s *EtcdOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&s.StorageConfig.Transport.TrustedCAFile, "etcd-cafile", s.StorageConfig.Transport.TrustedCAFile,
 		"SSL Certificate Authority file used to secure etcd communication.")
 
-	fs.StringVar(&s.EncryptionProviderConfigFilepath, "encryption-provider-config", s.EncryptionProviderConfigFilepath,
+	fs.StringVar(&s.encryptionProviderConfigFilepath, "encryption-provider-config", s.encryptionProviderConfigFilepath,
 		"The file containing configuration for encryption providers to be used for storing secrets in etcd")
 
 	fs.DurationVar(&s.StorageConfig.CompactionInterval, "etcd-compaction-interval", s.StorageConfig.CompactionInterval,
@@ -197,13 +204,9 @@ func (s *EtcdOptions) ApplyTo(c *server.Config) error {
 	if err := s.addEtcdHealthEndpoint(c); err != nil {
 		return err
 	}
-	transformerOverrides := make(map[schema.GroupResource]value.Transformer)
-	if len(s.EncryptionProviderConfigFilepath) > 0 {
-		var err error
-		transformerOverrides, err = encryptionconfig.GetTransformerOverrides(s.EncryptionProviderConfigFilepath)
-		if err != nil {
-			return err
-		}
+	transformerOverrides, _, err := s.LoadEncryptionConfig()
+	if err != nil {
+		return err
 	}
 
 	// use the StorageObjectCountTracker interface instance from server.Config
@@ -245,15 +248,23 @@ func (s *EtcdOptions) addEtcdHealthEndpoint(c *server.Config) error {
 		return readyCheck()
 	}))
 
-	if s.EncryptionProviderConfigFilepath != "" {
-		kmsPluginHealthzChecks, err := encryptionconfig.GetKMSPluginHealthzCheckers(s.EncryptionProviderConfigFilepath)
-		if err != nil {
-			return err
-		}
-		c.AddHealthChecks(kmsPluginHealthzChecks...)
+	_, kmsPluginHealthzChecks, err := s.LoadEncryptionConfig()
+	if err != nil {
+		return err
 	}
+	c.AddHealthChecks(kmsPluginHealthzChecks...)
 
 	return nil
+}
+
+func (s *EtcdOptions) LoadEncryptionConfig() (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, error) {
+	s.encryptionProviderConfigOnce.Do(func() {
+		if len(s.encryptionProviderConfigFilepath) == 0 {
+			return
+		}
+		s.transformers, s.kmsHealthChecks, s.encryptionProviderConfigErr = encryptionconfig.LoadEncryptionConfig(s.encryptionProviderConfigFilepath)
+	})
+	return s.transformers, s.kmsHealthChecks, s.encryptionProviderConfigErr
 }
 
 type SimpleRestOptionsFactory struct {
