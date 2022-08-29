@@ -59,6 +59,15 @@ type EtcdOptions struct {
 	DefaultWatchCacheSize int
 	// WatchCacheSizes represents override to a given resource
 	WatchCacheSizes []string
+
+	// complete guards fields that must be initialized via Complete before the Apply methods can be used.
+	complete               bool
+	transformerOverrides   map[schema.GroupResource]value.Transformer
+	kmsPluginHealthzChecks []healthz.HealthChecker
+
+	// SkipHealthEndpoints, when true, causes the Apply methods to not set up health endpoints.
+	// This allows multiple invocations of the Apply methods without duplication of said endpoints.
+	SkipHealthEndpoints bool
 }
 
 var storageTypes = sets.NewString(
@@ -190,35 +199,59 @@ func (s *EtcdOptions) AddFlags(fs *pflag.FlagSet) {
 		"The time in seconds that each lease is reused. A lower value could avoid large number of objects reusing the same lease. Notice that a too small value may cause performance problems at storage layer.")
 }
 
+// Complete must be called exactly once before using any of the Apply methods.  It is responsible for setting
+// up objects that must be created once and reused across multiple invocations such as storage transformers.
+func (s *EtcdOptions) Complete(c *server.Config) error {
+	if s == nil {
+		return nil
+	}
+
+	if s.complete {
+		return fmt.Errorf("EtcdOptions.Complete called more than once")
+	}
+
+	if len(s.EncryptionProviderConfigFilepath) != 0 {
+		transformerOverrides, kmsPluginHealthzChecks, err := encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath, c.DrainedNotify())
+		if err != nil {
+			return err
+		}
+		s.transformerOverrides = transformerOverrides
+		s.kmsPluginHealthzChecks = kmsPluginHealthzChecks
+	}
+
+	s.complete = true
+
+	return nil
+}
+
 func (s *EtcdOptions) ApplyTo(c *server.Config) error {
 	if s == nil {
 		return nil
 	}
-	if err := s.addEtcdHealthEndpoint(c); err != nil {
-		return err
+
+	return s.ApplyWithStorageFactoryTo(&StorageConfigFactory{StorageConfig: s.StorageConfig}, c)
+}
+
+func (s *EtcdOptions) ApplyWithStorageFactoryTo(factory serverstorage.StorageFactory, c *server.Config) error {
+	if s == nil {
+		return nil
 	}
-	transformerOverrides := make(map[schema.GroupResource]value.Transformer)
-	if len(s.EncryptionProviderConfigFilepath) > 0 {
-		var err error
-		transformerOverrides, err = encryptionconfig.GetTransformerOverrides(s.EncryptionProviderConfigFilepath, c.DrainedNotify())
-		if err != nil {
+
+	if !s.complete {
+		return fmt.Errorf("EtcdOptions.Apply called without completion")
+	}
+
+	if !s.SkipHealthEndpoints {
+		if err := s.addEtcdHealthEndpoint(c); err != nil {
 			return err
 		}
 	}
 
-	// use the StorageObjectCountTracker interface instance from server.Config
-	s.StorageConfig.StorageObjectCountTracker = c.StorageObjectCountTracker
-
-	c.RESTOptionsGetter = &SimpleRestOptionsFactory{
-		Options:              *s,
-		TransformerOverrides: transformerOverrides,
-	}
-	return nil
-}
-
-func (s *EtcdOptions) ApplyWithStorageFactoryTo(factory serverstorage.StorageFactory, c *server.Config) error {
-	if err := s.addEtcdHealthEndpoint(c); err != nil {
-		return err
+	if len(s.transformerOverrides) > 0 {
+		factory = &transformerStorageFactory{
+			delegate:             factory,
+			transformerOverrides: s.transformerOverrides,
+		}
 	}
 
 	// use the StorageObjectCountTracker interface instance from server.Config
@@ -245,55 +278,9 @@ func (s *EtcdOptions) addEtcdHealthEndpoint(c *server.Config) error {
 		return readyCheck()
 	}))
 
-	if s.EncryptionProviderConfigFilepath != "" {
-		kmsPluginHealthzChecks, err := encryptionconfig.GetKMSPluginHealthzCheckers(s.EncryptionProviderConfigFilepath, c.DrainedNotify())
-		if err != nil {
-			return err
-		}
-		c.AddHealthChecks(kmsPluginHealthzChecks...)
-	}
+	c.AddHealthChecks(s.kmsPluginHealthzChecks...)
 
 	return nil
-}
-
-type SimpleRestOptionsFactory struct {
-	Options              EtcdOptions
-	TransformerOverrides map[schema.GroupResource]value.Transformer
-}
-
-func (f *SimpleRestOptionsFactory) GetRESTOptions(resource schema.GroupResource) (generic.RESTOptions, error) {
-	ret := generic.RESTOptions{
-		StorageConfig:             f.Options.StorageConfig.ForResource(resource),
-		Decorator:                 generic.UndecoratedStorage,
-		EnableGarbageCollection:   f.Options.EnableGarbageCollection,
-		DeleteCollectionWorkers:   f.Options.DeleteCollectionWorkers,
-		ResourcePrefix:            resource.Group + "/" + resource.Resource,
-		CountMetricPollPeriod:     f.Options.StorageConfig.CountMetricPollPeriod,
-		StorageObjectCountTracker: f.Options.StorageConfig.StorageObjectCountTracker,
-	}
-	if f.TransformerOverrides != nil {
-		if transformer, ok := f.TransformerOverrides[resource]; ok {
-			ret.StorageConfig.Transformer = transformer
-		}
-	}
-	if f.Options.EnableWatchCache {
-		sizes, err := ParseWatchCacheSizes(f.Options.WatchCacheSizes)
-		if err != nil {
-			return generic.RESTOptions{}, err
-		}
-		size, ok := sizes[resource]
-		if ok && size > 0 {
-			klog.Warningf("Dropping watch-cache-size for %v - watchCache size is now dynamic", resource)
-		}
-		if ok && size <= 0 {
-			klog.V(3).InfoS("Not using watch cache", "resource", resource)
-			ret.Decorator = generic.UndecoratedStorage
-		} else {
-			klog.V(3).InfoS("Using watch cache", "resource", resource)
-			ret.Decorator = genericregistry.StorageWithCacher()
-		}
-	}
-	return ret, nil
 }
 
 type StorageFactoryRestOptionsFactory struct {
@@ -316,6 +303,7 @@ func (f *StorageFactoryRestOptionsFactory) GetRESTOptions(resource schema.GroupR
 		CountMetricPollPeriod:     f.Options.StorageConfig.CountMetricPollPeriod,
 		StorageObjectCountTracker: f.Options.StorageConfig.StorageObjectCountTracker,
 	}
+
 	if f.Options.EnableWatchCache {
 		sizes, err := ParseWatchCacheSizes(f.Options.WatchCacheSizes)
 		if err != nil {
@@ -326,8 +314,10 @@ func (f *StorageFactoryRestOptionsFactory) GetRESTOptions(resource schema.GroupR
 			klog.Warningf("Dropping watch-cache-size for %v - watchCache size is now dynamic", resource)
 		}
 		if ok && size <= 0 {
+			klog.V(3).InfoS("Not using watch cache", "resource", resource)
 			ret.Decorator = generic.UndecoratedStorage
 		} else {
+			klog.V(3).InfoS("Using watch cache", "resource", resource)
 			ret.Decorator = genericregistry.StorageWithCacher()
 		}
 	}
@@ -368,4 +358,57 @@ func WriteWatchCacheSizes(watchCacheSizes map[schema.GroupResource]int) ([]strin
 		cacheSizes = append(cacheSizes, fmt.Sprintf("%s#%d", resource.String(), size))
 	}
 	return cacheSizes, nil
+}
+
+var _ serverstorage.StorageFactory = &StorageConfigFactory{}
+
+type StorageConfigFactory struct {
+	StorageConfig storagebackend.Config
+}
+
+func (s *StorageConfigFactory) NewConfig(resource schema.GroupResource) (*storagebackend.ConfigForResource, error) {
+	return s.StorageConfig.ForResource(resource), nil
+}
+
+func (s *StorageConfigFactory) ResourcePrefix(resource schema.GroupResource) string {
+	return resource.Group + "/" + resource.Resource
+}
+
+func (s *StorageConfigFactory) Backends() []serverstorage.Backend {
+	// nothing should ever call this method but we still provide a functional implementation
+	return (&serverstorage.DefaultStorageFactory{StorageConfig: s.StorageConfig}).Backends()
+}
+
+var _ serverstorage.StorageFactory = &transformerStorageFactory{}
+
+type transformerStorageFactory struct {
+	delegate             serverstorage.StorageFactory
+	transformerOverrides map[schema.GroupResource]value.Transformer
+}
+
+func (t *transformerStorageFactory) NewConfig(resource schema.GroupResource) (*storagebackend.ConfigForResource, error) {
+	config, err := t.delegate.NewConfig(resource)
+	if err != nil {
+		return nil, err
+	}
+
+	transformer, ok := t.transformerOverrides[resource]
+	if !ok {
+		return config, nil
+	}
+
+	configCopy := *config
+	resourceConfig := configCopy.Config
+	resourceConfig.Transformer = transformer
+	configCopy.Config = resourceConfig
+
+	return &configCopy, nil
+}
+
+func (t *transformerStorageFactory) ResourcePrefix(resource schema.GroupResource) string {
+	return t.delegate.ResourcePrefix(resource)
+}
+
+func (t *transformerStorageFactory) Backends() []serverstorage.Backend {
+	return t.delegate.Backends()
 }

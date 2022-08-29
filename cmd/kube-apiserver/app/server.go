@@ -399,12 +399,7 @@ func buildGenericConfig(
 
 	storageFactoryConfig := kubeapiserver.NewStorageFactoryConfig()
 	storageFactoryConfig.APIResourceConfig = genericConfig.MergedResourceConfig
-	completedStorageFactoryConfig, err := storageFactoryConfig.Complete(s.Etcd)
-	if err != nil {
-		lastErr = err
-		return
-	}
-	storageFactory, lastErr = completedStorageFactoryConfig.New(genericConfig.DrainedNotify())
+	storageFactory, lastErr = storageFactoryConfig.Complete(s.Etcd).New()
 	if lastErr != nil {
 		return
 	}
@@ -415,6 +410,9 @@ func buildGenericConfig(
 		storageFactory.StorageConfig.Transport.TracerProvider = genericConfig.TracerProvider
 	} else {
 		storageFactory.StorageConfig.Transport.TracerProvider = oteltrace.NewNoopTracerProvider()
+	}
+	if lastErr = s.Etcd.Complete(genericConfig); lastErr != nil {
+		return
 	}
 	if lastErr = s.Etcd.ApplyWithStorageFactoryTo(storageFactory, genericConfig); lastErr != nil {
 		return
