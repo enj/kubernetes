@@ -347,7 +347,7 @@ func TestKMSPluginHealthz(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.desc, func(t *testing.T) {
-			got, err := getKMSPluginProbes(mustConfigReader(t, tt.config))
+			got, err, _, _ := getKMSPluginProbes(mustConfigReader(t, tt.config))
 			if err != nil && !tt.wantErr {
 				t.Fatalf("got %v, want nil for error", err)
 			}
