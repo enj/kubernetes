@@ -22,7 +22,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"reflect"
 	"testing"
 )
 
@@ -69,12 +68,15 @@ func TestTLSConfigKey(t *testing.T) {
 
 	// Make sure config fields that affect the tls config affect the cache key
 	dialer := net.Dialer{}
-	getCert := &CertHolder{F: func() (*tls.Certificate, error) { return nil, nil }}
+	getCert := func() (*tls.Certificate, error) { return nil, nil }
+	getCertHolder := &GetCertHolder{GetCert: getCert}
 	uniqueConfigurations := map[string]*Config{
 		"proxy":    {Proxy: func(request *http.Request) (*url.URL, error) { return nil, nil }},
 		"no tls":   {},
-		"dialer":   {Dial: &DialHolder{F: dialer.DialContext}},
-		"dialer2":  {Dial: &DialHolder{F: func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil }}},
+		"dialer":   {Dial: dialer.DialContext},
+		"dialer2":  {Dial: func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil }},
+		"dialer3":  {Dial: dialer.DialContext, DialHolder: &DialHolder{Dial: dialer.DialContext}},
+		"dialer4":  {Dial: func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil }, DialHolder: &DialHolder{Dial: func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil }}},
 		"insecure": {TLS: TLSConfig{Insecure: true}},
 		"cadata 1": {TLS: TLSConfig{CAData: []byte{1}}},
 		"cadata 2": {TLS: TLSConfig{CAData: []byte{2}}},
@@ -132,7 +134,14 @@ func TestTLSConfigKey(t *testing.T) {
 		"getCert2": {
 			TLS: TLSConfig{
 				KeyData: []byte{1},
-				GetCert: &CertHolder{F: func() (*tls.Certificate, error) { return nil, nil }},
+				GetCert: func() (*tls.Certificate, error) { return nil, nil },
+			},
+		},
+		"getCert3": {
+			TLS: TLSConfig{
+				KeyData:       []byte{1},
+				GetCert:       getCert,
+				GetCertHolder: getCertHolder,
 			},
 		},
 		"getCert1, key 2": {
@@ -154,17 +163,6 @@ func TestTLSConfigKey(t *testing.T) {
 			keyB, canCacheB, err := tlsConfigKey(valueB)
 			if err != nil {
 				t.Errorf("Unexpected error for %q: %v", nameB, err)
-				continue
-			}
-
-			shouldCacheA := valueA.Proxy == nil
-			if shouldCacheA != canCacheA {
-				t.Errorf("Unexpected canCache=false for " + nameA)
-			}
-
-			configIsNotEmpty := !reflect.DeepEqual(*valueA, Config{})
-			if keyA == (tlsCacheKey{}) && shouldCacheA && configIsNotEmpty {
-				t.Errorf("Expected non-empty cache keys for %q and %q, got:\n\t%s\n\t%s", nameA, nameB, keyA, keyB)
 				continue
 			}
 
