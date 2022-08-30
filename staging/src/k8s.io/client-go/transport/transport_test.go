@@ -209,11 +209,9 @@ func TestNew(t *testing.T) {
 			Config: &Config{
 				TLS: TLSConfig{
 					CAData: []byte(rootCACert),
-					GetCert: &CertHolder{
-						F: func() (*tls.Certificate, error) {
-							crt, err := tls.X509KeyPair([]byte(certData), []byte(keyData))
-							return &crt, err
-						},
+					GetCert: func() (*tls.Certificate, error) {
+						crt, err := tls.X509KeyPair([]byte(certData), []byte(keyData))
+						return &crt, err
 					},
 				},
 			},
@@ -225,10 +223,8 @@ func TestNew(t *testing.T) {
 			Config: &Config{
 				TLS: TLSConfig{
 					CAData: []byte(rootCACert),
-					GetCert: &CertHolder{
-						F: func() (*tls.Certificate, error) {
-							return nil, errors.New("GetCert failure")
-						},
+					GetCert: func() (*tls.Certificate, error) {
+						return nil, errors.New("GetCert failure")
 					},
 				},
 			},
@@ -239,10 +235,8 @@ func TestNew(t *testing.T) {
 			Config: &Config{
 				TLS: TLSConfig{
 					CAData: []byte(rootCACert),
-					GetCert: &CertHolder{
-						F: func() (*tls.Certificate, error) {
-							return nil, nil
-						},
+					GetCert: func() (*tls.Certificate, error) {
+						return nil, nil
 					},
 					CertData: []byte(certData),
 					KeyData:  []byte(keyData),
@@ -255,10 +249,8 @@ func TestNew(t *testing.T) {
 			Config: &Config{
 				TLS: TLSConfig{
 					CAData: []byte(rootCACert),
-					GetCert: &CertHolder{
-						F: func() (*tls.Certificate, error) {
-							return nil, nil
-						},
+					GetCert: func() (*tls.Certificate, error) {
+						return nil, nil
 					},
 				},
 			},
