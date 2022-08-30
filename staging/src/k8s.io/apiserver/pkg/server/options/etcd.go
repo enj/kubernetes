@@ -60,8 +60,8 @@ type EtcdOptions struct {
 	// WatchCacheSizes represents override to a given resource
 	WatchCacheSizes []string
 
-	// TODO comment about being private
-	encryptionProviderConfigFilepath string
+	// TODO comment about correct use
+	EncryptionProviderConfigFilepath string
 	encryptionProviderConfigOnce     *sync.Once
 	encryptionProviderConfigErr      error
 	transformers                     map[schema.GroupResource]value.Transformer
@@ -74,12 +74,13 @@ var storageTypes = sets.NewString(
 
 func NewEtcdOptions(backendConfig *storagebackend.Config) *EtcdOptions {
 	options := &EtcdOptions{
-		StorageConfig:           *backendConfig,
-		DefaultStorageMediaType: "application/json",
-		DeleteCollectionWorkers: 1,
-		EnableGarbageCollection: true,
-		EnableWatchCache:        true,
-		DefaultWatchCacheSize:   100,
+		StorageConfig:                *backendConfig,
+		DefaultStorageMediaType:      "application/json",
+		DeleteCollectionWorkers:      1,
+		EnableGarbageCollection:      true,
+		EnableWatchCache:             true,
+		DefaultWatchCacheSize:        100,
+		encryptionProviderConfigOnce: &sync.Once{},
 	}
 	options.StorageConfig.CountMetricPollPeriod = time.Minute
 	return options
@@ -175,7 +176,7 @@ func (s *EtcdOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&s.StorageConfig.Transport.TrustedCAFile, "etcd-cafile", s.StorageConfig.Transport.TrustedCAFile,
 		"SSL Certificate Authority file used to secure etcd communication.")
 
-	fs.StringVar(&s.encryptionProviderConfigFilepath, "encryption-provider-config", s.encryptionProviderConfigFilepath,
+	fs.StringVar(&s.EncryptionProviderConfigFilepath, "encryption-provider-config", s.EncryptionProviderConfigFilepath,
 		"The file containing configuration for encryption providers to be used for storing secrets in etcd")
 
 	fs.DurationVar(&s.StorageConfig.CompactionInterval, "etcd-compaction-interval", s.StorageConfig.CompactionInterval,
@@ -259,10 +260,10 @@ func (s *EtcdOptions) addEtcdHealthEndpoint(c *server.Config) error {
 
 func (s *EtcdOptions) LoadEncryptionConfig() (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, error) {
 	s.encryptionProviderConfigOnce.Do(func() {
-		if len(s.encryptionProviderConfigFilepath) == 0 {
+		if len(s.EncryptionProviderConfigFilepath) == 0 {
 			return
 		}
-		s.transformers, s.kmsHealthChecks, s.encryptionProviderConfigErr = encryptionconfig.LoadEncryptionConfig(s.encryptionProviderConfigFilepath)
+		s.transformers, s.kmsHealthChecks, s.encryptionProviderConfigErr = encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath)
 	})
 	return s.transformers, s.kmsHealthChecks, s.encryptionProviderConfigErr
 }
