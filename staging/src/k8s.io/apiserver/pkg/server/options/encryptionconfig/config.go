@@ -81,11 +81,11 @@ type kmsv2PluginProbe struct {
 	l            *sync.Mutex
 }
 
-type KeyIDGetter func(context.Context) (keyID string, err error)
+type keyIDGetterFunc func(context.Context) (keyID string, err error)
 
 func (h *kmsPluginProbe) toHealthzCheck(idx int) healthz.HealthChecker {
 	return healthz.NamedCheck(fmt.Sprintf("kms-provider-%d", idx), func(r *http.Request) error {
-		return h.Check()
+		return h.check()
 	})
 }
 
@@ -95,6 +95,14 @@ func (p *kmsv2PluginProbe) toHealthzCheck(idx int) healthz.HealthChecker {
 		return err
 	})
 }
+
+var (
+	// The factory to create kms service. This is to make writing test easier.
+	envelopeServiceFactory = envelope.NewGRPCService
+
+	// The factory to create kmsv2 service.
+	envelopeKMSv2ServiceFactory = envelopekmsv2.NewGRPCService
+)
 
 func LoadEncryptionConfig(filepath string) (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, error) {
 	config, err := loadConfig(filepath)
@@ -118,7 +126,7 @@ func LoadEncryptionConfig(filepath string) (map[schema.GroupResource]value.Trans
 // getKMSPluginHealthzCheckers extracts KMSPluginProbes from the EncryptionConfig.
 func getKMSPluginHealthzCheckers(config *apiserverconfig.EncryptionConfiguration) (
 	[]healthz.HealthChecker,
-	map[string]KeyIDGetter,
+	map[string]keyIDGetterFunc,
 	map[string]envelope.Service,
 	map[string]envelopekmsv2.Service,
 	error,
@@ -142,14 +150,14 @@ type healthChecker interface {
 
 func getKMSPluginProbes(config *apiserverconfig.EncryptionConfiguration) (
 	[]healthChecker,
-	map[string]KeyIDGetter,
+	map[string]keyIDGetterFunc,
 	map[string]envelope.Service,
 	map[string]envelopekmsv2.Service,
 	error,
 ) {
 	var result []healthChecker
 
-	keyIDGetters := map[string]KeyIDGetter{}
+	keyIDGetters := map[string]keyIDGetterFunc{}
 	v1Services := map[string]envelope.Service{}
 	v2Services := map[string]envelopekmsv2.Service{}
 	for _, r := range config.Resources {
@@ -172,7 +180,7 @@ func getKMSPluginProbes(config *apiserverconfig.EncryptionConfiguration) (
 
 			switch p.KMS.APIVersion {
 			case kmsAPIVersionV1:
-				s, err := envelope.NewGRPCService(p.KMS.Endpoint, p.KMS.Timeout.Duration)
+				s, err := envelopeServiceFactory(p.KMS.Endpoint, p.KMS.Timeout.Duration)
 				if err != nil {
 					return nil, nil, nil, nil, fmt.Errorf("could not configure KMSv1-Plugin's probe %q, error: %v", kmsName, err)
 				}
@@ -191,7 +199,7 @@ func getKMSPluginProbes(config *apiserverconfig.EncryptionConfiguration) (
 					return nil, nil, nil, nil, fmt.Errorf("could not configure KMSv2-Plugin's probe %q, KMSv2 feature is not enabled", kmsName)
 				}
 
-				s, err := envelopekmsv2.NewGRPCService(p.KMS.Endpoint, p.KMS.Timeout.Duration)
+				s, err := envelopeKMSv2ServiceFactory(p.KMS.Endpoint, p.KMS.Timeout.Duration)
 				if err != nil {
 					return nil, nil, nil, nil, fmt.Errorf("could not configure KMSv2-Plugin's probe %q, error: %v", kmsName, err)
 				}
@@ -217,7 +225,7 @@ func getKMSPluginProbes(config *apiserverconfig.EncryptionConfiguration) (
 }
 
 // Check encrypts and decrypts test data against KMS-Plugin's gRPC endpoint.
-func (h *kmsPluginProbe) Check() error {
+func (h *kmsPluginProbe) check() error {
 	h.l.Lock()
 	defer h.l.Unlock()
 
@@ -292,7 +300,7 @@ func isKMSv2ProviderHealthy(name string, response *envelopekmsv2.StatusResponse)
 // getTransformerOverrides returns the transformer overrides by reading and parsing the encryption provider configuration file
 func getTransformerOverrides(
 	config *apiserverconfig.EncryptionConfiguration,
-	keyIDGetters map[string]KeyIDGetter,
+	keyIDGetters map[string]keyIDGetterFunc,
 	v1Services map[string]envelope.Service, v2Services map[string]envelopekmsv2.Service,
 ) (map[schema.GroupResource]value.Transformer, error) {
 	resourceToPrefixTransformer := map[schema.GroupResource][]value.PrefixTransformer{}
@@ -356,7 +364,7 @@ func loadConfig(filepath string) (*apiserverconfig.EncryptionConfiguration, erro
 
 func prefixTransformers(
 	config apiserverconfig.ResourceConfiguration,
-	keyIDGetters map[string]KeyIDGetter,
+	keyIDGetters map[string]keyIDGetterFunc,
 	v1Services map[string]envelope.Service,
 	v2Services map[string]envelopekmsv2.Service,
 ) ([]value.PrefixTransformer, error) {
@@ -542,9 +550,9 @@ func envelopePrefixTransformer(config *apiserverconfig.KMSConfiguration, envelop
 	}, nil
 }
 
-func envelopekmsv2PrefixTransformer(config *apiserverconfig.KMSConfiguration, keyIDGetter KeyIDGetter, envelopeService envelopekmsv2.Service, prefix string) (value.PrefixTransformer, error) {
+func envelopekmsv2PrefixTransformer(config *apiserverconfig.KMSConfiguration, keyIDGetter keyIDGetterFunc, envelopeService envelopekmsv2.Service, prefix string) (value.PrefixTransformer, error) {
 	// using AES-GCM by default for encrypting data with KMSv2
-	envelopeTransformer, err := envelopekmsv2.NewEnvelopeTransformer(envelopeService, keyIDGetter, int(*config.CacheSize), aestransformer.NewGCMTransformer)
+	envelopeTransformer, err := envelopekmsv2.NewEnvelopeTransformer(envelopeService, envelopekmsv2.KeyIDGetterFunc(keyIDGetter), int(*config.CacheSize), aestransformer.NewGCMTransformer)
 	if err != nil {
 		return value.PrefixTransformer{}, err
 	}

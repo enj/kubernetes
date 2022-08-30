@@ -28,7 +28,6 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"k8s.io/apimachinery/pkg/util/uuid"
-	"k8s.io/apiserver/pkg/server/options/encryptionconfig"
 	"k8s.io/apiserver/pkg/storage/value"
 	kmstypes "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2/v2alpha1"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope/metrics"
@@ -51,10 +50,12 @@ type Service interface {
 	Status(ctx context.Context) (*StatusResponse, error)
 }
 
+type KeyIDGetterFunc func(context.Context) (keyID string, err error)
+
 type envelopeTransformer struct {
 	envelopeService Service
 
-	keyIDGetter encryptionconfig.KeyIDGetter
+	keyIDGetter KeyIDGetterFunc
 
 	// transformers is a thread-safe LRU cache which caches decrypted DEKs indexed by their encrypted form.
 	transformers *lru.Cache
@@ -91,7 +92,7 @@ type StatusResponse struct {
 // It uses envelopeService to encrypt and decrypt DEKs. Respective DEKs (in encrypted form) are prepended to
 // the data items they encrypt. A cache (of size cacheSize) is maintained to store the most recently
 // used decrypted DEKs in memory.
-func NewEnvelopeTransformer(envelopeService Service, keyIDGetter encryptionconfig.KeyIDGetter, cacheSize int, baseTransformerFunc func(cipher.Block) value.Transformer) (value.Transformer, error) {
+func NewEnvelopeTransformer(envelopeService Service, keyIDGetter KeyIDGetterFunc, cacheSize int, baseTransformerFunc func(cipher.Block) value.Transformer) (value.Transformer, error) {
 	var cache *lru.Cache
 
 	if cacheSize > 0 {
