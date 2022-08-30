@@ -1005,7 +1005,7 @@ func TestAuthorizationHeaderPresentCancelsExecAction(t *testing.T) {
 			cert := func() (*tls.Certificate, error) {
 				return nil, nil
 			}
-			tc := &transport.Config{TLS: transport.TLSConfig{Insecure: true, GetCert: &transport.CertHolder{F: cert}}}
+			tc := &transport.Config{TLS: transport.TLSConfig{Insecure: true, GetCert: cert}}
 			test.setTransportConfig(tc)
 
 			if err := a.UpdateTransportConfig(tc); err != nil {
