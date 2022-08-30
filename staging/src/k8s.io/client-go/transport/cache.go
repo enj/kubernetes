@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -57,7 +58,7 @@ type tlsCacheKey struct {
 	nextProtos         string
 	disableCompression bool
 	// these functions are wrapped to allow them to be used as map keys
-	getCert *CertHolder
+	getCert *GetCertHolder
 	dial    *DialHolder
 }
 
@@ -98,7 +99,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 
 	var dial func(ctx context.Context, network, address string) (net.Conn, error)
 	if config.Dial != nil {
-		dial = config.Dial.F
+		dial = config.Dial
 	} else {
 		dial = (&net.Dialer{
 			Timeout:   30 * time.Second,
@@ -148,6 +149,14 @@ func tlsConfigKey(c *Config) (tlsCacheKey, bool, error) {
 		// cannot determine equality for functions
 		return tlsCacheKey{}, false, nil
 	}
+	if c.Dial != nil && (c.DialHolder == nil || c.DialHolder.Dial == nil || reflect.ValueOf(c.DialHolder.Dial).Pointer() != reflect.ValueOf(c.Dial).Pointer()) {
+		// cannot determine equality for dial function that doesn't have non-nil DialHolder set as well
+		return tlsCacheKey{}, false, nil
+	}
+	if c.TLS.GetCert != nil && (c.TLS.GetCertHolder == nil || c.TLS.GetCertHolder.GetCert == nil || reflect.ValueOf(c.TLS.GetCertHolder.GetCert).Pointer() != reflect.ValueOf(c.TLS.GetCert).Pointer()) {
+		// cannot determine equality for getCert function that doesn't have non-nil GetCertHolder set as well
+		return tlsCacheKey{}, false, nil
+	}
 
 	k := tlsCacheKey{
 		insecure:           c.TLS.Insecure,
@@ -155,8 +164,8 @@ func tlsConfigKey(c *Config) (tlsCacheKey, bool, error) {
 		serverName:         c.TLS.ServerName,
 		nextProtos:         strings.Join(c.TLS.NextProtos, ","),
 		disableCompression: c.DisableCompression,
-		getCert:            c.TLS.GetCert,
-		dial:               c.Dial,
+		getCert:            c.TLS.GetCertHolder,
+		dial:               c.DialHolder,
 	}
 
 	if c.TLS.ReloadTLSFiles {
