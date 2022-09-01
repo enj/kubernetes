@@ -277,31 +277,32 @@ type EncryptionState struct {
 
 	Spec EncryptionStateSpec `json:"spec" protobuf:"bytes,2,opt,name=spec"`
 
-	Status EncryptionStateStatus `json:"status,omitempty" protobuf:"bytes,3,opt,name=status"`
+	Status EncryptionStateStatus `json:"status" protobuf:"bytes,3,opt,name=status"`
 }
 
 // spec is empty
 type EncryptionStateSpec struct{}
 
 type EncryptionStateStatus struct {
-	EncryptionConfigurationHash            string
-	EncryptionConfigurationHashLastUpdated metav1.Time
+	EncryptionConfigurationHash Hash `json:"encryptionConfigurationHash" protobuf:"bytes,1,opt,name=encryptionConfigurationHash"`
 
-	Resources []EncryptionStateResource
+	Resources []EncryptionStateResource `json:"resources" protobuf:"bytes,2,opt,name=resources"`
 }
 
 type EncryptionStateResource struct {
-	Resource schema.GroupResource
+	Resource metav1.GroupResource `json:"resource" protobuf:"bytes,1,opt,name=resource"`
 
-	WriteKeyIDHash            string
-	WriteKeyIDHashLastUpdated metav1.Time
+	WriteKeyIDHash Hash `json:"writeKeyIDHash" protobuf:"bytes,2,opt,name=writeKeyIDHash"`
 
-	ReadKeyIDHashes            []string
-	ReadKeyIDHashesLastUpdated metav1.Time
+	ReadKeyIDHashes []Hash `json:"readKeyIDHashes" protobuf:"bytes,3,opt,name=readKeyIDHashes"`
 
 	// this is a bit wierd to be per API server since it would be based on etcd scans
-	InUseKeyIDHashes            []string
-	InUseKeyIDHashesLastUpdated metav1.Time
+	InUseKeyIDHashes []Hash `json:"inUseKeyIDHashes" protobuf:"bytes,4,opt,name=inUseKeyIDHashes"`
+}
+
+type Hash struct {
+	Value       string      `json:"value" protobuf:"bytes,1,opt,name=value"`
+	LastUpdated metav1.Time `json:"lastUpdated" protobuf:"bytes,2,opt,name=lastUpdated"`
 }
 
 func parseEncryptionConfiguration(f io.Reader) (map[schema.GroupResource]value.Transformer, error) {
