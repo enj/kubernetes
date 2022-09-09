@@ -73,10 +73,8 @@ func TestTLSConfigKey(t *testing.T) {
 	uniqueConfigurations := map[string]*Config{
 		"proxy":    {Proxy: func(request *http.Request) (*url.URL, error) { return nil, nil }},
 		"no tls":   {},
-		"dialer":   {Dial: dialer.DialContext},
-		"dialer2":  {Dial: func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil }},
-		"dialer3":  {Dial: dialer.DialContext, DialHolder: &DialHolder{Dial: dialer.DialContext}},
-		"dialer4":  {Dial: func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil }, DialHolder: &DialHolder{Dial: func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil }}},
+		"dialer":   {DialHolder: &DialHolder{Dial: dialer.DialContext}},
+		"dialer2":  {DialHolder: &DialHolder{Dial: func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil }}},
 		"insecure": {TLS: TLSConfig{Insecure: true}},
 		"cadata 1": {TLS: TLSConfig{CAData: []byte{1}}},
 		"cadata 2": {TLS: TLSConfig{CAData: []byte{2}}},
