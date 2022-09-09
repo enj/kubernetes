@@ -274,10 +274,10 @@ func TestNew(t *testing.T) {
 		"nil holders and nil regular": {
 			Config: &Config{
 				TLS: TLSConfig{
-					GetCert:       nil,
+					// GetCert:       nil,
 					GetCertHolder: nil,
 				},
-				Dial:       nil,
+				// Dial:       nil,
 				DialHolder: nil,
 			},
 			Err:          false,
@@ -291,10 +291,10 @@ func TestNew(t *testing.T) {
 		"nil holders and non-nil regular get cert": {
 			Config: &Config{
 				TLS: TLSConfig{
-					GetCert:       func() (*tls.Certificate, error) { return nil, nil },
+					// GetCert:       func() (*tls.Certificate, error) { return nil, nil },
 					GetCertHolder: nil,
 				},
-				Dial:       nil,
+				// Dial:       nil,
 				DialHolder: nil,
 			},
 			Err:          false,
@@ -308,10 +308,10 @@ func TestNew(t *testing.T) {
 		"nil holders and non-nil regular dial": {
 			Config: &Config{
 				TLS: TLSConfig{
-					GetCert:       nil,
+					// GetCert:       nil,
 					GetCertHolder: nil,
 				},
-				Dial:       func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil },
+				// Dial:       func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil },
 				DialHolder: nil,
 			},
 			Err:          false,
@@ -325,10 +325,10 @@ func TestNew(t *testing.T) {
 		"non-nil dial holder and nil regular": {
 			Config: &Config{
 				TLS: TLSConfig{
-					GetCert:       nil,
+					// GetCert:       nil,
 					GetCertHolder: nil,
 				},
-				Dial:       nil,
+				// Dial:       nil,
 				DialHolder: &DialHolder{},
 			},
 			Err: true,
@@ -336,10 +336,10 @@ func TestNew(t *testing.T) {
 		"non-nil cert holder and nil regular": {
 			Config: &Config{
 				TLS: TLSConfig{
-					GetCert:       nil,
+					// GetCert:       nil,
 					GetCertHolder: &GetCertHolder{},
 				},
-				Dial:       nil,
+				// Dial:       nil,
 				DialHolder: nil,
 			},
 			Err: true,
@@ -347,10 +347,10 @@ func TestNew(t *testing.T) {
 		"non-nil dial holder and non-nil regular": {
 			Config: &Config{
 				TLS: TLSConfig{
-					GetCert:       nil,
+					// GetCert:       nil,
 					GetCertHolder: nil,
 				},
-				Dial:       func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil },
+				// Dial:       func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil },
 				DialHolder: &DialHolder{},
 			},
 			Err: true,
@@ -358,10 +358,10 @@ func TestNew(t *testing.T) {
 		"non-nil cert holder and non-nil regular": {
 			Config: &Config{
 				TLS: TLSConfig{
-					GetCert:       func() (*tls.Certificate, error) { return nil, nil },
+					// GetCert:       func() (*tls.Certificate, error) { return nil, nil },
 					GetCertHolder: &GetCertHolder{},
 				},
-				Dial:       nil,
+				// Dial:       nil,
 				DialHolder: nil,
 			},
 			Err: true,
@@ -369,10 +369,10 @@ func TestNew(t *testing.T) {
 		"non-nil dial holder+internal and non-nil regular": {
 			Config: &Config{
 				TLS: TLSConfig{
-					GetCert:       nil,
+					// GetCert:       nil,
 					GetCertHolder: nil,
 				},
-				Dial: func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil },
+				// Dial: func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil },
 				DialHolder: &DialHolder{
 					Dial: func(ctx context.Context, network, address string) (net.Conn, error) { return nil, nil },
 				},
@@ -382,12 +382,12 @@ func TestNew(t *testing.T) {
 		"non-nil cert holder+internal and non-nil regular": {
 			Config: &Config{
 				TLS: TLSConfig{
-					GetCert: func() (*tls.Certificate, error) { return nil, nil },
+					// GetCert: func() (*tls.Certificate, error) { return nil, nil },
 					GetCertHolder: &GetCertHolder{
 						GetCert: func() (*tls.Certificate, error) { return nil, nil },
 					},
 				},
-				Dial:       nil,
+				// Dial:       nil,
 				DialHolder: nil,
 			},
 			Err: true,
@@ -395,10 +395,10 @@ func TestNew(t *testing.T) {
 		"non-nil holders+internal and non-nil regular with correct address": {
 			Config: &Config{
 				TLS: TLSConfig{
-					GetCert:       globalGetCert.GetCert,
+					// GetCert:       globalGetCert.GetCert,
 					GetCertHolder: globalGetCert,
 				},
-				Dial:       globalDial.Dial,
+				// Dial:       globalDial.Dial,
 				DialHolder: globalDial,
 			},
 			Err:          false,
