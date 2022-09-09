@@ -127,8 +127,8 @@ func TestTLSConfigKey(t *testing.T) {
 		},
 		"getCert1": {
 			TLS: TLSConfig{
-				KeyData: []byte{1},
-				GetCert: getCert,
+				KeyData:       []byte{1},
+				GetCertHolder: getCert,
 			},
 		},
 		"getCert2": {
@@ -146,8 +146,8 @@ func TestTLSConfigKey(t *testing.T) {
 		},
 		"getCert1, key 2": {
 			TLS: TLSConfig{
-				KeyData: []byte{2},
-				GetCert: getCert,
+				KeyData:       []byte{2},
+				GetCertHolder: getCert,
 			},
 		},
 		"http2, http1.1": {TLS: TLSConfig{NextProtos: []string{"h2", "http/1.1"}}},
