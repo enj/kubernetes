@@ -308,17 +308,14 @@ func (a *Authenticator) UpdateTransportConfig(c *transport.Config) error {
 	if c.HasCertCallback() {
 		return errors.New("can't add TLS certificate callback: transport.Config.TLS.GetCert already set")
 	}
-	c.TLS.GetCert = a.getCert.GetCert
 	c.TLS.GetCertHolder = a.getCert // comparable for TLS config caching
 
-	if c.Dial != nil {
+	if c.DialHolder != nil {
 		// if c has a custom dialer, we have to wrap it
 		// TLS config caching is not supported for this config
-		d := connrotation.NewDialerWithTracker(c.Dial, a.connTracker)
-		c.Dial = d.DialContext
-		c.DialHolder = nil
+		d := connrotation.NewDialerWithTracker(c.DialHolder.Dial, a.connTracker)
+		c.DialHolder = &transport.DialHolder{Dial: d.DialContext}
 	} else {
-		c.Dial = a.dial.Dial
 		c.DialHolder = a.dial // comparable for TLS config caching
 	}
 
