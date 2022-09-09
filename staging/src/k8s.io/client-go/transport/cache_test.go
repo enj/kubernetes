@@ -133,15 +133,8 @@ func TestTLSConfigKey(t *testing.T) {
 		},
 		"getCert2": {
 			TLS: TLSConfig{
-				KeyData: []byte{1},
-				GetCert: func() (*tls.Certificate, error) { return nil, nil },
-			},
-		},
-		"getCert3": {
-			TLS: TLSConfig{
 				KeyData:       []byte{1},
-				GetCert:       getCert,
-				GetCertHolder: getCertHolder,
+				GetCertHolder: &GetCertHolder{GetCert: func() (*tls.Certificate, error) { return nil, nil }},
 			},
 		},
 		"getCert1, key 2": {
