@@ -86,7 +86,7 @@ func (c *dynamicClientCert) loadClientCert() (*tls.Certificate, error) {
 	}
 
 	klog.V(1).Infof("certificate rotation detected, shutting down client connections to start using new credentials")
-	c.connDialer.CloseAll()
+	c.connDialer.CloseAllTLS()
 
 	return cert, nil
 }

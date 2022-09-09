@@ -25,6 +25,8 @@ import (
 	"context"
 	"net"
 	"sync"
+
+	"k8s.io/client-go/transport"
 )
 
 // DialFunc is a shorthand for signature of net.DialContext.
@@ -71,17 +73,15 @@ func NewConnectionTracker() *ConnectionTracker {
 	}
 }
 
-// CloseAll forcibly closes all tracked connections.
+// CloseAllTLS forcibly closes all tracked connections.
 //
-// Note: new connections may get created before CloseAll returns.
-func (c *ConnectionTracker) CloseAll() {
+// Note: new connections may get created before CloseAllTLS returns.
+func (c *ConnectionTracker) CloseAllTLS() {
 	c.mu.Lock()
-	conns := c.conns
-	c.conns = make(map[*closableConn]struct{})
-	c.mu.Unlock()
+	defer c.mu.Unlock()
 
-	for conn := range conns {
-		conn.Close()
+	for conn := range c.conns {
+		conn.CloseIfTLS() // let conn remove itself from the map if it actually is closed
 	}
 }
 
@@ -91,9 +91,7 @@ func (c *ConnectionTracker) CloseAll() {
 func (c *ConnectionTracker) Track(conn net.Conn) net.Conn {
 	closable := &closableConn{Conn: conn}
 
-	// When the connection is closed, remove it from the map. This will
-	// be no-op if the connection isn't in the map, e.g. if CloseAll()
-	// is called.
+	// When the connection is closed, remove it from the map.
 	closable.onClose = func() {
 		c.mu.Lock()
 		delete(c.conns, closable)
@@ -122,7 +120,11 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.
 	return d.ConnectionTracker.Track(conn), nil
 }
 
+var _ transport.MarkTLSConn = &closableConn{}
+
 type closableConn struct {
+	m       sync.Mutex
+	tls     bool
 	onClose func()
 	net.Conn
 }
@@ -130,4 +132,24 @@ type closableConn struct {
 func (c *closableConn) Close() error {
 	go c.onClose()
 	return c.Conn.Close()
+}
+
+func (c *closableConn) CloseIfTLS() {
+	c.m.Lock()
+	defer c.m.Unlock()
+	if !c.tls {
+		return
+	}
+	_ = c.Close()
+}
+
+func (c *closableConn) MarkTLS() func() {
+	c.m.Lock()
+	c.tls = true
+	return func() {
+		if marker, ok := c.Conn.(transport.MarkTLSConn); ok {
+			marker.MarkTLS()()
+		}
+		c.m.Unlock()
+	}
 }

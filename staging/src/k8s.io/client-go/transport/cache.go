@@ -18,6 +18,7 @@ package transport
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -121,14 +122,57 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		proxy = config.Proxy
 	}
 
+	const tlsHandshakeTimeout = 10 * time.Second
+
 	transport := utilnet.SetTransportDefaults(&http.Transport{
 		Proxy:               proxy,
-		TLSHandshakeTimeout: 10 * time.Second,
+		TLSHandshakeTimeout: tlsHandshakeTimeout,
 		TLSClientConfig:     tlsConfig,
 		MaxIdleConnsPerHost: idleConnsPerHost,
 		DialContext:         dial,
 		DisableCompression:  config.DisableCompression,
 	})
+
+	transport.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		rawConn, err := dial(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+
+		colonPos := strings.LastIndex(addr, ":")
+		if colonPos == -1 {
+			colonPos = len(addr)
+		}
+		hostname := addr[:colonPos]
+
+		tlsConfigLocal := tlsConfig
+		if tlsConfigLocal == nil {
+			tlsConfigLocal = &tls.Config{}
+		}
+		// If no ServerName is set, infer the ServerName
+		// from the hostname we're connecting to.
+		if tlsConfigLocal.ServerName == "" {
+			// Make a copy to avoid polluting argument or default.
+			tlsConfigCopy := tlsConfigLocal.Clone()
+			tlsConfigCopy.ServerName = hostname
+			tlsConfigLocal = tlsConfigCopy
+		}
+
+		handshakeCtx, cancel := context.WithTimeout(ctx, tlsHandshakeTimeout)
+		defer cancel()
+
+		if marker, ok := rawConn.(MarkTLSConn); ok {
+			defer marker.MarkTLS()()
+		}
+
+		conn := tls.Client(rawConn, tlsConfigLocal)
+		if err := conn.HandshakeContext(handshakeCtx); err != nil {
+			_ = rawConn.Close()
+			return nil, err
+		}
+
+		return conn, nil
+	}
 
 	if canCache {
 		// Cache a single transport for these options
@@ -136,6 +180,10 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 	}
 
 	return transport, nil
+}
+
+type MarkTLSConn interface {
+	MarkTLS() func()
 }
 
 // tlsConfigKey returns a unique key for tls.Config objects returned from TLSConfigFor

@@ -504,7 +504,7 @@ func (a *Authenticator) refreshCredsLocked() error {
 		if oldCreds.cert != nil && oldCreds.cert.Leaf != nil {
 			metrics.ClientCertRotationAge.Observe(time.Since(oldCreds.cert.Leaf.NotBefore))
 		}
-		a.connTracker.CloseAll()
+		a.connTracker.CloseAllTLS()
 	}
 
 	expiry := time.Time{}
