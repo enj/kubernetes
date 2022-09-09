@@ -166,6 +166,17 @@ func TestTLSConfigKey(t *testing.T) {
 				continue
 			}
 
+			shouldCacheA := valueA.Proxy == nil
+			if shouldCacheA != canCacheA {
+				t.Errorf("Unexpected canCache=false for " + nameA)
+			}
+
+			configIsNotEmpty := !reflect.DeepEqual(*valueA, Config{})
+			if keyA == (tlsCacheKey{}) && shouldCacheA && configIsNotEmpty {
+				t.Errorf("Expected non-empty cache keys for %q and %q, got:\n\t%s\n\t%s", nameA, nameB, keyA, keyB)
+				continue
+			}
+
 			// Make sure we get the same key on the same config
 			if nameA == nameB {
 				if keyA != keyB {
