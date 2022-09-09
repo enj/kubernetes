@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"testing"
 )
 
@@ -68,8 +69,7 @@ func TestTLSConfigKey(t *testing.T) {
 
 	// Make sure config fields that affect the tls config affect the cache key
 	dialer := net.Dialer{}
-	getCert := func() (*tls.Certificate, error) { return nil, nil }
-	getCertHolder := &GetCertHolder{GetCert: getCert}
+	getCert := &GetCertHolder{GetCert: func() (*tls.Certificate, error) { return nil, nil }}
 	uniqueConfigurations := map[string]*Config{
 		"proxy":    {Proxy: func(request *http.Request) (*url.URL, error) { return nil, nil }},
 		"no tls":   {},
