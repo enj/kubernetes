@@ -119,7 +119,6 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.
 	return d.ConnectionTracker.Track(conn), nil
 }
 
-// TODO find shared spot for this
 type MarkTLSConn interface {
 	MarkTLS()
 }

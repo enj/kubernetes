@@ -28,6 +28,7 @@ import (
 
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/connrotation"
 )
 
 // TlsTransportCache caches TLS http.RoundTrippers different configurations. The
@@ -159,7 +160,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		}
 
 		getCert := tlsConfigLocal.GetClientCertificate
-		marker, isMarker := rawConn.(MarkTLSConn)
+		marker, isMarker := rawConn.(connrotation.MarkTLSConn)
 
 		if isMarker {
 			defer marker.MarkTLS()
@@ -190,10 +191,6 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 	}
 
 	return transport, nil
-}
-
-type MarkTLSConn interface {
-	MarkTLS() func()
 }
 
 // tlsConfigKey returns a unique key for tls.Config objects returned from TLSConfigFor
