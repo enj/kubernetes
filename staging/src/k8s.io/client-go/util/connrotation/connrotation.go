@@ -25,8 +25,7 @@ import (
 	"context"
 	"net"
 	"sync"
-
-	"k8s.io/client-go/transport"
+	"sync/atomic"
 )
 
 // DialFunc is a shorthand for signature of net.DialContext.
@@ -120,11 +119,15 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.
 	return d.ConnectionTracker.Track(conn), nil
 }
 
-var _ transport.MarkTLSConn = &closableConn{}
+// TODO find shared spot for this
+type MarkTLSConn interface {
+	MarkTLS()
+}
+
+var _ MarkTLSConn = &closableConn{}
 
 type closableConn struct {
-	m       sync.Mutex
-	tls     bool
+	marked  atomic.Bool
 	onClose func()
 	net.Conn
 }
@@ -135,21 +138,15 @@ func (c *closableConn) Close() error {
 }
 
 func (c *closableConn) CloseIfTLS() {
-	c.m.Lock()
-	defer c.m.Unlock()
-	if !c.tls {
+	if !c.marked.Load() {
 		return
 	}
 	_ = c.Close()
 }
 
-func (c *closableConn) MarkTLS() func() {
-	c.m.Lock()
-	c.tls = true
-	return func() {
-		if marker, ok := c.Conn.(transport.MarkTLSConn); ok {
-			marker.MarkTLS()()
-		}
-		c.m.Unlock()
+func (c *closableConn) MarkTLS() {
+	if marker, ok := c.Conn.(MarkTLSConn); ok {
+		marker.MarkTLS()
 	}
+	c.marked.Store(true)
 }

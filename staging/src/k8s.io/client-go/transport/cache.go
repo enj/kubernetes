@@ -158,12 +158,22 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 			tlsConfigLocal = tlsConfigCopy
 		}
 
+		getCert := tlsConfigLocal.GetClientCertificate
+		marker, isMarker := rawConn.(MarkTLSConn)
+
+		if isMarker {
+			defer marker.MarkTLS()
+		}
+
+		if getCert != nil && isMarker {
+			tlsConfigLocal.GetClientCertificate = func(cri *tls.CertificateRequestInfo) (*tls.Certificate, error) {
+				defer marker.MarkTLS()
+				return getCert(cri)
+			}
+		}
+
 		handshakeCtx, cancel := context.WithTimeout(ctx, tlsHandshakeTimeout)
 		defer cancel()
-
-		if marker, ok := rawConn.(MarkTLSConn); ok {
-			defer marker.MarkTLS()()
-		}
 
 		conn := tls.Client(rawConn, tlsConfigLocal)
 		if err := conn.HandshakeContext(handshakeCtx); err != nil {
