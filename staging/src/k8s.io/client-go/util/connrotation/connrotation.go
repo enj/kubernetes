@@ -72,15 +72,16 @@ func NewConnectionTracker() *ConnectionTracker {
 	}
 }
 
-// CloseAllTLS forcibly closes all tracked connections.
+// TODO fix comment and implementation
+// CloseAllGraceful forcibly closes all tracked connections.
 //
-// Note: new connections may get created before CloseAllTLS returns.
-func (c *ConnectionTracker) CloseAllTLS() {
+// Note: new connections may get created before CloseAllGraceful returns.
+func (c *ConnectionTracker) CloseAllGraceful() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	for conn := range c.conns {
-		conn.CloseIfTLS() // let conn remove itself from the map if it actually is closed
+		conn.closeIfGetCertOrTLSHandshakeComplete() // let conn remove itself from the map if it actually is closed
 	}
 }
 
@@ -90,7 +91,10 @@ func (c *ConnectionTracker) CloseAllTLS() {
 func (c *ConnectionTracker) Track(conn net.Conn) net.Conn {
 	closable := &closableConn{Conn: conn}
 
-	// When the connection is closed, remove it from the map.
+	// When the connection is closed, remove it from the map. This will
+	// be no-op if the connection isn't in the map, e.g. if CloseAll()
+	// is called.
+	// TODO fix comment
 	closable.onClose = func() {
 		c.mu.Lock()
 		delete(c.conns, closable)
@@ -119,11 +123,11 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.
 	return d.ConnectionTracker.Track(conn), nil
 }
 
-type MarkTLSConn interface {
-	MarkTLS()
+type GracefulRotation interface {
+	GetCertOrTLSHandshakeComplete()
 }
 
-var _ MarkTLSConn = &closableConn{}
+var _ GracefulRotation = &closableConn{}
 
 type closableConn struct {
 	marked  atomic.Bool
@@ -136,16 +140,16 @@ func (c *closableConn) Close() error {
 	return c.Conn.Close()
 }
 
-func (c *closableConn) CloseIfTLS() {
+func (c *closableConn) closeIfGetCertOrTLSHandshakeComplete() {
 	if !c.marked.Load() {
 		return
 	}
 	_ = c.Close()
 }
 
-func (c *closableConn) MarkTLS() {
-	if marker, ok := c.Conn.(MarkTLSConn); ok {
-		marker.MarkTLS()
+func (c *closableConn) GetCertOrTLSHandshakeComplete() {
+	if rotation, ok := c.Conn.(GracefulRotation); ok {
+		rotation.GetCertOrTLSHandshakeComplete()
 	}
 	c.marked.Store(true)
 }

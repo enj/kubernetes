@@ -41,7 +41,7 @@ func TestCloseAll(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		dialer.CloseAllTLS()
+		dialer.CloseAllGraceful()
 		deadline := time.After(time.Second)
 		for j := 0; j < numConns; j++ {
 			select {
@@ -72,7 +72,7 @@ func TestCloseAllRace(t *testing.T) {
 		begin.Wait()
 		defer wg.Done()
 		for i := 0; i < raceCount; i++ {
-			dialer.CloseAllTLS()
+			dialer.CloseAllGraceful()
 		}
 	}()
 
@@ -97,7 +97,7 @@ func TestCloseAllRace(t *testing.T) {
 	wg.Wait()
 
 	// Ensure CloseAll ran after all dials
-	dialer.CloseAllTLS()
+	dialer.CloseAllGraceful()
 
 	// Expect all connections to close within 5 seconds
 	for start := time.Now(); time.Since(start) < 5*time.Second; time.Sleep(10 * time.Millisecond) {

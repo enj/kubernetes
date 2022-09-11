@@ -109,9 +109,11 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		}).DialContext
 	}
 
+	hasGetCert := tlsConfig != nil && tlsConfig.GetClientCertificate != nil
+
 	// If we use are reloading files, we need to handle certificate rotation properly
 	// TODO(jackkleeman): We can also add rotation here when config.HasCertCallback() is true
-	if config.TLS.ReloadTLSFiles {
+	if hasGetCert && config.TLS.ReloadTLSFiles {
 		dynamicCertDialer := certRotatingDialer(tlsConfig.GetClientCertificate, dial)
 		tlsConfig.GetClientCertificate = dynamicCertDialer.GetClientCertificate
 		dial = dynamicCertDialer.connDialer.DialContext
@@ -123,66 +125,18 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		proxy = config.Proxy
 	}
 
-	const tlsHandshakeTimeout = 10 * time.Second
-
 	transport := utilnet.SetTransportDefaults(&http.Transport{
 		Proxy:               proxy,
-		TLSHandshakeTimeout: tlsHandshakeTimeout,
+		TLSHandshakeTimeout: 10 * time.Second,
 		TLSClientConfig:     tlsConfig,
 		MaxIdleConnsPerHost: idleConnsPerHost,
 		DialContext:         dial,
 		DisableCompression:  config.DisableCompression,
 	})
 
-	transport.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		rawConn, err := dial(ctx, network, addr)
-		if err != nil {
-			return nil, err
-		}
-
-		colonPos := strings.LastIndex(addr, ":")
-		if colonPos == -1 {
-			colonPos = len(addr)
-		}
-		hostname := addr[:colonPos]
-
-		tlsConfigLocal := tlsConfig
-		if tlsConfigLocal == nil {
-			tlsConfigLocal = &tls.Config{}
-		}
-		// If no ServerName is set, infer the ServerName
-		// from the hostname we're connecting to.
-		if tlsConfigLocal.ServerName == "" {
-			// Make a copy to avoid polluting argument or default.
-			tlsConfigCopy := tlsConfigLocal.Clone()
-			tlsConfigCopy.ServerName = hostname
-			tlsConfigLocal = tlsConfigCopy
-		}
-
-		getCert := tlsConfigLocal.GetClientCertificate
-		marker, isMarker := rawConn.(connrotation.MarkTLSConn)
-
-		if isMarker {
-			defer marker.MarkTLS()
-		}
-
-		if getCert != nil && isMarker {
-			tlsConfigLocal.GetClientCertificate = func(cri *tls.CertificateRequestInfo) (*tls.Certificate, error) {
-				defer marker.MarkTLS()
-				return getCert(cri)
-			}
-		}
-
-		handshakeCtx, cancel := context.WithTimeout(ctx, tlsHandshakeTimeout)
-		defer cancel()
-
-		conn := tls.Client(rawConn, tlsConfigLocal)
-		if err := conn.HandshakeContext(handshakeCtx); err != nil {
-			_ = rawConn.Close()
-			return nil, err
-		}
-
-		return conn, nil
+	isStatic := config.HasCertAuth() && !config.TLS.ReloadTLSFiles
+	if !isStatic && hasGetCert {
+		setDialTLSContextForRotation(transport)
 	}
 
 	if canCache {
@@ -191,6 +145,52 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 	}
 
 	return transport, nil
+}
+
+func setDialTLSContextForRotation(rt *http.Transport) {
+	rt.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		rawConn, err := rt.DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+
+		tlsConfig := rt.TLSClientConfig
+		// If no ServerName is set, infer the ServerName
+		// from the hostname we're connecting to.
+		if tlsConfig.ServerName == "" {
+			colonPos := strings.LastIndex(addr, ":")
+			if colonPos == -1 {
+				colonPos = len(addr)
+			}
+			hostname := addr[:colonPos]
+
+			// Make a copy to avoid polluting argument or default.
+			tlsConfigCopy := tlsConfig.Clone()
+			tlsConfigCopy.ServerName = hostname
+			tlsConfig = tlsConfigCopy
+		}
+
+		if rotation, ok := rawConn.(connrotation.GracefulRotation); ok {
+			defer rotation.GetCertOrTLSHandshakeComplete() // in case cert callback is not called
+
+			getCert := tlsConfig.GetClientCertificate
+			tlsConfig.GetClientCertificate = func(cri *tls.CertificateRequestInfo) (*tls.Certificate, error) {
+				defer rotation.GetCertOrTLSHandshakeComplete()
+				return getCert(cri)
+			}
+		}
+
+		handshakeCtx, cancel := context.WithTimeout(ctx, rt.TLSHandshakeTimeout)
+		defer cancel()
+
+		conn := tls.Client(rawConn, tlsConfig)
+		if err := conn.HandshakeContext(handshakeCtx); err != nil {
+			_ = rawConn.Close()
+			return nil, err
+		}
+
+		return conn, nil
+	}
 }
 
 // tlsConfigKey returns a unique key for tls.Config objects returned from TLSConfigFor
