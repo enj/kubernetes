@@ -155,19 +155,16 @@ func setDialTLSContextForRotation(rt *http.Transport) {
 		}
 
 		tlsConfig := rt.TLSClientConfig
-		// If no ServerName is set, infer the ServerName
-		// from the hostname we're connecting to.
+		// if no ServerName is set, infer it from the addr we are connecting to
 		if tlsConfig.ServerName == "" {
-			colonPos := strings.LastIndex(addr, ":")
-			if colonPos == -1 {
-				colonPos = len(addr)
+			hostname, _, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
 			}
-			hostname := addr[:colonPos]
 
-			// Make a copy to avoid polluting argument or default.
-			tlsConfigCopy := tlsConfig.Clone()
-			tlsConfigCopy.ServerName = hostname
-			tlsConfig = tlsConfigCopy
+			// make a copy to avoid polluting global cache
+			tlsConfig = tlsConfig.Clone()
+			tlsConfig.ServerName = hostname
 		}
 
 		if rotation, ok := rawConn.(connrotation.GracefulRotation); ok {
@@ -185,7 +182,7 @@ func setDialTLSContextForRotation(rt *http.Transport) {
 
 		conn := tls.Client(rawConn, tlsConfig)
 		if err := conn.HandshakeContext(handshakeCtx); err != nil {
-			_ = rawConn.Close()
+			go rawConn.Close()
 			return nil, err
 		}
 
