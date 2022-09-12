@@ -246,6 +246,7 @@ func isInteractive(isTerminalFunc func(int) bool, config *api.ExecConfig) (bool,
 
 type connectionTracker interface {
 	CloseAllGraceful()
+	Len() int
 }
 
 // Authenticator is a client credential provider that rotates credentials by executing a plugin.

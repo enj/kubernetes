@@ -97,6 +97,13 @@ func (c *ConnectionTracker) CloseAllGraceful() {
 	}
 }
 
+func (c *ConnectionTracker) Len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return len(c.conns)
+}
+
 // Track adds the connection to the list of tracked connections,
 // and returns a wrapped copy of the connection that stops tracking the connection
 // when it is closed.

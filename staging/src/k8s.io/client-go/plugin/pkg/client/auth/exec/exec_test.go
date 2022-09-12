@@ -39,6 +39,7 @@ import (
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/pkg/apis/clientauthentication"
 	"k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/transport"
@@ -1320,7 +1321,7 @@ func TestTLSCredentialsCallsAndRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	get := func(t *testing.T, name string, f transport.WrapperFunc, wantOutIncrease, wantCallIncrease int) {
+	get := func(t *testing.T, name string, f transport.WrapperFunc, wantOutIncrease, wantCallIncrease, wantFinalConnCount int) {
 		t.Helper()
 
 		t.Run(name, func(t *testing.T) {
@@ -1349,15 +1350,26 @@ func TestTLSCredentialsCallsAndRotation(t *testing.T) {
 			if want, got := startCall+wantCallIncrease, testTracker.calls; want != got {
 				t.Errorf("unexpected tracker close call count: want=%d, got=%d", want, got)
 			}
+			if err := wait.PollImmediate(100*time.Millisecond, wait.ForeverTestTimeout, func() (bool, error) {
+				// the value needs to be stable for a while before we call it "final"
+				for i := 0; i < 10; i++ {
+					if testTracker.Len() != wantFinalConnCount {
+						return false, nil
+					}
+					time.Sleep(100 * time.Millisecond)
+				}
+				return testTracker.Len() == wantFinalConnCount, nil
+			}); err != nil {
+				t.Errorf("unexpected final conn count: want=%d, got=%d, err=%v", wantFinalConnCount, testTracker.Len(), err)
+			}
 		})
 	}
 
 	// regular cert flow with cache miss
 	// both RoundTrip and GetClientCertificate are invoked, and both of those attempt to close connections
-	// TODO confirm that the number of tracked connections does not grow
 	noWrap := func(rt http.RoundTripper) http.RoundTripper { return rt }
-	get(t, "valid TLS cert", noWrap, 2, 1)
-	get(t, "valid TLS cert again", noWrap, 2, 2)
+	get(t, "valid TLS cert", noWrap, 2, 1, 1)
+	get(t, "valid TLS cert again", noWrap, 2, 2, 1)
 
 	// force every call to invoke the cert callback
 	// while uncommon, a server can disable keep-alives
@@ -1366,8 +1378,8 @@ func TestTLSCredentialsCallsAndRotation(t *testing.T) {
 	// cause the round tripper to be skipped combined with cache miss and single connection
 	// only GetClientCertificate is invoked, and it attempts to close connections
 	tokenWrap := func(rt http.RoundTripper) http.RoundTripper { return transport.NewBearerAuthRoundTripper("foo", rt) }
-	get(t, "valid TLS cert with token", tokenWrap, 1, 1)
-	get(t, "valid TLS cert again with token", tokenWrap, 1, 1)
+	get(t, "valid TLS cert with token", tokenWrap, 1, 1, 0)
+	get(t, "valid TLS cert again with token", tokenWrap, 1, 1, 0)
 }
 
 type tracker struct {
@@ -1378,4 +1390,8 @@ type tracker struct {
 func (t *tracker) CloseAllGraceful() {
 	t.calls++
 	t.tracker.CloseAllGraceful()
+}
+
+func (t *tracker) Len() int {
+	return t.tracker.Len()
 }
