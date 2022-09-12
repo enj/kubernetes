@@ -1445,8 +1445,8 @@ func (t *trackConn) Close() error {
 }
 
 func (t *trackConn) GetCertOrTLSHandshakeComplete() {
-	t.tracked.Store(true)
 	if rotation, ok := t.Conn.(connrotation.GracefulRotation); ok {
 		rotation.GetCertOrTLSHandshakeComplete()
+		t.tracked.Store(true)
 	}
 }

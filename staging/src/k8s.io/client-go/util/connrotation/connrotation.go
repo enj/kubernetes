@@ -86,7 +86,6 @@ func (c *ConnectionTracker) CloseAll() {
 	}
 }
 
-// TODO unit test
 // CloseAllGraceful forcibly closes all tracked connections that have been marked by GetCertOrTLSHandshakeComplete.
 func (c *ConnectionTracker) CloseAllGraceful() {
 	c.mu.Lock()
