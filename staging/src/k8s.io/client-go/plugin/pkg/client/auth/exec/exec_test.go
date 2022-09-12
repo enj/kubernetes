@@ -1275,7 +1275,7 @@ func TestTLSCredentialsCallsAndRotation(t *testing.T) {
 		ClientAuth: tls.RequireAnyClientCert,
 	}
 	server.StartTLS()
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &api.ExecConfig{
 		Command:         "./testdata/test-plugin.sh",
@@ -1318,51 +1318,49 @@ func TestTLSCredentialsCallsAndRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var getCalls int
-	get := func(t *testing.T, name string, f transport.WrapperFunc, wantErr string) {
+	get := func(t *testing.T, name string, f transport.WrapperFunc, wantOutIncrease int) {
+		t.Helper()
+
 		t.Run(name, func(t *testing.T) {
-			getCalls++
+			t.Helper()
+
+			startOut := outputCalls
+
 			req, err := http.NewRequest(http.MethodGet, server.URL, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			resp, err := f(rt).RoundTrip(req)
-			if gotErr := errString(err); wantErr != gotErr {
-				t.Errorf("round trip error does not match: want=%q, got=%q", wantErr, gotErr)
+			if err != nil {
+				t.Errorf("unexpected round trip error: %v", err)
 			}
 			if resp != nil && resp.Body != nil {
 				// drain and close body to reuse http keep-alive TCP connections
 				_, _ = io.ReadAll(resp.Body)
 				_ = resp.Body.Close()
 			}
+
+			if want, got := startOut+wantOutIncrease, outputCalls; want != got {
+				t.Errorf("unexpected exec call count: want=%d, got=%d", want, got)
+			}
 		})
 	}
 
 	// regular cert flow with cache miss
+	// both RoundTrip and GetClientCertificate are invoked, and both of those attempt to close connections
+	// TODO confirm that the closing happens and that the number of tracked connections does not grow
 	noWrap := func(rt http.RoundTripper) http.RoundTripper { return rt }
-	get(t, "valid TLS cert", noWrap, "")
-	get(t, "valid TLS cert again", noWrap, "")
+	get(t, "valid TLS cert", noWrap, 2)
+	get(t, "valid TLS cert again", noWrap, 2)
 
 	// force every call to invoke the cert callback
 	// while uncommon, a server can disable keep-alives
 	server.Config.SetKeepAlivesEnabled(false)
 
 	// cause the round tripper to be skipped combined with cache miss and single connection
+	// only GetClientCertificate is invoked, and it attempts to close connections
 	tokenWrap := func(rt http.RoundTripper) http.RoundTripper { return transport.NewBearerAuthRoundTripper("foo", rt) }
-	get(t, "valid TLS cert with token", tokenWrap, "")
-	get(t, "valid TLS cert again with token", tokenWrap, "")
+	get(t, "valid TLS cert with token", tokenWrap, 1)
+	get(t, "valid TLS cert again with token", tokenWrap, 1)
 
-	// the first round trip sets up the TLS connection and results in two calls to the exec plugin due to the expired cert
-	// TODO this does not seem right because shouldn't we be closing the connection on the later gets due to new certs?
-	if want, got := getCalls, outputCalls-1; want != got {
-		t.Errorf("unexpected exec call count: want=%d, got=%d", want, got)
-	}
-}
-
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-
-	return err.Error()
 }
