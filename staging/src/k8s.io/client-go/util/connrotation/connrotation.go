@@ -72,16 +72,28 @@ func NewConnectionTracker() *ConnectionTracker {
 	}
 }
 
-// TODO fix comment and implementation
-// CloseAllGraceful forcibly closes all tracked connections.
+// CloseAll forcibly closes all tracked connections.
 //
-// Note: new connections may get created before CloseAllGraceful returns.
+// Note: new connections may get created before CloseAll returns.
+func (c *ConnectionTracker) CloseAll() {
+	c.mu.Lock()
+	conns := c.conns
+	c.conns = make(map[*closableConn]struct{})
+	c.mu.Unlock()
+
+	for conn := range conns {
+		_ = conn.Close()
+	}
+}
+
+// TODO unit test
+// CloseAllGraceful forcibly closes all tracked connections that have been marked by GetCertOrTLSHandshakeComplete.
 func (c *ConnectionTracker) CloseAllGraceful() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	for conn := range c.conns {
-		conn.closeIfGetCertOrTLSHandshakeComplete() // let conn remove itself from the map if it actually is closed
+		conn.closeIfGetCertOrTLSHandshakeComplete() // let conn remove itself from c.conns if it is actually closed
 	}
 }
 
@@ -94,7 +106,6 @@ func (c *ConnectionTracker) Track(conn net.Conn) net.Conn {
 	// When the connection is closed, remove it from the map. This will
 	// be no-op if the connection isn't in the map, e.g. if CloseAll()
 	// is called.
-	// TODO fix comment
 	closable.onClose = func() {
 		c.mu.Lock()
 		delete(c.conns, closable)

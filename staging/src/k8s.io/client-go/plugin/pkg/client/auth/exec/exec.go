@@ -504,7 +504,7 @@ func (a *Authenticator) refreshCredsLocked() error {
 		if oldCreds.cert != nil && oldCreds.cert.Leaf != nil {
 			metrics.ClientCertRotationAge.Observe(time.Since(oldCreds.cert.Leaf.NotBefore))
 		}
-		a.connTracker.CloseAllGraceful()
+		a.connTracker.CloseAllGraceful() // only close connections that are past the TLS handshake
 	}
 
 	expiry := time.Time{}
