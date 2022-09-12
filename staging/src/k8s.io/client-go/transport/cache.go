@@ -154,29 +154,30 @@ func setDialTLSContextForRotation(rt *http.Transport) {
 			return nil, err
 		}
 
-		tlsConfig := rt.TLSClientConfig
+		// make a copy to avoid polluting global cache
+		tlsConfig := rt.TLSClientConfig.Clone()
+
 		// if no ServerName is set, infer it from the addr we are connecting to
 		if tlsConfig.ServerName == "" {
 			hostname, _, err := net.SplitHostPort(addr)
 			if err != nil {
 				return nil, err
 			}
-
-			// make a copy to avoid polluting global cache
-			tlsConfig = tlsConfig.Clone()
 			tlsConfig.ServerName = hostname
 		}
 
-		if rotation, ok := rawConn.(connrotation.GracefulRotation); ok {
-			defer rotation.GetCertOrTLSHandshakeComplete() // in case cert callback is not called
+		// inform our connection rotation logic of when the TLS handshake is complete
+		rotation, ok := rawConn.(connrotation.GracefulRotation)
+		if !ok {
+			return nil, fmt.Errorf("dialer must provide connection that implements connrotation.GracefulRotation")
+		}
 
-			getCert := tlsConfig.GetClientCertificate
-			tlsConfig.GetClientCertificate = func(cri *tls.CertificateRequestInfo) (*tls.Certificate, error) {
-				defer rotation.GetCertOrTLSHandshakeComplete()
-				return getCert(cri)
-			}
-		} else {
-			return nil, fmt.Errorf("NOPE")
+		defer rotation.GetCertOrTLSHandshakeComplete() // in case cert callback is not called
+
+		getCert := tlsConfig.GetClientCertificate
+		tlsConfig.GetClientCertificate = func(cri *tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			defer rotation.GetCertOrTLSHandshakeComplete() // the returned cert is now "in use"
+			return getCert(cri)
 		}
 
 		handshakeCtx, cancel := context.WithTimeout(ctx, rt.TLSHandshakeTimeout)
