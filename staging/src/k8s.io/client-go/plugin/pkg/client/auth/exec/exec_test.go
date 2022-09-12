@@ -1304,6 +1304,8 @@ func TestTLSCredentialsCallsAndRotation(t *testing.T) {
 	}
 	a.now = func() time.Time { return now }
 	a.stderr = io.Discard
+	testTracker := &tracker{tracker: a.connTracker}
+	a.connTracker = testTracker
 
 	caBundle := pem.EncodeToMemory(&pem.Block{
 		Type:  "CERTIFICATE",
@@ -1318,13 +1320,14 @@ func TestTLSCredentialsCallsAndRotation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	get := func(t *testing.T, name string, f transport.WrapperFunc, wantOutIncrease int) {
+	get := func(t *testing.T, name string, f transport.WrapperFunc, wantOutIncrease, wantCallIncrease int) {
 		t.Helper()
 
 		t.Run(name, func(t *testing.T) {
 			t.Helper()
 
 			startOut := outputCalls
+			startCall := testTracker.calls
 
 			req, err := http.NewRequest(http.MethodGet, server.URL, nil)
 			if err != nil {
@@ -1343,15 +1346,18 @@ func TestTLSCredentialsCallsAndRotation(t *testing.T) {
 			if want, got := startOut+wantOutIncrease, outputCalls; want != got {
 				t.Errorf("unexpected exec call count: want=%d, got=%d", want, got)
 			}
+			if want, got := startCall+wantCallIncrease, testTracker.calls; want != got {
+				t.Errorf("unexpected tracker close call count: want=%d, got=%d", want, got)
+			}
 		})
 	}
 
 	// regular cert flow with cache miss
 	// both RoundTrip and GetClientCertificate are invoked, and both of those attempt to close connections
-	// TODO confirm that the closing happens and that the number of tracked connections does not grow
+	// TODO confirm that the number of tracked connections does not grow
 	noWrap := func(rt http.RoundTripper) http.RoundTripper { return rt }
-	get(t, "valid TLS cert", noWrap, 2)
-	get(t, "valid TLS cert again", noWrap, 2)
+	get(t, "valid TLS cert", noWrap, 2, 1)
+	get(t, "valid TLS cert again", noWrap, 2, 2)
 
 	// force every call to invoke the cert callback
 	// while uncommon, a server can disable keep-alives
@@ -1360,7 +1366,16 @@ func TestTLSCredentialsCallsAndRotation(t *testing.T) {
 	// cause the round tripper to be skipped combined with cache miss and single connection
 	// only GetClientCertificate is invoked, and it attempts to close connections
 	tokenWrap := func(rt http.RoundTripper) http.RoundTripper { return transport.NewBearerAuthRoundTripper("foo", rt) }
-	get(t, "valid TLS cert with token", tokenWrap, 1)
-	get(t, "valid TLS cert again with token", tokenWrap, 1)
+	get(t, "valid TLS cert with token", tokenWrap, 1, 1)
+	get(t, "valid TLS cert again with token", tokenWrap, 1, 1)
+}
 
+type tracker struct {
+	calls   int
+	tracker connectionTracker
+}
+
+func (t *tracker) CloseAllGraceful() {
+	t.calls++
+	t.tracker.CloseAllGraceful()
 }
