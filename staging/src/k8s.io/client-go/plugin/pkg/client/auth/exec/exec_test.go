@@ -18,6 +18,7 @@ package exec
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -29,11 +30,13 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -43,6 +46,7 @@ import (
 	"k8s.io/client-go/pkg/apis/clientauthentication"
 	"k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/transport"
+	"k8s.io/client-go/util/connrotation"
 	testingclock "k8s.io/utils/clock/testing"
 )
 
@@ -1316,12 +1320,27 @@ func TestTLSCredentialsCallsAndRotation(t *testing.T) {
 	if err := a.UpdateTransportConfig(tc); err != nil {
 		t.Fatal(err)
 	}
+
+	var lastConn *trackConn
+	dial := tc.DialHolder.Dial
+	trackDial := func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := dial(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		trackedConn := &trackConn{Conn: conn}
+		lastConn = trackedConn
+		return trackedConn, nil
+	}
+	tc.Dial = trackDial
+	tc.DialHolder = &transport.DialHolder{Dial: trackDial}
+
 	rt, err := transport.New(tc)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	get := func(t *testing.T, name string, f transport.WrapperFunc, wantOutIncrease, wantCallIncrease, wantFinalConnCount int) {
+	get := func(t *testing.T, name string, f transport.WrapperFunc, wantOutIncrease, wantCallIncrease, wantFinalConnCount int, wantClosed bool) {
 		t.Helper()
 
 		t.Run(name, func(t *testing.T) {
@@ -1350,6 +1369,22 @@ func TestTLSCredentialsCallsAndRotation(t *testing.T) {
 			if want, got := startCall+wantCallIncrease, testTracker.calls; want != got {
 				t.Errorf("unexpected tracker close call count: want=%d, got=%d", want, got)
 			}
+			if !lastConn.tracked.Load() {
+				t.Errorf("conn was not tracked")
+			}
+			if err := wait.PollImmediate(100*time.Millisecond, wait.ForeverTestTimeout, func() (bool, error) {
+				// the value needs to be stable for a while before we call it "final"
+				start := lastConn.closed.Load()
+				for i := 0; i < 10; i++ {
+					if lastConn.closed.Load() != start {
+						return false, nil
+					}
+					time.Sleep(100 * time.Millisecond)
+				}
+				return wantClosed == lastConn.closed.Load(), nil
+			}); err != nil {
+				t.Errorf("unexpected conn closed: want=%v, got=%v, err=%v", wantClosed, lastConn.closed.Load(), err)
+			}
 			if err := wait.PollImmediate(100*time.Millisecond, wait.ForeverTestTimeout, func() (bool, error) {
 				// the value needs to be stable for a while before we call it "final"
 				for i := 0; i < 10; i++ {
@@ -1368,8 +1403,8 @@ func TestTLSCredentialsCallsAndRotation(t *testing.T) {
 	// regular cert flow with cache miss
 	// both RoundTrip and GetClientCertificate are invoked, and both of those attempt to close connections
 	noWrap := func(rt http.RoundTripper) http.RoundTripper { return rt }
-	get(t, "valid TLS cert", noWrap, 2, 1, 1)
-	get(t, "valid TLS cert again", noWrap, 2, 2, 1)
+	get(t, "valid TLS cert", noWrap, 2, 1, 1, false)
+	get(t, "valid TLS cert again", noWrap, 2, 2, 1, false)
 
 	// force every call to invoke the cert callback
 	// while uncommon, a server can disable keep-alives
@@ -1378,9 +1413,12 @@ func TestTLSCredentialsCallsAndRotation(t *testing.T) {
 	// cause the round tripper to be skipped combined with cache miss and single connection
 	// only GetClientCertificate is invoked, and it attempts to close connections
 	tokenWrap := func(rt http.RoundTripper) http.RoundTripper { return transport.NewBearerAuthRoundTripper("foo", rt) }
-	get(t, "valid TLS cert with token", tokenWrap, 1, 1, 0)
-	get(t, "valid TLS cert again with token", tokenWrap, 1, 1, 0)
+	get(t, "valid TLS cert with token", tokenWrap, 1, 1, 0, true)
+	get(t, "valid TLS cert again with token", tokenWrap, 1, 1, 0, true)
 }
+
+var _ connectionTracker = &tracker{}
+var _ connrotation.GracefulRotation = &trackConn{}
 
 type tracker struct {
 	calls   int
@@ -1394,4 +1432,21 @@ func (t *tracker) CloseAllGraceful() {
 
 func (t *tracker) Len() int {
 	return t.tracker.Len()
+}
+
+type trackConn struct {
+	closed, tracked atomic.Bool
+	net.Conn
+}
+
+func (t *trackConn) Close() error {
+	t.closed.Store(true)
+	return t.Conn.Close()
+}
+
+func (t *trackConn) GetCertOrTLSHandshakeComplete() {
+	t.tracked.Store(true)
+	if rotation, ok := t.Conn.(connrotation.GracefulRotation); ok {
+		rotation.GetCertOrTLSHandshakeComplete()
+	}
 }
