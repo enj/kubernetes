@@ -175,6 +175,8 @@ func setDialTLSContextForRotation(rt *http.Transport) {
 				defer rotation.GetCertOrTLSHandshakeComplete()
 				return getCert(cri)
 			}
+		} else {
+			return nil, fmt.Errorf("NOPE")
 		}
 
 		handshakeCtx, cancel := context.WithTimeout(ctx, rt.TLSHandshakeTimeout)
