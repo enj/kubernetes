@@ -58,7 +58,12 @@ func TestCloseAll(t *testing.T) {
 func TestCloseAllGraceful(t *testing.T) {
 	closed := make(chan struct{}, 50)
 	dialFn := func(ctx context.Context, network, address string) (net.Conn, error) {
-		return closeOnlyConn{onClose: func() { closed <- struct{}{} }}, nil
+		var once sync.Once
+		return closeOnlyConn{onClose: func() {
+			once.Do(func() {
+				closed <- struct{}{}
+			})
+		}}, nil
 	}
 	dialer := NewDialer(dialFn)
 
