@@ -21,6 +21,7 @@ package options
 // given binary target.
 import (
 	// Admission policies
+	validatingwasm "k8s.io/apiserver/pkg/admission/plugin/wasm/validating"
 	"k8s.io/kubernetes/plugin/pkg/admission/admit"
 	"k8s.io/kubernetes/plugin/pkg/admission/alwayspullimages"
 	"k8s.io/kubernetes/plugin/pkg/admission/antiaffinity"
@@ -97,6 +98,7 @@ var AllOrderedPlugins = []string{
 	// webhook, resourcequota, and deny plugins must go at the end
 
 	mutatingwebhook.PluginName,   // MutatingAdmissionWebhook
+	validatingwasm.PluginName,    // ValidatingAdmissionWASM
 	validatingwebhook.PluginName, // ValidatingAdmissionWebhook
 	resourcequota.PluginName,     // ResourceQuota
 	deny.PluginName,              // AlwaysDeny
@@ -159,6 +161,7 @@ func DefaultOffAdmissionPlugins() sets.String {
 		certsubjectrestriction.PluginName,       // CertificateSubjectRestriction
 		defaultingressclass.PluginName,          // DefaultIngressClass
 		podsecurity.PluginName,                  // PodSecurity
+		validatingwasm.PluginName,               // ValidatingAdmissionWASM
 	)
 
 	return sets.NewString(AllOrderedPlugins...).Difference(defaultOnPlugins)
