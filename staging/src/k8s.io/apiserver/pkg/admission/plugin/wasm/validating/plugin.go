@@ -227,7 +227,8 @@ func (p *Plugin) Authorize(ctx context.Context, spec wasmplugin.SubjectAccessRev
 	// TODO need more attributes
 	attr := authorizer.AttributesRecord{
 		User: &user.DefaultInfo{
-			Name: spec.Username,
+			Name:   spec.Username,
+			Groups: spec.Groups,
 		},
 		Verb:            spec.Verb,
 		Resource:        spec.Resource,

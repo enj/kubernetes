@@ -24,8 +24,9 @@ service SubjectAccessReview {
 // TODO this should look like SubjectAccessReviewSpec
 message SubjectAccessReviewSpec {
   string username = 1;
-  string verb = 2;
-  string resource = 3;
+  repeated string groups = 2;
+  string verb = 3;
+  string resource = 4;
 }
 
 message SubjectAccessReviewStatus {

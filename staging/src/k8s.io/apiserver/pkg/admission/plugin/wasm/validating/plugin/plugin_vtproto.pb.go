@@ -135,14 +135,23 @@ func (m *SubjectAccessReviewSpec) MarshalToSizedBufferVT(dAtA []byte) (int, erro
 		copy(dAtA[i:], m.Resource)
 		i = encodeVarint(dAtA, i, uint64(len(m.Resource)))
 		i--
-		dAtA[i] = 0x1a
+		dAtA[i] = 0x22
 	}
 	if len(m.Verb) > 0 {
 		i -= len(m.Verb)
 		copy(dAtA[i:], m.Verb)
 		i = encodeVarint(dAtA, i, uint64(len(m.Verb)))
 		i--
-		dAtA[i] = 0x12
+		dAtA[i] = 0x1a
+	}
+	if len(m.Groups) > 0 {
+		for iNdEx := len(m.Groups) - 1; iNdEx >= 0; iNdEx-- {
+			i -= len(m.Groups[iNdEx])
+			copy(dAtA[i:], m.Groups[iNdEx])
+			i = encodeVarint(dAtA, i, uint64(len(m.Groups[iNdEx])))
+			i--
+			dAtA[i] = 0x12
+		}
 	}
 	if len(m.Username) > 0 {
 		i -= len(m.Username)
@@ -256,6 +265,12 @@ func (m *SubjectAccessReviewSpec) SizeVT() (n int) {
 	l = len(m.Username)
 	if l > 0 {
 		n += 1 + l + sov(uint64(l))
+	}
+	if len(m.Groups) > 0 {
+		for _, s := range m.Groups {
+			l = len(s)
+			n += 1 + l + sov(uint64(l))
+		}
 	}
 	l = len(m.Verb)
 	if l > 0 {
@@ -529,6 +544,38 @@ func (m *SubjectAccessReviewSpec) UnmarshalVT(dAtA []byte) error {
 			iNdEx = postIndex
 		case 2:
 			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Groups", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Groups = append(m.Groups, string(dAtA[iNdEx:postIndex]))
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Verb", wireType)
 			}
 			var stringLen uint64
@@ -559,7 +606,7 @@ func (m *SubjectAccessReviewSpec) UnmarshalVT(dAtA []byte) error {
 			}
 			m.Verb = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
-		case 3:
+		case 4:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field Resource", wireType)
 			}

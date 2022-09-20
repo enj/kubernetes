@@ -63,9 +63,10 @@ type SubjectAccessReviewSpec struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Username string `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
-	Verb     string `protobuf:"bytes,2,opt,name=verb,proto3" json:"verb,omitempty"`
-	Resource string `protobuf:"bytes,3,opt,name=resource,proto3" json:"resource,omitempty"`
+	Username string   `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	Groups   []string `protobuf:"bytes,2,rep,name=groups,proto3" json:"groups,omitempty"`
+	Verb     string   `protobuf:"bytes,3,opt,name=verb,proto3" json:"verb,omitempty"`
+	Resource string   `protobuf:"bytes,4,opt,name=resource,proto3" json:"resource,omitempty"`
 }
 
 func (x *SubjectAccessReviewSpec) ProtoReflect() protoreflect.Message {
@@ -77,6 +78,13 @@ func (x *SubjectAccessReviewSpec) GetUsername() string {
 		return x.Username
 	}
 	return ""
+}
+
+func (x *SubjectAccessReviewSpec) GetGroups() []string {
+	if x != nil {
+		return x.Groups
+	}
+	return nil
 }
 
 func (x *SubjectAccessReviewSpec) GetVerb() string {

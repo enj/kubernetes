@@ -25,9 +25,10 @@ func (m p) Validate(ctx context.Context, request plugin.ValidateRequest) (plugin
 	}
 
 	d, err := m.a.Authorize(ctx, plugin.SubjectAccessReviewSpec{
-		Username: "bob",
-		Verb:     "get",
-		Resource: "pods",
+		Username: r.Request.UserInfo.Username,
+		Groups:   r.Request.UserInfo.Groups,
+		Verb:     "magic-verb",
+		Resource: r.Request.Resource.Resource,
 	})
 	if err != nil {
 		return plugin.ValidateResponse{}, err

@@ -51,8 +51,7 @@ func VerifyAdmissionResponse(uid types.UID, mutating bool, review runtime.Object
 
 		// Verify UID matches
 		if r.Response.UID != uid {
-			// TODO fix
-			// return nil, fmt.Errorf("expected response.uid=%q, got %q", uid, r.Response.UID)
+			return nil, fmt.Errorf("expected response.uid=%q, got %q", uid, r.Response.UID)
 		}
 
 		// Verify GVK
