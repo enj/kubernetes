@@ -17,10 +17,9 @@ limitations under the License.
 package validating
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 	"io"
+	"sync"
 
 	admissionv1 "k8s.io/api/admission/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -60,6 +59,7 @@ func Register(plugins *admission.Plugins) {
 type Plugin struct {
 	serializer runtime.Serializer
 	plugin     wasmplugin.Validation
+	m          sync.Mutex
 }
 
 var _ interface {
@@ -93,7 +93,7 @@ func NewValidatingAdmissionWASM(configFile io.Reader) (*Plugin, error) {
 		return nil, err
 	}
 
-	plugin, err := p.Load(ctx, "path/to/plugin.wasm")
+	plugin, err := p.Load(ctx, "/home/mo/plugin.wasm")
 	if err != nil {
 		return nil, err
 	}
@@ -128,28 +128,31 @@ func (p *Plugin) Validate(ctx context.Context, attr admission.Attributes, o admi
 	}
 
 	// make mutation of input impossible
-	versionedAttr.VersionedOldObject = versionedAttr.VersionedOldObject.DeepCopyObject()
-	versionedAttr.VersionedObject = versionedAttr.VersionedObject.DeepCopyObject()
+	if versionedAttr.VersionedOldObject != nil {
+		versionedAttr.VersionedOldObject = versionedAttr.VersionedOldObject.DeepCopyObject()
+	}
+	if versionedAttr.VersionedObject != nil {
+		versionedAttr.VersionedObject = versionedAttr.VersionedObject.DeepCopyObject()
+	}
 
 	uid := uuid.NewUUID()
 
 	req := request.CreateV1AdmissionReview(uid, versionedAttr, invocation)
 
 	// TODO this is silly, we should send proper structured data, not bytes
-	buf, err := encodeObject(req, p.serializer)
+	buf, err := runtime.Encode(p.serializer, req)
 	if err != nil {
 		return err
 	}
-	validateResponse, err := p.plugin.Validate(ctx, wasmplugin.ValidateRequest{AdmissionReview: buf})
+	validateResponse, err := p.validate(ctx, buf)
 	if err != nil {
 		return err
 	}
-	resp, err := decodeObject(validateResponse.AdmissionReview, p.serializer)
+	resp, err := runtime.Decode(p.serializer, validateResponse.AdmissionReview)
 	if err != nil {
 		return err
 	}
 
-	resp.Response.UID = uid // TODO fix
 	result, err := webhookrequest.VerifyAdmissionResponse(uid, false, resp)
 	if err != nil {
 		return err
@@ -204,29 +207,9 @@ func (p *Plugin) SetExternalKubeInformerFactory(factory informers.SharedInformer
 	// TODO implement
 }
 
-func encodeObject(obj runtime.Object, serializer runtime.Serializer) ([]byte, error) {
-	var buf bytes.Buffer
-	if err := serializer.Encode(obj, &buf); err != nil {
-		return nil, fmt.Errorf("encoding failed: %v", err)
-	}
+func (p *Plugin) validate(ctx context.Context, buf []byte) (wasmplugin.ValidateResponse, error) {
+	p.m.Lock()
+	defer p.m.Unlock()
 
-	return buf.Bytes(), nil
-}
-
-func decodeObject(data []byte, serializer runtime.Serializer) (*admissionv1.AdmissionReview, error) {
-	resp := &admissionv1.AdmissionReview{
-		Response: &admissionv1.AdmissionResponse{
-			Allowed: true, // TODO fix
-		},
-	}
-
-	// TODO fix
-	if false {
-		_, _, err := serializer.Decode(data, nil, resp)
-		if err != nil {
-			return nil, fmt.Errorf("decoding failed: %v", err)
-		}
-	}
-
-	return resp, nil
+	return p.plugin.Validate(ctx, wasmplugin.ValidateRequest{AdmissionReview: buf})
 }
