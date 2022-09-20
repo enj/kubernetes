@@ -15,3 +15,20 @@ message ValidateRequest {
 message ValidateResponse {
   bytes admissionReview = 1;
 }
+
+// go:plugin type=host version=1
+service SubjectAccessReview {
+  rpc Authorize(SubjectAccessReviewSpec) returns (SubjectAccessReviewStatus) {}
+}
+
+// TODO this should look like SubjectAccessReviewSpec
+message SubjectAccessReviewSpec {
+  string username = 1;
+  string verb = 2;
+  string resource = 3;
+}
+
+message SubjectAccessReviewStatus {
+  bool allowed = 1;
+  string reason = 2;
+}

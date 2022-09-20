@@ -57,7 +57,75 @@ func (x *ValidateResponse) GetAdmissionReview() []byte {
 	return nil
 }
 
+// TODO this should look like SubjectAccessReviewSpec
+type SubjectAccessReviewSpec struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Username string `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	Verb     string `protobuf:"bytes,2,opt,name=verb,proto3" json:"verb,omitempty"`
+	Resource string `protobuf:"bytes,3,opt,name=resource,proto3" json:"resource,omitempty"`
+}
+
+func (x *SubjectAccessReviewSpec) ProtoReflect() protoreflect.Message {
+	panic(`not implemented`)
+}
+
+func (x *SubjectAccessReviewSpec) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *SubjectAccessReviewSpec) GetVerb() string {
+	if x != nil {
+		return x.Verb
+	}
+	return ""
+}
+
+func (x *SubjectAccessReviewSpec) GetResource() string {
+	if x != nil {
+		return x.Resource
+	}
+	return ""
+}
+
+type SubjectAccessReviewStatus struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Allowed bool   `protobuf:"varint,1,opt,name=allowed,proto3" json:"allowed,omitempty"`
+	Reason  string `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+}
+
+func (x *SubjectAccessReviewStatus) ProtoReflect() protoreflect.Message {
+	panic(`not implemented`)
+}
+
+func (x *SubjectAccessReviewStatus) GetAllowed() bool {
+	if x != nil {
+		return x.Allowed
+	}
+	return false
+}
+
+func (x *SubjectAccessReviewStatus) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
 // go:plugin type=plugin version=1
 type Validation interface {
 	Validate(context.Context, ValidateRequest) (ValidateResponse, error)
+}
+
+// go:plugin type=host version=1
+type SubjectAccessReview interface {
+	Authorize(context.Context, SubjectAccessReviewSpec) (SubjectAccessReviewStatus, error)
 }

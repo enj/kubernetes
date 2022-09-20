@@ -45,3 +45,31 @@ func _validation_validate(ptr, size uint32) uint64 {
 	ptr, size = wasm.ByteToPtr(b)
 	return (uint64(ptr) << uint64(32)) | uint64(size)
 }
+
+type subjectAccessReview struct{}
+
+func NewSubjectAccessReview() SubjectAccessReview {
+	return subjectAccessReview{}
+}
+
+//go:wasm-module env
+//export authorize
+func _authorize(ptr uint32, size uint32) uint64
+
+func (h subjectAccessReview) Authorize(ctx context.Context, request SubjectAccessReviewSpec) (response SubjectAccessReviewStatus, err error) {
+	buf, err := request.MarshalVT()
+	if err != nil {
+		return response, err
+	}
+	ptr, size := wasm.ByteToPtr(buf)
+	ptrSize := _authorize(ptr, size)
+
+	ptr = uint32(ptrSize >> 32)
+	size = uint32(ptrSize)
+	buf = wasm.PtrToByte(ptr, size)
+
+	if err = response.UnmarshalVT(buf); err != nil {
+		return response, err
+	}
+	return response, nil
+}

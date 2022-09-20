@@ -18,6 +18,7 @@ package validating
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"sync"
 
@@ -33,6 +34,7 @@ import (
 	"k8s.io/apiserver/pkg/admission/plugin/webhook/generic"
 	"k8s.io/apiserver/pkg/admission/plugin/webhook/request"
 	webhookrequest "k8s.io/apiserver/pkg/admission/plugin/webhook/request"
+	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	quota "k8s.io/apiserver/pkg/quota/v1"
 	webhookutil "k8s.io/apiserver/pkg/util/webhook"
@@ -60,6 +62,7 @@ type Plugin struct {
 	serializer runtime.Serializer
 	plugin     wasmplugin.Validation
 	m          sync.Mutex
+	authorizer authorizer.Authorizer
 }
 
 var _ interface {
@@ -88,21 +91,23 @@ func NewValidatingAdmissionWASM(configFile io.Reader) (*Plugin, error) {
 
 	ctx := context.Background()
 
-	p, err := wasmplugin.NewValidationPlugin(ctx, wasmplugin.ValidationPluginOption{})
+	wasmPluginLoader, err := wasmplugin.NewValidationPlugin(ctx, wasmplugin.ValidationPluginOption{})
 	if err != nil {
 		return nil, err
 	}
 
-	plugin, err := p.Load(ctx, "/home/mo/plugin.wasm")
-	if err != nil {
-		return nil, err
-	}
-
-	return &Plugin{
+	admissionPlugin := &Plugin{
 		// legacy should always use JSON
 		serializer: serializer.NewCodecFactory(scheme).LegacyCodec(admissionv1.SchemeGroupVersion),
-		plugin:     plugin,
-	}, nil
+	}
+
+	wasmPlugin, err := wasmPluginLoader.Load(ctx, "/home/mo/plugin.wasm", admissionPlugin)
+	if err != nil {
+		return nil, err
+	}
+	admissionPlugin.plugin = wasmPlugin
+
+	return admissionPlugin, nil
 }
 
 func (p *Plugin) Validate(ctx context.Context, attr admission.Attributes, o admission.ObjectInterfaces) error {
@@ -148,8 +153,8 @@ func (p *Plugin) Validate(ctx context.Context, attr admission.Attributes, o admi
 	if err != nil {
 		return err
 	}
-	resp, err := runtime.Decode(p.serializer, validateResponse.AdmissionReview)
-	if err != nil {
+	resp := &admissionv1.AdmissionReview{}
+	if err := runtime.DecodeInto(p.serializer, validateResponse.AdmissionReview, resp); err != nil {
 		return err
 	}
 
@@ -179,12 +184,16 @@ func (p *Plugin) Handles(_ admission.Operation) bool {
 }
 
 func (p *Plugin) ValidateInitialization() error {
-	// TODO implement
+	if p.authorizer == nil {
+		return fmt.Errorf("wasm plugin missing authorizer")
+	}
+
+	// TODO implement the rest
 	return nil
 }
 
 func (p *Plugin) SetAuthorizer(authorizer authorizer.Authorizer) {
-	// TODO implement
+	p.authorizer = authorizer
 }
 
 func (p *Plugin) InspectFeatureGates(gate featuregate.FeatureGate) {
@@ -212,4 +221,23 @@ func (p *Plugin) validate(ctx context.Context, buf []byte) (wasmplugin.ValidateR
 	defer p.m.Unlock()
 
 	return p.plugin.Validate(ctx, wasmplugin.ValidateRequest{AdmissionReview: buf})
+}
+
+func (p *Plugin) Authorize(ctx context.Context, spec wasmplugin.SubjectAccessReviewSpec) (wasmplugin.SubjectAccessReviewStatus, error) { // TODO mutex copy error
+	// TODO need more attributes
+	attr := authorizer.AttributesRecord{
+		User: &user.DefaultInfo{
+			Name: spec.Username,
+		},
+		Verb:            spec.Verb,
+		Resource:        spec.Resource,
+		ResourceRequest: true,
+	}
+
+	decision, reason, err := p.authorizer.Authorize(ctx, attr)
+
+	return wasmplugin.SubjectAccessReviewStatus{
+		Allowed: decision == authorizer.DecisionAllow,
+		Reason:  reason,
+	}, err // TODO I think this error is swallowed
 }
