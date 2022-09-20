@@ -128,12 +128,115 @@ func (x *SubjectAccessReviewStatus) GetReason() string {
 	return ""
 }
 
+type InformerRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Group     string `protobuf:"bytes,1,opt,name=group,proto3" json:"group,omitempty"`
+	Version   string `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
+	Resource  string `protobuf:"bytes,3,opt,name=resource,proto3" json:"resource,omitempty"`
+	Namespace string `protobuf:"bytes,4,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Name      string `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"`
+}
+
+func (x *InformerRequest) ProtoReflect() protoreflect.Message {
+	panic(`not implemented`)
+}
+
+func (x *InformerRequest) GetGroup() string {
+	if x != nil {
+		return x.Group
+	}
+	return ""
+}
+
+func (x *InformerRequest) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *InformerRequest) GetResource() string {
+	if x != nil {
+		return x.Resource
+	}
+	return ""
+}
+
+func (x *InformerRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *InformerRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type InformerResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Namespace         string            `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Name              string            `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	ResourceVersion   string            `protobuf:"bytes,3,opt,name=resourceVersion,proto3" json:"resourceVersion,omitempty"`
+	CreationTimestamp string            `protobuf:"bytes,4,opt,name=creationTimestamp,proto3" json:"creationTimestamp,omitempty"`
+	Labels            map[string]string `protobuf:"bytes,5,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
+}
+
+func (x *InformerResponse) ProtoReflect() protoreflect.Message {
+	panic(`not implemented`)
+}
+
+func (x *InformerResponse) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *InformerResponse) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *InformerResponse) GetResourceVersion() string {
+	if x != nil {
+		return x.ResourceVersion
+	}
+	return ""
+}
+
+func (x *InformerResponse) GetCreationTimestamp() string {
+	if x != nil {
+		return x.CreationTimestamp
+	}
+	return ""
+}
+
+func (x *InformerResponse) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
 // go:plugin type=plugin version=1
 type Validation interface {
 	Validate(context.Context, ValidateRequest) (ValidateResponse, error)
 }
 
 // go:plugin type=host version=1
-type SubjectAccessReview interface {
-	Authorize(context.Context, SubjectAccessReviewSpec) (SubjectAccessReviewStatus, error)
+type Host interface {
+	Authorizer(context.Context, SubjectAccessReviewSpec) (SubjectAccessReviewStatus, error)
+	Informer(context.Context, InformerRequest) (InformerResponse, error)
 }

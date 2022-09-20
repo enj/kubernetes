@@ -24,6 +24,7 @@ import (
 
 	admissionv1 "k8s.io/api/admission/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -58,11 +59,14 @@ func Register(plugins *admission.Plugins) {
 	})
 }
 
+type getFunc func(namespace, name string) (metav1.ObjectMetaAccessor, error)
+
 type Plugin struct {
 	serializer runtime.Serializer
 	plugin     wasmplugin.Validation
 	m          sync.Mutex
 	authorizer authorizer.Authorizer
+	informers  map[metav1.GroupVersionResource]getFunc
 }
 
 var _ interface {
@@ -188,6 +192,10 @@ func (p *Plugin) ValidateInitialization() error {
 		return fmt.Errorf("wasm plugin missing authorizer")
 	}
 
+	if p.informers == nil {
+		return fmt.Errorf("wasm plugin missing informers")
+	}
+
 	// TODO implement the rest
 	return nil
 }
@@ -212,8 +220,38 @@ func (p *Plugin) SetExternalKubeClientSet(client kubernetes.Interface) {
 	// TODO implement
 }
 
-func (p *Plugin) SetExternalKubeInformerFactory(factory informers.SharedInformerFactory) {
-	// TODO implement
+func (p *Plugin) SetExternalKubeInformerFactory(informers informers.SharedInformerFactory) {
+	// informers are lazily loaded so we need to call these outside of the closure
+	namespaceInformer := informers.Core().V1().Namespaces().Lister()
+	podInformer := informers.Core().V1().Pods().Lister()
+	configmapInformer := informers.Core().V1().ConfigMaps().Lister()
+
+	p.informers = map[metav1.GroupVersionResource]getFunc{
+		metav1.GroupVersionResource{
+			Group:    "",
+			Version:  "v1",
+			Resource: "namespaces",
+		}: func(namespace, name string) (metav1.ObjectMetaAccessor, error) {
+			if len(namespace) > 0 {
+				return nil, fmt.Errorf("namespace resource is cluster scoped: %s", namespace)
+			}
+			return namespaceInformer.Get(name)
+		},
+		metav1.GroupVersionResource{
+			Group:    "",
+			Version:  "v1",
+			Resource: "pods",
+		}: func(namespace, name string) (metav1.ObjectMetaAccessor, error) {
+			return podInformer.Pods(namespace).Get(name)
+		},
+		metav1.GroupVersionResource{
+			Group:    "",
+			Version:  "v1",
+			Resource: "configmaps",
+		}: func(namespace, name string) (metav1.ObjectMetaAccessor, error) {
+			return configmapInformer.ConfigMaps(namespace).Get(name)
+		},
+	}
 }
 
 func (p *Plugin) validate(ctx context.Context, buf []byte) (wasmplugin.ValidateResponse, error) {
@@ -223,7 +261,7 @@ func (p *Plugin) validate(ctx context.Context, buf []byte) (wasmplugin.ValidateR
 	return p.plugin.Validate(ctx, wasmplugin.ValidateRequest{AdmissionReview: buf})
 }
 
-func (p *Plugin) Authorize(ctx context.Context, spec wasmplugin.SubjectAccessReviewSpec) (wasmplugin.SubjectAccessReviewStatus, error) { // TODO mutex copy error
+func (p *Plugin) Authorizer(ctx context.Context, spec wasmplugin.SubjectAccessReviewSpec) (wasmplugin.SubjectAccessReviewStatus, error) { // TODO mutex copy error
 	// TODO need more attributes
 	attr := authorizer.AttributesRecord{
 		User: &user.DefaultInfo{
@@ -240,5 +278,29 @@ func (p *Plugin) Authorize(ctx context.Context, spec wasmplugin.SubjectAccessRev
 	return wasmplugin.SubjectAccessReviewStatus{
 		Allowed: decision == authorizer.DecisionAllow,
 		Reason:  reason,
-	}, err // TODO I think this error is swallowed
+	}, err // this error causes a panic which is caught
+}
+
+func (p *Plugin) Informer(ctx context.Context, informerRequest wasmplugin.InformerRequest) (wasmplugin.InformerResponse, error) {
+	gvr := metav1.GroupVersionResource{
+		Group:    informerRequest.Group,
+		Version:  informerRequest.Version,
+		Resource: informerRequest.Resource,
+	}
+	f := p.informers[gvr]
+	if f == nil {
+		return wasmplugin.InformerResponse{}, fmt.Errorf("invalid gvr: %s", gvr)
+	}
+	meta, err := f(informerRequest.Namespace, informerRequest.Name)
+	if err != nil {
+		return wasmplugin.InformerResponse{}, err
+	}
+	o := meta.GetObjectMeta()
+	return wasmplugin.InformerResponse{
+		Namespace:         o.GetNamespace(),
+		Name:              o.GetName(),
+		ResourceVersion:   o.GetResourceVersion(),
+		CreationTimestamp: o.GetCreationTimestamp().String(),
+		Labels:            o.GetLabels(),
+	}, nil
 }

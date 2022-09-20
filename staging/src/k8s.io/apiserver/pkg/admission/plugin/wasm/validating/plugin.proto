@@ -17,8 +17,9 @@ message ValidateResponse {
 }
 
 // go:plugin type=host version=1
-service SubjectAccessReview {
-  rpc Authorize(SubjectAccessReviewSpec) returns (SubjectAccessReviewStatus) {}
+service Host {
+  rpc Authorizer(SubjectAccessReviewSpec) returns (SubjectAccessReviewStatus) {}
+  rpc Informer(InformerRequest) returns (InformerResponse) {}
 }
 
 // TODO this should look like SubjectAccessReviewSpec
@@ -32,4 +33,20 @@ message SubjectAccessReviewSpec {
 message SubjectAccessReviewStatus {
   bool allowed = 1;
   string reason = 2;
+}
+
+message InformerRequest {
+  string group = 1;
+  string version = 2;
+  string resource = 3;
+  string namespace = 4;
+  string name = 5;
+}
+
+message InformerResponse {
+  string namespace = 1;
+  string name = 2;
+  string resourceVersion = 3;
+  string creationTimestamp = 4;
+  map<string, string> labels = 5;
 }

@@ -22,17 +22,18 @@ import (
 	os "os"
 )
 
-type _subjectAccessReview struct {
-	SubjectAccessReview
+type _host struct {
+	Host
 }
 
-func (h _subjectAccessReview) Export() map[string]interface{} {
+func (h _host) Export() map[string]interface{} {
 	return map[string]interface{}{
-		"authorize": h._Authorize(),
+		"authorizer": h._Authorizer(),
+		"informer":   h._Informer(),
 	}
 }
 
-func (h _subjectAccessReview) _Authorize() func(ctx context.Context, m api.Module, offset, size uint32) uint64 {
+func (h _host) _Authorizer() func(ctx context.Context, m api.Module, offset, size uint32) uint64 {
 	return func(ctx context.Context, m api.Module, offset, size uint32) uint64 {
 		buf, err := wasm.ReadMemory(ctx, m, offset, size)
 		if err != nil {
@@ -43,7 +44,34 @@ func (h _subjectAccessReview) _Authorize() func(ctx context.Context, m api.Modul
 		if err != nil {
 			panic(err)
 		}
-		resp, err := h.Authorize(ctx, request)
+		resp, err := h.Authorizer(ctx, request)
+		if err != nil {
+			panic(err)
+		}
+		buf, err = resp.MarshalVT()
+		if err != nil {
+			panic(err)
+		}
+		ptr, err := wasm.WriteMemory(ctx, m, buf)
+		if err != nil {
+			panic(err)
+		}
+		return (ptr << uint64(32)) | uint64(len(buf))
+	}
+}
+
+func (h _host) _Informer() func(ctx context.Context, m api.Module, offset, size uint32) uint64 {
+	return func(ctx context.Context, m api.Module, offset, size uint32) uint64 {
+		buf, err := wasm.ReadMemory(ctx, m, offset, size)
+		if err != nil {
+			panic(err)
+		}
+		var request InformerRequest
+		err = request.UnmarshalVT(buf)
+		if err != nil {
+			panic(err)
+		}
+		resp, err := h.Informer(ctx, request)
 		if err != nil {
 			panic(err)
 		}
@@ -89,7 +117,7 @@ func NewValidationPlugin(ctx context.Context, opt ValidationPluginOption) (*Vali
 		config:  config,
 	}, nil
 }
-func (p *ValidationPlugin) Load(ctx context.Context, pluginPath string, hostFunctions SubjectAccessReview) (Validation, error) {
+func (p *ValidationPlugin) Load(ctx context.Context, pluginPath string, hostFunctions Host) (Validation, error) {
 	b, err := os.ReadFile(pluginPath)
 	if err != nil {
 		return nil, err
@@ -98,7 +126,7 @@ func (p *ValidationPlugin) Load(ctx context.Context, pluginPath string, hostFunc
 	// Create an empty namespace so that multiple modules will not conflict
 	ns := p.runtime.NewNamespace(ctx)
 
-	h := _subjectAccessReview{hostFunctions}
+	h := _host{hostFunctions}
 
 	// Instantiate a Go-defined module named "env" that exports functions.
 	_, err = p.runtime.NewModuleBuilder("env").ExportFunctions(h.Export()).Instantiate(ctx, ns)

@@ -187,7 +187,7 @@ do
 done
 
 if [ "x${GO_OUT}" == "x" ]; then
-    make -C "${KUBE_ROOT}" WHAT="cmd/kubectl cmd/kube-apiserver cmd/kube-controller-manager cmd/cloud-controller-manager cmd/kubelet cmd/kube-proxy cmd/kube-scheduler"
+    make -C "${KUBE_ROOT}" WHAT="cmd/kube-apiserver"
 else
     echo "skipped the build."
 fi
@@ -1101,7 +1101,7 @@ if [[ "${KUBETEST_IN_DOCKER:-}" == "true" ]]; then
   # to use docker installed containerd as kubelet container runtime
   # we need to enable cri and install cni
   # install cni for docker in docker
-  install_cni 
+  install_cni
 
   # enable cri for docker in docker
   echo "enable cri"

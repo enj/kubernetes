@@ -46,23 +46,45 @@ func _validation_validate(ptr, size uint32) uint64 {
 	return (uint64(ptr) << uint64(32)) | uint64(size)
 }
 
-type subjectAccessReview struct{}
+type host struct{}
 
-func NewSubjectAccessReview() SubjectAccessReview {
-	return subjectAccessReview{}
+func NewHost() Host {
+	return host{}
 }
 
 //go:wasm-module env
-//export authorize
-func _authorize(ptr uint32, size uint32) uint64
+//export authorizer
+func _authorizer(ptr uint32, size uint32) uint64
 
-func (h subjectAccessReview) Authorize(ctx context.Context, request SubjectAccessReviewSpec) (response SubjectAccessReviewStatus, err error) {
+func (h host) Authorizer(ctx context.Context, request SubjectAccessReviewSpec) (response SubjectAccessReviewStatus, err error) {
 	buf, err := request.MarshalVT()
 	if err != nil {
 		return response, err
 	}
 	ptr, size := wasm.ByteToPtr(buf)
-	ptrSize := _authorize(ptr, size)
+	ptrSize := _authorizer(ptr, size)
+
+	ptr = uint32(ptrSize >> 32)
+	size = uint32(ptrSize)
+	buf = wasm.PtrToByte(ptr, size)
+
+	if err = response.UnmarshalVT(buf); err != nil {
+		return response, err
+	}
+	return response, nil
+}
+
+//go:wasm-module env
+//export informer
+func _informer(ptr uint32, size uint32) uint64
+
+func (h host) Informer(ctx context.Context, request InformerRequest) (response InformerResponse, err error) {
+	buf, err := request.MarshalVT()
+	if err != nil {
+		return response, err
+	}
+	ptr, size := wasm.ByteToPtr(buf)
+	ptrSize := _informer(ptr, size)
 
 	ptr = uint32(ptrSize >> 32)
 	size = uint32(ptrSize)
