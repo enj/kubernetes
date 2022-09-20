@@ -40,8 +40,10 @@ func (m p) Validate(ctx context.Context, request plugin.ValidateRequest) (plugin
 		Result:           nil,
 		AuditAnnotations: nil,
 		Warnings: []string{
-			fmt.Sprintf("plugin saw uid %s", r.Request.UID),
-			fmt.Sprintf("authorizer said %t because of %s", d.Allowed, d.Reason),
+			fmt.Sprintf("plugin saw uid %q", r.Request.UID),
+			fmt.Sprintf("authorizer said %t because of %q", d.Allowed, d.Reason),
+			fmt.Sprintf("plugin saw user %q in groups %q for resource %q",
+				r.Request.UserInfo.Username, r.Request.UserInfo.Groups, r.Request.Resource.Resource),
 		},
 	}
 
