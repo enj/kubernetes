@@ -6,7 +6,7 @@ go 1.19
 
 require (
 	github.com/gogo/protobuf v1.3.2
-	github.com/stretchr/testify v1.7.0
+	github.com/stretchr/testify v1.7.1
 	google.golang.org/grpc v1.47.0
 )
 
@@ -26,4 +26,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace k8s.io/cri-api => ../cri-api
+replace (
+	github.com/stretchr/testify => github.com/stretchr/testify v1.7.0
+	k8s.io/cri-api => ../cri-api
+)
