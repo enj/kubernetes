@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/admission/initializer"
+	wasmplugin "k8s.io/apiserver/pkg/admission/plugin/wasm/validating/plugin"
 	webhookerrors "k8s.io/apiserver/pkg/admission/plugin/webhook/errors"
 	"k8s.io/apiserver/pkg/admission/plugin/webhook/generic"
 	"k8s.io/apiserver/pkg/admission/plugin/webhook/request"
@@ -58,6 +59,7 @@ func Register(plugins *admission.Plugins) {
 
 type Plugin struct {
 	serializer runtime.Serializer
+	plugin     wasmplugin.Validation
 }
 
 var _ interface {
@@ -84,9 +86,22 @@ func NewValidatingAdmissionWASM(configFile io.Reader) (*Plugin, error) {
 		return nil, err
 	}
 
+	ctx := context.Background()
+
+	p, err := wasmplugin.NewValidationPlugin(ctx, wasmplugin.ValidationPluginOption{})
+	if err != nil {
+		return nil, err
+	}
+
+	plugin, err := p.Load(ctx, "path/to/plugin.wasm")
+	if err != nil {
+		return nil, err
+	}
+
 	return &Plugin{
 		// legacy should always use JSON
 		serializer: serializer.NewCodecFactory(scheme).LegacyCodec(admissionv1.SchemeGroupVersion),
+		plugin:     plugin,
 	}, nil
 }
 
@@ -125,16 +140,16 @@ func (p *Plugin) Validate(ctx context.Context, attr admission.Attributes, o admi
 	if err != nil {
 		return err
 	}
-
-	// TODO wire to WASM
-	_ = buf
-	var buf2 []byte
-
-	resp, err := decodeObject(buf2, p.serializer)
+	validateResponse, err := p.plugin.Validate(ctx, wasmplugin.ValidateRequest{AdmissionReview: buf})
+	if err != nil {
+		return err
+	}
+	resp, err := decodeObject(validateResponse.AdmissionReview, p.serializer)
 	if err != nil {
 		return err
 	}
 
+	resp.Response.UID = uid // TODO fix
 	result, err := webhookrequest.VerifyAdmissionResponse(uid, false, resp)
 	if err != nil {
 		return err

@@ -1,0 +1,17 @@
+syntax = "proto3";
+package plugin;
+
+option go_package = "k8s.io/apiserver/pkg/admission/plugin/wasm/validating/plugin";
+
+// go:plugin type=plugin version=1
+service Validation {
+  rpc Validate(ValidateRequest) returns (ValidateResponse) {}
+}
+
+message ValidateRequest {
+  bytes admissionReview = 1;
+}
+
+message ValidateResponse {
+  bytes admissionReview = 1;
+}
