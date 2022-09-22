@@ -260,83 +260,32 @@ func loadConfig(filepath string) (*apiserverconfig.EncryptionConfiguration, erro
 	return config, validation.ValidateEncryptionConfiguration(config).ToAggregate()
 }
 
-var (
-	// The factory to create kms service. This is to make writing test easier.
-	envelopeServiceFactory = envelope.NewGRPCService
-
-	// The factory to create kmsv2 service.
-	envelopeKMSv2ServiceFactory = envelopekmsv2.NewGRPCService
-)
-
 func prefixTransformersAndProbes(config apiserverconfig.ResourceConfiguration, stopCh <-chan struct{}) ([]value.PrefixTransformer, []healthChecker, error) {
-	// we ignore the cancel func because this context should only be canceled when stopCh is closed
-	ctx, _ := wait.ContextForChannel(stopCh)
-
 	var transformers []value.PrefixTransformer
 	var probes []healthChecker
 
 	for _, provider := range config.Providers {
 		provider := provider
 		var (
-			transformer value.PrefixTransformer
-			err         error
+			transformer    value.PrefixTransformer
+			transformerErr error
+			probe          healthChecker
 		)
 
 		switch {
 		case provider.AESGCM != nil:
-			transformer, err = aesPrefixTransformer(provider.AESGCM, aestransformer.NewGCMTransformer, aesGCMTransformerPrefixV1)
+			transformer, transformerErr = aesPrefixTransformer(provider.AESGCM, aestransformer.NewGCMTransformer, aesGCMTransformerPrefixV1)
 
 		case provider.AESCBC != nil:
-			transformer, err = aesPrefixTransformer(provider.AESCBC, aestransformer.NewCBCTransformer, aesCBCTransformerPrefixV1)
+			transformer, transformerErr = aesPrefixTransformer(provider.AESCBC, aestransformer.NewCBCTransformer, aesCBCTransformerPrefixV1)
 
 		case provider.Secretbox != nil:
-			transformer, err = secretboxPrefixTransformer(provider.Secretbox)
+			transformer, transformerErr = secretboxPrefixTransformer(provider.Secretbox)
 
 		case provider.KMS != nil:
-			kmsName := provider.KMS.Name
-			switch provider.KMS.APIVersion {
-			case kmsAPIVersionV1:
-				envelopeService, err := envelopeServiceFactory(ctx, provider.KMS.Endpoint, provider.KMS.Timeout.Duration)
-				if err != nil {
-					return nil, nil, fmt.Errorf("could not configure KMSv1-Plugin's probe %q, error: %v", kmsName, err)
-				}
-
-				probe := &kmsPluginProbe{
-					name:         kmsName,
-					ttl:          kmsPluginHealthzNegativeTTL,
-					service:      envelopeService,
-					l:            &sync.Mutex{},
-					lastResponse: &kmsPluginHealthzResponse{},
-				}
-
+			transformer, probe, transformerErr = kmsPrefixTransformer(provider.KMS, stopCh)
+			if transformerErr == nil {
 				probes = append(probes, probe)
-
-				transformer, err = envelopePrefixTransformer(provider.KMS, envelopeService, kmsTransformerPrefixV1)
-
-			case kmsAPIVersionV2:
-				if !utilfeature.DefaultFeatureGate.Enabled(features.KMSv2) {
-					return nil, nil, fmt.Errorf("could not configure KMSv2 plugin %q, KMSv2 feature is not enabled", kmsName)
-				}
-
-				envelopeService, err := envelopeKMSv2ServiceFactory(ctx, provider.KMS.Endpoint, provider.KMS.Timeout.Duration)
-				if err != nil {
-					return nil, nil, fmt.Errorf("could not configure KMSv2-Plugin's probe %q, error: %v", kmsName, err)
-				}
-
-				probe := &kmsv2PluginProbe{
-					name:         kmsName,
-					ttl:          kmsPluginHealthzNegativeTTL,
-					service:      envelopeService,
-					l:            &sync.Mutex{},
-					lastResponse: &kmsPluginHealthzResponse{},
-				}
-
-				probes = append(probes, probe)
-
-				transformer, err = envelopekmsv2PrefixTransformer(provider.KMS, envelopeService, kmsTransformerPrefixV2)
-
-			default:
-				return nil, nil, fmt.Errorf("could not configure KMS plugin %q, unsupported KMS API version %q", kmsName, provider.KMS.APIVersion)
 			}
 
 		case provider.Identity != nil:
@@ -349,8 +298,8 @@ func prefixTransformersAndProbes(config apiserverconfig.ResourceConfiguration, s
 			return nil, nil, errors.New("provider does not contain any of the expected providers: KMS, AESGCM, AESCBC, Secretbox, Identity")
 		}
 
-		if err != nil {
-			return nil, nil, err
+		if transformerErr != nil {
+			return nil, nil, transformerErr
 		}
 
 		transformers = append(transformers, transformer)
@@ -462,7 +411,70 @@ func secretboxPrefixTransformer(config *apiserverconfig.SecretboxConfiguration) 
 	return result, nil
 }
 
-func envelopePrefixTransformer(config *apiserverconfig.KMSConfiguration, envelopeService envelope.Service, prefix string) (value.PrefixTransformer, error) {
+var (
+	// The factory to create kms service. This is to make writing test easier.
+	envelopeServiceFactory = envelope.NewGRPCService
+
+	// The factory to create kmsv2 service.
+	envelopeKMSv2ServiceFactory = envelopekmsv2.NewGRPCService
+)
+
+func kmsPrefixTransformer(config *apiserverconfig.KMSConfiguration, stopCh <-chan struct{}) (value.PrefixTransformer, healthChecker, error) {
+	// we ignore the cancel func because this context should only be canceled when stopCh is closed
+	ctx, _ := wait.ContextForChannel(stopCh)
+
+	kmsName := config.Name
+	switch config.APIVersion {
+	case kmsAPIVersionV1:
+		envelopeService, err := envelopeServiceFactory(ctx, config.Endpoint, config.Timeout.Duration)
+		if err != nil {
+			return value.PrefixTransformer{}, nil, fmt.Errorf("could not configure KMSv1-Plugin's probe %q, error: %v", kmsName, err)
+		}
+
+		probe := &kmsPluginProbe{
+			name:         kmsName,
+			ttl:          kmsPluginHealthzNegativeTTL,
+			service:      envelopeService,
+			l:            &sync.Mutex{},
+			lastResponse: &kmsPluginHealthzResponse{},
+		}
+
+		transformer := envelopePrefixTransformer(config, envelopeService, kmsTransformerPrefixV1)
+
+		return transformer, probe, nil
+
+	case kmsAPIVersionV2:
+		if !utilfeature.DefaultFeatureGate.Enabled(features.KMSv2) {
+			return value.PrefixTransformer{}, nil, fmt.Errorf("could not configure KMSv2 plugin %q, KMSv2 feature is not enabled", kmsName)
+		}
+
+		envelopeService, err := envelopeKMSv2ServiceFactory(ctx, config.Endpoint, config.Timeout.Duration)
+		if err != nil {
+			return value.PrefixTransformer{}, nil, fmt.Errorf("could not configure KMSv2-Plugin's probe %q, error: %v", kmsName, err)
+		}
+
+		probe := &kmsv2PluginProbe{
+			name:         kmsName,
+			ttl:          kmsPluginHealthzNegativeTTL,
+			service:      envelopeService,
+			l:            &sync.Mutex{},
+			lastResponse: &kmsPluginHealthzResponse{},
+		}
+
+		// using AES-GCM by default for encrypting data with KMSv2
+		transformer := value.PrefixTransformer{
+			Transformer: envelopekmsv2.NewEnvelopeTransformer(envelopeService, int(*config.CacheSize), aestransformer.NewGCMTransformer),
+			Prefix:      []byte(kmsTransformerPrefixV2 + kmsName + ":"),
+		}
+
+		return transformer, probe, nil
+
+	default:
+		return value.PrefixTransformer{}, nil, fmt.Errorf("could not configure KMS plugin %q, unsupported KMS API version %q", kmsName, config.APIVersion)
+	}
+}
+
+func envelopePrefixTransformer(config *apiserverconfig.KMSConfiguration, envelopeService envelope.Service, prefix string) value.PrefixTransformer {
 	baseTransformerFunc := func(block cipher.Block) value.Transformer {
 		// v1.24: write using AES-CBC only but support reads via AES-CBC and AES-GCM (so we can move to AES-GCM)
 		// v1.25: write using AES-GCM only but support reads via AES-GCM and fallback to AES-CBC for backwards compatibility
@@ -471,26 +483,10 @@ func envelopePrefixTransformer(config *apiserverconfig.KMSConfiguration, envelop
 		return unionTransformers{aestransformer.NewGCMTransformer(block), aestransformer.NewCBCTransformer(block)}
 	}
 
-	envelopeTransformer, err := envelope.NewEnvelopeTransformer(envelopeService, int(*config.CacheSize), baseTransformerFunc)
-	if err != nil {
-		return value.PrefixTransformer{}, err
-	}
 	return value.PrefixTransformer{
-		Transformer: envelopeTransformer,
+		Transformer: envelope.NewEnvelopeTransformer(envelopeService, int(*config.CacheSize), baseTransformerFunc),
 		Prefix:      []byte(prefix + config.Name + ":"),
-	}, nil
-}
-
-func envelopekmsv2PrefixTransformer(config *apiserverconfig.KMSConfiguration, envelopeService envelopekmsv2.Service, prefix string) (value.PrefixTransformer, error) {
-	// using AES-GCM by default for encrypting data with KMSv2
-	envelopeTransformer, err := envelopekmsv2.NewEnvelopeTransformer(envelopeService, int(*config.CacheSize), aestransformer.NewGCMTransformer)
-	if err != nil {
-		return value.PrefixTransformer{}, err
 	}
-	return value.PrefixTransformer{
-		Transformer: envelopeTransformer,
-		Prefix:      []byte(prefix + config.Name + ":"),
-	}, nil
 }
 
 type unionTransformers []value.Transformer
