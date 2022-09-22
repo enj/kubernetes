@@ -233,14 +233,12 @@ func (c *AvailableConditionController) sync(key string) error {
 		return err
 	}
 
-	apiService := originalAPIService.DeepCopy()
-
-	// if a particular transport was specified, use that otherwise build one.
-	// construct a transport that will ignore TLS verification based on api service config and set a very short timeout.
-	// This is a best effort GET that provides no additional information.
+	// if a particular transport was specified, use that otherwise build one
+	// construct a transport that will ignore TLS verification (if someone owns the network and messes with your status
+	// that's not so bad) and sets a very short timeout.  This is a best effort GET that provides no additional information
 	restConfig := &rest.Config{
 		TLSClientConfig: rest.TLSClientConfig{
-			Insecure: apiService.Spec.InsecureSkipTLSVerify,
+			Insecure: true,
 		},
 	}
 
@@ -264,6 +262,8 @@ func (c *AvailableConditionController) sync(key string) error {
 	if err != nil {
 		return err
 	}
+
+	apiService := originalAPIService.DeepCopy()
 
 	availableCondition := apiregistrationv1.APIServiceCondition{
 		Type:               apiregistrationv1.Available,
@@ -363,10 +363,6 @@ func (c *AvailableConditionController) sync(key string) error {
 				discoveryURL, err := c.serviceResolver.ResolveEndpoint(apiService.Spec.Service.Namespace, apiService.Spec.Service.Name, *apiService.Spec.Service.Port)
 				if err != nil {
 					results <- err
-					return
-				}
-				if discoveryURL.Scheme != "https" {
-					results <- fmt.Errorf("unexpected scheme %q from %v", discoveryURL.Scheme, discoveryURL)
 					return
 				}
 				// render legacyAPIService health check path when it is delegated to a service
