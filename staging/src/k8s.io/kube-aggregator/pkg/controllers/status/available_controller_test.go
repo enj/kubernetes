@@ -393,7 +393,7 @@ func TestSync(t *testing.T) {
 				endpointsIndexer.Add(obj)
 			}
 
-			testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			testServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if !tc.forceDiscoveryFail {
 					w.WriteHeader(http.StatusOK)
 				}

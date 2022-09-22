@@ -233,12 +233,14 @@ func (c *AvailableConditionController) sync(key string) error {
 		return err
 	}
 
-	// if a particular transport was specified, use that otherwise build one
-	// construct an http client that will ignore TLS verification (if someone owns the network and messes with your status
-	// that's not so bad) and sets a very short timeout.  This is a best effort GET that provides no additional information
+	apiService := originalAPIService.DeepCopy()
+
+	// if a particular transport was specified, use that otherwise build one.
+	// construct a transport that will ignore TLS verification based on api service config and set a very short timeout.
+	// This is a best effort GET that provides no additional information.
 	restConfig := &rest.Config{
 		TLSClientConfig: rest.TLSClientConfig{
-			Insecure: true,
+			Insecure: apiService.Spec.InsecureSkipTLSVerify,
 		},
 	}
 
@@ -256,17 +258,12 @@ func (c *AvailableConditionController) sync(key string) error {
 	// the controller spamming idle connections with short-lived transports.
 	// NOTE: the cache works because we assume that the transports constructed
 	// by the controller only vary on the dynamic cert/key.
+	// We use the transport directly instead of using a http.Client because
+	// we do not want to follow redirects.
 	restTransport, err := c.tlsCache.get(restConfig)
 	if err != nil {
 		return err
 	}
-	discoveryClient := &http.Client{
-		Transport: restTransport,
-		// the request should happen quickly.
-		Timeout: 5 * time.Second,
-	}
-
-	apiService := originalAPIService.DeepCopy()
 
 	availableCondition := apiregistrationv1.APIServiceCondition{
 		Type:               apiregistrationv1.Available,
@@ -368,6 +365,10 @@ func (c *AvailableConditionController) sync(key string) error {
 					results <- err
 					return
 				}
+				if discoveryURL.Scheme != "https" {
+					results <- fmt.Errorf("unexpected scheme %q from %v", discoveryURL.Scheme, discoveryURL)
+					return
+				}
 				// render legacyAPIService health check path when it is delegated to a service
 				if apiService.Name == "v1." {
 					discoveryURL.Path = "/api/" + apiService.Spec.Version
@@ -377,8 +378,12 @@ func (c *AvailableConditionController) sync(key string) error {
 
 				errCh := make(chan error, 1)
 				go func() {
+					// the request should happen quickly.
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+
 					// be sure to check a URL that the aggregated API server is required to serve
-					newReq, err := http.NewRequest("GET", discoveryURL.String(), nil)
+					newReq, err := http.NewRequestWithContext(ctx, "GET", discoveryURL.String(), nil)
 					if err != nil {
 						errCh <- err
 						return
@@ -386,10 +391,10 @@ func (c *AvailableConditionController) sync(key string) error {
 
 					// setting the system-masters identity ensures that we will always have access rights
 					transport.SetAuthProxyHeaders(newReq, "system:kube-aggregator", []string{"system:masters"}, nil)
-					resp, err := discoveryClient.Do(newReq)
+					resp, err := restTransport.RoundTrip(newReq)
 					if resp != nil {
-						resp.Body.Close()
-						// we should always been in the 200s or 300s
+						_ = resp.Body.Close()
+						// we should always been in the 200s
 						if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 							errCh <- fmt.Errorf("bad status from %v: %v", discoveryURL, resp.StatusCode)
 							return
