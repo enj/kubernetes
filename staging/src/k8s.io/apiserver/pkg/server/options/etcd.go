@@ -60,9 +60,11 @@ type EtcdOptions struct {
 	// WatchCacheSizes represents override to a given resource
 	WatchCacheSizes []string
 
-	// TODO comment about correct use
+	// EncryptionProviderConfigFilepath is loaded once via LoadEncryptionConfig.
+	// This prevents unnecessary gRPC connections to KMS plugins and ensures that
+	// the API server only has one view into the current key ID of KMS v2 plugins.
 	EncryptionProviderConfigFilepath string
-	encryptionProviderConfigOnce     *sync.Once
+	encryptionProviderConfigOnce     sync.Once
 	encryptionProviderConfigErr      error
 	transformers                     map[schema.GroupResource]value.Transformer
 	kmsHealthChecks                  []healthz.HealthChecker
@@ -74,13 +76,12 @@ var storageTypes = sets.NewString(
 
 func NewEtcdOptions(backendConfig *storagebackend.Config) *EtcdOptions {
 	options := &EtcdOptions{
-		StorageConfig:                *backendConfig,
-		DefaultStorageMediaType:      "application/json",
-		DeleteCollectionWorkers:      1,
-		EnableGarbageCollection:      true,
-		EnableWatchCache:             true,
-		DefaultWatchCacheSize:        100,
-		encryptionProviderConfigOnce: &sync.Once{},
+		StorageConfig:           *backendConfig,
+		DefaultStorageMediaType: "application/json",
+		DeleteCollectionWorkers: 1,
+		EnableGarbageCollection: true,
+		EnableWatchCache:        true,
+		DefaultWatchCacheSize:   100,
 	}
 	options.StorageConfig.CountMetricPollPeriod = time.Minute
 	return options

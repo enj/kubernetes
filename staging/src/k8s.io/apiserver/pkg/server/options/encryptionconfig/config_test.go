@@ -263,7 +263,7 @@ func TestKMSPluginHealthz(t *testing.T) {
 		desc    string
 		config  string
 		want    []healthChecker
-		wantErr bool
+		wantErr string
 	}{
 		{
 			desc:   "Install Healthz",
@@ -271,6 +271,7 @@ func TestKMSPluginHealthz(t *testing.T) {
 			want: []healthChecker{
 				&kmsPluginProbe{
 					name: "foo",
+					ttl:  3 * time.Second,
 				},
 			},
 		},
@@ -280,9 +281,11 @@ func TestKMSPluginHealthz(t *testing.T) {
 			want: []healthChecker{
 				&kmsPluginProbe{
 					name: "foo",
+					ttl:  3 * time.Second,
 				},
 				&kmsPluginProbe{
 					name: "bar",
+					ttl:  3 * time.Second,
 				},
 			},
 		},
@@ -296,9 +299,11 @@ func TestKMSPluginHealthz(t *testing.T) {
 			want: []healthChecker{
 				&kmsv2PluginProbe{
 					name: "foo",
+					ttl:  3 * time.Second,
 				},
 				&kmsPluginProbe{
 					name: "bar",
+					ttl:  3 * time.Second,
 				},
 			},
 		},
@@ -306,30 +311,49 @@ func TestKMSPluginHealthz(t *testing.T) {
 			desc:    "Invalid API version",
 			config:  "testdata/invalid-configs/kms/invalid-apiversion.yaml",
 			want:    nil,
-			wantErr: true,
+			wantErr: `resources[0].providers[0].kms.apiVersion: Invalid value: "v3": unsupported apiVersion apiVersion for KMS provider, only v1 and v2 are supported`,
 		},
 	}
 
 	for _, tt := range testCases {
 		t.Run(tt.desc, func(t *testing.T) {
-			t.Skip()
-
-			ctx := testContext(t)
-
 			config, err := loadConfig(tt.config)
+			if errStr := errString(err); errStr != tt.wantErr {
+				t.Fatalf("unexpected error state got=%s want=%s", errStr, tt.wantErr)
+			}
+			if len(tt.wantErr) > 0 {
+				return
+			}
+
+			_, got, err := getTransformerOverridesAndKMSPluginProbes(config, testContext(t).Done())
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, got, err := getTransformerOverridesAndKMSPluginProbes(config, ctx.Done())
-			if err != nil && !tt.wantErr {
-				t.Fatalf("got %v, want nil for error", err)
+
+			// unset fields that are not relevant to the test
+			for i := range got {
+				checker := got[i]
+				switch p := checker.(type) {
+				case *kmsPluginProbe:
+					p.service = nil
+					p.l = nil
+					p.lastResponse = nil
+				case *kmsv2PluginProbe:
+					p.service = nil
+					p.l = nil
+					p.lastResponse = nil
+				default:
+					t.Fatalf("unexpected probe type %T", p)
+				}
 			}
 
 			if d := cmp.Diff(tt.want, got,
-				cmp.Comparer(serviceComparer),
-				cmp.Comparer(serviceKMSv2Comparer),
-				cmp.Comparer(kmsPluginProbeComparer),
-				cmp.Comparer(kmsv2PluginProbeComparer),
+				cmp.Comparer(func(a, b *kmsPluginProbe) bool {
+					return *a == *b
+				}),
+				cmp.Comparer(func(a, b *kmsv2PluginProbe) bool {
+					return *a == *b
+				}),
 			); d != "" {
 				t.Fatalf("HealthzConfig mismatch (-want +got):\n%s", d)
 			}
@@ -419,42 +443,12 @@ func TestKMSv2PluginHealthzTTL(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.desc, func(t *testing.T) {
-			_, _ = tt.probe.check(ctx)
+			_ = tt.probe.check(ctx)
 			if tt.probe.ttl != tt.wantTTL {
 				t.Fatalf("want ttl %v, got ttl %v", tt.wantTTL, tt.probe.ttl)
 			}
 		})
 	}
-}
-
-// As long as got and want contain envelope.Service we will return true.
-// If got has an envelope.Service and want does not (or vice versa) this will return false.
-func serviceComparer(_, _ envelope.Service) bool {
-	return true
-}
-
-func serviceKMSv2Comparer(_, _ envelopekmsv2.Service) bool {
-	return true
-}
-
-func kmsPluginProbeComparer(a, b *kmsPluginProbe) bool {
-	aa := *a
-	bb := *b
-	aa.l = nil
-	bb.l = nil
-	aa.service = nil
-	bb.service = nil
-	return aa == bb
-}
-
-func kmsv2PluginProbeComparer(a, b *kmsv2PluginProbe) bool {
-	aa := *a
-	bb := *b
-	aa.l = nil
-	bb.l = nil
-	aa.service = nil
-	bb.service = nil
-	return aa == bb
 }
 
 func TestCBCKeyRotationWithOverlappingProviders(t *testing.T) {
@@ -586,4 +580,12 @@ func testContext(t *testing.T) context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	return ctx
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	return err.Error()
 }

@@ -18,7 +18,6 @@ package options
 
 import (
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -226,7 +225,6 @@ func TestKMSHealthzEndpoint(t *testing.T) {
 			serverConfig := server.NewConfig(codecs)
 			etcdOptions := &EtcdOptions{
 				EncryptionProviderConfigFilepath: tc.encryptionConfigPath,
-				encryptionProviderConfigOnce:     &sync.Once{},
 			}
 			if err := etcdOptions.addEtcdHealthEndpoint(serverConfig); err != nil {
 				t.Fatalf("Failed to add healthz error: %v", err)
@@ -260,9 +258,7 @@ func TestReadinessCheck(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			serverConfig := server.NewConfig(codecs)
-			etcdOptions := &EtcdOptions{
-				encryptionProviderConfigOnce: &sync.Once{},
-			}
+			etcdOptions := &EtcdOptions{}
 			if err := etcdOptions.addEtcdHealthEndpoint(serverConfig); err != nil {
 				t.Fatalf("Failed to add healthz error: %v", err)
 			}

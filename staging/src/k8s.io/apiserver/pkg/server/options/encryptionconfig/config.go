@@ -62,7 +62,6 @@ const (
 )
 
 type kmsPluginHealthzResponse struct {
-	keyID    string
 	err      error
 	received time.Time
 }
@@ -83,8 +82,6 @@ type kmsv2PluginProbe struct {
 	l            *sync.Mutex
 }
 
-type keyIDGetterFunc func(context.Context) (keyID string, err error)
-
 func (h *kmsPluginProbe) toHealthzCheck(idx int) healthz.HealthChecker {
 	return healthz.NamedCheck(fmt.Sprintf("kms-provider-%d", idx), func(r *http.Request) error {
 		return h.check()
@@ -93,8 +90,7 @@ func (h *kmsPluginProbe) toHealthzCheck(idx int) healthz.HealthChecker {
 
 func (p *kmsv2PluginProbe) toHealthzCheck(idx int) healthz.HealthChecker {
 	return healthz.NamedCheck(fmt.Sprintf("kms-provider-%d", idx), func(r *http.Request) error {
-		_, err := p.check(r.Context())
-		return err
+		return p.check(r.Context())
 	})
 }
 
@@ -187,30 +183,30 @@ func (h *kmsPluginProbe) check() error {
 }
 
 // check gets the healthz status of the KMSv2-Plugin using the Status() method.
-func (h *kmsv2PluginProbe) check(ctx context.Context) (string, error) {
+func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 	h.l.Lock()
 	defer h.l.Unlock()
 
 	if (time.Since(h.lastResponse.received)) < h.ttl {
-		return h.lastResponse.keyID, h.lastResponse.err
+		return h.lastResponse.err
 	}
 
 	p, err := h.service.Status(ctx)
 	if err != nil {
 		h.lastResponse = &kmsPluginHealthzResponse{err: err, received: time.Now()}
 		h.ttl = kmsPluginHealthzNegativeTTL
-		return "", fmt.Errorf("failed to perform status section of the healthz check for KMS Provider %s, error: %v", h.name, err)
+		return fmt.Errorf("failed to perform status section of the healthz check for KMS Provider %s, error: %v", h.name, err)
 	}
 
 	if err := isKMSv2ProviderHealthy(h.name, p); err != nil {
 		h.lastResponse = &kmsPluginHealthzResponse{err: err, received: time.Now()}
 		h.ttl = kmsPluginHealthzNegativeTTL
-		return "", err
+		return err
 	}
 
-	h.lastResponse = &kmsPluginHealthzResponse{keyID: p.KeyID, err: nil, received: time.Now()}
+	h.lastResponse = &kmsPluginHealthzResponse{err: nil, received: time.Now()}
 	h.ttl = kmsPluginHealthzPositiveTTL
-	return h.lastResponse.keyID, nil
+	return nil
 }
 
 // isKMSv2ProviderHealthy checks if the KMSv2-Plugin is healthy.
@@ -242,6 +238,9 @@ func loadConfig(filepath string) (*apiserverconfig.EncryptionConfiguration, erro
 	data, err := io.ReadAll(f)
 	if err != nil {
 		return nil, fmt.Errorf("could not read contents: %v", err)
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("encryption provider configuration file %q is empty", filepath)
 	}
 
 	scheme := runtime.NewScheme()
@@ -294,7 +293,6 @@ func prefixTransformersAndProbes(config apiserverconfig.ResourceConfiguration, s
 			transformer, err = secretboxPrefixTransformer(provider.Secretbox)
 
 		case provider.KMS != nil:
-			// TODO add validation that checks that all KMS plugins with name X have the same config Y
 			kmsName := provider.KMS.Name
 			switch provider.KMS.APIVersion {
 			case kmsAPIVersionV1:
@@ -335,7 +333,7 @@ func prefixTransformersAndProbes(config apiserverconfig.ResourceConfiguration, s
 
 				probes = append(probes, probe)
 
-				transformer, err = envelopekmsv2PrefixTransformer(provider.KMS, probe.check, envelopeService, kmsTransformerPrefixV2)
+				transformer, err = envelopekmsv2PrefixTransformer(provider.KMS, envelopeService, kmsTransformerPrefixV2)
 
 			default:
 				return nil, nil, fmt.Errorf("could not configure KMS plugin %q, unsupported KMS API version %q", kmsName, provider.KMS.APIVersion)
@@ -483,9 +481,9 @@ func envelopePrefixTransformer(config *apiserverconfig.KMSConfiguration, envelop
 	}, nil
 }
 
-func envelopekmsv2PrefixTransformer(config *apiserverconfig.KMSConfiguration, keyIDGetter keyIDGetterFunc, envelopeService envelopekmsv2.Service, prefix string) (value.PrefixTransformer, error) {
+func envelopekmsv2PrefixTransformer(config *apiserverconfig.KMSConfiguration, envelopeService envelopekmsv2.Service, prefix string) (value.PrefixTransformer, error) {
 	// using AES-GCM by default for encrypting data with KMSv2
-	envelopeTransformer, err := envelopekmsv2.NewEnvelopeTransformer(envelopeService, envelopekmsv2.KeyIDGetterFunc(keyIDGetter), int(*config.CacheSize), aestransformer.NewGCMTransformer)
+	envelopeTransformer, err := envelopekmsv2.NewEnvelopeTransformer(envelopeService, int(*config.CacheSize), aestransformer.NewGCMTransformer)
 	if err != nil {
 		return value.PrefixTransformer{}, err
 	}
