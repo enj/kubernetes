@@ -5,10 +5,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/mailru/easyjson"
 	"k8s.io/apiserver/pkg/admission/plugin/wasm/validating/plugin"
 )
+
+var gil sync.Mutex
 
 func main() {
 	plugin.RegisterValidation(p{a: plugin.NewHost()})
@@ -19,6 +22,13 @@ type p struct {
 }
 
 func (m p) Validate(ctx context.Context, request plugin.ValidateRequest) (plugin.ValidateResponse, error) {
+	gil.Lock()
+	resp, err := m.validate(ctx, request)
+	gil.Unlock() // this does not rely on defer working in tinygo (which does not support panic so seems deadlock safe?)
+	return resp, err
+}
+
+func (m p) validate(ctx context.Context, request plugin.ValidateRequest) (plugin.ValidateResponse, error) {
 	r := &AdmissionReview{}
 	if err := easyjson.Unmarshal(request.AdmissionReview, r); err != nil {
 		return plugin.ValidateResponse{}, err
