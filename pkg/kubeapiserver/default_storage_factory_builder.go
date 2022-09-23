@@ -90,7 +90,7 @@ type StorageFactoryConfig struct {
 	Serializer                runtime.StorageSerializer
 	ResourceEncodingOverrides []schema.GroupVersionResource
 	EtcdServersOverrides      []string
-	LoadEncryptionConfig      func(stopCh <-chan struct{}) (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, error)
+	LoadEncryptionConfigOnce  func(stopCh <-chan struct{}) (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, error)
 }
 
 // Complete completes the StorageFactoryConfig with provided etcdOptions returning completedStorageFactoryConfig.
@@ -98,7 +98,7 @@ func (c *StorageFactoryConfig) Complete(etcdOptions *serveroptions.EtcdOptions) 
 	c.StorageConfig = etcdOptions.StorageConfig
 	c.DefaultStorageMediaType = etcdOptions.DefaultStorageMediaType
 	c.EtcdServersOverrides = etcdOptions.EtcdServersOverrides
-	c.LoadEncryptionConfig = etcdOptions.LoadEncryptionConfig
+	c.LoadEncryptionConfigOnce = etcdOptions.LoadEncryptionConfigOnce
 	return &completedStorageFactoryConfig{c}, nil
 }
 
@@ -142,7 +142,7 @@ func (c *completedStorageFactoryConfig) New(stopCh <-chan struct{}) (*serverstor
 		storageFactory.SetEtcdLocation(groupResource, servers)
 	}
 
-	transformerOverrides, _, err := c.LoadEncryptionConfig(stopCh)
+	transformerOverrides, _, err := c.LoadEncryptionConfigOnce(stopCh)
 	if err != nil {
 		return nil, err
 	}

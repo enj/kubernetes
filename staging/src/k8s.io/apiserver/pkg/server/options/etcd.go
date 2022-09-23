@@ -21,7 +21,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -60,11 +59,10 @@ type EtcdOptions struct {
 	// WatchCacheSizes represents override to a given resource
 	WatchCacheSizes []string
 
-	// EncryptionProviderConfigFilepath is loaded once via LoadEncryptionConfig.
+	// EncryptionProviderConfigFilepath is loaded once via LoadEncryptionConfigOnce.
 	// This prevents unnecessary gRPC connections to KMS plugins and ensures that
 	// the API server only has one view into the current key ID of KMS v2 plugins.
 	EncryptionProviderConfigFilepath string
-	encryptionProviderConfigOnce     sync.Once
 	encryptionProviderConfigErr      error
 	transformers                     map[schema.GroupResource]value.Transformer
 	kmsHealthChecks                  []healthz.HealthChecker
@@ -206,7 +204,7 @@ func (s *EtcdOptions) ApplyTo(c *server.Config) error {
 	if err := s.addEtcdHealthEndpoint(c); err != nil {
 		return err
 	}
-	transformerOverrides, _, err := s.LoadEncryptionConfig(c.DrainedNotify())
+	transformerOverrides, _, err := s.LoadEncryptionConfigOnce(c.DrainedNotify())
 	if err != nil {
 		return err
 	}
@@ -250,7 +248,7 @@ func (s *EtcdOptions) addEtcdHealthEndpoint(c *server.Config) error {
 		return readyCheck()
 	}))
 
-	_, kmsPluginHealthzChecks, err := s.LoadEncryptionConfig(c.DrainedNotify())
+	_, kmsPluginHealthzChecks, err := s.LoadEncryptionConfigOnce(c.DrainedNotify())
 	if err != nil {
 		return err
 	}
@@ -259,14 +257,20 @@ func (s *EtcdOptions) addEtcdHealthEndpoint(c *server.Config) error {
 	return nil
 }
 
-func (s *EtcdOptions) LoadEncryptionConfig(stopCh <-chan struct{}) (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, error) {
-	s.encryptionProviderConfigOnce.Do(func() {
-		if len(s.EncryptionProviderConfigFilepath) == 0 {
-			return
-		}
-		s.transformers, s.kmsHealthChecks, s.encryptionProviderConfigErr = encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath, stopCh)
-	})
-	return s.transformers, s.kmsHealthChecks, s.encryptionProviderConfigErr
+func (s *EtcdOptions) LoadEncryptionConfigOnce(stopCh <-chan struct{}) (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, error) {
+	if s.encryptionProviderConfigErr != nil {
+		return nil, nil, s.encryptionProviderConfigErr
+	}
+
+	if len(s.transformers) > 0 || len(s.kmsHealthChecks) > 0 {
+		return s.transformers, s.kmsHealthChecks, nil
+	}
+
+	if len(s.EncryptionProviderConfigFilepath) == 0 {
+		return nil, nil, nil
+	}
+
+	return encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath, stopCh)
 }
 
 type SimpleRestOptionsFactory struct {
