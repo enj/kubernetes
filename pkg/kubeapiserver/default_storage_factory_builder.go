@@ -94,12 +94,12 @@ type StorageFactoryConfig struct {
 }
 
 // Complete completes the StorageFactoryConfig with provided etcdOptions returning completedStorageFactoryConfig.
-func (c *StorageFactoryConfig) Complete(etcdOptions *serveroptions.EtcdOptions) (*completedStorageFactoryConfig, error) {
+func (c *StorageFactoryConfig) Complete(etcdOptions *serveroptions.EtcdOptions) *completedStorageFactoryConfig {
 	c.StorageConfig = etcdOptions.StorageConfig
 	c.DefaultStorageMediaType = etcdOptions.DefaultStorageMediaType
 	c.EtcdServersOverrides = etcdOptions.EtcdServersOverrides
 	c.LoadEncryptionConfigOnce = etcdOptions.LoadEncryptionConfigOnce
-	return &completedStorageFactoryConfig{c}, nil
+	return &completedStorageFactoryConfig{c}
 }
 
 // completedStorageFactoryConfig is a wrapper around StorageFactoryConfig completed with etcd options.
