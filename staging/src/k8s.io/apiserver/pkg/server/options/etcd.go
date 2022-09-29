@@ -191,24 +191,30 @@ func (s *EtcdOptions) AddFlags(fs *pflag.FlagSet) {
 }
 
 func (s *EtcdOptions) ApplyTo(c *server.Config) error {
-	return s.ApplyWithStorageFactoryTo(nil, c)
+	if s == nil {
+		return nil
+	}
+
+	return s.ApplyWithStorageFactoryTo(&StorageConfigFactory{StorageConfig: s.StorageConfig}, c)
 }
 
 func (s *EtcdOptions) ApplyWithStorageFactoryTo(factory serverstorage.StorageFactory, c *server.Config) error {
 	if s == nil {
 		return nil
 	}
+
 	if err := s.addEtcdHealthEndpoint(c); err != nil {
 		return err
 	}
 
-	var transformerOverrides map[schema.GroupResource]value.Transformer
 	if len(s.EncryptionProviderConfigFilepath) != 0 {
-		var kmsPluginHealthzChecks []healthz.HealthChecker
-		var err error
-		transformerOverrides, kmsPluginHealthzChecks, err = encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath, c.DrainedNotify())
+		transformerOverrides, kmsPluginHealthzChecks, err := encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath, c.DrainedNotify())
 		if err != nil {
 			return err
+		}
+		factory = &transformerStorageFactory{
+			delegate:             factory,
+			transformerOverrides: transformerOverrides,
 		}
 		c.AddHealthChecks(kmsPluginHealthzChecks...)
 	}
@@ -217,9 +223,8 @@ func (s *EtcdOptions) ApplyWithStorageFactoryTo(factory serverstorage.StorageFac
 	s.StorageConfig.StorageObjectCountTracker = c.StorageObjectCountTracker
 
 	c.RESTOptionsGetter = &StorageFactoryRestOptionsFactory{
-		Options:              *s,
-		TransformerOverrides: transformerOverrides,
-		StorageFactory:       factory,
+		Options:        *s,
+		StorageFactory: factory,
 	}
 	return nil
 }
@@ -245,36 +250,24 @@ func (s *EtcdOptions) addEtcdHealthEndpoint(c *server.Config) error {
 }
 
 type StorageFactoryRestOptionsFactory struct {
-	Options              EtcdOptions
-	StorageFactory       serverstorage.StorageFactory // optional, can be nil
-	TransformerOverrides map[schema.GroupResource]value.Transformer
+	Options        EtcdOptions
+	StorageFactory serverstorage.StorageFactory
 }
 
 func (f *StorageFactoryRestOptionsFactory) GetRESTOptions(resource schema.GroupResource) (generic.RESTOptions, error) {
+	storageConfig, err := f.StorageFactory.NewConfig(resource)
+	if err != nil {
+		return generic.RESTOptions{}, fmt.Errorf("unable to find storage destination for %v, due to %v", resource, err.Error())
+	}
+
 	ret := generic.RESTOptions{
-		StorageConfig:             f.Options.StorageConfig.ForResource(resource),
+		StorageConfig:             storageConfig,
 		Decorator:                 generic.UndecoratedStorage,
-		EnableGarbageCollection:   f.Options.EnableGarbageCollection,
 		DeleteCollectionWorkers:   f.Options.DeleteCollectionWorkers,
-		ResourcePrefix:            resource.Group + "/" + resource.Resource,
+		EnableGarbageCollection:   f.Options.EnableGarbageCollection,
+		ResourcePrefix:            f.StorageFactory.ResourcePrefix(resource),
 		CountMetricPollPeriod:     f.Options.StorageConfig.CountMetricPollPeriod,
 		StorageObjectCountTracker: f.Options.StorageConfig.StorageObjectCountTracker,
-	}
-
-	if f.StorageFactory != nil {
-		storageConfig, err := f.StorageFactory.NewConfig(resource)
-		if err != nil {
-			return generic.RESTOptions{}, fmt.Errorf("unable to find storage destination for %v, due to %v", resource, err.Error())
-		}
-		ret.StorageConfig = storageConfig
-		ret.ResourcePrefix = f.StorageFactory.ResourcePrefix(resource)
-	}
-
-	// TODO wrap storage factory so that this happens in NewConfig
-	if transformer, ok := f.TransformerOverrides[resource]; ok {
-		storageConfigCopy := *ret.StorageConfig
-		storageConfigCopy.Transformer = transformer
-		ret.StorageConfig = &storageConfigCopy
 	}
 
 	if f.Options.EnableWatchCache {
@@ -331,4 +324,57 @@ func WriteWatchCacheSizes(watchCacheSizes map[schema.GroupResource]int) ([]strin
 		cacheSizes = append(cacheSizes, fmt.Sprintf("%s#%d", resource.String(), size))
 	}
 	return cacheSizes, nil
+}
+
+var _ serverstorage.StorageFactory = &StorageConfigFactory{}
+
+type StorageConfigFactory struct {
+	StorageConfig storagebackend.Config
+}
+
+func (s *StorageConfigFactory) NewConfig(resource schema.GroupResource) (*storagebackend.ConfigForResource, error) {
+	return s.StorageConfig.ForResource(resource), nil
+}
+
+func (s *StorageConfigFactory) ResourcePrefix(resource schema.GroupResource) string {
+	return resource.Group + "/" + resource.Resource
+}
+
+func (s *StorageConfigFactory) Backends() []serverstorage.Backend {
+	// nothing should ever call this method but we still provide a functional implementation
+	return (&serverstorage.DefaultStorageFactory{StorageConfig: s.StorageConfig}).Backends()
+}
+
+var _ serverstorage.StorageFactory = &transformerStorageFactory{}
+
+type transformerStorageFactory struct {
+	delegate             serverstorage.StorageFactory
+	transformerOverrides map[schema.GroupResource]value.Transformer
+}
+
+func (t *transformerStorageFactory) NewConfig(resource schema.GroupResource) (*storagebackend.ConfigForResource, error) {
+	config, err := t.delegate.NewConfig(resource)
+	if err != nil {
+		return nil, err
+	}
+
+	transformer, ok := t.transformerOverrides[resource]
+	if !ok {
+		return config, nil
+	}
+
+	configCopy := *config
+	resourceConfig := configCopy.Config
+	resourceConfig.Transformer = transformer
+	configCopy.Config = resourceConfig
+
+	return &configCopy, nil
+}
+
+func (t *transformerStorageFactory) ResourcePrefix(resource schema.GroupResource) string {
+	return t.delegate.ResourcePrefix(resource)
+}
+
+func (t *transformerStorageFactory) Backends() []serverstorage.Backend {
+	return t.delegate.Backends()
 }
