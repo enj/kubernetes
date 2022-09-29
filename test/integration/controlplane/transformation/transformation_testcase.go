@@ -19,6 +19,7 @@ package transformation
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
@@ -34,12 +35,16 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/config/v1"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/apiserver/pkg/storage/value"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	kubeapiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
 	"k8s.io/kubernetes/test/integration"
+	"k8s.io/kubernetes/test/integration/etcd"
 	"k8s.io/kubernetes/test/integration/framework"
 )
 
@@ -50,6 +55,9 @@ const (
 	testNamespace            = "secret-encryption-test"
 	testSecret               = "test-secret"
 	metricsPrefix            = "apiserver_storage_"
+	configMapKey             = "foo"
+	configMapVal             = "bar"
+	testConfigMap            = "cm1"
 
 	// precomputed key and secret for use with AES CBC
 	// this looks exactly the same as the AES GCM secret but with a different value
@@ -69,6 +77,11 @@ type transformTest struct {
 	restClient        *kubernetes.Clientset
 	ns                *corev1.Namespace
 	secret            *corev1.Secret
+	group             string
+	resource          string
+	name              string
+	namespaceName     string
+	dynamicInterface  dynamic.Interface
 }
 
 func newTransformTest(l kubeapiservertesting.Logger, transformerConfigYAML string) (*transformTest, error) {
@@ -102,12 +115,15 @@ func newTransformTest(l kubeapiservertesting.Logger, transformerConfigYAML strin
 }
 
 func (e *transformTest) cleanUp() {
+	e.logger.Logf("RITA cleanup")
 	os.RemoveAll(e.configDir)
 	e.restClient.CoreV1().Namespaces().Delete(context.TODO(), e.ns.Name, *metav1.NewDeleteOptions(0))
 	e.kubeAPIServer.TearDownFn()
 }
 
 func (e *transformTest) run(unSealSecretFunc unSealSecret, expectedEnvelopePrefix string) {
+	path := e.getETCDPath()
+	e.logger.Logf("RITA path: %s", path)
 	response, err := e.readRawRecordFromETCD(e.getETCDPath())
 	if err != nil {
 		e.logger.Errorf("failed to read from etcd: %v", err)
@@ -115,7 +131,7 @@ func (e *transformTest) run(unSealSecretFunc unSealSecret, expectedEnvelopePrefi
 	}
 
 	if !bytes.HasPrefix(response.Kvs[0].Value, []byte(expectedEnvelopePrefix)) {
-		e.logger.Errorf("expected secret to be prefixed with %s, but got %s",
+		e.logger.Errorf("expected data to be prefixed with %s, but got %s",
 			expectedEnvelopePrefix, response.Kvs[0].Value)
 		return
 	}
@@ -134,17 +150,62 @@ func (e *transformTest) run(unSealSecretFunc unSealSecret, expectedEnvelopePrefi
 		e.logger.Errorf("failed to unseal secret: %v", err)
 		return
 	}
-	if !strings.Contains(string(v), secretVal) {
-		e.logger.Errorf("expected %q after decryption, but got %q", secretVal, string(v))
+	if e.resource == "secrets" {
+		if !strings.Contains(string(v), secretVal) {
+			e.logger.Errorf("expected %q after decryption, but got %q", secretVal, string(v))
+		}
+	} else if e.resource == "configmaps" {
+		if !strings.Contains(string(v), configMapVal) {
+			e.logger.Errorf("expected %q after decryption, but got %q", configMapVal, string(v))
+		}
+	} else {
+		if !strings.Contains(string(v), e.name) {
+			e.logger.Errorf("expected %q after decryption, but got %q", e.name, string(v))
+		}
 	}
 
-	// Secrets should be un-enveloped on direct reads from Kube API Server.
-	s, err := e.restClient.CoreV1().Secrets(testNamespace).Get(context.TODO(), testSecret, metav1.GetOptions{})
-	if err != nil {
-		e.logger.Errorf("failed to get Secret from %s, err: %v", testNamespace, err)
-	}
-	if secretVal != string(s.Data[secretKey]) {
-		e.logger.Errorf("expected %s from KubeAPI, but got %s", secretVal, string(s.Data[secretKey]))
+	// Data should be un-enveloped on direct reads from Kube API Server.
+	if e.resource == "secrets" {
+		s, err := e.restClient.CoreV1().Secrets(testNamespace).Get(context.TODO(), testSecret, metav1.GetOptions{})
+		if err != nil {
+			e.logger.Errorf("failed to get Secret from %s, err: %v", testNamespace, err)
+		}
+		if secretVal != string(s.Data[secretKey]) {
+			e.logger.Errorf("expected %s from KubeAPI, but got %s", secretVal, string(s.Data[secretKey]))
+		}
+	} else if e.resource == "configmaps" {
+		s, err := e.restClient.CoreV1().ConfigMaps(e.namespaceName).Get(context.TODO(), e.name, metav1.GetOptions{})
+		if err != nil {
+			e.logger.Errorf("failed to get ConfigMap from %s, err: %v", e.namespaceName, err)
+		}
+		if configMapVal != string(s.Data[configMapKey]) {
+			e.logger.Errorf("expected %s from KubeAPI, but got %s", configMapVal, string(s.Data[configMapKey]))
+		}
+	} else if e.resource == "pods" {
+		p, err := e.restClient.CoreV1().Pods(e.namespaceName).Get(context.TODO(), e.name, metav1.GetOptions{})
+		if err != nil {
+			e.logger.Errorf("failed to get Pod from %s, err: %v", e.namespaceName, err)
+		}
+		if p.Name != e.name {
+			e.logger.Errorf("expected %s from KubeAPI, but got %s", e.name, p.Name)
+		}
+	} else {
+		e.logger.Logf("Get object with dynamic client")
+		if e.dynamicInterface == nil {
+			dynamicClient, err := dynamic.NewForConfig(e.kubeAPIServer.ClientConfig)
+			if err != nil {
+				e.logger.Fatalf("Failed to create dynamic client: %v, name: %s", err, e.name)
+			}
+			e.dynamicInterface = dynamicClient
+		}
+		fooResource := schema.GroupVersionResource{Group: e.group, Version: "v1", Resource: e.resource}
+		obj, err := e.dynamicInterface.Resource(fooResource).Get(context.TODO(), e.name, metav1.GetOptions{})
+		if err != nil {
+			e.logger.Errorf("Failed to get test instance: %v, name: %s", err, e.name)
+		}
+		if obj.GetName() != e.name {
+			e.logger.Errorf("expected %s from KubeAPI, but got %s", e.name, obj.GetName())
+		}
 	}
 }
 
@@ -158,7 +219,20 @@ func (e *transformTest) benchmark(b *testing.B) {
 }
 
 func (e *transformTest) getETCDPath() string {
-	return fmt.Sprintf("/%s/secrets/%s/%s", e.storageConfig.Prefix, e.ns.Name, e.secret.Name)
+	if e.secret != nil {
+		e.group = ""
+		e.resource = "secrets"
+		e.name = testSecret
+		e.namespaceName = testNamespace
+	}
+	groupResource := e.resource
+	if e.group != "" {
+		groupResource = fmt.Sprintf("%s/%s", e.group, e.resource)
+	}
+	if e.namespaceName == "" {
+		return fmt.Sprintf("/%s/%s/%s", e.storageConfig.Prefix, groupResource, e.name)
+	}
+	return fmt.Sprintf("/%s/%s/%s/%s", e.storageConfig.Prefix, groupResource, e.namespaceName, e.name)
 }
 
 func (e *transformTest) getRawSecretFromETCD() ([]byte, error) {
@@ -167,12 +241,15 @@ func (e *transformTest) getRawSecretFromETCD() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read %s from etcd: %v", secretETCDPath, err)
 	}
+	e.logger.Logf("path: %s", secretETCDPath)
 	return etcdResponse.Kvs[0].Value, nil
 }
 
 func (e *transformTest) getEncryptionOptions() []string {
 	if e.transformerConfig != "" {
-		return []string{"--encryption-provider-config", path.Join(e.configDir, encryptionConfigFileName)}
+		return []string{
+			"--encryption-provider-config", path.Join(e.configDir, encryptionConfigFileName),
+			"--disable-admission-plugins", "ServiceAccount"}
 	}
 
 	return nil
@@ -233,6 +310,71 @@ func (e *transformTest) createSecret(name, namespace string) (*corev1.Secret, er
 	}
 
 	return secret, nil
+}
+
+func (e *transformTest) createConfigMap(name, namespace string) (*corev1.ConfigMap, error) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Data: map[string]string{
+			configMapKey: configMapVal,
+		},
+	}
+	if _, err := e.restClient.CoreV1().ConfigMaps(cm.Namespace).Create(context.TODO(), cm, metav1.CreateOptions{}); err != nil {
+		return nil, fmt.Errorf("error while writing configmap: %v", err)
+	}
+
+	return cm, nil
+}
+
+func gvr(group, version, resource string) schema.GroupVersionResource {
+	return schema.GroupVersionResource{Group: group, Version: version, Resource: resource}
+}
+
+func createResource(client dynamic.Interface, gvr schema.GroupVersionResource, ns string) (*unstructured.Unstructured, error) {
+	stubObj, err := getStubObj(gvr)
+	if err != nil {
+		return nil, err
+	}
+	return client.Resource(gvr).Namespace(ns).Create(context.TODO(), stubObj, metav1.CreateOptions{})
+}
+
+func getStubObj(gvr schema.GroupVersionResource) (*unstructured.Unstructured, error) {
+	stub := ""
+	if data, ok := etcd.GetEtcdStorageDataForNamespace(testNamespace)[gvr]; ok {
+		stub = data.Stub
+	}
+	if len(stub) == 0 {
+		return nil, fmt.Errorf("no stub data for %#v", gvr)
+	}
+
+	stubObj := &unstructured.Unstructured{Object: map[string]interface{}{}}
+	if err := json.Unmarshal([]byte(stub), &stubObj.Object); err != nil {
+		return nil, fmt.Errorf("error unmarshaling stub for %#v: %v", gvr, err)
+	}
+	return stubObj, nil
+}
+
+func (e *transformTest) createPod(name, namespace string, dynamicInterface dynamic.Interface) (*unstructured.Unstructured, error) {
+
+	podGVR := gvr("", "v1", "pods")
+	pod, err := createResource(dynamicInterface, podGVR, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("error while writing pod: %v", err)
+	}
+	// pod := &corev1.Pod{
+	// 	ObjectMeta: metav1.ObjectMeta{
+	// 		Name:      name,
+	// 		Namespace: namespace,
+	// 	},
+	// }
+	// if _, err := e.restClient.CoreV1().Pods(pod.Namespace).Create(context.TODO(), pod, metav1.CreateOptions{}); err != nil {
+	// 	return nil, fmt.Errorf("error while writing pod: %v", err)
+	// }
+
+	return pod, nil
 }
 
 func (e *transformTest) readRawRecordFromETCD(path string) (*clientv3.GetResponse, error) {

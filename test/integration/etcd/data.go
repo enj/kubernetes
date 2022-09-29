@@ -398,6 +398,7 @@ func GetEtcdStorageDataForNamespace(namespace string) map[schema.GroupVersionRes
 		gvr("apiregistration.k8s.io", "v1", "apiservices"): {
 			Stub:             `{"metadata": {"name": "as2.foo.com"}, "spec": {"group": "foo.com", "version": "as2", "groupPriorityMinimum":100, "versionPriority":10}}`,
 			ExpectedEtcdPath: "/registry/apiregistration.k8s.io/apiservices/as2.foo.com",
+			ExpectedGVK:      gvkP("apiregistration.k8s.io", "v1", "APIService"),
 		},
 		// --
 
@@ -421,6 +422,7 @@ func GetEtcdStorageDataForNamespace(namespace string) map[schema.GroupVersionRes
 		gvr("awesome.bears.com", "v1", "pandas"): {
 			Stub:             `{"kind": "Panda", "apiVersion": "awesome.bears.com/v1", "metadata": {"name": "cr3panda"}, "spec":{"replicas": 100}}`, // requires TypeMeta due to CRD scheme's UnstructuredObjectTyper
 			ExpectedEtcdPath: "/registry/awesome.bears.com/pandas/cr3panda",
+			ExpectedGVK:      gvkP("awesome.bears.com", "v1", "Panda"),
 		},
 		gvr("awesome.bears.com", "v3", "pandas"): {
 			Stub:             `{"kind": "Panda", "apiVersion": "awesome.bears.com/v3", "metadata": {"name": "cr4panda"}, "spec":{"replicas": 300}}`, // requires TypeMeta due to CRD scheme's UnstructuredObjectTyper

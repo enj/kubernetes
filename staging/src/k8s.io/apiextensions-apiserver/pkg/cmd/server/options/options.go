@@ -29,10 +29,12 @@ import (
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	genericregistry "k8s.io/apiserver/pkg/registry/generic"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	genericoptions "k8s.io/apiserver/pkg/server/options"
+	"k8s.io/apiserver/pkg/storage/value"
 	"k8s.io/apiserver/pkg/util/proxy"
 	"k8s.io/apiserver/pkg/util/webhook"
 	corev1 "k8s.io/client-go/listers/core/v1"
@@ -43,9 +45,10 @@ const defaultEtcdPathPrefix = "/registry/apiextensions.kubernetes.io"
 
 // CustomResourceDefinitionsServerOptions describes the runtime options of an apiextensions-apiserver.
 type CustomResourceDefinitionsServerOptions struct {
-	ServerRunOptions   *genericoptions.ServerRunOptions
-	RecommendedOptions *genericoptions.RecommendedOptions
-	APIEnablement      *genericoptions.APIEnablementOptions
+	ServerRunOptions     *genericoptions.ServerRunOptions
+	RecommendedOptions   *genericoptions.RecommendedOptions
+	APIEnablement        *genericoptions.APIEnablementOptions
+	TransformerOverrides map[schema.GroupResource]value.Transformer
 
 	StdOut io.Writer
 	StdErr io.Writer
@@ -129,6 +132,7 @@ func NewCRDRESTOptionsGetter(etcdOptions genericoptions.EtcdOptions) genericregi
 		DeleteCollectionWorkers:   etcdOptions.DeleteCollectionWorkers,
 		CountMetricPollPeriod:     etcdOptions.StorageConfig.CountMetricPollPeriod,
 		StorageObjectCountTracker: etcdOptions.StorageConfig.StorageObjectCountTracker,
+		TransformerOverrides:      etcdOptions.TransformerOverrides,
 	}
 	ret.StorageConfig.Codec = unstructured.UnstructuredJSONScheme
 
