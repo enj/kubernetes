@@ -42,7 +42,8 @@ import (
 type EtcdOptions struct {
 	// The value of Paging on StorageConfig will be overridden by the
 	// calculated feature gate value.
-	StorageConfig storagebackend.Config
+	StorageConfig                    storagebackend.Config
+	EncryptionProviderConfigFilepath string
 
 	EtcdServersOverrides []string
 
@@ -58,14 +59,6 @@ type EtcdOptions struct {
 	DefaultWatchCacheSize int
 	// WatchCacheSizes represents override to a given resource
 	WatchCacheSizes []string
-
-	// EncryptionProviderConfigFilepath is loaded once via LoadEncryptionConfigOnce.
-	// This prevents unnecessary gRPC connections to KMS plugins and ensures that
-	// the API server only has one view into the current key ID of KMS v2 plugins.
-	EncryptionProviderConfigFilepath string
-	encryptionProviderConfigErr      error
-	transformers                     map[schema.GroupResource]value.Transformer
-	kmsHealthChecks                  []healthz.HealthChecker
 }
 
 var storageTypes = sets.NewString(
@@ -198,36 +191,36 @@ func (s *EtcdOptions) AddFlags(fs *pflag.FlagSet) {
 }
 
 func (s *EtcdOptions) ApplyTo(c *server.Config) error {
+	return s.ApplyWithStorageFactoryTo(nil, c)
+}
+
+func (s *EtcdOptions) ApplyWithStorageFactoryTo(factory serverstorage.StorageFactory, c *server.Config) error {
 	if s == nil {
 		return nil
 	}
 	if err := s.addEtcdHealthEndpoint(c); err != nil {
 		return err
 	}
-	transformerOverrides, _, err := s.LoadEncryptionConfigOnce(c.DrainedNotify())
-	if err != nil {
-		return err
+
+	var transformerOverrides map[schema.GroupResource]value.Transformer
+	if len(s.EncryptionProviderConfigFilepath) != 0 {
+		var kmsPluginHealthzChecks []healthz.HealthChecker
+		var err error
+		transformerOverrides, kmsPluginHealthzChecks, err = encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath, c.DrainedNotify())
+		if err != nil {
+			return err
+		}
+		c.AddHealthChecks(kmsPluginHealthzChecks...)
 	}
 
 	// use the StorageObjectCountTracker interface instance from server.Config
 	s.StorageConfig.StorageObjectCountTracker = c.StorageObjectCountTracker
 
-	c.RESTOptionsGetter = &SimpleRestOptionsFactory{
+	c.RESTOptionsGetter = &StorageFactoryRestOptionsFactory{
 		Options:              *s,
 		TransformerOverrides: transformerOverrides,
+		StorageFactory:       factory,
 	}
-	return nil
-}
-
-func (s *EtcdOptions) ApplyWithStorageFactoryTo(factory serverstorage.StorageFactory, c *server.Config) error {
-	if err := s.addEtcdHealthEndpoint(c); err != nil {
-		return err
-	}
-
-	// use the StorageObjectCountTracker interface instance from server.Config
-	s.StorageConfig.StorageObjectCountTracker = c.StorageObjectCountTracker
-
-	c.RESTOptionsGetter = &StorageFactoryRestOptionsFactory{Options: *s, StorageFactory: factory}
 	return nil
 }
 
@@ -248,35 +241,16 @@ func (s *EtcdOptions) addEtcdHealthEndpoint(c *server.Config) error {
 		return readyCheck()
 	}))
 
-	_, kmsPluginHealthzChecks, err := s.LoadEncryptionConfigOnce(c.DrainedNotify())
-	if err != nil {
-		return err
-	}
-	c.AddHealthChecks(kmsPluginHealthzChecks...)
-
 	return nil
 }
 
-func (s *EtcdOptions) LoadEncryptionConfigOnce(stopCh <-chan struct{}) (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, error) {
-	if len(s.transformers) > 0 || len(s.kmsHealthChecks) > 0 || s.encryptionProviderConfigErr != nil {
-		return s.transformers, s.kmsHealthChecks, s.encryptionProviderConfigErr
-	}
-
-	if len(s.EncryptionProviderConfigFilepath) == 0 {
-		return nil, nil, nil
-	}
-
-	s.transformers, s.kmsHealthChecks, s.encryptionProviderConfigErr = encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath, stopCh)
-
-	return s.transformers, s.kmsHealthChecks, s.encryptionProviderConfigErr
-}
-
-type SimpleRestOptionsFactory struct {
+type StorageFactoryRestOptionsFactory struct {
 	Options              EtcdOptions
+	StorageFactory       serverstorage.StorageFactory // optional, can be nil
 	TransformerOverrides map[schema.GroupResource]value.Transformer
 }
 
-func (f *SimpleRestOptionsFactory) GetRESTOptions(resource schema.GroupResource) (generic.RESTOptions, error) {
+func (f *StorageFactoryRestOptionsFactory) GetRESTOptions(resource schema.GroupResource) (generic.RESTOptions, error) {
 	ret := generic.RESTOptions{
 		StorageConfig:             f.Options.StorageConfig.ForResource(resource),
 		Decorator:                 generic.UndecoratedStorage,
@@ -286,11 +260,23 @@ func (f *SimpleRestOptionsFactory) GetRESTOptions(resource schema.GroupResource)
 		CountMetricPollPeriod:     f.Options.StorageConfig.CountMetricPollPeriod,
 		StorageObjectCountTracker: f.Options.StorageConfig.StorageObjectCountTracker,
 	}
-	if f.TransformerOverrides != nil {
-		if transformer, ok := f.TransformerOverrides[resource]; ok {
-			ret.StorageConfig.Transformer = transformer
+
+	if f.StorageFactory != nil {
+		storageConfig, err := f.StorageFactory.NewConfig(resource)
+		if err != nil {
+			return generic.RESTOptions{}, fmt.Errorf("unable to find storage destination for %v, due to %v", resource, err.Error())
 		}
+		ret.StorageConfig = storageConfig
+		ret.ResourcePrefix = f.StorageFactory.ResourcePrefix(resource)
 	}
+
+	// TODO wrap storage factory so that this happens in NewConfig
+	if transformer, ok := f.TransformerOverrides[resource]; ok {
+		storageConfigCopy := *ret.StorageConfig
+		storageConfigCopy.Transformer = transformer
+		ret.StorageConfig = &storageConfigCopy
+	}
+
 	if f.Options.EnableWatchCache {
 		sizes, err := ParseWatchCacheSizes(f.Options.WatchCacheSizes)
 		if err != nil {
@@ -305,44 +291,6 @@ func (f *SimpleRestOptionsFactory) GetRESTOptions(resource schema.GroupResource)
 			ret.Decorator = generic.UndecoratedStorage
 		} else {
 			klog.V(3).InfoS("Using watch cache", "resource", resource)
-			ret.Decorator = genericregistry.StorageWithCacher()
-		}
-	}
-	return ret, nil
-}
-
-type StorageFactoryRestOptionsFactory struct {
-	Options        EtcdOptions
-	StorageFactory serverstorage.StorageFactory
-}
-
-func (f *StorageFactoryRestOptionsFactory) GetRESTOptions(resource schema.GroupResource) (generic.RESTOptions, error) {
-	storageConfig, err := f.StorageFactory.NewConfig(resource)
-	if err != nil {
-		return generic.RESTOptions{}, fmt.Errorf("unable to find storage destination for %v, due to %v", resource, err.Error())
-	}
-
-	ret := generic.RESTOptions{
-		StorageConfig:             storageConfig,
-		Decorator:                 generic.UndecoratedStorage,
-		DeleteCollectionWorkers:   f.Options.DeleteCollectionWorkers,
-		EnableGarbageCollection:   f.Options.EnableGarbageCollection,
-		ResourcePrefix:            f.StorageFactory.ResourcePrefix(resource),
-		CountMetricPollPeriod:     f.Options.StorageConfig.CountMetricPollPeriod,
-		StorageObjectCountTracker: f.Options.StorageConfig.StorageObjectCountTracker,
-	}
-	if f.Options.EnableWatchCache {
-		sizes, err := ParseWatchCacheSizes(f.Options.WatchCacheSizes)
-		if err != nil {
-			return generic.RESTOptions{}, err
-		}
-		size, ok := sizes[resource]
-		if ok && size > 0 {
-			klog.Warningf("Dropping watch-cache-size for %v - watchCache size is now dynamic", resource)
-		}
-		if ok && size <= 0 {
-			ret.Decorator = generic.UndecoratedStorage
-		} else {
 			ret.Decorator = genericregistry.StorageWithCacher()
 		}
 	}

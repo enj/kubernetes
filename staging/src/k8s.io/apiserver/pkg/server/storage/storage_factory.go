@@ -29,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
-	"k8s.io/apiserver/pkg/storage/value"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 )
 
@@ -112,8 +111,6 @@ type groupResourceOverrides struct {
 	// decoderDecoratorFn is optional and may wrap the provided decoders (can add new decoders). The order of
 	// returned decoders will be priority for attempt to decode.
 	decoderDecoratorFn func([]runtime.Decoder) []runtime.Decoder
-	// transformer is optional and shall encrypt that resource at rest.
-	transformer value.Transformer
 	// disablePaging will prevent paging on the provided resource.
 	disablePaging bool
 }
@@ -138,9 +135,6 @@ func (o groupResourceOverrides) Apply(config *storagebackend.Config, options *St
 	}
 	if o.decoderDecoratorFn != nil {
 		options.DecoderDecoratorFn = o.decoderDecoratorFn
-	}
-	if o.transformer != nil {
-		config.Transformer = o.transformer
 	}
 	if o.disablePaging {
 		config.Paging = false
@@ -207,12 +201,6 @@ func (s *DefaultStorageFactory) SetSerializer(groupResource schema.GroupResource
 	overrides := s.Overrides[groupResource]
 	overrides.mediaType = mediaType
 	overrides.serializer = serializer
-	s.Overrides[groupResource] = overrides
-}
-
-func (s *DefaultStorageFactory) SetTransformer(groupResource schema.GroupResource, transformer value.Transformer) {
-	overrides := s.Overrides[groupResource]
-	overrides.transformer = transformer
 	s.Overrides[groupResource] = overrides
 }
 

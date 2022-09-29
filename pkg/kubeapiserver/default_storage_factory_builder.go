@@ -21,12 +21,10 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apiserver/pkg/server/healthz"
 	serveroptions "k8s.io/apiserver/pkg/server/options"
 	"k8s.io/apiserver/pkg/server/resourceconfig"
 	serverstorage "k8s.io/apiserver/pkg/server/storage"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
-	"k8s.io/apiserver/pkg/storage/value"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/apis/apps"
 	api "k8s.io/kubernetes/pkg/apis/core"
@@ -90,7 +88,6 @@ type StorageFactoryConfig struct {
 	Serializer                runtime.StorageSerializer
 	ResourceEncodingOverrides []schema.GroupVersionResource
 	EtcdServersOverrides      []string
-	LoadEncryptionConfigOnce  func(stopCh <-chan struct{}) (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, error)
 }
 
 // Complete completes the StorageFactoryConfig with provided etcdOptions returning completedStorageFactoryConfig.
@@ -98,7 +95,6 @@ func (c *StorageFactoryConfig) Complete(etcdOptions *serveroptions.EtcdOptions) 
 	c.StorageConfig = etcdOptions.StorageConfig
 	c.DefaultStorageMediaType = etcdOptions.DefaultStorageMediaType
 	c.EtcdServersOverrides = etcdOptions.EtcdServersOverrides
-	c.LoadEncryptionConfigOnce = etcdOptions.LoadEncryptionConfigOnce
 	return &completedStorageFactoryConfig{c}
 }
 
@@ -111,7 +107,7 @@ type completedStorageFactoryConfig struct {
 }
 
 // New returns a new storage factory created from the completed storage factory configuration.
-func (c *completedStorageFactoryConfig) New(stopCh <-chan struct{}) (*serverstorage.DefaultStorageFactory, error) {
+func (c *completedStorageFactoryConfig) New() (*serverstorage.DefaultStorageFactory, error) {
 	resourceEncodingConfig := resourceconfig.MergeResourceEncodingConfigs(c.DefaultResourceEncoding, c.ResourceEncodingOverrides)
 	storageFactory := serverstorage.NewDefaultStorageFactory(
 		c.StorageConfig,
@@ -141,14 +137,5 @@ func (c *completedStorageFactoryConfig) New(stopCh <-chan struct{}) (*serverstor
 		servers := strings.Split(tokens[1], ";")
 		storageFactory.SetEtcdLocation(groupResource, servers)
 	}
-
-	transformerOverrides, _, err := c.LoadEncryptionConfigOnce(stopCh)
-	if err != nil {
-		return nil, err
-	}
-	for groupResource, transformer := range transformerOverrides {
-		storageFactory.SetTransformer(groupResource, transformer)
-	}
-
 	return storageFactory, nil
 }

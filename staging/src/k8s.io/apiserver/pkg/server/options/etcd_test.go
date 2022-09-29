@@ -226,7 +226,7 @@ func TestKMSHealthzEndpoint(t *testing.T) {
 			etcdOptions := &EtcdOptions{
 				EncryptionProviderConfigFilepath: tc.encryptionConfigPath,
 			}
-			if err := etcdOptions.addEtcdHealthEndpoint(serverConfig); err != nil {
+			if err := etcdOptions.ApplyTo(serverConfig); err != nil {
 				t.Fatalf("Failed to add healthz error: %v", err)
 			}
 
@@ -259,7 +259,7 @@ func TestReadinessCheck(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			serverConfig := server.NewConfig(codecs)
 			etcdOptions := &EtcdOptions{}
-			if err := etcdOptions.addEtcdHealthEndpoint(serverConfig); err != nil {
+			if err := etcdOptions.ApplyTo(serverConfig); err != nil {
 				t.Fatalf("Failed to add healthz error: %v", err)
 			}
 
