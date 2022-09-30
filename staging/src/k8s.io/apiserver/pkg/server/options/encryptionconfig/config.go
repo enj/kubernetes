@@ -82,18 +82,6 @@ type kmsv2PluginProbe struct {
 	l            *sync.Mutex
 }
 
-var _ envelopekmsv2.ServiceGetter = &kmsv2Healthz{}
-
-// kmsv2Healthz allows integration tests to make assertions against service.
-type kmsv2Healthz struct {
-	healthz.HealthChecker
-	service envelopekmsv2.Service
-}
-
-func (h *kmsv2Healthz) Service() envelopekmsv2.Service {
-	return h.service
-}
-
 func (h *kmsPluginProbe) toHealthzCheck(idx int) healthz.HealthChecker {
 	return healthz.NamedCheck(fmt.Sprintf("kms-provider-%d", idx), func(r *http.Request) error {
 		return h.check()
@@ -101,12 +89,9 @@ func (h *kmsPluginProbe) toHealthzCheck(idx int) healthz.HealthChecker {
 }
 
 func (p *kmsv2PluginProbe) toHealthzCheck(idx int) healthz.HealthChecker {
-	return &kmsv2Healthz{
-		HealthChecker: healthz.NamedCheck(fmt.Sprintf("kms-provider-%d", idx), func(r *http.Request) error {
-			return p.check(r.Context())
-		}),
-		service: p.service,
-	}
+	return healthz.NamedCheck(fmt.Sprintf("kms-provider-%d", idx), func(r *http.Request) error {
+		return p.check(r.Context())
+	})
 }
 
 func LoadEncryptionConfig(filepath string, stopCh <-chan struct{}) (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, error) {
