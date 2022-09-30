@@ -58,12 +58,6 @@ type Service interface {
 	Status(ctx context.Context) (*StatusResponse, error)
 }
 
-type ServiceGetter interface {
-	Service() Service
-}
-
-var _ ServiceGetter = &envelopeTransformer{}
-
 type envelopeTransformer struct {
 	envelopeService Service
 
@@ -315,8 +309,4 @@ func validateKeyID(keyID string) error {
 		return fmt.Errorf("keyID is %d bytes, which exceeds the max size of %d", len(keyID), keyIDMaxSize)
 	}
 	return nil
-}
-
-func (t *envelopeTransformer) Service() Service {
-	return t.envelopeService
 }

@@ -82,18 +82,6 @@ type kmsv2PluginProbe struct {
 	l            *sync.Mutex
 }
 
-var _ envelopekmsv2.ServiceGetter = &kmsv2Healthz{}
-
-// kmsv2Healthz allows integration tests to make assertions against service.
-type kmsv2Healthz struct {
-	healthz.HealthChecker
-	service envelopekmsv2.Service
-}
-
-func (h *kmsv2Healthz) Service() envelopekmsv2.Service {
-	return h.service
-}
-
 func (h *kmsPluginProbe) toHealthzCheck(idx int) healthz.HealthChecker {
 	return healthz.NamedCheck(fmt.Sprintf("kms-provider-%d", idx), func(r *http.Request) error {
 		return h.check()
@@ -101,12 +89,9 @@ func (h *kmsPluginProbe) toHealthzCheck(idx int) healthz.HealthChecker {
 }
 
 func (p *kmsv2PluginProbe) toHealthzCheck(idx int) healthz.HealthChecker {
-	return &kmsv2Healthz{
-		HealthChecker: healthz.NamedCheck(fmt.Sprintf("kms-provider-%d", idx), func(r *http.Request) error {
-			return p.check(r.Context())
-		}),
-		service: p.service,
-	}
+	return healthz.NamedCheck(fmt.Sprintf("kms-provider-%d", idx), func(r *http.Request) error {
+		return p.check(r.Context())
+	})
 }
 
 func LoadEncryptionConfig(filepath string, stopCh <-chan struct{}) (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, error) {
@@ -430,8 +415,8 @@ var (
 	// The factory to create kms service. This is to make writing test easier.
 	envelopeServiceFactory = envelope.NewGRPCService
 
-	// The factory to create kmsv2 service.
-	envelopeKMSv2ServiceFactory = envelopekmsv2.NewGRPCService
+	// The factory to create kmsv2 service.  Exported for integration tests.
+	EnvelopeKMSv2ServiceFactory = envelopekmsv2.NewGRPCService
 )
 
 func kmsPrefixTransformer(config *apiserverconfig.KMSConfiguration, stopCh <-chan struct{}) (value.PrefixTransformer, healthChecker, error) {
@@ -463,7 +448,7 @@ func kmsPrefixTransformer(config *apiserverconfig.KMSConfiguration, stopCh <-cha
 			return value.PrefixTransformer{}, nil, fmt.Errorf("could not configure KMSv2 plugin %q, KMSv2 feature is not enabled", kmsName)
 		}
 
-		envelopeService, err := envelopeKMSv2ServiceFactory(ctx, config.Endpoint, config.Timeout.Duration)
+		envelopeService, err := EnvelopeKMSv2ServiceFactory(ctx, config.Endpoint, config.Timeout.Duration)
 		if err != nil {
 			return value.PrefixTransformer{}, nil, fmt.Errorf("could not configure KMSv2-Plugin's probe %q, error: %v", kmsName, err)
 		}
