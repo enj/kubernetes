@@ -110,7 +110,7 @@ func (o CustomResourceDefinitionsServerOptions) Config() (*apiserver.Config, err
 	config := &apiserver.Config{
 		GenericConfig: serverConfig,
 		ExtraConfig: apiserver.ExtraConfig{
-			CRDRESTOptionsGetter: NewCRDRESTOptionsGetter(*o.RecommendedOptions.Etcd, serverConfig.RESTOptionsGetter),
+			CRDRESTOptionsGetter: NewCRDRESTOptionsGetter(*o.RecommendedOptions.Etcd),
 			ServiceResolver:      &serviceResolver{serverConfig.SharedInformerFactory.Core().V1().Services().Lister()},
 			AuthResolverWrapper:  webhook.NewDefaultAuthenticationInfoResolverWrapper(nil, nil, serverConfig.LoopbackClientConfig, oteltrace.NewNoopTracerProvider()),
 		},
@@ -119,14 +119,14 @@ func (o CustomResourceDefinitionsServerOptions) Config() (*apiserver.Config, err
 }
 
 // NewCRDRESTOptionsGetter create a RESTOptionsGetter for CustomResources.
-func NewCRDRESTOptionsGetter(etcdOptions genericoptions.EtcdOptions, transformerOverride genericregistry.RESTOptionsGetter) genericregistry.RESTOptionsGetter {
+func NewCRDRESTOptionsGetter(etcdOptions genericoptions.EtcdOptions) genericregistry.RESTOptionsGetter {
 	storageConfig := etcdOptions.StorageConfig
 	storageConfig.Codec = unstructured.UnstructuredJSONScheme
 	etcdOptions.StorageConfig = storageConfig
 
 	etcdOptions.WatchCacheSizes = nil // this control is not provided for custom resources
 
-	return genericoptions.NewTransformerOverrideRESTOptionsGetter(etcdOptions, transformerOverride)
+	return genericoptions.NewTransformerOverrideRESTOptionsGetter(etcdOptions)
 }
 
 type serviceResolver struct {

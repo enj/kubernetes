@@ -44,6 +44,7 @@ type EtcdOptions struct {
 	// calculated feature gate value.
 	StorageConfig                    storagebackend.Config
 	EncryptionProviderConfigFilepath string
+	TransformerWrapper               func(serverstorage.StorageFactory) serverstorage.StorageFactory
 
 	EtcdServersOverrides []string
 
@@ -207,14 +208,18 @@ func (s *EtcdOptions) ApplyWithStorageFactoryTo(factory serverstorage.StorageFac
 		return err
 	}
 
+	s.TransformerWrapper = func(factory serverstorage.StorageFactory) serverstorage.StorageFactory { return factory }
+
 	if len(s.EncryptionProviderConfigFilepath) != 0 {
 		transformerOverrides, kmsPluginHealthzChecks, err := encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath, c.DrainedNotify())
 		if err != nil {
 			return err
 		}
-		factory = &transformerStorageFactory{
-			delegate:             factory,
-			transformerOverrides: transformerOverrides,
+		s.TransformerWrapper = func(factory serverstorage.StorageFactory) serverstorage.StorageFactory {
+			return &transformerStorageFactory{
+				delegate:             factory,
+				transformerOverrides: transformerOverrides,
+			}
 		}
 		c.AddHealthChecks(kmsPluginHealthzChecks...)
 	}
@@ -224,7 +229,7 @@ func (s *EtcdOptions) ApplyWithStorageFactoryTo(factory serverstorage.StorageFac
 
 	c.RESTOptionsGetter = &StorageFactoryRestOptionsFactory{
 		Options:        *s,
-		StorageFactory: factory,
+		StorageFactory: s.TransformerWrapper(factory),
 	}
 	return nil
 }
@@ -379,48 +384,13 @@ func (t *transformerStorageFactory) Backends() []serverstorage.Backend {
 	return t.delegate.Backends()
 }
 
-var _ serverstorage.StorageFactory = &transformerOverrideStorageFactory{}
-
-type transformerOverrideStorageFactory struct {
-	delegate            serverstorage.StorageFactory
-	transformerOverride generic.RESTOptionsGetter
-}
-
-func (t *transformerOverrideStorageFactory) NewConfig(resource schema.GroupResource) (*storagebackend.ConfigForResource, error) {
-	config, err := t.delegate.NewConfig(resource)
-	if err != nil {
-		return nil, err
-	}
-
-	transformerOverride, err := t.transformerOverride.GetRESTOptions(resource)
-	if err != nil {
-		return nil, err
-	}
-
-	configCopy := *config
-	resourceConfig := configCopy.Config
-	resourceConfig.Transformer = transformerOverride.StorageConfig.Config.Transformer
-	configCopy.Config = resourceConfig
-
-	return &configCopy, nil
-}
-
-func (t *transformerOverrideStorageFactory) ResourcePrefix(resource schema.GroupResource) string {
-	return t.delegate.ResourcePrefix(resource)
-}
-
-func (t *transformerOverrideStorageFactory) Backends() []serverstorage.Backend {
-	return t.delegate.Backends()
-}
-
-func NewTransformerOverrideRESTOptionsGetter(options EtcdOptions, transformerOverride generic.RESTOptionsGetter) generic.RESTOptionsGetter {
+func NewTransformerOverrideRESTOptionsGetter(options EtcdOptions) generic.RESTOptionsGetter {
 	return &StorageFactoryRestOptionsFactory{
 		Options: options,
-		StorageFactory: &transformerOverrideStorageFactory{
-			delegate: &StorageConfigFactory{
+		StorageFactory: options.TransformerWrapper(
+			&StorageConfigFactory{
 				StorageConfig: options.StorageConfig,
 			},
-			transformerOverride: transformerOverride,
-		},
+		),
 	}
 }
