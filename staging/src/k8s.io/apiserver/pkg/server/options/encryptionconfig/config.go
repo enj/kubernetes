@@ -415,8 +415,8 @@ var (
 	// The factory to create kms service. This is to make writing test easier.
 	envelopeServiceFactory = envelope.NewGRPCService
 
-	// The factory to create kmsv2 service.
-	envelopeKMSv2ServiceFactory = envelopekmsv2.NewGRPCService
+	// The factory to create kmsv2 service.  Exported for integration tests.
+	EnvelopeKMSv2ServiceFactory = envelopekmsv2.NewGRPCService
 )
 
 func kmsPrefixTransformer(config *apiserverconfig.KMSConfiguration, stopCh <-chan struct{}) (value.PrefixTransformer, healthChecker, error) {
@@ -448,7 +448,7 @@ func kmsPrefixTransformer(config *apiserverconfig.KMSConfiguration, stopCh <-cha
 			return value.PrefixTransformer{}, nil, fmt.Errorf("could not configure KMSv2 plugin %q, KMSv2 feature is not enabled", kmsName)
 		}
 
-		envelopeService, err := envelopeKMSv2ServiceFactory(ctx, config.Endpoint, config.Timeout.Duration)
+		envelopeService, err := EnvelopeKMSv2ServiceFactory(ctx, config.Endpoint, config.Timeout.Duration)
 		if err != nil {
 			return value.PrefixTransformer{}, nil, fmt.Errorf("could not configure KMSv2-Plugin's probe %q, error: %v", kmsName, err)
 		}

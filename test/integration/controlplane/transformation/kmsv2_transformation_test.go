@@ -29,21 +29,24 @@ import (
 	"time"
 
 	"github.com/gogo/protobuf/proto"
+	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apiserver/pkg/features"
+	"k8s.io/apiserver/pkg/server/options/encryptionconfig"
 	"k8s.io/apiserver/pkg/storage/value"
 	aestransformer "k8s.io/apiserver/pkg/storage/value/encrypt/aes"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2"
 	kmstypes "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2/v2alpha1"
 	kmsv2mock "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/testing/v2alpha1"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/client-go/dynamic"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	kmsv2api "k8s.io/kms/apis/v2alpha1"
-	"k8s.io/kubernetes/cmd/kube-apiserver/app"
-	"k8s.io/kubernetes/pkg/controlplane"
+	"k8s.io/kubernetes/test/integration/etcd"
 )
 
 type envelopekmsv2 struct {
@@ -281,6 +284,20 @@ resources:
 func TestKMSv2SingleService(t *testing.T) {
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2, true)()
 
+	var kmsv2Calls int
+	origEnvelopeKMSv2ServiceFactory := encryptionconfig.EnvelopeKMSv2ServiceFactory
+	encryptionconfig.EnvelopeKMSv2ServiceFactory = func(ctx context.Context, endpoint string, callTimeout time.Duration) (kmsv2.Service, error) {
+		kmsv2Calls++
+		return origEnvelopeKMSv2ServiceFactory(ctx, endpoint, callTimeout)
+	}
+	t.Cleanup(func() {
+		encryptionconfig.EnvelopeKMSv2ServiceFactory = origEnvelopeKMSv2ServiceFactory
+	})
+
+	// check resources provided by the three servers that we have wired together
+	// - pods and config maps from KAS
+	// - CRDs and CRs from API extensions
+	// - API services from aggregator
 	encryptionConfig := `
 kind: EncryptionConfiguration
 apiVersion: apiserver.config.k8s.io/v1
@@ -288,6 +305,9 @@ resources:
   - resources:
     - pods
     - configmaps
+    - customresourcedefinitions.apiextensions.k8s.io
+    - pandas.awesome.bears.com
+    - apiservices.apiregistration.k8s.io
     providers:
     - kms:
        apiVersion: v2
@@ -313,47 +333,28 @@ resources:
 	}
 	t.Cleanup(test.cleanUp)
 
-	kasConfig := app.LastKubeAPIServerConfigSeenInTest
+	// the storage registry for CRs is dynamic so create one to exercise the wiring
+	etcd.CreateTestCRDs(t, apiextensionsclientset.NewForConfigOrDie(test.kubeAPIServer.ClientConfig), false, etcd.GetCustomResourceDefinitionData()...)
 
-	healthzChecks := kasConfig.GenericConfig.HealthzChecks
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
 
-	var serviceForHealthz kmsv2.Service
-	for _, check := range healthzChecks {
-		serviceGetter, ok := check.(kmsv2.ServiceGetter)
-		if !ok {
-			continue
-		}
-		if serviceForHealthz != nil {
-			t.Fatalf("expected only a single kms healthz: %v", healthzChecks)
-		}
-		serviceForHealthz = serviceGetter.Service()
+	gvr := schema.GroupVersionResource{Group: "awesome.bears.com", Version: "v1", Resource: "pandas"}
+	stub := etcd.GetEtcdStorageData()[gvr].Stub
+	dynamicClient, obj, err := etcd.JSONToUnstructured(stub, "", &meta.RESTMapping{
+		Resource:         gvr,
+		GroupVersionKind: gvr.GroupVersion().WithKind("Panda"),
+		Scope:            meta.RESTScopeRoot,
+	}, dynamic.NewForConfigOrDie(test.kubeAPIServer.ClientConfig))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if serviceForHealthz == nil {
-		t.Fatalf("could not find kms healthz: %v", healthzChecks)
-	}
-
-	podServiceForREST := serviceForREST(t, kasConfig, schema.GroupResource{Resource: "pods"})
-	cmServiceForREST := serviceForREST(t, kasConfig, schema.GroupResource{Resource: "configmaps"})
-	if podServiceForREST != serviceForHealthz {
-		t.Fatalf("pod rest service %v is not equal to healthz service %v", podServiceForREST, serviceForHealthz)
-	}
-	if cmServiceForREST != serviceForHealthz {
-		t.Fatalf("config map rest service %v is not equal to healthz service %v", cmServiceForREST, serviceForHealthz)
-	}
-}
-
-func serviceForREST(t *testing.T, kasConfig *controlplane.Config, resource schema.GroupResource) kmsv2.Service {
-	t.Helper()
-
-	opts, err := kasConfig.GenericConfig.RESTOptionsGetter.GetRESTOptions(resource)
+	_, err = dynamicClient.Create(ctx, obj, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	transformers := opts.StorageConfig.Transformer.(*value.MutableTransformer).Get().(*value.PrefixTransformers).Transformers
-	if len(transformers) != 1 {
-		t.Fatalf("expected only a single transformer: %v", transformers)
+	if kmsv2Calls != 1 {
+		t.Fatalf("expected a single call to KMS v2 service factory: %v", kmsv2Calls)
 	}
-
-	return transformers[0].Transformer.(kmsv2.ServiceGetter).Service()
 }
