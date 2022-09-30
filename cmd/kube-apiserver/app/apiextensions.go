@@ -47,6 +47,7 @@ func createAPIExtensionsConfig(
 ) (*apiextensionsapiserver.Config, error) {
 	// make a shallow copy to let us twiddle a few things
 	// most of the config actually remains the same.  We only need to mess with a couple items related to the particulars of the apiextensions
+	transformerRestOptionsGetter := kubeAPIServerConfig.RESTOptionsGetter
 	genericConfig := kubeAPIServerConfig
 	genericConfig.PostStartHooks = map[string]genericapiserver.PostStartHookConfigEntry{}
 	genericConfig.RESTOptionsGetter = nil
@@ -64,7 +65,6 @@ func createAPIExtensionsConfig(
 	}
 
 	// copy the etcd options so we don't mutate originals.
-	transformerRestOptionsGetter := genericConfig.RESTOptionsGetter
 	etcdOptions := *commandOptions.Etcd
 	etcdOptions.StorageConfig.Paging = utilfeature.DefaultFeatureGate.Enabled(features.APIListChunking)
 	// this is where the true decodable levels come from.

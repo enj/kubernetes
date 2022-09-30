@@ -63,6 +63,7 @@ func createAggregatorConfig(
 ) (*aggregatorapiserver.Config, error) {
 	// make a shallow copy to let us twiddle a few things
 	// most of the config actually remains the same.  We only need to mess with a couple items related to the particulars of the aggregator
+	transformerRestOptionsGetter := kubeAPIServerConfig.RESTOptionsGetter
 	genericConfig := kubeAPIServerConfig
 	genericConfig.PostStartHooks = map[string]genericapiserver.PostStartHookConfigEntry{}
 	genericConfig.RESTOptionsGetter = nil
@@ -91,7 +92,6 @@ func createAggregatorConfig(
 	}
 
 	// copy the etcd options so we don't mutate originals.
-	transformerRestOptionsGetter := genericConfig.RESTOptionsGetter
 	etcdOptions := *commandOptions.Etcd
 	etcdOptions.StorageConfig.Paging = utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIListChunking)
 	etcdOptions.StorageConfig.Codec = aggregatorscheme.Codecs.LegacyCodec(v1.SchemeGroupVersion, v1beta1.SchemeGroupVersion)
