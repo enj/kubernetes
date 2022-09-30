@@ -110,7 +110,7 @@ func (o CustomResourceDefinitionsServerOptions) Config() (*apiserver.Config, err
 	config := &apiserver.Config{
 		GenericConfig: serverConfig,
 		ExtraConfig: apiserver.ExtraConfig{
-			CRDRESTOptionsGetter: NewCRDRESTOptionsGetter(*o.RecommendedOptions.Etcd),
+			CRDRESTOptionsGetter: NewCRDRESTOptionsGetter(*o.RecommendedOptions.Etcd, serverConfig.RESTOptionsGetter),
 			ServiceResolver:      &serviceResolver{serverConfig.SharedInformerFactory.Core().V1().Services().Lister()},
 			AuthResolverWrapper:  webhook.NewDefaultAuthenticationInfoResolverWrapper(nil, nil, serverConfig.LoopbackClientConfig, oteltrace.NewNoopTracerProvider()),
 		},
@@ -119,20 +119,14 @@ func (o CustomResourceDefinitionsServerOptions) Config() (*apiserver.Config, err
 }
 
 // NewCRDRESTOptionsGetter create a RESTOptionsGetter for CustomResources.
-func NewCRDRESTOptionsGetter(etcdOptions genericoptions.EtcdOptions) genericregistry.RESTOptionsGetter {
-	ret := apiserver.CRDRESTOptionsGetter{
-		StorageConfig:             etcdOptions.StorageConfig,
-		StoragePrefix:             etcdOptions.StorageConfig.Prefix,
-		EnableWatchCache:          etcdOptions.EnableWatchCache,
-		DefaultWatchCacheSize:     etcdOptions.DefaultWatchCacheSize,
-		EnableGarbageCollection:   etcdOptions.EnableGarbageCollection,
-		DeleteCollectionWorkers:   etcdOptions.DeleteCollectionWorkers,
-		CountMetricPollPeriod:     etcdOptions.StorageConfig.CountMetricPollPeriod,
-		StorageObjectCountTracker: etcdOptions.StorageConfig.StorageObjectCountTracker,
-	}
-	ret.StorageConfig.Codec = unstructured.UnstructuredJSONScheme
+func NewCRDRESTOptionsGetter(etcdOptions genericoptions.EtcdOptions, transformerOverride genericregistry.RESTOptionsGetter) genericregistry.RESTOptionsGetter {
+	storageConfig := etcdOptions.StorageConfig
+	storageConfig.Codec = unstructured.UnstructuredJSONScheme
+	etcdOptions.StorageConfig = storageConfig
 
-	return ret
+	etcdOptions.WatchCacheSizes = nil // this control is not provided for custom resources
+
+	return genericoptions.NewTransformerOverrideRESTOptionsGetter(etcdOptions, transformerOverride)
 }
 
 type serviceResolver struct {

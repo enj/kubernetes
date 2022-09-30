@@ -378,3 +378,49 @@ func (t *transformerStorageFactory) ResourcePrefix(resource schema.GroupResource
 func (t *transformerStorageFactory) Backends() []serverstorage.Backend {
 	return t.delegate.Backends()
 }
+
+var _ serverstorage.StorageFactory = &transformerOverrideStorageFactory{}
+
+type transformerOverrideStorageFactory struct {
+	delegate            serverstorage.StorageFactory
+	transformerOverride generic.RESTOptionsGetter
+}
+
+func (t *transformerOverrideStorageFactory) NewConfig(resource schema.GroupResource) (*storagebackend.ConfigForResource, error) {
+	config, err := t.delegate.NewConfig(resource)
+	if err != nil {
+		return nil, err
+	}
+
+	transformerOverride, err := t.transformerOverride.GetRESTOptions(resource)
+	if err != nil {
+		return nil, err
+	}
+
+	configCopy := *config
+	resourceConfig := configCopy.Config
+	resourceConfig.Transformer = transformerOverride.StorageConfig.Config.Transformer
+	configCopy.Config = resourceConfig
+
+	return &configCopy, nil
+}
+
+func (t *transformerOverrideStorageFactory) ResourcePrefix(resource schema.GroupResource) string {
+	return t.delegate.ResourcePrefix(resource)
+}
+
+func (t *transformerOverrideStorageFactory) Backends() []serverstorage.Backend {
+	return t.delegate.Backends()
+}
+
+func NewTransformerOverrideRESTOptionsGetter(options EtcdOptions, transformerOverride generic.RESTOptionsGetter) generic.RESTOptionsGetter {
+	return &StorageFactoryRestOptionsFactory{
+		Options: options,
+		StorageFactory: &transformerOverrideStorageFactory{
+			delegate: &StorageConfigFactory{
+				StorageConfig: options.StorageConfig,
+			},
+			transformerOverride: transformerOverride,
+		},
+	}
+}

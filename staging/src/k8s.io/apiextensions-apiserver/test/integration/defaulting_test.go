@@ -33,6 +33,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/apiserver/pkg/registry/generic"
+	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/client-go/dynamic"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -658,7 +660,7 @@ func TestCustomResourceDefaultingOfMetaFields(t *testing.T) {
 	t.Logf("CR created: %#v", returnedFoo.UnstructuredContent())
 
 	// get persisted object
-	RESTOptionsGetter := serveroptions.NewCRDRESTOptionsGetter(*options.RecommendedOptions.Etcd)
+	RESTOptionsGetter := serveroptions.NewCRDRESTOptionsGetter(*options.RecommendedOptions.Etcd, generic.RESTOptions{StorageConfig: &storagebackend.ConfigForResource{}})
 	restOptions, err := RESTOptionsGetter.GetRESTOptions(schema.GroupResource{Group: crd.Spec.Group, Resource: crd.Spec.Names.Plural})
 	if err != nil {
 		t.Fatal(err)

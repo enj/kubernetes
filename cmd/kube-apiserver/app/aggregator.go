@@ -91,14 +91,12 @@ func createAggregatorConfig(
 	}
 
 	// copy the etcd options so we don't mutate originals.
+	transformerRestOptionsGetter := genericConfig.RESTOptionsGetter
 	etcdOptions := *commandOptions.Etcd
 	etcdOptions.StorageConfig.Paging = utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIListChunking)
 	etcdOptions.StorageConfig.Codec = aggregatorscheme.Codecs.LegacyCodec(v1.SchemeGroupVersion, v1beta1.SchemeGroupVersion)
 	etcdOptions.StorageConfig.EncodeVersioner = runtime.NewMultiGroupVersioner(v1.SchemeGroupVersion, schema.GroupKind{Group: v1beta1.GroupName})
-	genericConfig.RESTOptionsGetter = &genericoptions.StorageFactoryRestOptionsFactory{
-		Options:        etcdOptions,
-		StorageFactory: &genericoptions.StorageConfigFactory{StorageConfig: etcdOptions.StorageConfig},
-	}
+	genericConfig.RESTOptionsGetter = genericoptions.NewTransformerOverrideRESTOptionsGetter(etcdOptions, transformerRestOptionsGetter)
 
 	// override MergedResourceConfig with aggregator defaults and registry
 	if err := commandOptions.APIEnablement.ApplyTo(

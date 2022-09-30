@@ -29,6 +29,12 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
+	"k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	serveroptions "k8s.io/apiextensions-apiserver/pkg/cmd/server/options"
+	"k8s.io/apiextensions-apiserver/test/integration/fixtures"
+	"k8s.io/apiextensions-apiserver/test/integration/storage"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -38,16 +44,11 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apiserver/pkg/registry/generic"
 	etcd3watcher "k8s.io/apiserver/pkg/storage/etcd3"
+	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/client-go/dynamic"
 	_ "k8s.io/component-base/logs/testinit" // enable logging flags
-
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
-	"k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
-	serveroptions "k8s.io/apiextensions-apiserver/pkg/cmd/server/options"
-	"k8s.io/apiextensions-apiserver/test/integration/fixtures"
-	"k8s.io/apiextensions-apiserver/test/integration/storage"
 )
 
 type Checker func(t *testing.T, ctc *conversionTestContext)
@@ -182,7 +183,7 @@ func testWebhookConverter(t *testing.T, watchCache bool) {
 
 	crd := multiVersionFixture.DeepCopy()
 
-	RESTOptionsGetter := serveroptions.NewCRDRESTOptionsGetter(*options.RecommendedOptions.Etcd)
+	RESTOptionsGetter := serveroptions.NewCRDRESTOptionsGetter(*options.RecommendedOptions.Etcd, generic.RESTOptions{StorageConfig: &storagebackend.ConfigForResource{}})
 	restOptions, err := RESTOptionsGetter.GetRESTOptions(schema.GroupResource{Group: crd.Spec.Group, Resource: crd.Spec.Names.Plural})
 	if err != nil {
 		t.Fatal(err)
