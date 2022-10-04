@@ -18,10 +18,14 @@ package webhook
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"strconv"
 
@@ -31,6 +35,7 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apiserver/pkg/util/x509metrics"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/transport"
 	"k8s.io/utils/lru"
 )
 
@@ -154,7 +159,12 @@ func (cm *ClientManager) HookClient(cc ClientConfig) (*rest.RESTClient, error) {
 			x509InsecureSHA1Counter,
 		))
 
-		client, err := rest.UnversionedRESTClientFor(cfg)
+		httpClient, err := httpClientFor(cfg)
+		if err != nil {
+			return nil, err
+		}
+
+		client, err := rest.UnversionedRESTClientForConfigAndClient(cfg, httpClient)
 		if err == nil {
 			cm.cache.Add(string(cacheKey), client)
 		}
@@ -227,4 +237,135 @@ func (cm *ClientManager) HookClient(cc ClientConfig) (*rest.RESTClient, error) {
 	cfg.APIPath = u.Path
 
 	return complete(cfg)
+}
+
+func httpClientFor(config *rest.Config) (*http.Client, error) {
+	transportConfig, err := config.TransportConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := loadCRLIfProvided(transportConfig); err != nil {
+		return nil, err
+	}
+
+	rt, err := transport.New(transportConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	var httpClient *http.Client
+	if rt != http.DefaultTransport || config.Timeout > 0 {
+		httpClient = &http.Client{
+			Transport: rt,
+			Timeout:   config.Timeout,
+		}
+	} else {
+		httpClient = http.DefaultClient
+	}
+
+	return httpClient, nil
+}
+
+func loadCRLIfProvided(transportConfig *transport.Config) error {
+	// load CA data
+	if _, err := transport.TLSConfigFor(transportConfig); err != nil {
+		return err
+	}
+
+	if len(transportConfig.TLS.CAData) == 0 {
+		return nil
+	}
+
+	ca, err := x509.ParseCertificate(transportConfig.TLS.CAData)
+	if err != nil {
+		return err
+	}
+
+	if len(ca.CRLDistributionPoints) == 0 {
+		return nil
+	}
+
+	if transportConfig.HasVerifyConnectionCallback() {
+		// this can easily be improved if needed but rest.Config simply cannot set this field yet
+		return fmt.Errorf("nested verify connection is not supported")
+	}
+
+	// TODO add dynamic reloading of CRLs and change this to be a set of revoked serial numbers
+	revocationLists := make([]*x509.RevocationList, 0, len(ca.CRLDistributionPoints))
+	for _, point := range ca.CRLDistributionPoints {
+		if ldapURL(point) {
+			continue // skip LDAP based CRLs
+		}
+
+		resp, err := http.DefaultClient.Get(point) // this is a http get, the bytes are verified below
+		if err != nil {
+			return fmt.Errorf("failed to get CRL from %q: %w", point, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode/100 != 2 {
+			return fmt.Errorf("failed to get CRL from %q due to status code: %d", point, resp.StatusCode)
+		}
+		crlDer, err := io.ReadAll(io.LimitReader(resp.Body, 100*1024*1024)) // read up to 100 mB
+		if err != nil {
+			return fmt.Errorf("failed to read CRL response from %q: %w", point, err)
+		}
+
+		revocationList, err := x509.ParseRevocationList(crlDer)
+		if err != nil {
+			return fmt.Errorf("failed to parse CRL from %q: %w", point, err)
+		}
+		if err := revocationList.CheckSignatureFrom(ca); err != nil {
+			return fmt.Errorf("failed to verify CRL from %q: %w", point, err)
+		}
+		revocationLists = append(revocationLists, revocationList)
+	}
+
+	if len(revocationLists) == 0 {
+		return nil
+	}
+
+	transportConfig.TLS.VerifyConnectionHolder = &transport.VerifyConnectionHolder{
+		VerifyConnection: func(state tls.ConnectionState) error {
+			for _, chain := range state.VerifiedChains {
+				if !isRevokedChain(revocationLists, chain) {
+					return nil // connection is valid as long as a single chain is not revoked
+				}
+			}
+			return fmt.Errorf("no unrevoked chains found")
+		},
+	}
+
+	return nil
+}
+
+func isRevokedChain(revocationLists []*x509.RevocationList, chain []*x509.Certificate) (revoked bool) {
+	for _, cert := range chain {
+		if isRevoked(revocationLists, cert) {
+			return true
+		}
+	}
+	return false
+}
+
+func isRevoked(revocationLists []*x509.RevocationList, cert *x509.Certificate) (revoked bool) {
+	for _, revocationList := range revocationLists {
+		for _, revokedCertificate := range revocationList.RevokedCertificates {
+			if cert.SerialNumber.Cmp(revokedCertificate.SerialNumber) == 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func ldapURL(urlString string) bool {
+	u, err := url.Parse(urlString)
+	if err != nil {
+		return false
+	}
+	if u.Scheme == "ldap" {
+		return true
+	}
+	return false
 }
