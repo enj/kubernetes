@@ -57,8 +57,9 @@ type tlsCacheKey struct {
 	nextProtos         string
 	disableCompression bool
 	// these functions are wrapped to allow them to be used as map keys
-	getCert *GetCertHolder
-	dial    *DialHolder
+	getCert          *GetCertHolder
+	verifyConnection *VerifyConnectionHolder
+	dial             *DialHolder
 }
 
 func (t tlsCacheKey) String() string {
@@ -66,8 +67,8 @@ func (t tlsCacheKey) String() string {
 	if len(t.keyData) > 0 {
 		keyText = "<redacted>"
 	}
-	return fmt.Sprintf("insecure:%v, caData:%#v, certData:%#v, keyData:%s, serverName:%s, disableCompression:%t, getCert:%p, dial:%p",
-		t.insecure, t.caData, t.certData, keyText, t.serverName, t.disableCompression, t.getCert, t.dial)
+	return fmt.Sprintf("insecure:%v, caData:%#v, certData:%#v, keyData:%s, serverName:%s, disableCompression:%t, getCert:%p, verifyConnection:%p, dial:%p",
+		t.insecure, t.caData, t.certData, keyText, t.serverName, t.disableCompression, t.getCert, t.verifyConnection, t.dial)
 }
 
 func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
@@ -157,6 +158,7 @@ func tlsConfigKey(c *Config) (tlsCacheKey, bool, error) {
 		nextProtos:         strings.Join(c.TLS.NextProtos, ","),
 		disableCompression: c.DisableCompression,
 		getCert:            c.TLS.GetCertHolder,
+		verifyConnection:   c.TLS.VerifyConnectionHolder,
 		dial:               c.DialHolder,
 	}
 

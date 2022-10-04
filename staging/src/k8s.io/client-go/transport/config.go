@@ -121,6 +121,10 @@ func (c *Config) HasCertCallback() bool {
 	return c.TLS.GetCertHolder != nil
 }
 
+func (c *Config) HasVerifyConnectionCallback() bool {
+	return c.TLS.VerifyConnectionHolder != nil
+}
+
 // Wrap adds a transport middleware function that will give the caller
 // an opportunity to wrap the underlying http.RoundTripper prior to the
 // first API call being made. The provided function is invoked after any
@@ -152,9 +156,15 @@ type TLSConfig struct {
 	// Callback that returns a TLS client certificate. CertData, CertFile, KeyData and KeyFile supercede this field.
 	// This struct indirection is used to make transport configs cacheable.
 	GetCertHolder *GetCertHolder
+
+	VerifyConnectionHolder *VerifyConnectionHolder
 }
 
 // GetCertHolder is used to make the wrapped function comparable so that it can be used as a map key.
 type GetCertHolder struct {
 	GetCert func() (*tls.Certificate, error)
+}
+
+type VerifyConnectionHolder struct {
+	VerifyConnection func(tls.ConnectionState) error
 }

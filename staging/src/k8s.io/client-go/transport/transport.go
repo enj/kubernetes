@@ -35,7 +35,7 @@ import (
 // or transport level security defined by the provided Config.
 func New(config *Config) (http.RoundTripper, error) {
 	// Set transport level security
-	if config.Transport != nil && (config.HasCA() || config.HasCertAuth() || config.HasCertCallback() || config.TLS.Insecure) {
+	if config.Transport != nil && (config.HasCA() || config.HasCertAuth() || config.HasCertCallback() || config.HasVerifyConnectionCallback() || config.TLS.Insecure) {
 		return nil, fmt.Errorf("using a custom transport with TLS certificate options or the insecure flag is not allowed")
 	}
 
@@ -65,6 +65,10 @@ func isValidHolders(config *Config) bool {
 		return false
 	}
 
+	if config.TLS.VerifyConnectionHolder != nil && config.TLS.VerifyConnectionHolder.VerifyConnection == nil {
+		return false
+	}
+
 	if config.DialHolder != nil && config.DialHolder.Dial == nil {
 		return false
 	}
@@ -75,7 +79,7 @@ func isValidHolders(config *Config) bool {
 // TLSConfigFor returns a tls.Config that will provide the transport level security defined
 // by the provided Config. Will return nil if no transport level security is requested.
 func TLSConfigFor(c *Config) (*tls.Config, error) {
-	if !(c.HasCA() || c.HasCertAuth() || c.HasCertCallback() || c.TLS.Insecure || len(c.TLS.ServerName) > 0 || len(c.TLS.NextProtos) > 0) {
+	if !(c.HasCA() || c.HasCertAuth() || c.HasCertCallback() || c.HasVerifyConnectionCallback() || c.TLS.Insecure || len(c.TLS.ServerName) > 0 || len(c.TLS.NextProtos) > 0) {
 		return nil, nil
 	}
 	if c.HasCA() && c.TLS.Insecure {
@@ -147,6 +151,10 @@ func TLSConfigFor(c *Config) (*tls.Config, error) {
 			// be sent to the server.
 			return &tls.Certificate{}, nil
 		}
+	}
+
+	if c.HasVerifyConnectionCallback() {
+		tlsConfig.VerifyConnection = c.TLS.VerifyConnectionHolder.VerifyConnection
 	}
 
 	return tlsConfig, nil
