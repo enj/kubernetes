@@ -27,7 +27,6 @@ import (
 	"net/http"
 	"os"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -513,45 +512,4 @@ func (u unionTransformers) TransformFromStorage(ctx context.Context, data []byte
 
 func (u unionTransformers) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) (out []byte, err error) {
 	return u[0].TransformToStorage(ctx, data, dataCtx)
-}
-
-func NewDynamicTransformers(transformerOverrides map[schema.GroupResource]value.Transformer) *DynamicTransformers {
-	dynamicTransformers := &DynamicTransformers{transformerOverrides: &atomic.Value{}}
-	dynamicTransformers.Set(transformerOverrides)
-	return dynamicTransformers
-}
-
-type DynamicTransformers struct {
-	transformerOverrides *atomic.Value
-}
-
-func (d *DynamicTransformers) TransformerForResource(resource schema.GroupResource) value.Transformer {
-	return &resourceTransformer{resource: resource, transformerOverrides: d.transformerOverrides}
-}
-
-func (d *DynamicTransformers) Set(transformerOverrides map[schema.GroupResource]value.Transformer) {
-	d.transformerOverrides.Store(transformerOverrides)
-}
-
-var _ value.Transformer = &resourceTransformer{}
-
-type resourceTransformer struct {
-	resource             schema.GroupResource
-	transformerOverrides *atomic.Value
-}
-
-func (r *resourceTransformer) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
-	return r.transformer().TransformFromStorage(ctx, data, dataCtx)
-}
-
-func (r *resourceTransformer) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, error) {
-	return r.transformer().TransformToStorage(ctx, data, dataCtx)
-}
-
-func (r *resourceTransformer) transformer() value.Transformer {
-	transformer := r.transformerOverrides.Load().(map[schema.GroupResource]value.Transformer)[r.resource]
-	if transformer == nil {
-		return identity.NewEncryptCheckTransformer()
-	}
-	return transformer
 }

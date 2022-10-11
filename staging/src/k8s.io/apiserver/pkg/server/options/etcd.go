@@ -35,6 +35,7 @@ import (
 	serverstorage "k8s.io/apiserver/pkg/server/storage"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	storagefactory "k8s.io/apiserver/pkg/storage/storagebackend/factory"
+	"k8s.io/apiserver/pkg/storage/value"
 	"k8s.io/klog/v2"
 )
 
@@ -211,10 +212,9 @@ func (s *EtcdOptions) ApplyWithStorageFactoryTo(factory serverstorage.StorageFac
 		if err != nil {
 			return err
 		}
-		dynamicTransformers := encryptionconfig.NewDynamicTransformers(transformerOverrides)
 		factory = &transformerStorageFactory{
-			delegate:            factory,
-			dynamicTransformers: dynamicTransformers,
+			delegate:             factory,
+			transformerOverrides: transformerOverrides,
 		}
 		c.AddHealthChecks(kmsPluginHealthzChecks...)
 	}
@@ -348,8 +348,8 @@ func (s *StorageConfigFactory) Backends() []serverstorage.Backend {
 var _ serverstorage.StorageFactory = &transformerStorageFactory{}
 
 type transformerStorageFactory struct {
-	delegate            serverstorage.StorageFactory
-	dynamicTransformers *encryptionconfig.DynamicTransformers
+	delegate             serverstorage.StorageFactory
+	transformerOverrides map[schema.GroupResource]value.Transformer
 }
 
 func (t *transformerStorageFactory) NewConfig(resource schema.GroupResource) (*storagebackend.ConfigForResource, error) {
@@ -358,9 +358,14 @@ func (t *transformerStorageFactory) NewConfig(resource schema.GroupResource) (*s
 		return nil, err
 	}
 
+	transformer, ok := t.transformerOverrides[resource]
+	if !ok {
+		return config, nil
+	}
+
 	configCopy := *config
 	resourceConfig := configCopy.Config
-	resourceConfig.Transformer = t.dynamicTransformers.TransformerForResource(resource)
+	resourceConfig.Transformer = transformer
 	configCopy.Config = resourceConfig
 
 	return &configCopy, nil
