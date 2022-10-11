@@ -60,11 +60,14 @@ type EtcdOptions struct {
 	// WatchCacheSizes represents override to a given resource
 	WatchCacheSizes []string
 
-	// TODO comment
+	// complete guards fields that must be initialized via Complete before the Apply methods can be used.
 	complete               bool
 	transformerOverrides   map[schema.GroupResource]value.Transformer
 	kmsPluginHealthzChecks []healthz.HealthChecker
-	SkipHealthEndpoints    bool
+
+	// SkipHealthEndpoints, when true, causes the Apply methods to not set up health endpoints.
+	// This allows multiple invocations of the Apply methods without duplication of said endpoints.
+	SkipHealthEndpoints bool
 }
 
 var storageTypes = sets.NewString(
@@ -196,7 +199,8 @@ func (s *EtcdOptions) AddFlags(fs *pflag.FlagSet) {
 		"The time in seconds that each lease is reused. A lower value could avoid large number of objects reusing the same lease. Notice that a too small value may cause performance problems at storage layer.")
 }
 
-// TODO comment
+// Complete must be called exactly once before using any of the Apply methods.  It is responsible for setting
+// up objects that must be created once and reused across multiple invocations such as storage transformers.
 func (s *EtcdOptions) Complete(c *server.Config) error {
 	if s == nil {
 		return nil

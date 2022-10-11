@@ -63,7 +63,8 @@ func createAPIExtensionsConfig(
 	}
 
 	// copy the etcd options so we don't mutate originals.
-	// TODO comment
+	// we assume that the etcd options have been completed already.  avoid messing with anything outside
+	// of changes to StorageConfig as that may lead to unexpected behavior when the options are applied.
 	etcdOptions := *commandOptions.Etcd
 	etcdOptions.StorageConfig.Paging = utilfeature.DefaultFeatureGate.Enabled(features.APIListChunking)
 	// this is where the true decodable levels come from.
