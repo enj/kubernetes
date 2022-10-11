@@ -59,6 +59,12 @@ type EtcdOptions struct {
 	DefaultWatchCacheSize int
 	// WatchCacheSizes represents override to a given resource
 	WatchCacheSizes []string
+
+	// TODO comment
+	complete               bool
+	transformerOverrides   map[schema.GroupResource]value.Transformer
+	kmsPluginHealthzChecks []healthz.HealthChecker
+	SkipHealthEndpoints    bool
 }
 
 var storageTypes = sets.NewString(
@@ -190,6 +196,30 @@ func (s *EtcdOptions) AddFlags(fs *pflag.FlagSet) {
 		"The time in seconds that each lease is reused. A lower value could avoid large number of objects reusing the same lease. Notice that a too small value may cause performance problems at storage layer.")
 }
 
+// TODO comment
+func (s *EtcdOptions) Complete(c *server.Config) error {
+	if s == nil {
+		return nil
+	}
+
+	if s.complete {
+		return fmt.Errorf("EtcdOptions.Complete called more than once")
+	}
+
+	if len(s.EncryptionProviderConfigFilepath) != 0 {
+		transformerOverrides, kmsPluginHealthzChecks, err := encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath, c.DrainedNotify())
+		if err != nil {
+			return err
+		}
+		s.transformerOverrides = transformerOverrides
+		s.kmsPluginHealthzChecks = kmsPluginHealthzChecks
+	}
+
+	s.complete = true
+
+	return nil
+}
+
 func (s *EtcdOptions) ApplyTo(c *server.Config) error {
 	if s == nil {
 		return nil
@@ -203,20 +233,21 @@ func (s *EtcdOptions) ApplyWithStorageFactoryTo(factory serverstorage.StorageFac
 		return nil
 	}
 
-	if err := s.addEtcdHealthEndpoint(c); err != nil {
-		return err
+	if !s.complete {
+		return fmt.Errorf("EtcdOptions.Apply called without completion")
 	}
 
-	if len(s.EncryptionProviderConfigFilepath) != 0 {
-		transformerOverrides, kmsPluginHealthzChecks, err := encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath, c.DrainedNotify())
-		if err != nil {
+	if !s.SkipHealthEndpoints {
+		if err := s.addEtcdHealthEndpoint(c); err != nil {
 			return err
 		}
+	}
+
+	if len(s.transformerOverrides) > 0 {
 		factory = &transformerStorageFactory{
 			delegate:             factory,
-			transformerOverrides: transformerOverrides,
+			transformerOverrides: s.transformerOverrides,
 		}
-		c.AddHealthChecks(kmsPluginHealthzChecks...)
 	}
 
 	// use the StorageObjectCountTracker interface instance from server.Config
@@ -245,6 +276,8 @@ func (s *EtcdOptions) addEtcdHealthEndpoint(c *server.Config) error {
 	c.AddReadyzChecks(healthz.NamedCheck("etcd-readiness", func(r *http.Request) error {
 		return readyCheck()
 	}))
+
+	c.AddHealthChecks(s.kmsPluginHealthzChecks...)
 
 	return nil
 }

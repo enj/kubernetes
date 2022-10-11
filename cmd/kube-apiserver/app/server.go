@@ -411,6 +411,9 @@ func buildGenericConfig(
 	} else {
 		storageFactory.StorageConfig.Transport.TracerProvider = oteltrace.NewNoopTracerProvider()
 	}
+	if lastErr = s.Etcd.Complete(genericConfig); lastErr != nil {
+		return
+	}
 	if lastErr = s.Etcd.ApplyWithStorageFactoryTo(storageFactory, genericConfig); lastErr != nil {
 		return
 	}
