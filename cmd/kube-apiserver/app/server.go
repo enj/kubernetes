@@ -397,21 +397,22 @@ func buildGenericConfig(
 	kubeVersion := version.Get()
 	genericConfig.Version = &kubeVersion
 
+	if genericConfig.EgressSelector != nil {
+		s.Etcd.StorageConfig.Transport.EgressLookup = genericConfig.EgressSelector.Lookup
+	}
+	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerTracing) {
+		s.Etcd.StorageConfig.Transport.TracerProvider = genericConfig.TracerProvider
+	} else {
+		s.Etcd.StorageConfig.Transport.TracerProvider = oteltrace.NewNoopTracerProvider()
+	}
+	if lastErr = s.Etcd.Complete(genericConfig.StorageObjectCountTracker, genericConfig.DrainedNotify()); lastErr != nil {
+		return
+	}
+
 	storageFactoryConfig := kubeapiserver.NewStorageFactoryConfig()
 	storageFactoryConfig.APIResourceConfig = genericConfig.MergedResourceConfig
 	storageFactory, lastErr = storageFactoryConfig.Complete(s.Etcd).New()
 	if lastErr != nil {
-		return
-	}
-	if genericConfig.EgressSelector != nil {
-		storageFactory.StorageConfig.Transport.EgressLookup = genericConfig.EgressSelector.Lookup
-	}
-	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerTracing) {
-		storageFactory.StorageConfig.Transport.TracerProvider = genericConfig.TracerProvider
-	} else {
-		storageFactory.StorageConfig.Transport.TracerProvider = oteltrace.NewNoopTracerProvider()
-	}
-	if lastErr = s.Etcd.Complete(genericConfig.StorageObjectCountTracker, genericConfig.DrainedNotify()); lastErr != nil {
 		return
 	}
 	if lastErr = s.Etcd.ApplyWithStorageFactoryTo(storageFactory, genericConfig); lastErr != nil {

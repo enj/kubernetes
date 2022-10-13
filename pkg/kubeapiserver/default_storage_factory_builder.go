@@ -91,6 +91,7 @@ type StorageFactoryConfig struct {
 }
 
 // Complete completes the StorageFactoryConfig with provided etcdOptions returning completedStorageFactoryConfig.
+// This method mutates the receiver (StorageFactoryConfig).  It must never mutate the inputs.
 func (c *StorageFactoryConfig) Complete(etcdOptions *serveroptions.EtcdOptions) *completedStorageFactoryConfig {
 	c.StorageConfig = etcdOptions.StorageConfig
 	c.DefaultStorageMediaType = etcdOptions.DefaultStorageMediaType
