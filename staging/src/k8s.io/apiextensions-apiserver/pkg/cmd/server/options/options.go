@@ -21,6 +21,7 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"reflect"
 
 	"github.com/spf13/pflag"
 	oteltrace "go.opentelemetry.io/otel/trace"
@@ -31,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	genericregistry "k8s.io/apiserver/pkg/registry/generic"
+	"k8s.io/apiserver/pkg/server"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	genericoptions "k8s.io/apiserver/pkg/server/options"
 	"k8s.io/apiserver/pkg/util/proxy"
@@ -119,20 +121,33 @@ func (o CustomResourceDefinitionsServerOptions) Config() (*apiserver.Config, err
 }
 
 // NewCRDRESTOptionsGetter create a RESTOptionsGetter for CustomResources.
+// The input EtcdOptions is expected to have already been completed.
 func NewCRDRESTOptionsGetter(etcdOptions genericoptions.EtcdOptions) genericregistry.RESTOptionsGetter {
-	ret := apiserver.CRDRESTOptionsGetter{
-		StorageConfig:             etcdOptions.StorageConfig,
-		StoragePrefix:             etcdOptions.StorageConfig.Prefix,
-		EnableWatchCache:          etcdOptions.EnableWatchCache,
-		DefaultWatchCacheSize:     etcdOptions.DefaultWatchCacheSize,
-		EnableGarbageCollection:   etcdOptions.EnableGarbageCollection,
-		DeleteCollectionWorkers:   etcdOptions.DeleteCollectionWorkers,
-		CountMetricPollPeriod:     etcdOptions.StorageConfig.CountMetricPollPeriod,
-		StorageObjectCountTracker: etcdOptions.StorageConfig.StorageObjectCountTracker,
-	}
-	ret.StorageConfig.Codec = unstructured.UnstructuredJSONScheme
+	storageConfig := etcdOptions.StorageConfig
+	storageConfig.Codec = unstructured.UnstructuredJSONScheme
+	etcdOptions.StorageConfig = storageConfig
 
-	return ret
+	etcdOptions.WatchCacheSizes = nil      // this control is not provided for custom resources
+	etcdOptions.SkipHealthEndpoints = true // avoid double wiring of health checks
+
+	c := server.Config{}
+	if err := etcdOptions.ApplyTo(&c); err != nil {
+		panic(err) // TODO handle the error
+	}
+
+	restOptionsGetter := c.RESTOptionsGetter
+
+	if restOptionsGetter == nil {
+		// TODO return error
+	}
+
+	// sanity check that no other fields are set
+	c.RESTOptionsGetter = nil
+	if !reflect.DeepEqual(c, server.Config{}) {
+		// TODO return error
+	}
+
+	return restOptionsGetter
 }
 
 type serviceResolver struct {
