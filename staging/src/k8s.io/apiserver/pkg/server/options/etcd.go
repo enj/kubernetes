@@ -36,6 +36,7 @@ import (
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	storagefactory "k8s.io/apiserver/pkg/storage/storagebackend/factory"
 	"k8s.io/apiserver/pkg/storage/value"
+	flowcontrolrequest "k8s.io/apiserver/pkg/util/flowcontrol/request"
 	"k8s.io/klog/v2"
 )
 
@@ -201,7 +202,8 @@ func (s *EtcdOptions) AddFlags(fs *pflag.FlagSet) {
 
 // Complete must be called exactly once before using any of the Apply methods.  It is responsible for setting
 // up objects that must be created once and reused across multiple invocations such as storage transformers.
-func (s *EtcdOptions) Complete(c *server.Config) error {
+// This method mutates the receiver (EtcdOptions).  It must never mutate the inputs.
+func (s *EtcdOptions) Complete(storageObjectCountTracker flowcontrolrequest.StorageObjectCountTracker, stopCh <-chan struct{}) error {
 	if s == nil {
 		return nil
 	}
@@ -211,7 +213,7 @@ func (s *EtcdOptions) Complete(c *server.Config) error {
 	}
 
 	if len(s.EncryptionProviderConfigFilepath) != 0 {
-		transformerOverrides, kmsPluginHealthzChecks, err := encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath, c.DrainedNotify())
+		transformerOverrides, kmsPluginHealthzChecks, err := encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath, stopCh)
 		if err != nil {
 			return err
 		}
@@ -219,19 +221,23 @@ func (s *EtcdOptions) Complete(c *server.Config) error {
 		s.kmsPluginHealthzChecks = kmsPluginHealthzChecks
 	}
 
+	s.StorageConfig.StorageObjectCountTracker = storageObjectCountTracker
+
 	s.complete = true
 
 	return nil
 }
 
+// ApplyTo mutates the provided server.Config.  It must never mutate the receiver (EtcdOptions).
 func (s *EtcdOptions) ApplyTo(c *server.Config) error {
 	if s == nil {
 		return nil
 	}
 
-	return s.ApplyWithStorageFactoryTo(&StorageConfigFactory{StorageConfig: s.StorageConfig}, c)
+	return s.ApplyWithStorageFactoryTo(&SimpleStorageFactory{StorageConfig: s.StorageConfig}, c)
 }
 
+// ApplyWithStorageFactoryTo mutates the provided server.Config.  It must never mutate the receiver (EtcdOptions).
 func (s *EtcdOptions) ApplyWithStorageFactoryTo(factory serverstorage.StorageFactory, c *server.Config) error {
 	if s == nil {
 		return nil
@@ -253,9 +259,6 @@ func (s *EtcdOptions) ApplyWithStorageFactoryTo(factory serverstorage.StorageFac
 			transformerOverrides: s.transformerOverrides,
 		}
 	}
-
-	// use the StorageObjectCountTracker interface instance from server.Config
-	s.StorageConfig.StorageObjectCountTracker = c.StorageObjectCountTracker
 
 	c.RESTOptionsGetter = &StorageFactoryRestOptionsFactory{Options: *s, StorageFactory: factory}
 	return nil
@@ -360,23 +363,27 @@ func WriteWatchCacheSizes(watchCacheSizes map[schema.GroupResource]int) ([]strin
 	return cacheSizes, nil
 }
 
-var _ serverstorage.StorageFactory = &StorageConfigFactory{}
+var _ serverstorage.StorageFactory = &SimpleStorageFactory{}
 
-type StorageConfigFactory struct {
+// SimpleStorageFactory provides a StorageFactory implementation that should be used when different
+// resources essentially share the same storage config (as defined by the given storagebackend.Config).
+// It assumes the resources are stored at a path that is purely based on the schema.GroupResource.
+// Users that need flexibility and per resource overrides should use DefaultStorageFactory instead.
+type SimpleStorageFactory struct {
 	StorageConfig storagebackend.Config
 }
 
-func (s *StorageConfigFactory) NewConfig(resource schema.GroupResource) (*storagebackend.ConfigForResource, error) {
+func (s *SimpleStorageFactory) NewConfig(resource schema.GroupResource) (*storagebackend.ConfigForResource, error) {
 	return s.StorageConfig.ForResource(resource), nil
 }
 
-func (s *StorageConfigFactory) ResourcePrefix(resource schema.GroupResource) string {
+func (s *SimpleStorageFactory) ResourcePrefix(resource schema.GroupResource) string {
 	return resource.Group + "/" + resource.Resource
 }
 
-func (s *StorageConfigFactory) Backends() []serverstorage.Backend {
+func (s *SimpleStorageFactory) Backends() []serverstorage.Backend {
 	// nothing should ever call this method but we still provide a functional implementation
-	return (&serverstorage.DefaultStorageFactory{StorageConfig: s.StorageConfig}).Backends()
+	return serverstorage.Backends(s.StorageConfig)
 }
 
 var _ serverstorage.StorageFactory = &transformerStorageFactory{}
