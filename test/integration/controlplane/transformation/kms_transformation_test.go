@@ -141,6 +141,7 @@ resources:
 	if err != nil {
 		t.Fatalf("Failed to create test secret, error: %v", err)
 	}
+
 	// Since Data Encryption Key (DEK) is randomly generated (per encryption operation), we need to ask KMS Mock for it.
 	plainTextDEK := pluginMock.LastEncryptRequest()
 

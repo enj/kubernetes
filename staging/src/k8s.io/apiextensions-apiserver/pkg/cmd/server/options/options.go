@@ -21,6 +21,7 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"reflect"
 
 	"github.com/spf13/pflag"
 	oteltrace "go.opentelemetry.io/otel/trace"
@@ -29,12 +30,10 @@ import (
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	genericregistry "k8s.io/apiserver/pkg/registry/generic"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	genericoptions "k8s.io/apiserver/pkg/server/options"
-	"k8s.io/apiserver/pkg/storage/value"
 	"k8s.io/apiserver/pkg/util/proxy"
 	"k8s.io/apiserver/pkg/util/webhook"
 	corev1 "k8s.io/client-go/listers/core/v1"
@@ -45,10 +44,9 @@ const defaultEtcdPathPrefix = "/registry/apiextensions.kubernetes.io"
 
 // CustomResourceDefinitionsServerOptions describes the runtime options of an apiextensions-apiserver.
 type CustomResourceDefinitionsServerOptions struct {
-	ServerRunOptions     *genericoptions.ServerRunOptions
-	RecommendedOptions   *genericoptions.RecommendedOptions
-	APIEnablement        *genericoptions.APIEnablementOptions
-	TransformerOverrides map[schema.GroupResource]value.Transformer
+	ServerRunOptions   *genericoptions.ServerRunOptions
+	RecommendedOptions *genericoptions.RecommendedOptions
+	APIEnablement      *genericoptions.APIEnablementOptions
 
 	StdOut io.Writer
 	StdErr io.Writer
@@ -109,11 +107,14 @@ func (o CustomResourceDefinitionsServerOptions) Config() (*apiserver.Config, err
 	if err := o.APIEnablement.ApplyTo(&serverConfig.Config, apiserver.DefaultAPIResourceConfigSource(), apiserver.Scheme); err != nil {
 		return nil, err
 	}
-
+	crdRESTOptionsGetter, err := NewCRDRESTOptionsGetter(*o.RecommendedOptions.Etcd)
+	if err != nil {
+		return nil, err
+	}
 	config := &apiserver.Config{
 		GenericConfig: serverConfig,
 		ExtraConfig: apiserver.ExtraConfig{
-			CRDRESTOptionsGetter: NewCRDRESTOptionsGetter(*o.RecommendedOptions.Etcd),
+			CRDRESTOptionsGetter: crdRESTOptionsGetter,
 			ServiceResolver:      &serviceResolver{serverConfig.SharedInformerFactory.Core().V1().Services().Lister()},
 			AuthResolverWrapper:  webhook.NewDefaultAuthenticationInfoResolverWrapper(nil, nil, serverConfig.LoopbackClientConfig, oteltrace.NewNoopTracerProvider()),
 		},
@@ -122,21 +123,29 @@ func (o CustomResourceDefinitionsServerOptions) Config() (*apiserver.Config, err
 }
 
 // NewCRDRESTOptionsGetter create a RESTOptionsGetter for CustomResources.
-func NewCRDRESTOptionsGetter(etcdOptions genericoptions.EtcdOptions) genericregistry.RESTOptionsGetter {
-	ret := apiserver.CRDRESTOptionsGetter{
-		StorageConfig:             etcdOptions.StorageConfig,
-		StoragePrefix:             etcdOptions.StorageConfig.Prefix,
-		EnableWatchCache:          etcdOptions.EnableWatchCache,
-		DefaultWatchCacheSize:     etcdOptions.DefaultWatchCacheSize,
-		EnableGarbageCollection:   etcdOptions.EnableGarbageCollection,
-		DeleteCollectionWorkers:   etcdOptions.DeleteCollectionWorkers,
-		CountMetricPollPeriod:     etcdOptions.StorageConfig.CountMetricPollPeriod,
-		StorageObjectCountTracker: etcdOptions.StorageConfig.StorageObjectCountTracker,
-		TransformerOverrides:      etcdOptions.TransformerOverrides,
-	}
-	ret.StorageConfig.Codec = unstructured.UnstructuredJSONScheme
+// The input EtcdOptions is expected to have already been completed.
+func NewCRDRESTOptionsGetter(etcdOptions genericoptions.EtcdOptions) (genericregistry.RESTOptionsGetter, error) {
+	storageConfig := etcdOptions.StorageConfig
+	storageConfig.Codec = unstructured.UnstructuredJSONScheme
+	etcdOptions.StorageConfig = storageConfig
 
-	return ret
+	etcdOptions.WatchCacheSizes = nil      // this control is not provided for custom resources
+	etcdOptions.SkipHealthEndpoints = true // avoid double wiring of health checks
+
+	c := genericapiserver.Config{}
+	if err := etcdOptions.ApplyTo(&c); err != nil {
+		return nil, err
+	}
+	restOptionsGetter := c.RESTOptionsGetter
+	if restOptionsGetter == nil {
+		return nil, fmt.Errorf("server.Config RESTOptionsGetter should not be nil")
+	}
+	// sanity check that no other fields are set
+	c.RESTOptionsGetter = nil
+	if !reflect.DeepEqual(c, genericapiserver.Config{}) {
+		return nil, fmt.Errorf("only RESTOptionsGetter should have been mutated in server.Config")
+	}
+	return restOptionsGetter, nil
 }
 
 type serviceResolver struct {

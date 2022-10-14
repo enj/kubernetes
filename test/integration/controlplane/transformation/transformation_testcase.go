@@ -78,6 +78,8 @@ type transformTest struct {
 	ns                *corev1.Namespace
 	secret            *corev1.Secret
 	group             string
+	version           string
+	kind              string
 	resource          string
 	name              string
 	namespaceName     string
@@ -115,15 +117,12 @@ func newTransformTest(l kubeapiservertesting.Logger, transformerConfigYAML strin
 }
 
 func (e *transformTest) cleanUp() {
-	e.logger.Logf("RITA cleanup")
 	os.RemoveAll(e.configDir)
 	e.restClient.CoreV1().Namespaces().Delete(context.TODO(), e.ns.Name, *metav1.NewDeleteOptions(0))
 	e.kubeAPIServer.TearDownFn()
 }
 
 func (e *transformTest) run(unSealSecretFunc unSealSecret, expectedEnvelopePrefix string) {
-	path := e.getETCDPath()
-	e.logger.Logf("RITA path: %s", path)
 	response, err := e.readRawRecordFromETCD(e.getETCDPath())
 	if err != nil {
 		e.logger.Errorf("failed to read from etcd: %v", err)
@@ -168,7 +167,7 @@ func (e *transformTest) run(unSealSecretFunc unSealSecret, expectedEnvelopePrefi
 	if e.resource == "secrets" {
 		s, err := e.restClient.CoreV1().Secrets(testNamespace).Get(context.TODO(), testSecret, metav1.GetOptions{})
 		if err != nil {
-			e.logger.Errorf("failed to get Secret from %s, err: %v", testNamespace, err)
+			e.logger.Fatalf("failed to get Secret from %s, err: %v", testNamespace, err)
 		}
 		if secretVal != string(s.Data[secretKey]) {
 			e.logger.Errorf("expected %s from KubeAPI, but got %s", secretVal, string(s.Data[secretKey]))
@@ -176,7 +175,7 @@ func (e *transformTest) run(unSealSecretFunc unSealSecret, expectedEnvelopePrefi
 	} else if e.resource == "configmaps" {
 		s, err := e.restClient.CoreV1().ConfigMaps(e.namespaceName).Get(context.TODO(), e.name, metav1.GetOptions{})
 		if err != nil {
-			e.logger.Errorf("failed to get ConfigMap from %s, err: %v", e.namespaceName, err)
+			e.logger.Fatalf("failed to get ConfigMap from %s, err: %v", e.namespaceName, err)
 		}
 		if configMapVal != string(s.Data[configMapKey]) {
 			e.logger.Errorf("expected %s from KubeAPI, but got %s", configMapVal, string(s.Data[configMapKey]))
@@ -184,7 +183,7 @@ func (e *transformTest) run(unSealSecretFunc unSealSecret, expectedEnvelopePrefi
 	} else if e.resource == "pods" {
 		p, err := e.restClient.CoreV1().Pods(e.namespaceName).Get(context.TODO(), e.name, metav1.GetOptions{})
 		if err != nil {
-			e.logger.Errorf("failed to get Pod from %s, err: %v", e.namespaceName, err)
+			e.logger.Fatalf("failed to get Pod from %s, err: %v", e.namespaceName, err)
 		}
 		if p.Name != e.name {
 			e.logger.Errorf("expected %s from KubeAPI, but got %s", e.name, p.Name)
@@ -198,12 +197,12 @@ func (e *transformTest) run(unSealSecretFunc unSealSecret, expectedEnvelopePrefi
 			}
 			e.dynamicInterface = dynamicClient
 		}
-		fooResource := schema.GroupVersionResource{Group: e.group, Version: "v1", Resource: e.resource}
-		obj, err := e.dynamicInterface.Resource(fooResource).Get(context.TODO(), e.name, metav1.GetOptions{})
+		fooResource := schema.GroupVersionResource{Group: e.group, Version: e.version, Resource: e.resource}
+		obj, err := e.dynamicInterface.Resource(fooResource).Namespace(e.namespaceName).Get(context.TODO(), e.name, metav1.GetOptions{})
 		if err != nil {
-			e.logger.Errorf("Failed to get test instance: %v, name: %s", err, e.name)
+			e.logger.Fatalf("Failed to get test instance: %v, name: %s", err, e.name)
 		}
-		if obj.GetName() != e.name {
+		if obj.GetObjectKind().GroupVersionKind().Group == e.group && obj.GroupVersionKind().Version == e.version && obj.GetKind() == e.resource && obj.GetNamespace() == e.namespaceName && obj.GetName() != e.name {
 			e.logger.Errorf("expected %s from KubeAPI, but got %s", e.name, obj.GetName())
 		}
 	}
@@ -236,12 +235,11 @@ func (e *transformTest) getETCDPath() string {
 }
 
 func (e *transformTest) getRawSecretFromETCD() ([]byte, error) {
-	secretETCDPath := e.getETCDPath()
-	etcdResponse, err := e.readRawRecordFromETCD(secretETCDPath)
+	etcdPath := e.getETCDPath()
+	etcdResponse, err := e.readRawRecordFromETCD(etcdPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read %s from etcd: %v", secretETCDPath, err)
+		return nil, fmt.Errorf("failed to read %s from etcd: %v", etcdPath, err)
 	}
-	e.logger.Logf("path: %s", secretETCDPath)
 	return etcdResponse.Kvs[0].Value, nil
 }
 
@@ -359,21 +357,11 @@ func getStubObj(gvr schema.GroupVersionResource) (*unstructured.Unstructured, er
 
 func (e *transformTest) createPod(name, namespace string, dynamicInterface dynamic.Interface) (*unstructured.Unstructured, error) {
 
-	podGVR := gvr("", "v1", "pods")
+	podGVR := gvr(e.group, e.version, e.resource)
 	pod, err := createResource(dynamicInterface, podGVR, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("error while writing pod: %v", err)
 	}
-	// pod := &corev1.Pod{
-	// 	ObjectMeta: metav1.ObjectMeta{
-	// 		Name:      name,
-	// 		Namespace: namespace,
-	// 	},
-	// }
-	// if _, err := e.restClient.CoreV1().Pods(pod.Namespace).Create(context.TODO(), pod, metav1.CreateOptions{}); err != nil {
-	// 	return nil, fmt.Errorf("error while writing pod: %v", err)
-	// }
-
 	return pod, nil
 }
 

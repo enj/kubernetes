@@ -49,14 +49,12 @@ func createResources(t *testing.T, test *transformTest) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		t.Cleanup(cancel)
 
-		gvr := schema.GroupVersionResource{Group: test.group, Version: "v1", Resource: test.resource}
+		gvr := schema.GroupVersionResource{Group: test.group, Version: test.version, Resource: test.resource}
 		data := etcd.GetEtcdStorageData()[gvr]
 		stub := data.Stub
-		kind := data.ExpectedGVK.Kind
-		t.Logf("RITA kind: %s", kind)
 		dynamicClient, obj, err := etcd.JSONToUnstructured(stub, test.namespaceName, &meta.RESTMapping{
 			Resource:         gvr,
-			GroupVersionKind: gvr.GroupVersion().WithKind(kind),
+			GroupVersionKind: gvr.GroupVersion().WithKind(test.kind),
 			Scope:            meta.RESTScopeRoot,
 		}, test.dynamicInterface)
 		if err != nil {
@@ -95,29 +93,33 @@ resources:
 
 	var testCases = []struct {
 		group     string
+		version   string
+		kind      string
 		resource  string
 		name      string
 		namespace string
 	}{
-		{"", "configmaps", "cm1", testNamespace},
-		{"apiextensions.k8s.io", "customresourcedefinitions", "pandas.awesome.bears.com", ""},
-		{"awesome.bears.com", "pandas", "cr3panda", ""},
-		// {"apiregistration.k8s.io", "apiservices", "as2.foo.com", ""},
-		//{"", "pods", "pod1", testNamespace},
+		{"", "v1", "ConfigMap", "configmaps", "cm1", testNamespace},
+		{"apiextensions.k8s.io", "v1", "CustomResourceDefinition", "customresourcedefinitions", "pandas.awesome.bears.com", ""},
+		{"awesome.bears.com", "v1", "Panda", "pandas", "cr3panda", ""},
+		{"apiregistration.k8s.io", "v1", "APIService", "apiservices", "as2.foo.com", ""},
+		{"", "v1", "Pod", "pods", "pod1", testNamespace},
 	}
 	for _, tt := range testCases {
 		test, err := newTransformTest(t, encryptionConfig)
 		if err != nil {
 			t.Fatalf("failed to start KUBE API Server with encryptionConfig\n %s, error: %v", encryptionConfig, err)
-			defer test.cleanUp()
+			test.cleanUp()
 			continue
 		}
-		defer test.cleanUp()
 		test.group = tt.group
+		test.version = tt.version
+		test.kind = tt.kind
 		test.resource = tt.resource
 		test.name = tt.name
 		test.namespaceName = tt.namespace
 		createResources(t, test)
 		test.run(unSealWithCBCTransformer, aesCBCPrefix)
+		test.cleanUp()
 	}
 }
