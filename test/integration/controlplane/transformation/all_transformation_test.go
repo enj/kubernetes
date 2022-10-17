@@ -29,34 +29,37 @@ import (
 	"k8s.io/kubernetes/test/integration/etcd"
 )
 
-func createResources(t *testing.T, test *transformTest) {
-	test.dynamicInterface = dynamic.NewForConfigOrDie(test.kubeAPIServer.ClientConfig)
-	switch test.resource {
+func createResources(t *testing.T, test *transformTest,
+	group,
+	version,
+	kind,
+	resource,
+	name,
+	namespace string,
+) {
+	switch resource {
 	case "pods":
-		_, err := test.createPod(test.name, test.namespaceName, test.dynamicInterface)
+		_, err := test.createPod(namespace, dynamic.NewForConfigOrDie(test.kubeAPIServer.ClientConfig))
 		if err != nil {
-			t.Fatalf("Failed to create test pod, error: %v, name: %s, ns: %s", err, test.name, test.namespaceName)
+			t.Fatalf("Failed to create test pod, error: %v, name: %s, ns: %s", err, name, namespace)
 		}
 	case "configmaps":
-		_, err := test.createConfigMap(test.name, test.namespaceName)
+		_, err := test.createConfigMap(name, namespace)
 		if err != nil {
-			t.Fatalf("Failed to create test configmap, error: %v, name: %s, ns: %s", err, test.name, test.namespaceName)
+			t.Fatalf("Failed to create test configmap, error: %v, name: %s, ns: %s", err, name, namespace)
 		}
 	default:
-		// the storage registry for CRs is dynamic so create one to exercise the wiring
-		etcd.CreateTestCRDs(t, apiextensionsclientset.NewForConfigOrDie(test.kubeAPIServer.ClientConfig), false, etcd.GetCustomResourceDefinitionData()...)
-
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		t.Cleanup(cancel)
 
-		gvr := schema.GroupVersionResource{Group: test.group, Version: test.version, Resource: test.resource}
+		gvr := schema.GroupVersionResource{Group: group, Version: version, Resource: resource}
 		data := etcd.GetEtcdStorageData()[gvr]
 		stub := data.Stub
-		dynamicClient, obj, err := etcd.JSONToUnstructured(stub, test.namespaceName, &meta.RESTMapping{
+		dynamicClient, obj, err := etcd.JSONToUnstructured(stub, namespace, &meta.RESTMapping{
 			Resource:         gvr,
-			GroupVersionKind: gvr.GroupVersion().WithKind(test.kind),
+			GroupVersionKind: gvr.GroupVersion().WithKind(kind),
 			Scope:            meta.RESTScopeRoot,
-		}, test.dynamicInterface)
+		}, dynamic.NewForConfigOrDie(test.kubeAPIServer.ClientConfig))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -91,7 +94,16 @@ resources:
         secret: c2VjcmV0IGlzIHNlY3VyZQ==
 `
 
-	var testCases = []struct {
+	test, err := newTransformTest(t, encryptionConfig)
+	if err != nil {
+		t.Fatalf("failed to start Kube API Server with encryptionConfig\n %s, error: %v", encryptionConfig, err)
+	}
+	t.Cleanup(test.cleanUp)
+
+	// the storage registry for CRs is dynamic so create one to exercise the wiring
+	etcd.CreateTestCRDs(t, apiextensionsclientset.NewForConfigOrDie(test.kubeAPIServer.ClientConfig), false, etcd.GetCustomResourceDefinitionData()...)
+
+	for _, tt := range []struct {
 		group     string
 		version   string
 		kind      string
@@ -104,22 +116,13 @@ resources:
 		{"awesome.bears.com", "v1", "Panda", "pandas", "cr3panda", ""},
 		{"apiregistration.k8s.io", "v1", "APIService", "apiservices", "as2.foo.com", ""},
 		{"", "v1", "Pod", "pods", "pod1", testNamespace},
-	}
-	for _, tt := range testCases {
-		test, err := newTransformTest(t, encryptionConfig)
-		if err != nil {
-			t.Fatalf("failed to start KUBE API Server with encryptionConfig\n %s, error: %v", encryptionConfig, err)
-			test.cleanUp()
-			continue
-		}
-		test.group = tt.group
-		test.version = tt.version
-		test.kind = tt.kind
-		test.resource = tt.resource
-		test.name = tt.name
-		test.namespaceName = tt.namespace
-		createResources(t, test)
-		test.run(unSealWithCBCTransformer, aesCBCPrefix)
-		test.cleanUp()
+	} {
+		tt := tt
+		t.Run(tt.resource, func(t *testing.T) {
+			t.Parallel()
+
+			createResources(t, test, tt.group, tt.version, tt.kind, tt.resource, tt.name, tt.namespace)
+			test.runResource(unSealWithCBCTransformer, aesCBCPrefix, tt.group, tt.version, tt.resource, tt.name, tt.namespace)
+		})
 	}
 }

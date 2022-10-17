@@ -57,7 +57,6 @@ const (
 	metricsPrefix            = "apiserver_storage_"
 	configMapKey             = "foo"
 	configMapVal             = "bar"
-	testConfigMap            = "cm1"
 
 	// precomputed key and secret for use with AES CBC
 	// this looks exactly the same as the AES GCM secret but with a different value
@@ -77,13 +76,6 @@ type transformTest struct {
 	restClient        *kubernetes.Clientset
 	ns                *corev1.Namespace
 	secret            *corev1.Secret
-	group             string
-	version           string
-	kind              string
-	resource          string
-	name              string
-	namespaceName     string
-	dynamicInterface  dynamic.Interface
 }
 
 func newTransformTest(l kubeapiservertesting.Logger, transformerConfigYAML string) (*transformTest, error) {
@@ -123,7 +115,17 @@ func (e *transformTest) cleanUp() {
 }
 
 func (e *transformTest) run(unSealSecretFunc unSealSecret, expectedEnvelopePrefix string) {
-	response, err := e.readRawRecordFromETCD(e.getETCDPath())
+	e.runResource(unSealSecretFunc, expectedEnvelopePrefix, "", "v1", "secrets", "", "")
+}
+
+func (e *transformTest) runResource(unSealSecretFunc unSealSecret, expectedEnvelopePrefix,
+	group,
+	version,
+	resource,
+	name,
+	namespaceName string,
+) {
+	response, err := e.readRawRecordFromETCD(e.getETCDPathForResource(group, resource, name, namespaceName))
 	if err != nil {
 		e.logger.Errorf("failed to read from etcd: %v", err)
 		return
@@ -137,7 +139,7 @@ func (e *transformTest) run(unSealSecretFunc unSealSecret, expectedEnvelopePrefi
 
 	// etcd path of the key is used as the authenticated context - need to pass it to decrypt
 	ctx := context.Background()
-	dataCtx := value.DefaultContext([]byte(e.getETCDPath()))
+	dataCtx := value.DefaultContext(e.getETCDPathForResource(group, resource, name, namespaceName))
 	// Envelope header precedes the cipherTextPayload
 	sealedData := response.Kvs[0].Value[len(expectedEnvelopePrefix):]
 	transformerConfig, err := e.getEncryptionConfig()
@@ -149,22 +151,22 @@ func (e *transformTest) run(unSealSecretFunc unSealSecret, expectedEnvelopePrefi
 		e.logger.Errorf("failed to unseal secret: %v", err)
 		return
 	}
-	if e.resource == "secrets" {
+	if resource == "secrets" {
 		if !strings.Contains(string(v), secretVal) {
 			e.logger.Errorf("expected %q after decryption, but got %q", secretVal, string(v))
 		}
-	} else if e.resource == "configmaps" {
+	} else if resource == "configmaps" {
 		if !strings.Contains(string(v), configMapVal) {
 			e.logger.Errorf("expected %q after decryption, but got %q", configMapVal, string(v))
 		}
 	} else {
-		if !strings.Contains(string(v), e.name) {
-			e.logger.Errorf("expected %q after decryption, but got %q", e.name, string(v))
+		if !strings.Contains(string(v), name) {
+			e.logger.Errorf("expected %q after decryption, but got %q", name, string(v))
 		}
 	}
 
 	// Data should be un-enveloped on direct reads from Kube API Server.
-	if e.resource == "secrets" {
+	if resource == "secrets" {
 		s, err := e.restClient.CoreV1().Secrets(testNamespace).Get(context.TODO(), testSecret, metav1.GetOptions{})
 		if err != nil {
 			e.logger.Fatalf("failed to get Secret from %s, err: %v", testNamespace, err)
@@ -172,38 +174,31 @@ func (e *transformTest) run(unSealSecretFunc unSealSecret, expectedEnvelopePrefi
 		if secretVal != string(s.Data[secretKey]) {
 			e.logger.Errorf("expected %s from KubeAPI, but got %s", secretVal, string(s.Data[secretKey]))
 		}
-	} else if e.resource == "configmaps" {
-		s, err := e.restClient.CoreV1().ConfigMaps(e.namespaceName).Get(context.TODO(), e.name, metav1.GetOptions{})
+	} else if resource == "configmaps" {
+		s, err := e.restClient.CoreV1().ConfigMaps(namespaceName).Get(context.TODO(), name, metav1.GetOptions{})
 		if err != nil {
-			e.logger.Fatalf("failed to get ConfigMap from %s, err: %v", e.namespaceName, err)
+			e.logger.Fatalf("failed to get ConfigMap from %s, err: %v", namespaceName, err)
 		}
 		if configMapVal != string(s.Data[configMapKey]) {
 			e.logger.Errorf("expected %s from KubeAPI, but got %s", configMapVal, string(s.Data[configMapKey]))
 		}
-	} else if e.resource == "pods" {
-		p, err := e.restClient.CoreV1().Pods(e.namespaceName).Get(context.TODO(), e.name, metav1.GetOptions{})
+	} else if resource == "pods" {
+		p, err := e.restClient.CoreV1().Pods(namespaceName).Get(context.TODO(), name, metav1.GetOptions{})
 		if err != nil {
-			e.logger.Fatalf("failed to get Pod from %s, err: %v", e.namespaceName, err)
+			e.logger.Fatalf("failed to get Pod from %s, err: %v", namespaceName, err)
 		}
-		if p.Name != e.name {
-			e.logger.Errorf("expected %s from KubeAPI, but got %s", e.name, p.Name)
+		if p.Name != name {
+			e.logger.Errorf("expected %s from KubeAPI, but got %s", name, p.Name)
 		}
 	} else {
 		e.logger.Logf("Get object with dynamic client")
-		if e.dynamicInterface == nil {
-			dynamicClient, err := dynamic.NewForConfig(e.kubeAPIServer.ClientConfig)
-			if err != nil {
-				e.logger.Fatalf("Failed to create dynamic client: %v, name: %s", err, e.name)
-			}
-			e.dynamicInterface = dynamicClient
-		}
-		fooResource := schema.GroupVersionResource{Group: e.group, Version: e.version, Resource: e.resource}
-		obj, err := e.dynamicInterface.Resource(fooResource).Namespace(e.namespaceName).Get(context.TODO(), e.name, metav1.GetOptions{})
+		fooResource := schema.GroupVersionResource{Group: group, Version: version, Resource: resource}
+		obj, err := dynamic.NewForConfigOrDie(e.kubeAPIServer.ClientConfig).Resource(fooResource).Namespace(namespaceName).Get(context.TODO(), name, metav1.GetOptions{})
 		if err != nil {
-			e.logger.Fatalf("Failed to get test instance: %v, name: %s", err, e.name)
+			e.logger.Fatalf("Failed to get test instance: %v, name: %s", err, name)
 		}
-		if obj.GetObjectKind().GroupVersionKind().Group == e.group && obj.GroupVersionKind().Version == e.version && obj.GetKind() == e.resource && obj.GetNamespace() == e.namespaceName && obj.GetName() != e.name {
-			e.logger.Errorf("expected %s from KubeAPI, but got %s", e.name, obj.GetName())
+		if obj.GetObjectKind().GroupVersionKind().Group == group && obj.GroupVersionKind().Version == version && obj.GetKind() == resource && obj.GetNamespace() == namespaceName && obj.GetName() != name {
+			e.logger.Errorf("expected %s from KubeAPI, but got %s", name, obj.GetName())
 		}
 	}
 }
@@ -218,27 +213,31 @@ func (e *transformTest) benchmark(b *testing.B) {
 }
 
 func (e *transformTest) getETCDPath() string {
+	return fmt.Sprintf("/%s/secrets/%s/%s", e.storageConfig.Prefix, e.ns.Name, e.secret.Name)
+}
+
+func (e *transformTest) getETCDPathForResource(group, resource, name, namespaceName string) string {
 	if e.secret != nil {
-		e.group = ""
-		e.resource = "secrets"
-		e.name = testSecret
-		e.namespaceName = testNamespace
+		group = ""
+		resource = "secrets"
+		name = testSecret
+		namespaceName = testNamespace
 	}
-	groupResource := e.resource
-	if e.group != "" {
-		groupResource = fmt.Sprintf("%s/%s", e.group, e.resource)
+	groupResource := resource
+	if group != "" {
+		groupResource = fmt.Sprintf("%s/%s", group, resource)
 	}
-	if e.namespaceName == "" {
-		return fmt.Sprintf("/%s/%s/%s", e.storageConfig.Prefix, groupResource, e.name)
+	if namespaceName == "" {
+		return fmt.Sprintf("/%s/%s/%s", e.storageConfig.Prefix, groupResource, name)
 	}
-	return fmt.Sprintf("/%s/%s/%s/%s", e.storageConfig.Prefix, groupResource, e.namespaceName, e.name)
+	return fmt.Sprintf("/%s/%s/%s/%s", e.storageConfig.Prefix, groupResource, namespaceName, name)
 }
 
 func (e *transformTest) getRawSecretFromETCD() ([]byte, error) {
-	etcdPath := e.getETCDPath()
-	etcdResponse, err := e.readRawRecordFromETCD(etcdPath)
+	secretETCDPath := e.getETCDPath()
+	etcdResponse, err := e.readRawRecordFromETCD(secretETCDPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read %s from etcd: %v", etcdPath, err)
+		return nil, fmt.Errorf("failed to read %s from etcd: %v", secretETCDPath, err)
 	}
 	return etcdResponse.Kvs[0].Value, nil
 }
@@ -355,9 +354,8 @@ func getStubObj(gvr schema.GroupVersionResource) (*unstructured.Unstructured, er
 	return stubObj, nil
 }
 
-func (e *transformTest) createPod(name, namespace string, dynamicInterface dynamic.Interface) (*unstructured.Unstructured, error) {
-
-	podGVR := gvr(e.group, e.version, e.resource)
+func (e *transformTest) createPod(namespace string, dynamicInterface dynamic.Interface) (*unstructured.Unstructured, error) {
+	podGVR := gvr("", "v1", "pods")
 	pod, err := createResource(dynamicInterface, podGVR, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("error while writing pod: %v", err)
