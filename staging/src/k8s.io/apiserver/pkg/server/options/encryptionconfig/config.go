@@ -82,28 +82,45 @@ type kmsv2PluginProbe struct {
 	l            *sync.Mutex
 }
 
+type kmsHealthChecker []healthz.HealthChecker
+
+func (k kmsHealthChecker) Name() string {
+	return "kms-provider-0" // for backwards compatibility with /healthz?exclude=kms-provider-0
+}
+
+func (k kmsHealthChecker) Check(req *http.Request) error {
+	for i := range k {
+		checker := k[i]
+		if err := checker.Check(req); err != nil {
+			return fmt.Errorf("%s healthz check failed: %w", checker.Name(), err)
+		}
+	}
+
+	return nil
+}
+
 func (h *kmsPluginProbe) toHealthzCheck(idx int) healthz.HealthChecker {
 	return healthz.NamedCheck(fmt.Sprintf("kms-provider-%d", idx), func(r *http.Request) error {
 		return h.check()
 	})
 }
 
-func (p *kmsv2PluginProbe) toHealthzCheck(idx int) healthz.HealthChecker {
+func (h *kmsv2PluginProbe) toHealthzCheck(idx int) healthz.HealthChecker {
 	return healthz.NamedCheck(fmt.Sprintf("kms-provider-%d", idx), func(r *http.Request) error {
-		return p.check(r.Context())
+		return h.check(r.Context())
 	})
 }
 
-func LoadEncryptionConfig(filepath string, stopCh <-chan struct{}) (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, error) {
+func LoadEncryptionConfig(filepath string, stopCh <-chan struct{}) (map[schema.GroupResource]value.Transformer, healthz.HealthChecker, error) {
 	config, err := loadConfig(filepath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error while parsing file: %v", err)
+		return nil, nil, fmt.Errorf("error while parsing file: %w", err)
 	}
 
-	return getTransformerOverridesAndKMSPluginHealthzCheckers(config, stopCh)
+	return getTransformerOverridesAndKMSPluginHealthzChecker(config, stopCh)
 }
 
-func getTransformerOverridesAndKMSPluginHealthzCheckers(config *apiserverconfig.EncryptionConfiguration, stopCh <-chan struct{}) (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, error) {
+func getTransformerOverridesAndKMSPluginHealthzChecker(config *apiserverconfig.EncryptionConfiguration, stopCh <-chan struct{}) (map[schema.GroupResource]value.Transformer, healthz.HealthChecker, error) {
 	var kmsHealthChecks []healthz.HealthChecker
 	transformers, probes, err := getTransformerOverridesAndKMSPluginProbes(config, stopCh)
 	if err != nil {
@@ -114,7 +131,7 @@ func getTransformerOverridesAndKMSPluginHealthzCheckers(config *apiserverconfig.
 		kmsHealthChecks = append(kmsHealthChecks, probe.toHealthzCheck(i))
 	}
 
-	return transformers, kmsHealthChecks, nil
+	return transformers, kmsHealthChecker(kmsHealthChecks), nil
 }
 
 type healthChecker interface {
@@ -168,13 +185,13 @@ func (h *kmsPluginProbe) check() error {
 	if err != nil {
 		h.lastResponse = &kmsPluginHealthzResponse{err: err, received: time.Now()}
 		h.ttl = kmsPluginHealthzNegativeTTL
-		return fmt.Errorf("failed to perform encrypt section of the healthz check for KMS Provider %s, error: %v", h.name, err)
+		return fmt.Errorf("failed to perform encrypt section of the healthz check for KMS Provider %s, error: %w", h.name, err)
 	}
 
 	if _, err := h.service.Decrypt(p); err != nil {
 		h.lastResponse = &kmsPluginHealthzResponse{err: err, received: time.Now()}
 		h.ttl = kmsPluginHealthzNegativeTTL
-		return fmt.Errorf("failed to perform decrypt section of the healthz check for KMS Provider %s, error: %v", h.name, err)
+		return fmt.Errorf("failed to perform decrypt section of the healthz check for KMS Provider %s, error: %w", h.name, err)
 	}
 
 	h.lastResponse = &kmsPluginHealthzResponse{err: nil, received: time.Now()}
@@ -195,7 +212,7 @@ func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 	if err != nil {
 		h.lastResponse = &kmsPluginHealthzResponse{err: err, received: time.Now()}
 		h.ttl = kmsPluginHealthzNegativeTTL
-		return fmt.Errorf("failed to perform status section of the healthz check for KMS Provider %s, error: %v", h.name, err)
+		return fmt.Errorf("failed to perform status section of the healthz check for KMS Provider %s, error: %w", h.name, err)
 	}
 
 	if err := isKMSv2ProviderHealthy(h.name, p); err != nil {
@@ -223,7 +240,7 @@ func isKMSv2ProviderHealthy(name string, response *envelopekmsv2.StatusResponse)
 	}
 
 	if err := utilerrors.Reduce(utilerrors.NewAggregate(errs)); err != nil {
-		return fmt.Errorf("kmsv2 Provider %s is not healthy, error: %v", name, err)
+		return fmt.Errorf("kmsv2 Provider %s is not healthy, error: %w", name, err)
 	}
 	return nil
 }
@@ -231,13 +248,13 @@ func isKMSv2ProviderHealthy(name string, response *envelopekmsv2.StatusResponse)
 func loadConfig(filepath string) (*apiserverconfig.EncryptionConfiguration, error) {
 	f, err := os.Open(filepath)
 	if err != nil {
-		return nil, fmt.Errorf("error opening encryption provider configuration file %q: %v", filepath, err)
+		return nil, fmt.Errorf("error opening encryption provider configuration file %q: %w", filepath, err)
 	}
 	defer f.Close()
 
 	data, err := io.ReadAll(f)
 	if err != nil {
-		return nil, fmt.Errorf("could not read contents: %v", err)
+		return nil, fmt.Errorf("could not read contents: %w", err)
 	}
 	if len(data) == 0 {
 		return nil, fmt.Errorf("encryption provider configuration file %q is empty", filepath)
@@ -428,7 +445,7 @@ func kmsPrefixTransformer(config *apiserverconfig.KMSConfiguration, stopCh <-cha
 	case kmsAPIVersionV1:
 		envelopeService, err := envelopeServiceFactory(ctx, config.Endpoint, config.Timeout.Duration)
 		if err != nil {
-			return value.PrefixTransformer{}, nil, fmt.Errorf("could not configure KMSv1-Plugin's probe %q, error: %v", kmsName, err)
+			return value.PrefixTransformer{}, nil, fmt.Errorf("could not configure KMSv1-Plugin's probe %q, error: %w", kmsName, err)
 		}
 
 		probe := &kmsPluginProbe{
@@ -450,7 +467,7 @@ func kmsPrefixTransformer(config *apiserverconfig.KMSConfiguration, stopCh <-cha
 
 		envelopeService, err := EnvelopeKMSv2ServiceFactory(ctx, config.Endpoint, config.Timeout.Duration)
 		if err != nil {
-			return value.PrefixTransformer{}, nil, fmt.Errorf("could not configure KMSv2-Plugin's probe %q, error: %v", kmsName, err)
+			return value.PrefixTransformer{}, nil, fmt.Errorf("could not configure KMSv2-Plugin's probe %q, error: %w", kmsName, err)
 		}
 
 		probe := &kmsv2PluginProbe{

@@ -62,9 +62,9 @@ type EtcdOptions struct {
 	WatchCacheSizes []string
 
 	// complete guards fields that must be initialized via Complete before the Apply methods can be used.
-	complete               bool
-	transformerOverrides   map[schema.GroupResource]value.Transformer
-	kmsPluginHealthzChecks []healthz.HealthChecker
+	complete              bool
+	transformerOverrides  map[schema.GroupResource]value.Transformer
+	kmsPluginHealthzCheck healthz.HealthChecker
 
 	// SkipHealthEndpoints, when true, causes the Apply methods to not set up health endpoints.
 	// This allows multiple invocations of the Apply methods without duplication of said endpoints.
@@ -213,12 +213,12 @@ func (s *EtcdOptions) Complete(storageObjectCountTracker flowcontrolrequest.Stor
 	}
 
 	if len(s.EncryptionProviderConfigFilepath) != 0 {
-		transformerOverrides, kmsPluginHealthzChecks, err := encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath, stopCh)
+		transformerOverrides, kmsPluginHealthzCheck, err := encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath, stopCh)
 		if err != nil {
 			return err
 		}
 		s.transformerOverrides = transformerOverrides
-		s.kmsPluginHealthzChecks = kmsPluginHealthzChecks
+		s.kmsPluginHealthzCheck = kmsPluginHealthzCheck
 	}
 
 	s.StorageConfig.StorageObjectCountTracker = storageObjectCountTracker
@@ -281,7 +281,9 @@ func (s *EtcdOptions) addEtcdHealthEndpoint(c *server.Config) error {
 		return readyCheck()
 	}))
 
-	c.AddHealthChecks(s.kmsPluginHealthzChecks...)
+	if s.kmsPluginHealthzCheck != nil {
+		c.AddHealthChecks(s.kmsPluginHealthzCheck)
+	}
 
 	return nil
 }

@@ -259,27 +259,32 @@ resources:
 	}
 	defer test.cleanUp()
 
-	// Name of the healthz check is calculated based on a constant "kms-provider-" + position of the
-	// provider in the config.
+	// Name of the healthz check is always "kms-provider-0" and it covers all kms plugins.
 
-	// Stage 1 - Since all kms-plugins are guaranteed to be up, healthz checks for:
-	// healthz/kms-provider-0 and /healthz/kms-provider-1 should be OK.
-	mustBeHealthy(t, "kms-provider-0", test.kubeAPIServer.ClientConfig)
-	mustBeHealthy(t, "kms-provider-1", test.kubeAPIServer.ClientConfig)
+	// Stage 1 - Since all kms-plugins are guaranteed to be up,
+	// the healthz check should be OK.
+	mustBeHealthy(t, "/kms-provider-0", "ok", test.kubeAPIServer.ClientConfig)
 
-	// Stage 2 - kms-plugin for provider-1 is down. Therefore, expect the health check for provider-1
-	// to fail, but provider-2 should still be OK
+	// Stage 2 - kms-plugin for provider-1 is down. Therefore, expect the healthz check
+	// to fail and report that provider-1 is down
 	pluginMock1.EnterFailedState()
-	mustBeUnHealthy(t, "kms-provider-0", test.kubeAPIServer.ClientConfig)
-	mustBeHealthy(t, "kms-provider-1", test.kubeAPIServer.ClientConfig)
+	mustBeUnHealthy(t, "/kms-provider-0",
+		"internal server error: kms-provider-0 healthz check failed: rpc error: code = FailedPrecondition desc = failed precondition - key disabled",
+		test.kubeAPIServer.ClientConfig)
 	pluginMock1.ExitFailedState()
 
 	// Stage 3 - kms-plugin for provider-1 is now up. Therefore, expect the health check for provider-1
 	// to succeed now, but provider-2 is now down.
 	// Need to sleep since health check chases responses for 3 seconds.
 	pluginMock2.EnterFailedState()
-	mustBeHealthy(t, "kms-provider-0", test.kubeAPIServer.ClientConfig)
-	mustBeUnHealthy(t, "kms-provider-1", test.kubeAPIServer.ClientConfig)
+	mustBeUnHealthy(t, "/kms-provider-0",
+		"internal server error: kms-provider-1 healthz check failed: rpc error: code = FailedPrecondition desc = failed precondition - key disabled",
+		test.kubeAPIServer.ClientConfig)
+	pluginMock2.ExitFailedState()
+
+	// Stage 4 - All kms-plugins are once again up,
+	// the healthz check should be OK.
+	mustBeHealthy(t, "/kms-provider-0", "ok", test.kubeAPIServer.ClientConfig)
 }
 
 func TestKMSv2SingleService(t *testing.T) {

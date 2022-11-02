@@ -207,14 +207,19 @@ func TestKMSHealthzEndpoint(t *testing.T) {
 		skipHealth           bool
 	}{
 		{
+			name:                 "no kms-provider, expect single kms healthz check",
+			encryptionConfigPath: "testdata/encryption-configs/no-kms-provider.yaml",
+			wantChecks:           []string{"etcd", "kms-provider-0"},
+		},
+		{
 			name:                 "single kms-provider, expect single kms healthz check",
 			encryptionConfigPath: "testdata/encryption-configs/single-kms-provider.yaml",
 			wantChecks:           []string{"etcd", "kms-provider-0"},
 		},
 		{
-			name:                 "two kms-providers, expect two kms healthz checks",
+			name:                 "two kms-providers, expect single kms healthz check",
 			encryptionConfigPath: "testdata/encryption-configs/multiple-kms-providers.yaml",
-			wantChecks:           []string{"etcd", "kms-provider-0", "kms-provider-1"},
+			wantChecks:           []string{"etcd", "kms-provider-0"},
 		},
 		{
 			name:                 "two kms-providers with skip, expect zero kms healthz checks",
