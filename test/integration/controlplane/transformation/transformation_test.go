@@ -80,7 +80,7 @@ type transformTest struct {
 	secret            *corev1.Secret
 }
 
-func newTransformTest(l kubeapiservertesting.Logger, transformerConfigYAML string) (*transformTest, error) {
+func newTransformTest(l kubeapiservertesting.Logger, transformerConfigYAML string, reload bool) (*transformTest, error) {
 	e := transformTest{
 		logger:            l,
 		transformerConfig: transformerConfigYAML,
@@ -94,7 +94,7 @@ func newTransformTest(l kubeapiservertesting.Logger, transformerConfigYAML strin
 		}
 	}
 
-	if e.kubeAPIServer, err = kubeapiservertesting.StartTestServer(l, nil, e.getEncryptionOptions(), e.storageConfig); err != nil {
+	if e.kubeAPIServer, err = kubeapiservertesting.StartTestServer(l, nil, e.getEncryptionOptions(reload), e.storageConfig); err != nil {
 		return nil, fmt.Errorf("failed to start KubeAPI server: %v", err)
 	}
 	klog.Infof("Started kube-apiserver %v", e.kubeAPIServer.ClientConfig.Host)
@@ -107,12 +107,12 @@ func newTransformTest(l kubeapiservertesting.Logger, transformerConfigYAML strin
 		return nil, err
 	}
 
-	if transformerConfigYAML != "" && false {
-		// this healthz endpoint is always present when encryption at rest is enabled even if kms is not used
-		mustBeHealthy(l, "/kms-provider-0", "ok", e.kubeAPIServer.ClientConfig)
+	if transformerConfigYAML != "" && reload {
+		// when reloading is enabled, this healthz endpoint is always present
+		mustBeHealthy(l, "/kms-providers", "ok", e.kubeAPIServer.ClientConfig)
 
 		// excluding healthz endpoints even if they do not exist should work (confirms backward compatibility)
-		mustBeHealthy(l, "", `warn: some health checks cannot be excluded: no matches for "kms-provider-1","kms-provider-2","kms-provider-3"`,
+		mustBeHealthy(l, "", `warn: some health checks cannot be excluded: no matches for "kms-provider-0","kms-provider-1","kms-provider-2","kms-provider-3"`,
 			e.kubeAPIServer.ClientConfig, "kms-provider-0", "kms-provider-1", "kms-provider-2", "kms-provider-3")
 	}
 
@@ -239,10 +239,11 @@ func (e *transformTest) getRawSecretFromETCD() ([]byte, error) {
 	return etcdResponse.Kvs[0].Value, nil
 }
 
-func (e *transformTest) getEncryptionOptions() []string {
+func (e *transformTest) getEncryptionOptions(reload bool) []string {
 	if e.transformerConfig != "" {
 		return []string{
 			"--encryption-provider-config", path.Join(e.configDir, encryptionConfigFileName),
+			"--encryption-provider-config-automatic-reload", fmt.Sprintf("%v", reload),
 			"--disable-admission-plugins", "ServiceAccount"}
 	}
 
