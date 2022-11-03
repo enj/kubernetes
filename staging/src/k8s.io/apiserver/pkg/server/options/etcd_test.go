@@ -113,6 +113,31 @@ func TestEtcdOptionsValidate(t *testing.T) {
 			expectErr: "--etcd-servers-overrides invalid, must be of format: group/resource#servers, where servers are URLs, semicolon separated",
 		},
 		{
+			name: "test when encryption-provider-config-automatic-reload is invalid",
+			testOptions: &EtcdOptions{
+				StorageConfig: storagebackend.Config{
+					Type:   "etcd3",
+					Prefix: "/registry",
+					Transport: storagebackend.TransportConfig{
+						ServerList:    []string{"http://127.0.0.1"},
+						KeyFile:       "/var/run/kubernetes/etcd.key",
+						TrustedCAFile: "/var/run/kubernetes/etcdca.crt",
+						CertFile:      "/var/run/kubernetes/etcdce.crt",
+					},
+					CompactionInterval:    storagebackend.DefaultCompactInterval,
+					CountMetricPollPeriod: time.Minute,
+				},
+				EncryptionProviderConfigAutomaticReload: true,
+				DefaultStorageMediaType:                 "application/vnd.kubernetes.protobuf",
+				DeleteCollectionWorkers:                 1,
+				EnableGarbageCollection:                 true,
+				EnableWatchCache:                        true,
+				DefaultWatchCacheSize:                   100,
+				EtcdServersOverrides:                    []string{"/events#http://127.0.0.1:4002"},
+			},
+			expectErr: "--encryption-provider-config-automatic-reload must be set with --encryption-provider-config",
+		},
+		{
 			name: "test when EtcdOptions is valid",
 			testOptions: &EtcdOptions{
 				StorageConfig: storagebackend.Config{
@@ -322,13 +347,13 @@ func TestReadinessCheck(t *testing.T) {
 	}
 }
 
-func healthChecksAreEqual(t *testing.T, want []string, healthchecks []healthz.HealthChecker) {
+func healthChecksAreEqual(t *testing.T, want []string, healthChecks []healthz.HealthChecker) {
 	t.Helper()
 
 	wantSet := sets.NewString(want...)
 	gotSet := sets.NewString()
 
-	for _, h := range healthchecks {
+	for _, h := range healthChecks {
 		gotSet.Insert(h.Name())
 	}
 
