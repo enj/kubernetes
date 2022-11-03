@@ -111,7 +111,7 @@ func newTransformTest(l kubeapiservertesting.Logger, transformerConfigYAML strin
 		// when reloading is enabled, this healthz endpoint is always present
 		mustBeHealthy(l, "/kms-providers", "ok", e.kubeAPIServer.ClientConfig)
 
-		// excluding healthz endpoints even if they do not exist should work (confirms backward compatibility)
+		// excluding healthz endpoints even if they do not exist should work
 		mustBeHealthy(l, "", `warn: some health checks cannot be excluded: no matches for "kms-provider-0","kms-provider-1","kms-provider-2","kms-provider-3"`,
 			e.kubeAPIServer.ClientConfig, "kms-provider-0", "kms-provider-1", "kms-provider-2", "kms-provider-3")
 	}
@@ -243,7 +243,7 @@ func (e *transformTest) getEncryptionOptions(reload bool) []string {
 	if e.transformerConfig != "" {
 		return []string{
 			"--encryption-provider-config", path.Join(e.configDir, encryptionConfigFileName),
-			"--encryption-provider-config-automatic-reload", fmt.Sprintf("%v", reload),
+			fmt.Sprintf("--encryption-provider-config-automatic-reload=%v", reload),
 			"--disable-admission-plugins", "ServiceAccount"}
 	}
 
@@ -423,7 +423,11 @@ func mustBeHealthy(t kubeapiservertesting.Logger, checkName, wantBodyContains st
 		if err != nil {
 			return false, err
 		}
-		return ok && strings.Contains(body, wantBodyContains), nil
+		done := ok && strings.Contains(body, wantBodyContains)
+		if !done {
+			t.Logf("expected server check %q to be healthy with message %q but it is not: %s", checkName, wantBodyContains, body)
+		}
+		return done, nil
 	})
 
 	if pollErr == wait.ErrWaitTimeout {
@@ -440,7 +444,11 @@ func mustBeUnHealthy(t kubeapiservertesting.Logger, checkName, wantBodyContains 
 		if err != nil {
 			return false, err
 		}
-		return !ok && strings.Contains(body, wantBodyContains), nil
+		done := !ok && strings.Contains(body, wantBodyContains)
+		if !done {
+			t.Logf("expected server check %q to be unhealthy with message %q but it is not: %s", checkName, wantBodyContains, body)
+		}
+		return done, nil
 	})
 
 	if pollErr == wait.ErrWaitTimeout {

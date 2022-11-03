@@ -335,7 +335,7 @@ resources:
 	// to fail, but provider-2 should still be OK
 	pluginMock1.EnterFailedState()
 	mustBeUnHealthy(t, "/kms-provider-0",
-		"internal server error: kms-provider-0 healthz check failed: rpc error: code = FailedPrecondition desc = failed precondition - key disabled",
+		"internal server error: rpc error: code = FailedPrecondition desc = failed precondition - key disabled",
 		test.kubeAPIServer.ClientConfig)
 	mustBeHealthy(t, "/kms-provider-1", "ok", test.kubeAPIServer.ClientConfig)
 	pluginMock1.ExitFailedState()
@@ -346,7 +346,7 @@ resources:
 	pluginMock2.EnterFailedState()
 	mustBeHealthy(t, "/kms-provider-0", "ok", test.kubeAPIServer.ClientConfig)
 	mustBeUnHealthy(t, "/kms-provider-1",
-		"internal server error: kms-provider-0 healthz check failed: rpc error: code = FailedPrecondition desc = failed precondition - key disabled",
+		"internal server error: rpc error: code = FailedPrecondition desc = failed precondition - key disabled",
 		test.kubeAPIServer.ClientConfig)
 	pluginMock2.ExitFailedState()
 
