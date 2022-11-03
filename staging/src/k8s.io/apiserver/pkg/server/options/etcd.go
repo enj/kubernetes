@@ -223,17 +223,12 @@ func (s *EtcdOptions) Complete(storageObjectCountTracker flowcontrolrequest.Stor
 	}
 
 	if len(s.EncryptionProviderConfigFilepath) != 0 {
-		transformerOverrides, kmsPluginHealthzChecks, err := encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath, stopCh)
+		transformerOverrides, kmsPluginHealthzChecks, err := encryptionconfig.LoadEncryptionConfig(s.EncryptionProviderConfigFilepath, s.EncryptionProviderConfigAutomaticReload, stopCh)
 		if err != nil {
 			return err
 		}
 		s.transformerOverrides = transformerOverrides
-
-		if s.EncryptionProviderConfigAutomaticReload {
-			s.kmsPluginHealthzChecks = []healthz.HealthChecker{encryptionconfig.UnionKMSHealthChecker(kmsPluginHealthzChecks)}
-		} else {
-			s.kmsPluginHealthzChecks = kmsPluginHealthzChecks
-		}
+		s.kmsPluginHealthzChecks = kmsPluginHealthzChecks
 	}
 
 	s.StorageConfig.StorageObjectCountTracker = storageObjectCountTracker
