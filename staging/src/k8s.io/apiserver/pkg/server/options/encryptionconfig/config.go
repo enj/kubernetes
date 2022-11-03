@@ -82,13 +82,13 @@ type kmsv2PluginProbe struct {
 	l            *sync.Mutex
 }
 
-type kmsHealthChecker []healthz.HealthChecker
+type UnionKMSHealthChecker []healthz.HealthChecker
 
-func (k kmsHealthChecker) Name() string {
-	return "kms-provider-0" // for backwards compatibility with /healthz?exclude=kms-provider-0
+func (k UnionKMSHealthChecker) Name() string {
+	return "kms-providers"
 }
 
-func (k kmsHealthChecker) Check(req *http.Request) error {
+func (k UnionKMSHealthChecker) Check(req *http.Request) error {
 	for i := range k {
 		checker := k[i]
 		if err := checker.Check(req); err != nil {
@@ -111,16 +111,16 @@ func (h *kmsv2PluginProbe) toHealthzCheck(idx int) healthz.HealthChecker {
 	})
 }
 
-func LoadEncryptionConfig(filepath string, stopCh <-chan struct{}) (map[schema.GroupResource]value.Transformer, healthz.HealthChecker, error) {
+func LoadEncryptionConfig(filepath string, stopCh <-chan struct{}) (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, error) {
 	config, err := loadConfig(filepath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error while parsing file: %w", err)
 	}
 
-	return getTransformerOverridesAndKMSPluginHealthzChecker(config, stopCh)
+	return getTransformerOverridesAndKMSPluginHealthzCheckers(config, stopCh)
 }
 
-func getTransformerOverridesAndKMSPluginHealthzChecker(config *apiserverconfig.EncryptionConfiguration, stopCh <-chan struct{}) (map[schema.GroupResource]value.Transformer, healthz.HealthChecker, error) {
+func getTransformerOverridesAndKMSPluginHealthzCheckers(config *apiserverconfig.EncryptionConfiguration, stopCh <-chan struct{}) (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, error) {
 	var kmsHealthChecks []healthz.HealthChecker
 	transformers, probes, err := getTransformerOverridesAndKMSPluginProbes(config, stopCh)
 	if err != nil {
@@ -131,7 +131,7 @@ func getTransformerOverridesAndKMSPluginHealthzChecker(config *apiserverconfig.E
 		kmsHealthChecks = append(kmsHealthChecks, probe.toHealthzCheck(i))
 	}
 
-	return transformers, kmsHealthChecker(kmsHealthChecks), nil
+	return transformers, kmsHealthChecks, nil
 }
 
 type healthChecker interface {
