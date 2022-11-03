@@ -107,7 +107,7 @@ func newTransformTest(l kubeapiservertesting.Logger, transformerConfigYAML strin
 		return nil, err
 	}
 
-	if transformerConfigYAML != "" {
+	if transformerConfigYAML != "" && false {
 		// this healthz endpoint is always present when encryption at rest is enabled even if kms is not used
 		mustBeHealthy(l, "/kms-provider-0", "ok", e.kubeAPIServer.ClientConfig)
 
