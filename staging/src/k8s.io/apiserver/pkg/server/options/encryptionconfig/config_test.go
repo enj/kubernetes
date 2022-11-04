@@ -265,6 +265,7 @@ func TestKMSPluginHealthz(t *testing.T) {
 		want    []healthChecker
 		wantErr string
 		kmsv2   bool
+		kmsv1   bool
 	}{
 		{
 			desc:   "Install Healthz",
@@ -275,6 +276,7 @@ func TestKMSPluginHealthz(t *testing.T) {
 					ttl:  3 * time.Second,
 				},
 			},
+			kmsv1: true,
 		},
 		{
 			desc:   "Install multiple healthz",
@@ -289,6 +291,7 @@ func TestKMSPluginHealthz(t *testing.T) {
 					ttl:  3 * time.Second,
 				},
 			},
+			kmsv1: true,
 		},
 		{
 			desc:   "No KMS Providers",
@@ -308,6 +311,7 @@ func TestKMSPluginHealthz(t *testing.T) {
 				},
 			},
 			kmsv2: true,
+			kmsv1: true,
 		},
 		{
 			desc:    "Invalid API version",
@@ -327,7 +331,7 @@ func TestKMSPluginHealthz(t *testing.T) {
 				return
 			}
 
-			_, got, kmsv2, err := getTransformerOverridesAndKMSPluginProbes(config, testContext(t).Done())
+			_, got, kmsv2, kmsv1, err := getTransformerOverridesAndKMSPluginProbes(config, testContext(t).Done())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -351,6 +355,9 @@ func TestKMSPluginHealthz(t *testing.T) {
 
 			if tt.kmsv2 != kmsv2 {
 				t.Errorf("incorrect kms v2 detection: want=%v got=%v", tt.kmsv2, kmsv2)
+			}
+			if tt.kmsv1 != kmsv1 {
+				t.Errorf("incorrect kms v1 detection: want=%v got=%v", tt.kmsv1, kmsv1)
 			}
 
 			if d := cmp.Diff(tt.want, got,

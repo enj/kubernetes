@@ -266,13 +266,24 @@ func TestKMSHealthzEndpoint(t *testing.T) {
 			wantChecks:           []string{"etcd", "kms-providers"},
 		},
 		{
-			name:                 "any kms v2 provider, expect single kms healthz check",
+			name:                 "kms v1+v2, expect three kms healthz checks",
 			encryptionConfigPath: "testdata/encryption-configs/multiple-kms-providers-with-v2.yaml",
+			wantChecks:           []string{"etcd", "kms-provider-0", "kms-provider-1", "kms-provider-2"},
+		},
+		{
+			name:                 "kms v1+v2+reload, expect single kms healthz check",
+			encryptionConfigPath: "testdata/encryption-configs/multiple-kms-providers-with-v2.yaml",
+			reload:               true,
 			wantChecks:           []string{"etcd", "kms-providers"},
 		},
 		{
-			name:                 "any kms v2 provider+reload, expect single kms healthz check",
-			encryptionConfigPath: "testdata/encryption-configs/multiple-kms-providers-with-v2.yaml",
+			name:                 "multiple kms v2, expect single kms healthz check",
+			encryptionConfigPath: "testdata/encryption-configs/multiple-kms-v2-providers.yaml",
+			wantChecks:           []string{"etcd", "kms-providers"},
+		},
+		{
+			name:                 "multiple kms v2+reload, expect single kms healthz check",
+			encryptionConfigPath: "testdata/encryption-configs/multiple-kms-v2-providers.yaml",
 			reload:               true,
 			wantChecks:           []string{"etcd", "kms-providers"},
 		},
