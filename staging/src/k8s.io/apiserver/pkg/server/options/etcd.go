@@ -188,8 +188,7 @@ func (s *EtcdOptions) AddFlags(fs *pflag.FlagSet) {
 
 	fs.BoolVar(&s.EncryptionProviderConfigAutomaticReload, "encryption-provider-config-automatic-reload", s.EncryptionProviderConfigAutomaticReload,
 		"Determines if the file set by --encryption-provider-config should be automatically reloaded if the disk contents change. "+
-			"Setting this to true disables the ability to uniquely identify distinct KMS plugins via the API server healthz endpoints. "+
-			"If any KMS v2 plugins are used, this flag is ignored and the encryption config is always automatically reloaded, and the healthz endpoints are always merged.")
+			"Setting this to true disables the ability to uniquely identify distinct KMS plugins via the API server healthz endpoints.")
 
 	fs.DurationVar(&s.StorageConfig.CompactionInterval, "etcd-compaction-interval", s.StorageConfig.CompactionInterval,
 		"The interval of compaction requests. If 0, the compaction request from apiserver is disabled.")
