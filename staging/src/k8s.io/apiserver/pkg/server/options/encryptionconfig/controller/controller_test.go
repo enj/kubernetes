@@ -41,7 +41,7 @@ func TestProcessEncryptionConfig(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			ctx := context.Background()
-			d := NewDynamicKMSEncryptionConfiguration(
+			d := NewDynamicEncryptionConfiguration(
 				testCase.name,
 				testCase.filePath,
 				nil,
@@ -105,7 +105,7 @@ func TestWatchEncryptionConfigFile(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			testFilePath := copyFileForTest(t, "testdata/ec_config.yaml")
 
-			d := NewDynamicKMSEncryptionConfiguration(
+			d := NewDynamicEncryptionConfiguration(
 				testCase.name,
 				testFilePath,
 				nil,
