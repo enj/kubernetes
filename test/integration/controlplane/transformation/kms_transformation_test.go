@@ -525,7 +525,6 @@ resources:
 func TestEncryptionConfigHotReloadFileWatch(t *testing.T) {
 	testCases := []struct {
 		fileUpdateMethod string
-		sleep            time.Duration
 	}{
 		{
 			fileUpdateMethod: "truncate",
@@ -538,22 +537,6 @@ func TestEncryptionConfigHotReloadFileWatch(t *testing.T) {
 		},
 		{
 			fileUpdateMethod: "symLink",
-		},
-		{
-			fileUpdateMethod: "truncate",
-			sleep:            10 * time.Second,
-		},
-		{
-			fileUpdateMethod: "deleteAndCreate",
-			sleep:            10 * time.Second,
-		},
-		{
-			fileUpdateMethod: "move",
-			sleep:            10 * time.Second,
-		},
-		{
-			fileUpdateMethod: "symLink",
-			sleep:            10 * time.Second,
 		},
 	}
 
@@ -688,11 +671,6 @@ resources:
 				t.Fatalf("unknown file update method: %s", tc.fileUpdateMethod)
 			}
 
-			// if the test asks for it, sleep to let connections close
-			if tc.sleep != 0 {
-				time.Sleep(tc.sleep)
-			}
-
 			wantPrefix := "k8s:enc:kms:v1:new-kms-provider-for-secrets:"
 
 			// implementing this brute force approach instead of fancy channel notification to avoid test specific code in prod.
@@ -733,20 +711,8 @@ resources:
 				t.Fatalf("expected secret to be prefixed with %s, but got %s", wantPrefix, rawEnvelope)
 			}
 
-			// make sure that old connections have been closed and check again
-			if tc.sleep != 0 {
-				time.Sleep(tc.sleep)
-			}
-			_, err = test.restClient.CoreV1().Secrets("").List(
-				context.TODO(),
-				metav1.ListOptions{},
-			)
-			if err != nil {
-				t.Fatalf("failed to re-list secrets, err: %v", err)
-			}
-
 			// make sure things still work at a "later" time
-			time.Sleep(2 * time.Minute)
+			time.Sleep(20 * time.Second)
 			_, err = test.createSecret(fmt.Sprintf("secret-%d", rand.Intn(100000)), "default")
 			if err != nil {
 				t.Fatalf("Failed to create test secret, error: %v", err)
