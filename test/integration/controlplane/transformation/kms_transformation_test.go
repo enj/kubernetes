@@ -525,6 +525,7 @@ resources:
 func TestEncryptionConfigHotReloadFileWatch(t *testing.T) {
 	testCases := []struct {
 		fileUpdateMethod string
+		sleep            time.Duration
 	}{
 		{
 			fileUpdateMethod: "truncate",
@@ -537,6 +538,22 @@ func TestEncryptionConfigHotReloadFileWatch(t *testing.T) {
 		},
 		{
 			fileUpdateMethod: "symLink",
+		},
+		{
+			fileUpdateMethod: "truncate with sleep",
+			sleep:            10 * time.Second,
+		},
+		{
+			fileUpdateMethod: "deleteAndCreate with sleep",
+			sleep:            10 * time.Second,
+		},
+		{
+			fileUpdateMethod: "move with sleep",
+			sleep:            10 * time.Second,
+		},
+		{
+			fileUpdateMethod: "symLink with sleep",
+			sleep:            10 * time.Second,
 		},
 	}
 
@@ -553,6 +570,7 @@ resources:
        name: kms-provider
        cachesize: 1000
        endpoint: unix:///@kms-provider.sock
+       timeout: 1s
 `
 			pluginMock, err := mock.NewBase64Plugin("@kms-provider.sock")
 			if err != nil {
@@ -598,10 +616,12 @@ resources:
        name: new-kms-provider-for-secrets
        cachesize: 1000
        endpoint: unix:///@new-kms-provider.sock
+       timeout: 1s
     - kms:
        name: kms-provider
        cachesize: 1000
        endpoint: unix:///@kms-provider.sock
+       timeout: 1s
   - resources:
     - configmaps
     providers:
@@ -609,6 +629,7 @@ resources:
        name: new-kms-provider-for-configmaps
        cachesize: 1000
        endpoint: unix:///@new-kms-provider.sock
+       timeout: 1s
     - identity: {}
 `
 			// start new KMS Plugin
@@ -667,6 +688,11 @@ resources:
 				t.Fatalf("unknown file update method: %s", tc.fileUpdateMethod)
 			}
 
+			// if the test asks for it, sleep to let connections close
+			if tc.sleep != 0 {
+				time.Sleep(tc.sleep)
+			}
+
 			wantPrefix := "k8s:enc:kms:v1:new-kms-provider-for-secrets:"
 
 			// implementing this brute force approach instead of fancy channel notification to avoid test specific code in prod.
@@ -705,6 +731,18 @@ resources:
 			// assert secret
 			if !bytes.HasPrefix(rawEnvelope, []byte(wantPrefix)) {
 				t.Fatalf("expected secret to be prefixed with %s, but got %s", wantPrefix, rawEnvelope)
+			}
+
+			// make sure that old connections have been closed and check again
+			if tc.sleep != 0 {
+				time.Sleep(tc.sleep)
+			}
+			_, err = test.restClient.CoreV1().Secrets("").List(
+				context.TODO(),
+				metav1.ListOptions{},
+			)
+			if err != nil {
+				t.Fatalf("failed to re-list secrets, err: %v", err)
 			}
 		})
 	}
