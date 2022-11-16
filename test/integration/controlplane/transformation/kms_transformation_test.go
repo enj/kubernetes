@@ -540,19 +540,19 @@ func TestEncryptionConfigHotReloadFileWatch(t *testing.T) {
 			fileUpdateMethod: "symLink",
 		},
 		{
-			fileUpdateMethod: "truncate with sleep",
+			fileUpdateMethod: "truncate",
 			sleep:            10 * time.Second,
 		},
 		{
-			fileUpdateMethod: "deleteAndCreate with sleep",
+			fileUpdateMethod: "deleteAndCreate",
 			sleep:            10 * time.Second,
 		},
 		{
-			fileUpdateMethod: "move with sleep",
+			fileUpdateMethod: "move",
 			sleep:            10 * time.Second,
 		},
 		{
-			fileUpdateMethod: "symLink with sleep",
+			fileUpdateMethod: "symLink",
 			sleep:            10 * time.Second,
 		},
 	}
