@@ -744,6 +744,20 @@ resources:
 			if err != nil {
 				t.Fatalf("failed to re-list secrets, err: %v", err)
 			}
+
+			// make sure things still work at a "later" time
+			time.Sleep(2 * time.Minute)
+			_, err = test.createSecret(fmt.Sprintf("secret-%d", rand.Intn(100000)), "default")
+			if err != nil {
+				t.Fatalf("Failed to create test secret, error: %v", err)
+			}
+			_, err = test.restClient.CoreV1().Secrets("").List(
+				context.TODO(),
+				metav1.ListOptions{},
+			)
+			if err != nil {
+				t.Fatalf("failed to re-list secrets, err: %v", err)
+			}
 		})
 	}
 }
