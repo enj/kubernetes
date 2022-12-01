@@ -200,7 +200,7 @@ func (c *Controller) syncStorageVersion(ctx context.Context, name string) error 
 	for _, v := range sv.Status.StorageVersions {
 		lease, err := c.kubeclientset.CoordinationV1().Leases(metav1.NamespaceSystem).Get(ctx, v.APIServerID, metav1.GetOptions{})
 		if err != nil || lease == nil || lease.Labels == nil ||
-			lease.Labels[genericapiserver.IdentityLeaseComponentLabelKey] != genericapiserver.KubeAPIServer {
+			lease.Labels[genericapiserver.IdentityLeaseComponentLabelKey] != genericapiserver.IdentityLeaseComponentLabelValueForAPIServers {
 			// We cannot find a corresponding identity lease from apiserver as well.
 			// We need to clean up this storage version.
 			hasInvalidID = true
@@ -229,7 +229,7 @@ func (c *Controller) enqueueStorageVersion(obj *apiserverinternalv1alpha1.Storag
 	for _, sv := range obj.Status.StorageVersions {
 		lease, err := c.leaseLister.Leases(metav1.NamespaceSystem).Get(sv.APIServerID)
 		if err != nil || lease == nil || lease.Labels == nil ||
-			lease.Labels[genericapiserver.IdentityLeaseComponentLabelKey] != genericapiserver.KubeAPIServer {
+			lease.Labels[genericapiserver.IdentityLeaseComponentLabelKey] != genericapiserver.IdentityLeaseComponentLabelValueForAPIServers {
 			// we cannot find a corresponding identity lease in cache, enqueue the storageversion
 			klog.V(4).Infof("Observed storage version %s with invalid apiserver entry", obj.Name)
 			c.storageVersionQueue.Add(obj.Name)
@@ -255,7 +255,7 @@ func (c *Controller) onDeleteLease(obj interface{}) {
 
 	if castObj.Namespace == metav1.NamespaceSystem &&
 		castObj.Labels != nil &&
-		castObj.Labels[genericapiserver.IdentityLeaseComponentLabelKey] == genericapiserver.KubeAPIServer {
+		castObj.Labels[genericapiserver.IdentityLeaseComponentLabelKey] == genericapiserver.IdentityLeaseComponentLabelValueForAPIServers {
 		klog.V(4).Infof("Observed lease %s deleted", castObj.Name)
 		c.enqueueLease(castObj)
 	}

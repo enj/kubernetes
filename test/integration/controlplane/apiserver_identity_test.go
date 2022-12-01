@@ -70,7 +70,7 @@ func TestCreateLeaseOnStart(t *testing.T) {
 		leases, err := kubeclient.
 			CoordinationV1().
 			Leases(metav1.NamespaceSystem).
-			List(context.TODO(), metav1.ListOptions{LabelSelector: genericapiserver.KubeAPIServerIdentityLeaseLabelSelector})
+			List(context.TODO(), metav1.ListOptions{LabelSelector: genericapiserver.APIServerIdentityLeaseLabelSelector})
 		if err != nil {
 			return false, err
 		}
@@ -192,7 +192,7 @@ func newTestLease(acquireTime time.Time, namespace string) *coordinationv1.Lease
 			Name:      testLeaseName,
 			Namespace: namespace,
 			Labels: map[string]string{
-				genericapiserver.IdentityLeaseComponentLabelKey: genericapiserver.KubeAPIServer,
+				genericapiserver.IdentityLeaseComponentLabelKey: genericapiserver.IdentityLeaseComponentLabelValueForAPIServers,
 			},
 		},
 		Spec: coordinationv1.LeaseSpec{

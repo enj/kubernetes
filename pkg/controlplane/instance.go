@@ -475,7 +475,7 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 				kubeClient,
 				genericapiserver.IdentityLeaseGCPeriod,
 				metav1.NamespaceSystem,
-				genericapiserver.KubeAPIServerIdentityLeaseLabelSelector,
+				genericapiserver.APIServerIdentityLeaseLabelSelector,
 			).Run(hookContext.StopCh)
 			return nil
 		})

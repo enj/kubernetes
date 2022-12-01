@@ -43,6 +43,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/apimachinery/pkg/util/wait"
 	utilwaitgroup "k8s.io/apimachinery/pkg/util/waitgroup"
 	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/apiserver/pkg/admission"
@@ -99,10 +100,11 @@ const (
 	//   1. the lease is an identity lease (different from leader election leases)
 	//   2. which component owns this lease
 	IdentityLeaseComponentLabelKey = "k8s.io/component"
-	// KubeAPIServer defines variable used internally when referring to kube-apiserver component
-	KubeAPIServer = "kube-apiserver"
-	// KubeAPIServerIdentityLeaseLabelSelector selects kube-apiserver identity leases
-	KubeAPIServerIdentityLeaseLabelSelector = IdentityLeaseComponentLabelKey + "=" + KubeAPIServer
+	// IdentityLeaseComponentLabelValueForAPIServers defines variable used internally when referring to apiserver components
+	// TODO(enj): this value seems wrong because these leases are used by all API servers, not just the Kube API server
+	IdentityLeaseComponentLabelValueForAPIServers = "kube-apiserver"
+	// APIServerIdentityLeaseLabelSelector selects apiserver identity leases
+	APIServerIdentityLeaseLabelSelector = IdentityLeaseComponentLabelKey + "=" + IdentityLeaseComponentLabelValueForAPIServers
 )
 
 var (
@@ -112,9 +114,12 @@ var (
 	// IdentityLeaseDurationSeconds is the duration of kube-apiserver lease in seconds
 	// IdentityLeaseDurationSeconds is exposed so integration tests can tune this value.
 	IdentityLeaseDurationSeconds = 3600
-	// IdentityLeaseRenewIntervalSeconds is the interval of kube-apiserver renewing its lease in seconds
-	// IdentityLeaseRenewIntervalSeconds is exposed so integration tests can tune this value.
+	// IdentityLeaseRenewIntervalPeriod is the interval of kube-apiserver renewing its lease in seconds
+	// IdentityLeaseRenewIntervalPeriod is exposed so integration tests can tune this value.
 	IdentityLeaseRenewIntervalPeriod = 10 * time.Second
+	// IdentityLeaseGetHostname is the function used to determine the hostname of the API server.
+	// IdentityLeaseGetHostname is exposed so integration tests can tune this value.
+	IdentityLeaseGetHostname = os.Hostname
 )
 
 // Config is a structure used to configure a GenericAPIServer.
@@ -288,6 +293,10 @@ type Config struct {
 	// APIServerID is the ID of this API server
 	APIServerID string
 
+	// APIServerIDConfig is the rest config used to manage identity leases
+	// If unspecified, the in-cluster config is used
+	APIServerIDConfig *restclient.Config
+
 	// StorageVersionManager holds the storage versions of the API resources installed by this server.
 	StorageVersionManager storageversion.Manager
 
@@ -362,7 +371,7 @@ func NewConfig(codecs serializer.CodecFactory) *Config {
 	defaultHealthChecks := []healthz.HealthChecker{healthz.PingHealthz, healthz.LogHealthz}
 	var id string
 	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
-		hostname, err := os.Hostname()
+		hostname, err := IdentityLeaseGetHostname()
 		if err != nil {
 			klog.Fatalf("error getting hostname for apiserver identity: %v", err)
 		}
@@ -701,6 +710,7 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 		ShutdownSendRetryAfter: c.ShutdownSendRetryAfter,
 
 		APIServerID:           c.APIServerID,
+		APIServerIDConfig:     c.APIServerIDConfig,
 		StorageVersionManager: c.StorageVersionManager,
 
 		Version: c.Version,
@@ -828,7 +838,20 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 		const apiServerIdentityHookName = "start-generic-apiserver-identity-lease-controller"
 		if !s.isPostStartHookRegistered(apiServerIdentityHookName) {
 			if err := s.AddPostStartHook(apiServerIdentityHookName, func(context PostStartHookContext) error {
-				kubeClient, err := kubernetes.NewForConfig(context.LoopbackClientConfig)
+				config := s.APIServerIDConfig
+				if config == nil {
+					inClusterConfig, err := restclient.InClusterConfig()
+					if err != nil {
+						return err
+					}
+					config = inClusterConfig
+				}
+
+				config = restclient.CopyConfig(config)
+				// use protobuf here because we know the kube-apiserver supports it for leases
+				config.ContentConfig.ContentType = "application/vnd.kubernetes.protobuf"
+
+				kubeClient, err := kubernetes.NewForConfig(config)
 				if err != nil {
 					return err
 				}
@@ -849,10 +872,10 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 						if lease.Labels == nil {
 							lease.Labels = map[string]string{}
 						}
-						// This label indicates that kube-apiserver owns this identity lease object
-						lease.Labels[IdentityLeaseComponentLabelKey] = KubeAPIServer
+						// This label indicates that an apiserver owns this identity lease object
+						lease.Labels[IdentityLeaseComponentLabelKey] = IdentityLeaseComponentLabelValueForAPIServers
 
-						hostname, err := os.Hostname()
+						hostname, err := IdentityLeaseGetHostname()
 						if err != nil {
 							return err
 						}
@@ -862,7 +885,11 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 						return nil
 					},
 				)
-				go controller.Run(context.StopCh)
+
+				// we ignore the cancel func because this context should only be canceled when context.StopCh is closed
+				ctx, _ := wait.ContextForChannel(context.StopCh)
+				go controller.Run(ctx)
+
 				return nil
 			}); err != nil {
 				return nil, err

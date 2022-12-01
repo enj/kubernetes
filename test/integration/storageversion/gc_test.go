@@ -172,7 +172,7 @@ func createTestAPIServerIdentityLease(t *testing.T, client kubernetes.Interface,
 			Name:      name,
 			Namespace: metav1.NamespaceSystem,
 			Labels: map[string]string{
-				genericapiserver.IdentityLeaseComponentLabelKey: genericapiserver.KubeAPIServer,
+				genericapiserver.IdentityLeaseComponentLabelKey: genericapiserver.IdentityLeaseComponentLabelValueForAPIServers,
 			},
 		},
 		Spec: coordinationv1.LeaseSpec{
