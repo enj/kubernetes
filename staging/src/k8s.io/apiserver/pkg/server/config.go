@@ -34,8 +34,8 @@ import (
 
 	jsonpatch "github.com/evanphx/json-patch"
 
-	coordinationapiv1 "k8s.io/api/coordination/v1"
-	apiv1 "k8s.io/api/core/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -100,10 +100,10 @@ const (
 	//   1. the lease is an identity lease (different from leader election leases)
 	//   2. which component owns this lease
 	IdentityLeaseComponentLabelKey = "k8s.io/component"
-	// IdentityLeaseComponentLabelValueForAPIServers defines variable used internally when referring to apiserver components
+	// IdentityLeaseComponentLabelValueForAPIServers defines the value used when referring to api server components
 	// TODO(enj): this value seems wrong because these leases are used by all API servers, not just the Kube API server
 	IdentityLeaseComponentLabelValueForAPIServers = "kube-apiserver"
-	// APIServerIdentityLeaseLabelSelector selects apiserver identity leases
+	// APIServerIdentityLeaseLabelSelector selects api server identity leases
 	APIServerIdentityLeaseLabelSelector = IdentityLeaseComponentLabelKey + "=" + IdentityLeaseComponentLabelValueForAPIServers
 )
 
@@ -111,13 +111,13 @@ var (
 	// IdentityLeaseGCPeriod is the interval which the lease GC controller checks for expired leases
 	// IdentityLeaseGCPeriod is exposed so integration tests can tune this value.
 	IdentityLeaseGCPeriod = 3600 * time.Second
-	// IdentityLeaseDurationSeconds is the duration of kube-apiserver lease in seconds
+	// IdentityLeaseDurationSeconds is the duration of an api server lease in seconds
 	// IdentityLeaseDurationSeconds is exposed so integration tests can tune this value.
 	IdentityLeaseDurationSeconds = 3600
-	// IdentityLeaseRenewIntervalPeriod is the interval of kube-apiserver renewing its lease in seconds
+	// IdentityLeaseRenewIntervalPeriod is the interval of an api server renewing its lease in seconds
 	// IdentityLeaseRenewIntervalPeriod is exposed so integration tests can tune this value.
 	IdentityLeaseRenewIntervalPeriod = 10 * time.Second
-	// IdentityLeaseGetHostname is the function used to determine the hostname of the API server.
+	// IdentityLeaseGetHostname is the function used to determine the hostname of an api server.
 	// IdentityLeaseGetHostname is exposed so integration tests can tune this value.
 	IdentityLeaseGetHostname = os.Hostname
 )
@@ -868,7 +868,7 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 					IdentityLeaseRenewIntervalPeriod,
 					leaseName,
 					metav1.NamespaceSystem,
-					func(lease *coordinationapiv1.Lease) error {
+					func(lease *coordinationv1.Lease) error {
 						if lease.Labels == nil {
 							lease.Labels = map[string]string{}
 						}
@@ -881,7 +881,7 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 						}
 
 						// convenience label to easily map a lease object to a specific apiserver
-						lease.Labels[apiv1.LabelHostname] = hostname
+						lease.Labels[corev1.LabelHostname] = hostname
 						return nil
 					},
 				)
