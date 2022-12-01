@@ -33,14 +33,16 @@ import (
 	"time"
 
 	jsonpatch "github.com/evanphx/json-patch"
-	"github.com/google/uuid"
 
+	coordinationapiv1 "k8s.io/api/coordination/v1"
+	apiv1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	utilwaitgroup "k8s.io/apimachinery/pkg/util/waitgroup"
 	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/apiserver/pkg/admission"
@@ -69,11 +71,13 @@ import (
 	utilflowcontrol "k8s.io/apiserver/pkg/util/flowcontrol"
 	flowcontrolrequest "k8s.io/apiserver/pkg/util/flowcontrol/request"
 	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/component-base/logs"
 	"k8s.io/component-base/metrics/features"
 	"k8s.io/component-base/metrics/prometheus/slis"
 	"k8s.io/component-base/tracing"
+	"k8s.io/component-helpers/apimachinery/lease"
 	"k8s.io/klog/v2"
 	openapicommon "k8s.io/kube-openapi/pkg/common"
 	"k8s.io/kube-openapi/pkg/validation/spec"
@@ -90,6 +94,27 @@ const (
 
 	// APIGroupPrefix is where non-legacy API group will be located.
 	APIGroupPrefix = "/apis"
+
+	// IdentityLeaseComponentLabelKey is used to apply a component label to identity lease objects, indicating:
+	//   1. the lease is an identity lease (different from leader election leases)
+	//   2. which component owns this lease
+	IdentityLeaseComponentLabelKey = "k8s.io/component"
+	// KubeAPIServer defines variable used internally when referring to kube-apiserver component
+	KubeAPIServer = "kube-apiserver"
+	// KubeAPIServerIdentityLeaseLabelSelector selects kube-apiserver identity leases
+	KubeAPIServerIdentityLeaseLabelSelector = IdentityLeaseComponentLabelKey + "=" + KubeAPIServer
+)
+
+var (
+	// IdentityLeaseGCPeriod is the interval which the lease GC controller checks for expired leases
+	// IdentityLeaseGCPeriod is exposed so integration tests can tune this value.
+	IdentityLeaseGCPeriod = 3600 * time.Second
+	// IdentityLeaseDurationSeconds is the duration of kube-apiserver lease in seconds
+	// IdentityLeaseDurationSeconds is exposed so integration tests can tune this value.
+	IdentityLeaseDurationSeconds = 3600
+	// IdentityLeaseRenewIntervalSeconds is the interval of kube-apiserver renewing its lease in seconds
+	// IdentityLeaseRenewIntervalSeconds is exposed so integration tests can tune this value.
+	IdentityLeaseRenewIntervalPeriod = 10 * time.Second
 )
 
 // Config is a structure used to configure a GenericAPIServer.
@@ -149,9 +174,9 @@ type Config struct {
 	// TracerProvider can provide a tracer, which records spans for distributed tracing.
 	TracerProvider tracing.TracerProvider
 
-	//===========================================================================
+	// ===========================================================================
 	// Fields you probably don't care about changing
-	//===========================================================================
+	// ===========================================================================
 
 	// BuildHandlerChainFunc allows you to build custom handler chains by decorating the apiHandler.
 	BuildHandlerChainFunc func(apiHandler http.Handler, c *Config) (secure http.Handler)
@@ -247,9 +272,9 @@ type Config struct {
 	// rejected with a 429 status code and a 'Retry-After' response.
 	ShutdownSendRetryAfter bool
 
-	//===========================================================================
+	// ===========================================================================
 	// values below here are targets for removal
-	//===========================================================================
+	// ===========================================================================
 
 	// PublicAddress is the IP address where members of the cluster (kubelet,
 	// kube-proxy, services, etc.) can reach the GenericAPIServer.
@@ -455,9 +480,9 @@ func (c *AuthenticationInfo) ApplyClientCert(clientCA dynamiccertificates.CACont
 type completedConfig struct {
 	*Config
 
-	//===========================================================================
+	// ===========================================================================
 	// values below here are filled in during completion
-	//===========================================================================
+	// ===========================================================================
 
 	// SharedInformerFactory provides shared informers for resources
 	SharedInformerFactory informers.SharedInformerFactory
@@ -798,6 +823,53 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 		}
 	}
 
+	// this lives here because all API servers need identities, not just the Kube API server
+	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
+		const apiServerIdentityHookName = "start-generic-apiserver-identity-lease-controller"
+		if !s.isPostStartHookRegistered(apiServerIdentityHookName) {
+			if err := s.AddPostStartHook(apiServerIdentityHookName, func(context PostStartHookContext) error {
+				kubeClient, err := kubernetes.NewForConfig(context.LoopbackClientConfig)
+				if err != nil {
+					return err
+				}
+
+				leaseName := s.APIServerID
+				holderIdentity := s.APIServerID + "_" + string(uuid.NewUUID())
+
+				controller := lease.NewController(
+					clock.RealClock{},
+					kubeClient,
+					holderIdentity,
+					int32(IdentityLeaseDurationSeconds),
+					nil,
+					IdentityLeaseRenewIntervalPeriod,
+					leaseName,
+					metav1.NamespaceSystem,
+					func(lease *coordinationapiv1.Lease) error {
+						if lease.Labels == nil {
+							lease.Labels = map[string]string{}
+						}
+						// This label indicates that kube-apiserver owns this identity lease object
+						lease.Labels[IdentityLeaseComponentLabelKey] = KubeAPIServer
+
+						hostname, err := os.Hostname()
+						if err != nil {
+							return err
+						}
+
+						// convenience label to easily map a lease object to a specific apiserver
+						lease.Labels[apiv1.LabelHostname] = hostname
+						return nil
+					},
+				)
+				go controller.Run(context.StopCh)
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	for _, delegateCheck := range delegationTarget.HealthzChecks() {
 		skip := false
 		for _, existingCheck := range c.HealthzChecks {
@@ -809,7 +881,9 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 		if skip {
 			continue
 		}
-		s.AddHealthChecks(delegateCheck)
+		if err := s.AddHealthChecks(delegateCheck); err != nil {
+			return nil, err
+		}
 	}
 	s.RegisterDestroyFunc(func() {
 		if err := c.Config.TracerProvider.Shutdown(context.Background()); err != nil {
@@ -992,11 +1066,10 @@ func AuthorizeClientBearerToken(loopback *restclient.Config, authn *Authenticati
 	}
 
 	privilegedLoopbackToken := loopback.BearerToken
-	var uid = uuid.New().String()
 	tokens := make(map[string]*user.DefaultInfo)
 	tokens[privilegedLoopbackToken] = &user.DefaultInfo{
 		Name:   user.APIServerUser,
-		UID:    uid,
+		UID:    string(uuid.NewUUID()),
 		Groups: []string{user.SystemPrivilegedGroup},
 	}
 

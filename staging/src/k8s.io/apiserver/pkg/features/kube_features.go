@@ -66,8 +66,9 @@ const (
 	// Enables compression of REST responses (GET and LIST only)
 	APIResponseCompression featuregate.Feature = "APIResponseCompression"
 
-	// owner: @roycaihw
+	// owner: @andrewsykim @enj
 	// alpha: v1.20
+	// beta: v1.26
 	//
 	// Assigns each kube-apiserver an ID in a cluster.
 	APIServerIdentity featuregate.Feature = "APIServerIdentity"
