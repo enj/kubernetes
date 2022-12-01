@@ -174,9 +174,9 @@ type Config struct {
 	// TracerProvider can provide a tracer, which records spans for distributed tracing.
 	TracerProvider tracing.TracerProvider
 
-	// ===========================================================================
+	//===========================================================================
 	// Fields you probably don't care about changing
-	// ===========================================================================
+	//===========================================================================
 
 	// BuildHandlerChainFunc allows you to build custom handler chains by decorating the apiHandler.
 	BuildHandlerChainFunc func(apiHandler http.Handler, c *Config) (secure http.Handler)
@@ -272,9 +272,9 @@ type Config struct {
 	// rejected with a 429 status code and a 'Retry-After' response.
 	ShutdownSendRetryAfter bool
 
-	// ===========================================================================
+	//===========================================================================
 	// values below here are targets for removal
-	// ===========================================================================
+	//===========================================================================
 
 	// PublicAddress is the IP address where members of the cluster (kubelet,
 	// kube-proxy, services, etc.) can reach the GenericAPIServer.
@@ -480,9 +480,9 @@ func (c *AuthenticationInfo) ApplyClientCert(clientCA dynamiccertificates.CACont
 type completedConfig struct {
 	*Config
 
-	// ===========================================================================
+	//===========================================================================
 	// values below here are filled in during completion
-	// ===========================================================================
+	//===========================================================================
 
 	// SharedInformerFactory provides shared informers for resources
 	SharedInformerFactory informers.SharedInformerFactory
