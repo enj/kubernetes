@@ -158,6 +158,7 @@ func TestNewWithDelegate(t *testing.T) {
 		"/healthz/poststarthook/generic-apiserver-start-informers",
 		"/healthz/poststarthook/max-in-flight-filter",
 		"/healthz/poststarthook/storage-object-count-tracker-hook",
+		"/healthz/poststarthook/start-generic-apiserver-identity-lease-controller",
 		"/healthz/poststarthook/wrapping-post-start-hook",
 		"/healthz/wrapping-health",
 		"/livez",
@@ -168,6 +169,7 @@ func TestNewWithDelegate(t *testing.T) {
 		"/livez/poststarthook/generic-apiserver-start-informers",
 		"/livez/poststarthook/max-in-flight-filter",
 		"/livez/poststarthook/storage-object-count-tracker-hook",
+		"/livez/poststarthook/start-generic-apiserver-identity-lease-controller",
 		"/livez/poststarthook/wrapping-post-start-hook",
 		"/metrics",
 		"/readyz",
@@ -179,6 +181,7 @@ func TestNewWithDelegate(t *testing.T) {
 		"/readyz/poststarthook/generic-apiserver-start-informers",
 		"/readyz/poststarthook/max-in-flight-filter",
 		"/readyz/poststarthook/storage-object-count-tracker-hook",
+		"/readyz/poststarthook/start-generic-apiserver-identity-lease-controller",
 		"/readyz/poststarthook/wrapping-post-start-hook",
 		"/readyz/shutdown",
 	}
@@ -208,6 +211,7 @@ func TestNewWithDelegate(t *testing.T) {
 [+]poststarthook/generic-apiserver-start-informers ok
 [+]poststarthook/max-in-flight-filter ok
 [+]poststarthook/storage-object-count-tracker-hook ok
+[+]poststarthook/start-generic-apiserver-identity-lease-controller ok
 [+]poststarthook/delegate-post-start-hook ok
 [+]poststarthook/wrapping-post-start-hook ok
 healthz check failed
