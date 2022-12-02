@@ -67,6 +67,7 @@ const (
 	APIResponseCompression featuregate.Feature = "APIResponseCompression"
 
 	// owner: @andrewsykim @enj
+	// kep: https://kep.k8s.io/1965
 	// alpha: v1.20
 	// beta: v1.26
 	//
@@ -90,7 +91,7 @@ const (
 	AdvancedAuditing featuregate.Feature = "AdvancedAuditing"
 
 	// owner: @cici37 @jpbetz
-	// kep: http://kep.k8s.io/3488
+	// kep: https://kep.k8s.io/3488
 	// alpha: v1.26
 	//
 	// Enables expression validation in Admission Control
