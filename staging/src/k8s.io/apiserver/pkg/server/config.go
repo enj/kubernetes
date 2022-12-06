@@ -36,6 +36,7 @@ import (
 
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -105,6 +106,9 @@ const (
 	IdentityLeaseComponentLabelValueForAPIServers = "kube-apiserver"
 	// APIServerIdentityLeaseLabelSelector selects api server identity leases
 	APIServerIdentityLeaseLabelSelector = IdentityLeaseComponentLabelKey + "=" + IdentityLeaseComponentLabelValueForAPIServers
+
+	// StorageVersionPostStartHookName is the name of the storage version updater post start hook.
+	StorageVersionPostStartHookName = "built-in-resources-storage-version-updater"
 )
 
 var (
@@ -179,9 +183,9 @@ type Config struct {
 	// TracerProvider can provide a tracer, which records spans for distributed tracing.
 	TracerProvider tracing.TracerProvider
 
-	//===========================================================================
+	// ===========================================================================
 	// Fields you probably don't care about changing
-	//===========================================================================
+	// ===========================================================================
 
 	// BuildHandlerChainFunc allows you to build custom handler chains by decorating the apiHandler.
 	BuildHandlerChainFunc func(apiHandler http.Handler, c *Config) (secure http.Handler)
@@ -277,9 +281,9 @@ type Config struct {
 	// rejected with a 429 status code and a 'Retry-After' response.
 	ShutdownSendRetryAfter bool
 
-	//===========================================================================
+	// ===========================================================================
 	// values below here are targets for removal
-	//===========================================================================
+	// ===========================================================================
 
 	// PublicAddress is the IP address where members of the cluster (kubelet,
 	// kube-proxy, services, etc.) can reach the GenericAPIServer.
@@ -489,9 +493,9 @@ func (c *AuthenticationInfo) ApplyClientCert(clientCA dynamiccertificates.CACont
 type completedConfig struct {
 	*Config
 
-	//===========================================================================
+	// ===========================================================================
 	// values below here are filled in during completion
-	//===========================================================================
+	// ===========================================================================
 
 	// SharedInformerFactory provides shared informers for resources
 	SharedInformerFactory informers.SharedInformerFactory
@@ -833,35 +837,42 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 		}
 	}
 
+	var apiServerIDClient kubernetes.Interface
+	var apiServerIDConfig *restclient.Config
+	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
+		config := s.APIServerIDConfig
+		if config == nil {
+			inClusterConfig, err := restclient.InClusterConfig()
+			if err != nil {
+				return nil, err
+			}
+			config = inClusterConfig
+		}
+
+		config = restclient.CopyConfig(config)
+		// use protobuf here because we know the kube-apiserver supports it for leases
+		config.ContentConfig.ContentType = "application/vnd.kubernetes.protobuf"
+
+		client, err := kubernetes.NewForConfig(config)
+		if err != nil {
+			return nil, err
+		}
+
+		apiServerIDClient = client
+		apiServerIDConfig = config
+	}
+
 	// this lives here because all API servers need identities, not just the Kube API server
 	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
 		const apiServerIdentityHookName = "start-generic-apiserver-identity-lease-controller"
 		if !s.isPostStartHookRegistered(apiServerIdentityHookName) {
 			if err := s.AddPostStartHook(apiServerIdentityHookName, func(context PostStartHookContext) error {
-				config := s.APIServerIDConfig
-				if config == nil {
-					inClusterConfig, err := restclient.InClusterConfig()
-					if err != nil {
-						return err
-					}
-					config = inClusterConfig
-				}
-
-				config = restclient.CopyConfig(config)
-				// use protobuf here because we know the kube-apiserver supports it for leases
-				config.ContentConfig.ContentType = "application/vnd.kubernetes.protobuf"
-
-				kubeClient, err := kubernetes.NewForConfig(config)
-				if err != nil {
-					return err
-				}
-
 				leaseName := s.APIServerID
 				holderIdentity := s.APIServerID + "_" + string(uuid.NewUUID())
 
 				controller := lease.NewController(
 					clock.RealClock{},
-					kubeClient,
+					apiServerIDClient,
 					holderIdentity,
 					int32(IdentityLeaseDurationSeconds),
 					nil,
@@ -891,6 +902,57 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 				go controller.Run(ctx)
 
 				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.StorageVersionAPI) &&
+		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) &&
+		!s.StorageVersionManager.Completed() {
+		if !s.isPostStartHookRegistered(StorageVersionPostStartHookName) {
+			// spawn a goroutine in every api server to update storage version for all built-in resources
+			if err := s.AddPostStartHook(StorageVersionPostStartHookName, func(hookContext PostStartHookContext) error {
+				// Wait for api server identity to exist first before updating storage
+				// versions, to avoid storage version GC accidentally garbage-collecting
+				// storage versions.
+				if err := wait.PollImmediateUntil(100*time.Millisecond, func() (bool, error) {
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+
+					_, err := apiServerIDClient.CoordinationV1().Leases(metav1.NamespaceSystem).Get(ctx, s.APIServerID, metav1.GetOptions{})
+					if apierrors.IsNotFound(err) {
+						return false, nil
+					}
+					if err != nil {
+						return false, err
+					}
+					return true, nil
+				}, hookContext.StopCh); err != nil {
+					return fmt.Errorf("failed to wait for api server identity lease %s to be created: %v",
+						s.APIServerID, err)
+				}
+				// Technically an apiserver only needs to update storage version once during bootstrap.
+				// Reconcile StorageVersion objects every 10 minutes will help in the case that the
+				// StorageVersion objects get accidentally modified/deleted by a different agent. In that
+				// case, the reconciliation ensures future storage migration still works. If nothing gets
+				// changed, the reconciliation update is a noop and gets short-circuited by the apiserver,
+				// therefore won't change the resource version and trigger storage migration.
+				go wait.PollImmediateUntil(10*time.Minute, func() (bool, error) {
+					// All apiservers (aggregator-apiserver, kube-apiserver, apiextensions-apiserver)
+					// share the same generic apiserver config. The same StorageVersion manager is used
+					// to register all built-in resources when the generic apiservers install APIs.
+					s.StorageVersionManager.UpdateStorageVersions(apiServerIDConfig, s.APIServerID)
+					return false, nil
+				}, hookContext.StopCh)
+				// Once the storage version updater finishes the first round of update,
+				// the PostStartHook will return to unblock /healthz. The handler chain
+				// won't block write requests anymore. Check every second since it's not
+				// expensive.
+				return wait.PollImmediateUntil(time.Second, func() (bool, error) {
+					return s.StorageVersionManager.Completed(), nil
+				}, hookContext.StopCh)
 			}); err != nil {
 				return nil, err
 			}
@@ -934,14 +996,22 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 	return s, nil
 }
 
-func BuildHandlerChainWithStorageVersionPrecondition(apiHandler http.Handler, c *Config) http.Handler {
-	// WithStorageVersionPrecondition needs the WithRequestInfo to run first
-	handler := genericapifilters.WithStorageVersionPrecondition(apiHandler, c.StorageVersionManager, c.Serializer)
-	return DefaultBuildHandlerChain(handler, c)
-}
-
 func DefaultBuildHandlerChain(apiHandler http.Handler, c *Config) http.Handler {
-	handler := filterlatency.TrackCompleted(apiHandler)
+	handler := apiHandler
+
+	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.StorageVersionAPI) &&
+		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
+		// Add StorageVersionPrecondition handler to all generic api servers
+		// The handler will block write requests to built-in resources until the
+		// target resources' storage versions are up-to-date.
+
+		// WithStorageVersionPrecondition needs the WithRequestInfo to run first
+
+		// TODO(enj): grant aggregated API servers the RBAC needed for this
+		handler = genericapifilters.WithStorageVersionPrecondition(handler, c.StorageVersionManager, c.Serializer)
+	}
+
+	handler = filterlatency.TrackCompleted(handler)
 	handler = genericapifilters.WithAuthorization(handler, c.Authorization.Authorizer, c.Serializer)
 	handler = filterlatency.TrackStarted(handler, c.TracerProvider, "authorization")
 

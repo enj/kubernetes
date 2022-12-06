@@ -61,6 +61,7 @@ type Manager interface {
 }
 
 var _ Manager = &defaultManager{}
+var _ Manager = noopManager{}
 
 // defaultManager indicates if an apiserver has completed reporting its storage versions.
 type defaultManager struct {
@@ -79,6 +80,18 @@ type defaultManager struct {
 type updateStatus struct {
 	done    bool
 	lastErr error
+}
+
+type noopManager struct{}
+
+func (noopManager) AddResourceInfo(_ ...*ResourceInfo)             {}
+func (noopManager) UpdateStorageVersions(_ *rest.Config, _ string) {}
+func (noopManager) PendingUpdate(_ schema.GroupResource) bool      { return false }
+func (noopManager) LastUpdateError(_ schema.GroupResource) error   { return nil }
+func (noopManager) Completed() bool                                { return true }
+
+func NewNoOpManager() Manager {
+	return noopManager{}
 }
 
 // NewDefaultManager creates a new defaultManager.
