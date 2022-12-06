@@ -179,9 +179,9 @@ type Config struct {
 	// TracerProvider can provide a tracer, which records spans for distributed tracing.
 	TracerProvider tracing.TracerProvider
 
-	//===========================================================================
+	// ===========================================================================
 	// Fields you probably don't care about changing
-	//===========================================================================
+	// ===========================================================================
 
 	// BuildHandlerChainFunc allows you to build custom handler chains by decorating the apiHandler.
 	BuildHandlerChainFunc func(apiHandler http.Handler, c *Config) (secure http.Handler)
@@ -277,9 +277,9 @@ type Config struct {
 	// rejected with a 429 status code and a 'Retry-After' response.
 	ShutdownSendRetryAfter bool
 
-	//===========================================================================
+	// ===========================================================================
 	// values below here are targets for removal
-	//===========================================================================
+	// ===========================================================================
 
 	// PublicAddress is the IP address where members of the cluster (kubelet,
 	// kube-proxy, services, etc.) can reach the GenericAPIServer.
@@ -489,9 +489,9 @@ func (c *AuthenticationInfo) ApplyClientCert(clientCA dynamiccertificates.CACont
 type completedConfig struct {
 	*Config
 
-	//===========================================================================
+	// ===========================================================================
 	// values below here are filled in during completion
-	//===========================================================================
+	// ===========================================================================
 
 	// SharedInformerFactory provides shared informers for resources
 	SharedInformerFactory informers.SharedInformerFactory
@@ -636,6 +636,14 @@ func (c *Config) Complete(informers informers.SharedInformerFactory) CompletedCo
 				return ""
 			})
 		}
+	}
+
+	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) && c.APIServerIDConfig == nil {
+		inClusterConfig, err := restclient.InClusterConfig()
+		if err != nil {
+			klog.Fatalf("cannot determine config for API server lease management: %w", err)
+		}
+		c.APIServerIDConfig = inClusterConfig
 	}
 
 	return CompletedConfig{&completedConfig{c, informers}}
@@ -838,16 +846,7 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 		const apiServerIdentityHookName = "start-generic-apiserver-identity-lease-controller"
 		if !s.isPostStartHookRegistered(apiServerIdentityHookName) {
 			if err := s.AddPostStartHook(apiServerIdentityHookName, func(context PostStartHookContext) error {
-				config := s.APIServerIDConfig
-				if config == nil {
-					inClusterConfig, err := restclient.InClusterConfig()
-					if err != nil {
-						return err
-					}
-					config = inClusterConfig
-				}
-
-				config = restclient.CopyConfig(config)
+				config := restclient.CopyConfig(s.APIServerIDConfig)
 				// use protobuf here because we know the kube-apiserver supports it for leases
 				config.ContentConfig.ContentType = "application/vnd.kubernetes.protobuf"
 
