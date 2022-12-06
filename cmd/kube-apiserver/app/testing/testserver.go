@@ -36,6 +36,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
+	genericapiserver "k8s.io/apiserver/pkg/server"
 	serveroptions "k8s.io/apiserver/pkg/server/options"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/apiserver/pkg/storageversion"
@@ -43,7 +44,6 @@ import (
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/util/cert"
 	"k8s.io/klog/v2"
-	"k8s.io/kube-aggregator/pkg/apiserver"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app/options"
 	"k8s.io/kubernetes/cmd/kubeadm/app/util/pkiutil"
@@ -284,7 +284,7 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 		if instanceOptions.StorageVersionWrapFunc != nil {
 			// We hardcode the param instead of having a new instanceOptions field
 			// to avoid confusing users with more options.
-			storageVersionCheck := fmt.Sprintf("poststarthook/%s", apiserver.StorageVersionPostStartHookName)
+			storageVersionCheck := fmt.Sprintf("poststarthook/%s", genericapiserver.StorageVersionPostStartHookName)
 			req.Param("exclude", storageVersionCheck)
 		}
 		result := req.Do(context.TODO())
