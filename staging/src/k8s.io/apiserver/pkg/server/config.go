@@ -852,15 +852,13 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 		}
 	}
 
-
-
 	var apiServerIDClient kubernetes.Interface
 	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
-			client, err := kubernetes.NewForConfig(s.APIServerIDConfig)
+		client, err := kubernetes.NewForConfig(s.APIServerIDConfig)
 		if err != nil {
 			return nil, err
 		}
-	apiServerIDClient = client
+		apiServerIDClient = client
 	}
 
 	// this lives here because all API servers need identities, not just the Kube API server
