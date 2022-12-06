@@ -641,7 +641,7 @@ func (c *Config) Complete(informers informers.SharedInformerFactory) CompletedCo
 	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) && c.APIServerIDConfig == nil {
 		inClusterConfig, err := restclient.InClusterConfig()
 		if err != nil {
-			klog.Fatalf("cannot determine config for API server lease management: %w", err)
+			klog.Fatalf("cannot determine config for API server lease management: %v", err)
 		}
 		c.APIServerIDConfig = inClusterConfig
 	}
