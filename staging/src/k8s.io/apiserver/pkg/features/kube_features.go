@@ -179,7 +179,8 @@ const (
 	// Enables server-side field validation.
 	ServerSideFieldValidation featuregate.Feature = "ServerSideFieldValidation"
 
-	// owner: @caesarxuchao @roycaihw
+	// owner: @andrewsykim @enj
+	// kep: https://kep.k8s.io/2339
 	// alpha: v1.20
 	//
 	// Enable the storage version API.
