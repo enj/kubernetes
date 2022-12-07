@@ -44,7 +44,10 @@ func NewDownloader() Downloader {
 
 func (s *Downloader) handlerWithUser(handler http.Handler, info user.Info) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		req = req.WithContext(request.WithUser(req.Context(), info))
+		ctx := req.Context()
+		ctx = request.WithUser(ctx, info)
+		ctx = request.WithRequestInfo(ctx, &request.RequestInfo{IsResourceRequest: false})
+		req = req.WithContext(ctx)
 		handler.ServeHTTP(w, req)
 	})
 }

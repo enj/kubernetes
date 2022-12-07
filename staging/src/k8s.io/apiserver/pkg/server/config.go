@@ -387,7 +387,7 @@ func NewConfig(codecs serializer.CodecFactory) *Config {
 
 	return &Config{
 		Serializer:                  codecs,
-		BuildHandlerChainFunc:       DefaultBuildHandlerChain,
+		BuildHandlerChainFunc:       BuildHandlerChainWithStorageVersionPrecondition,
 		HandlerChainWaitGroup:       new(utilwaitgroup.SafeWaitGroup),
 		LegacyAPIGroupPrefixes:      sets.NewString(DefaultLegacyAPIPrefix),
 		DisabledPostStartHooks:      sets.NewString(),
@@ -908,8 +908,7 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 	}
 
 	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.StorageVersionAPI) &&
-		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) &&
-		!s.StorageVersionManager.Completed() {
+		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
 		if !s.isPostStartHookRegistered(StorageVersionPostStartHookName) {
 			// spawn a goroutine in every api server to update storage version for all built-in resources
 			if err := s.AddPostStartHook(StorageVersionPostStartHookName, func(hookContext PostStartHookContext) error {
@@ -995,22 +994,20 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 	return s, nil
 }
 
-func DefaultBuildHandlerChain(apiHandler http.Handler, c *Config) http.Handler {
-	handler := apiHandler
-
-	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.StorageVersionAPI) &&
-		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
-		// Add StorageVersionPrecondition handler to all generic api servers
-		// The handler will block write requests to built-in resources until the
-		// target resources' storage versions are up-to-date.
-
-		// WithStorageVersionPrecondition needs the WithRequestInfo to run first
-
-		// TODO(enj): grant aggregated API servers the RBAC needed for this
-		handler = genericapifilters.WithStorageVersionPrecondition(handler, c.StorageVersionManager, c.Serializer)
+func BuildHandlerChainWithStorageVersionPrecondition(apiHandler http.Handler, c *Config) http.Handler {
+	sv := utilfeature.DefaultFeatureGate.Enabled(genericfeatures.StorageVersionAPI) &&
+		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity)
+	if !sv {
+		return DefaultBuildHandlerChain(apiHandler, c)
 	}
 
-	handler = filterlatency.TrackCompleted(handler)
+	// WithStorageVersionPrecondition needs the WithRequestInfo to run first
+	handler := genericapifilters.WithStorageVersionPrecondition(apiHandler, c.StorageVersionManager, c.Serializer)
+	return DefaultBuildHandlerChain(handler, c)
+}
+
+func DefaultBuildHandlerChain(apiHandler http.Handler, c *Config) http.Handler {
+	handler := filterlatency.TrackCompleted(apiHandler)
 	handler = genericapifilters.WithAuthorization(handler, c.Authorization.Authorizer, c.Serializer)
 	handler = filterlatency.TrackStarted(handler, c.TracerProvider, "authorization")
 

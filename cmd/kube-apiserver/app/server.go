@@ -30,8 +30,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"k8s.io/apiserver/pkg/storageversion"
-
 	oteltrace "go.opentelemetry.io/otel/trace"
 
 	extensionsapiserver "k8s.io/apiextensions-apiserver/pkg/apiserver"
@@ -488,7 +486,7 @@ func buildGenericConfig(
 	}
 	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.StorageVersionAPI) &&
 		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
-		genericConfig.StorageVersionManager = storageversion.NewNoOpManager() // we handle this ourselves in the aggregator
+		genericConfig.BuildHandlerChainFunc = genericapiserver.DefaultBuildHandlerChain // we handle this ourselves in the aggregator
 	}
 
 	return

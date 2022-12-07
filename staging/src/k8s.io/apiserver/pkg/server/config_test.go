@@ -312,7 +312,7 @@ func TestAuthenticationAuditAnnotationsDefaultChain(t *testing.T) {
 		TracerProvider:        tracing.NewNoopTracerProvider(),
 	}
 
-	h := DefaultBuildHandlerChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := BuildHandlerChainWithStorageVersionPrecondition(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// confirm this is a no-op
 		if r.Context() != audit.WithAuditContext(r.Context()) {
 			t.Error("unexpected double wrapping of context")

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"runtime/debug"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -55,6 +56,7 @@ func WithStorageVersionPrecondition(handler http.Handler, svm storageversion.Man
 		ctx := req.Context()
 		requestInfo, found := request.RequestInfoFrom(ctx)
 		if !found {
+			debug.PrintStack()
 			responsewriters.InternalError(w, req, errors.New("no RequestInfo found in the context"))
 			return
 		}
@@ -106,6 +108,7 @@ func WithStorageVersionPrecondition(handler http.Handler, svm storageversion.Man
 			return
 		}
 
+		debug.PrintStack()
 		gv := schema.GroupVersion{requestInfo.APIGroup, requestInfo.APIVersion}
 		responsewriters.ErrorNegotiated(apierrors.NewServiceUnavailable(fmt.Sprintf("wait for storage version registration to complete for resource: %v, last seen error: %v", gr, svm.LastUpdateError(gr))), s, gv, w, req)
 	})

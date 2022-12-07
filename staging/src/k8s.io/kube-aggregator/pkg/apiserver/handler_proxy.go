@@ -20,6 +20,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -103,6 +104,7 @@ func proxyError(w http.ResponseWriter, req *http.Request, error string, code int
 	ctx := req.Context()
 	info, ok := genericapirequest.RequestInfoFrom(ctx)
 	if !ok {
+		debug.PrintStack()
 		klog.Warning("no RequestInfo found in the context")
 		return
 	}

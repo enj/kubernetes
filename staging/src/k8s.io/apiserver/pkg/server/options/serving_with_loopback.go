@@ -19,8 +19,6 @@ package options
 import (
 	"fmt"
 
-	"github.com/google/uuid"
-
 	"k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	"k8s.io/client-go/rest"
@@ -63,7 +61,7 @@ func (s *SecureServingOptionsWithLoopback) ApplyTo(secureServingInfo **server.Se
 	// Write to the front of SNICerts so that this overrides any other certs with the same name
 	(*secureServingInfo).SNICerts = append([]dynamiccertificates.SNICertKeyContentProvider{certProvider}, (*secureServingInfo).SNICerts...)
 
-	secureLoopbackClientConfig, err := (*secureServingInfo).NewLoopbackClientConfig(uuid.New().String(), certPem)
+	secureLoopbackClientConfig, err := (*secureServingInfo).NewLoopbackClientConfig("hello", certPem)
 	switch {
 	// if we failed and there's no fallback loopback client config, we need to fail
 	case err != nil && *loopbackClientConfig == nil:
