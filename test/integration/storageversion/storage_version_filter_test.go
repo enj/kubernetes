@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/features"
+	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/storageversion"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/dynamic"
@@ -152,25 +153,29 @@ func TestStorageVersionBootstrap(t *testing.T) {
 	etcd.CreateTestCRDs(t, apiextensionsclientset.NewForConfigOrDie(server.ClientConfig), false, etcd.GetCustomResourceDefinitionData()[0])
 	server.TearDownFn()
 
+	originalStorageVersionManager := genericapiserver.StorageVersionManager
+	t.Cleanup(func() {
+		genericapiserver.StorageVersionManager = originalStorageVersionManager
+	})
 	startUpdateSV := make(chan struct{})
 	finishUpdateSV := make(chan struct{})
 	updateFinished := make(chan struct{})
 	completed := make(chan struct{})
-	wrapperFunc := func(delegate storageversion.Manager) storageversion.Manager {
-		return &wrappedStorageVersionManager{
-			startUpdateSV:  startUpdateSV,
-			finishUpdateSV: finishUpdateSV,
-			updateFinished: updateFinished,
-			completed:      completed,
-			Manager:        delegate,
-		}
+	wrappedSVM := &wrappedStorageVersionManager{
+		startUpdateSV:  startUpdateSV,
+		finishUpdateSV: finishUpdateSV,
+		updateFinished: updateFinished,
+		completed:      completed,
+		Manager:        originalStorageVersionManager(),
 	}
+	genericapiserver.StorageVersionManager = func() storageversion.Manager { return wrappedSVM }
+
 	// Restart api server, enable the storage version API and the feature gates.
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StorageVersionAPI, true)()
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.APIServerIdentity, true)()
 	server = kubeapiservertesting.StartTestServerOrDie(t,
 		&kubeapiservertesting.TestServerInstanceOptions{
-			StorageVersionWrapFunc: wrapperFunc,
+			IgnoreStorageVersionHealthz: true,
 		},
 		[]string{
 			// force enable all resources to ensure that the storage updates can handle cross group resources.

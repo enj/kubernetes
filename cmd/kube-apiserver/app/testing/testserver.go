@@ -63,6 +63,9 @@ type TearDownFunc func()
 type TestServerInstanceOptions struct {
 	// Enable cert-auth for the kube-apiserver
 	EnableCertAuth bool
+
+	// Used in some tests that need to override genericapiserver.StorageVersionManager
+	IgnoreStorageVersionHealthz bool
 }
 
 // TestServer return values supplied by kube-test-ApiServer
@@ -275,7 +278,7 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 		req := client.CoreV1().RESTClient().Get().AbsPath("/healthz")
 		// The storage version bootstrap test wraps the storage version post-start
 		// hook, so the hook won't become health when the server bootstraps
-		if instanceOptions.StorageVersionWrapFunc != nil {
+		if instanceOptions.IgnoreStorageVersionHealthz {
 			// We hardcode the param instead of having a new instanceOptions field
 			// to avoid confusing users with more options.
 			storageVersionCheck := fmt.Sprintf("poststarthook/%s", genericapiserver.StorageVersionPostStartHookName)

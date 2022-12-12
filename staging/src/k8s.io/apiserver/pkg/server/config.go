@@ -124,6 +124,10 @@ var (
 	// IdentityLeaseGetHostname is the function used to determine the hostname of an api server.
 	// IdentityLeaseGetHostname is exposed so integration tests can tune this value.
 	IdentityLeaseGetHostname = os.Hostname
+
+	// StorageVersionManager is the function used to get the default storage manager implementation.
+	// StorageVersionManager is exposed so integration tests can tune this value.
+	StorageVersionManager = storageversion.NewDefaultManager
 )
 
 // Config is a structure used to configure a GenericAPIServer.
@@ -384,10 +388,10 @@ func NewConfig(codecs serializer.CodecFactory) *Config {
 		id = "kube-apiserver-" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(hash[:16]))
 	}
 
-	var sm storageversion.Manager
+	var svm storageversion.Manager
 	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.StorageVersionAPI) &&
 		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
-		sm = storageversion.NewDefaultManager()
+		svm = StorageVersionManager()
 	}
 
 	lifecycleSignals := newLifecycleSignals()
@@ -437,7 +441,7 @@ func NewConfig(codecs serializer.CodecFactory) *Config {
 		StorageObjectCountTracker: flowcontrolrequest.NewStorageObjectCountTracker(),
 
 		APIServerID:           id,
-		StorageVersionManager: sm,
+		StorageVersionManager: svm,
 		TracerProvider:        tracing.NewNoopTracerProvider(),
 	}
 }
