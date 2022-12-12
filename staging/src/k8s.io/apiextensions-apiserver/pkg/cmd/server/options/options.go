@@ -25,9 +25,6 @@ import (
 
 	"github.com/spf13/pflag"
 	oteltrace "go.opentelemetry.io/otel/trace"
-	genericfeatures "k8s.io/apiserver/pkg/features"
-	"k8s.io/apiserver/pkg/storageversion"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
 
 	v1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
@@ -113,10 +110,6 @@ func (o CustomResourceDefinitionsServerOptions) Config() (*apiserver.Config, err
 	crdRESTOptionsGetter, err := NewCRDRESTOptionsGetter(*o.RecommendedOptions.Etcd)
 	if err != nil {
 		return nil, err
-	}
-	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.StorageVersionAPI) &&
-		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
-		serverConfig.StorageVersionManager = storageversion.NewNoOpManager() // TODO fix
 	}
 	config := &apiserver.Config{
 		GenericConfig: serverConfig,

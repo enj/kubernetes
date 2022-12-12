@@ -30,7 +30,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"k8s.io/apiserver/pkg/storageversion"
 
 	oteltrace "go.opentelemetry.io/otel/trace"
 
@@ -485,10 +484,6 @@ func buildGenericConfig(
 	}
 	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
 		genericConfig.APIServerIDConfig = genericConfig.LoopbackClientConfig // kube-apiserver talks back to itself to manage identity leases
-	}
-	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.StorageVersionAPI) &&
-		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
-		genericConfig.StorageVersionManager = storageversion.NewNoOpManager() // we handle this ourselves in the aggregator
 	}
 
 	return

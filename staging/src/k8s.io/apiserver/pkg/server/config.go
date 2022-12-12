@@ -383,6 +383,13 @@ func NewConfig(codecs serializer.CodecFactory) *Config {
 		hash := sha256.Sum256([]byte(hostname))
 		id = "kube-apiserver-" + strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(hash[:16]))
 	}
+
+	var sm storageversion.Manager
+	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.StorageVersionAPI) &&
+		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
+		sm = storageversion.NewDefaultManager()
+	}
+
 	lifecycleSignals := newLifecycleSignals()
 
 	return &Config{
@@ -430,7 +437,7 @@ func NewConfig(codecs serializer.CodecFactory) *Config {
 		StorageObjectCountTracker: flowcontrolrequest.NewStorageObjectCountTracker(),
 
 		APIServerID:           id,
-		StorageVersionManager: storageversion.NewDefaultManager(),
+		StorageVersionManager: sm,
 		TracerProvider:        tracing.NewNoopTracerProvider(),
 	}
 }
@@ -909,8 +916,7 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 	}
 
 	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.StorageVersionAPI) &&
-		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) &&
-		!s.StorageVersionManager.Completed() {
+		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
 		if !s.isPostStartHookRegistered(StorageVersionPostStartHookName) {
 			// spawn a goroutine in every api server to update storage version for all built-in resources
 			if err := s.AddPostStartHook(StorageVersionPostStartHookName, func(hookContext PostStartHookContext) error {
@@ -997,19 +1003,13 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 }
 
 func DefaultBuildHandlerChain(apiHandler http.Handler, c *Config) http.Handler {
-	handler := apiHandler
-
-	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.StorageVersionAPI) &&
-		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
-		// Add StorageVersionPrecondition handler to all generic api servers
-		// The handler will block write requests to built-in resources until the
-		// target resources' storage versions are up-to-date.
-
-		// WithStorageVersionPrecondition needs the WithRequestInfo to run first
-
-		// TODO(enj): grant aggregated API servers the RBAC needed for this
-		handler = genericapifilters.WithStorageVersionPrecondition(handler, c.StorageVersionManager, c.Serializer)
-	}
+	// Add StorageVersionPrecondition handler to all generic api servers
+	// The handler will block write requests to built-in resources until the
+	// target resources' storage versions are up-to-date.
+	// TODO(enj): grant aggregated API servers the RBAC needed for this
+	handler := filterlatency.TrackCompleted(apiHandler)
+	handler = genericapifilters.WithStorageVersionPrecondition(handler, c.StorageVersionManager, c.Serializer)
+	handler = filterlatency.TrackStarted(handler, c.TracerProvider, "storageversionprecondition")
 
 	handler = filterlatency.TrackCompleted(handler)
 	handler = genericapifilters.WithAuthorization(handler, c.Authorization.Authorizer, c.Serializer)

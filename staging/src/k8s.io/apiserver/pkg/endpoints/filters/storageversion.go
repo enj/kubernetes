@@ -28,7 +28,9 @@ import (
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
 	"k8s.io/apiserver/pkg/endpoints/request"
+	genericfeatures "k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/storageversion"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	_ "k8s.io/component-base/metrics/prometheus/workqueue" // for workqueue metric registration
 	"k8s.io/klog/v2"
 )
@@ -42,11 +44,15 @@ import (
 // 5. write requests to the lease API in kube-system namespace,
 // 6. resources whose StorageVersion is not pending update, including non-persisted resources.
 func WithStorageVersionPrecondition(handler http.Handler, svm storageversion.Manager, s runtime.NegotiatedSerializer) http.Handler {
-	if svm == nil {
+	enabled := utilfeature.DefaultFeatureGate.Enabled(genericfeatures.StorageVersionAPI) &&
+		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity)
+
+	if svm == nil || !enabled {
 		// TODO(roycaihw): switch to warning after the feature graduate to beta/GA
 		klog.V(2).Infof("Storage Version barrier is disabled")
 		return handler
 	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if svm.Completed() {
 			handler.ServeHTTP(w, req)

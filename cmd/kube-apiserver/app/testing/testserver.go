@@ -39,7 +39,6 @@ import (
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	serveroptions "k8s.io/apiserver/pkg/server/options"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
-	"k8s.io/apiserver/pkg/storageversion"
 	"k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/util/cert"
@@ -64,8 +63,6 @@ type TearDownFunc func()
 type TestServerInstanceOptions struct {
 	// Enable cert-auth for the kube-apiserver
 	EnableCertAuth bool
-	// Wrap the storage version interface of the created server's generic server.
-	StorageVersionWrapFunc func(storageversion.Manager) storageversion.Manager
 }
 
 // TestServer return values supplied by kube-test-ApiServer
@@ -247,9 +244,6 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 	server, err := app.CreateServerChain(completedOptions)
 	if err != nil {
 		return result, fmt.Errorf("failed to create server chain: %v", err)
-	}
-	if instanceOptions.StorageVersionWrapFunc != nil {
-		server.GenericAPIServer.StorageVersionManager = instanceOptions.StorageVersionWrapFunc(server.GenericAPIServer.StorageVersionManager)
 	}
 
 	errCh = make(chan error)

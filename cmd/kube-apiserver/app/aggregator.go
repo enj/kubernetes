@@ -25,7 +25,6 @@ import (
 	"strings"
 	"sync"
 
-	"k8s.io/apiserver/pkg/storageversion"
 	"k8s.io/klog/v2"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -69,11 +68,6 @@ func createAggregatorConfig(
 	// prevent generic API server from installing the OpenAPI handler. Aggregator server
 	// has its own customized OpenAPI handler.
 	genericConfig.SkipOpenAPIInstallation = true
-
-	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.StorageVersionAPI) &&
-		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {
-		genericConfig.StorageVersionManager = storageversion.NewDefaultManager()
-	}
 
 	// copy the etcd options so we don't mutate originals.
 	// we assume that the etcd options have been completed already.  avoid messing with anything outside
