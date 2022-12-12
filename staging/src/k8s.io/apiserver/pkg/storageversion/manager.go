@@ -18,6 +18,7 @@ package storageversion
 
 import (
 	"fmt"
+	"runtime/debug"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -263,11 +264,15 @@ func (s *defaultManager) LastUpdateError(gr schema.GroupResource) error {
 
 // setComplete marks the completion of updating StorageVersions. No write requests need to be blocked anymore.
 func (s *defaultManager) setComplete() {
+	klog.Errorf("COMPLETED >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
 	s.completed.Store(true)
 }
 
 // Completed returns if updating StorageVersions has completed.
 func (s *defaultManager) Completed() bool {
+	if !s.completed.Load() && false {
+		debug.PrintStack()
+	}
 	return s.completed.Load()
 }
 

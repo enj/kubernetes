@@ -37,6 +37,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
+	"k8s.io/klog/v2"
 	apiregistrationv1 "k8s.io/kube-aggregator/pkg/apis/apiregistration/v1"
 	aggregatorclient "k8s.io/kube-aggregator/pkg/client/clientset_generated/clientset"
 	kubeapiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
@@ -53,10 +54,12 @@ type wrappedStorageVersionManager struct {
 }
 
 func (w *wrappedStorageVersionManager) UpdateStorageVersions(loopbackClientConfig *rest.Config, serverID string) {
+	klog.Error("TEST CALLLED ------------------------------------------------------------>>>>>")
 	<-w.startUpdateSV
 	w.Manager.UpdateStorageVersions(loopbackClientConfig, serverID)
 	close(w.updateFinished)
 	<-w.finishUpdateSV
+	klog.Error("TEST ENDEDD ------------------------------------------------------------>>>>>")
 }
 
 func (w *wrappedStorageVersionManager) Completed() bool {
@@ -214,8 +217,15 @@ func TestStorageVersionBootstrap(t *testing.T) {
 	// After the storage versions are updated, even though the
 	// StorageVersionManager.Complete() still returns false, the filter
 	// should not block any request.
+	t.Log("GOT HERE >>>>>")
 	close(startUpdateSV)
-	<-updateFinished
+	select {
+	case <-updateFinished:
+		t.Log("BUG FIXED >>>>>")
+	case <-time.After(time.Minute):
+		t.Log("STUCKK >>>>>>")
+		<-updateFinished
+	}
 	t.Run("after storage version update", func(t *testing.T) {
 		t.Run("write to k8s native API object should pass", func(t *testing.T) {
 			testBuiltinResourceWrite(t, cfg, false)
