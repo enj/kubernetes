@@ -1010,7 +1010,8 @@ func DefaultBuildHandlerChain(apiHandler http.Handler, c *Config) http.Handler {
 	// Add StorageVersionPrecondition handler to all generic api servers
 	// The handler will block write requests to built-in resources until the
 	// target resources' storage versions are up-to-date.
-	// TODO(enj): grant aggregated API servers the RBAC needed for this
+	// TODO(enj): create cluster role to grant aggregated API servers the necessary RBAC:
+	//  get and create on storageversions, update on storageversions/status
 	handler := filterlatency.TrackCompleted(apiHandler)
 	handler = genericapifilters.WithStorageVersionPrecondition(handler, c.StorageVersionManager, c.Serializer)
 	handler = filterlatency.TrackStarted(handler, c.TracerProvider, "storageversionprecondition")
