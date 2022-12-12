@@ -927,7 +927,7 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 				// Wait for api server identity to exist first before updating storage
 				// versions, to avoid storage version GC accidentally garbage-collecting
 				// storage versions.
-				if err := wait.PollImmediateUntil(100*time.Millisecond, func() (bool, error) {
+				if err := wait.PollImmediateUntil(time.Second, func() (bool, error) {
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer cancel()
 
@@ -936,9 +936,9 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 						return false, nil
 					}
 					if err != nil {
-						return false, err
+						klog.ErrorS(err, "failed to get api server identity lease", "APIServerID", s.APIServerID)
 					}
-					return true, nil
+					return err == nil, nil
 				}, hookContext.StopCh); err != nil {
 					return fmt.Errorf("failed to wait for api server identity lease %s to be created: %v",
 						s.APIServerID, err)
