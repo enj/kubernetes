@@ -1012,6 +1012,7 @@ func DefaultBuildHandlerChain(apiHandler http.Handler, c *Config) http.Handler {
 	// target resources' storage versions are up-to-date.
 	// TODO(enj): create cluster role to grant aggregated API servers the necessary RBAC:
 	//  get and create on storageversions, update on storageversions/status
+	//  or should this just be documented since servers should be isolated to resourceNames?
 	handler := filterlatency.TrackCompleted(apiHandler)
 	handler = genericapifilters.WithStorageVersionPrecondition(handler, c.StorageVersionManager, c.Serializer)
 	handler = filterlatency.TrackStarted(handler, c.TracerProvider, "storageversionprecondition")
