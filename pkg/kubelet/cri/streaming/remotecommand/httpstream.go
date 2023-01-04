@@ -17,6 +17,7 @@ limitations under the License.
 package remotecommand
 
 import (
+	gocontext "context"
 	"encoding/json"
 	"errors"
 	"fmt"
