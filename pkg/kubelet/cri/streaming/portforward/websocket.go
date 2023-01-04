@@ -142,7 +142,7 @@ func handleWebSocketStreams(req *http.Request, w http.ResponseWriter, portForwar
 		uid:         uid,
 		forwarder:   portForwarder,
 	}
-	h.run()
+	h.run(req.Context()) // TODO confirm this is correct
 
 	return nil
 }
@@ -167,7 +167,7 @@ type websocketStreamHandler struct {
 
 // run invokes the websocketStreamHandler's forwarder.PortForward
 // function for the given stream pair.
-func (h *websocketStreamHandler) run() {
+func (h *websocketStreamHandler) run(ctx context.Context) {
 	wg := sync.WaitGroup{}
 	wg.Add(len(h.streamPairs))
 
@@ -175,15 +175,14 @@ func (h *websocketStreamHandler) run() {
 		p := pair
 		go func() {
 			defer wg.Done()
-			h.portForward(p)
+			h.portForward(ctx, p)
 		}()
 	}
 
 	wg.Wait()
 }
 
-func (h *websocketStreamHandler) portForward(p *websocketStreamPair) {
-	ctx := context.Background()
+func (h *websocketStreamHandler) portForward(ctx context.Context, p *websocketStreamPair) {
 	defer p.dataStream.Close()
 	defer p.errorStream.Close()
 

@@ -63,7 +63,7 @@ func handleHTTPStreams(req *http.Request, w http.ResponseWriter, portForwarder P
 		uid:                   uid,
 		forwarder:             portForwarder,
 	}
-	h.run()
+	h.run(req.Context()) // TODO confirm this is correct
 
 	return nil
 }
@@ -140,7 +140,7 @@ func (h *httpStreamHandler) getStreamPair(requestID string) (*httpStreamPair, bo
 func (h *httpStreamHandler) monitorStreamPair(p *httpStreamPair, timeout <-chan time.Time) {
 	select {
 	case <-timeout:
-		err := fmt.Errorf("(conn=%v, request=%s) timed out waiting for streams", h.conn, p.requestID)
+		err := fmt.Errorf("(conn=%p, request=%s) timed out waiting for streams", h.conn, p.requestID)
 		utilruntime.HandleError(err)
 		p.printError(err.Error())
 	case <-p.complete:
@@ -232,7 +232,7 @@ Loop:
 				utilruntime.HandleError(errors.New(msg))
 				p.printError(msg)
 			} else if complete {
-				go h.portForward(p)
+				go h.portForward(ctx, p)
 			}
 		}
 	}
@@ -240,8 +240,7 @@ Loop:
 
 // portForward invokes the httpStreamHandler's forwarder.PortForward
 // function for the given stream pair.
-func (h *httpStreamHandler) portForward(p *httpStreamPair) {
-	ctx := context.Background()
+func (h *httpStreamHandler) portForward(ctx context.Context, p *httpStreamPair) {
 	defer p.dataStream.Close()
 	defer p.errorStream.Close()
 
