@@ -17,7 +17,7 @@ limitations under the License.
 package remotecommand
 
 import (
-	gocontext "context"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -410,7 +410,7 @@ WaitForStreams:
 // supportsTerminalResizing returns false because v1ProtocolHandler doesn't support it.
 func (*v1ProtocolHandler) supportsTerminalResizing() bool { return false }
 
-func handleResizeEvents(ctx gocontext.Context, stream io.Reader, channel chan<- remotecommand.TerminalSize) {
+func handleResizeEvents(ctx context.Context, stream io.Reader, channel chan<- remotecommand.TerminalSize) {
 	defer runtime.HandleCrash()
 	defer close(channel)
 
