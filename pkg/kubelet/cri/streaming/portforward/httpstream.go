@@ -63,7 +63,7 @@ func handleHTTPStreams(req *http.Request, w http.ResponseWriter, portForwarder P
 		uid:                   uid,
 		forwarder:             portForwarder,
 	}
-	h.run(req.Context()) // TODO confirm this is correct
+	h.run(req.Context())
 
 	return nil
 }
