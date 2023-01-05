@@ -210,13 +210,13 @@ func (h *httpStreamHandler) requestID(stream httpstream.Stream) string {
 // run is the main loop for the httpStreamHandler. It processes new
 // streams, invoking portForward for each complete stream pair. The loop exits
 // when the httpstream.Connection is closed.
-func (h *httpStreamHandler) run() {
-	klog.V(5).InfoS("Connection waiting for port forward streams", "connection", h.conn)
+func (h *httpStreamHandler) run(ctx context.Context) {
+	klog.V(5).InfoS("Connection waiting for port forward streams")
 Loop:
 	for {
 		select {
 		case <-h.conn.CloseChan():
-			klog.V(5).InfoS("Connection upgraded connection closed", "connection", h.conn)
+			klog.V(5).InfoS("Connection upgraded connection closed")
 			break Loop
 		case stream := <-h.streamChan:
 			requestID := h.requestID(stream)
