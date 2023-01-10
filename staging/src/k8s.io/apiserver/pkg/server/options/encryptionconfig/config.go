@@ -138,7 +138,8 @@ type EncryptionConfiguration struct {
 }
 
 // LoadEncryptionConfig parses and validates the encryption config specified by filepath.
-// It may launch multiple go routines whose lifecycle is controlled by the server's lifecycle ctx.
+// It may launch multiple go routines whose lifecycle is controlled by ctx.
+// In case of an error, the caller is responsible for canceling ctx to clean up any go routines that may have been launched.
 // If reload is true, or KMS v2 plugins are used with no KMS v1 plugins, the returned slice of health checkers will always be of length 1.
 func LoadEncryptionConfig(ctx context.Context, filepath string, reload bool) (*EncryptionConfiguration, error) {
 	config, contentHash, err := loadConfig(filepath, reload)
@@ -165,9 +166,12 @@ func LoadEncryptionConfig(ctx context.Context, filepath string, reload bool) (*E
 		HealthChecks:              kmsHealthChecks,
 		EncryptionFileContentHash: contentHash,
 		KMSCloseGracePeriod:       2 * kmsUsed.kmsTimeoutSum,
-	}, err
+	}, nil
 }
 
+// getTransformerOverridesAndKMSPluginHealthzCheckers creates the set of transformers and KMS healthz checks based on the given config.
+// It may launch multiple go routines whose lifecycle is controlled by ctx.
+// In case of an error, the caller is responsible for canceling ctx to clean up any go routines that may have been launched.
 func getTransformerOverridesAndKMSPluginHealthzCheckers(ctx context.Context, config *apiserverconfig.EncryptionConfiguration) (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, *kmsState, error) {
 	var kmsHealthChecks []healthz.HealthChecker
 	transformers, probes, kmsUsed, err := getTransformerOverridesAndKMSPluginProbes(ctx, config)
@@ -186,6 +190,9 @@ type healthChecker interface {
 	toHealthzCheck(idx int) healthz.HealthChecker
 }
 
+// getTransformerOverridesAndKMSPluginProbes creates the set of transformers and KMS probes based on the given config.
+// It may launch multiple go routines whose lifecycle is controlled by ctx.
+// In case of an error, the caller is responsible for canceling ctx to clean up any go routines that may have been launched.
 func getTransformerOverridesAndKMSPluginProbes(ctx context.Context, config *apiserverconfig.EncryptionConfiguration) (map[schema.GroupResource]value.Transformer, []healthChecker, *kmsState, error) {
 	resourceToPrefixTransformer := map[schema.GroupResource][]value.PrefixTransformer{}
 	var probes []healthChecker
@@ -328,6 +335,9 @@ func loadConfig(filepath string, reload bool) (*apiserverconfig.EncryptionConfig
 	return config, computeEncryptionConfigHash(data), validation.ValidateEncryptionConfiguration(config, reload).ToAggregate()
 }
 
+// prefixTransformersAndProbes creates the set of transformers and KMS probes based on the given resource config.
+// It may launch multiple go routines whose lifecycle is controlled by ctx.
+// In case of an error, the caller is responsible for canceling ctx to clean up any go routines that may have been launched.
 func prefixTransformersAndProbes(ctx context.Context, config apiserverconfig.ResourceConfiguration) ([]value.PrefixTransformer, []healthChecker, *kmsState, error) {
 	var transformers []value.PrefixTransformer
 	var probes []healthChecker
@@ -505,6 +515,9 @@ func (s *kmsState) accumulate(other *kmsState) {
 	s.kmsTimeoutSum += other.kmsTimeoutSum
 }
 
+// kmsPrefixTransformer creates a KMS transformer and probe based on the given KMS config.
+// It may launch multiple go routines whose lifecycle is controlled by ctx.
+// In case of an error, the caller is responsible for canceling ctx to clean up any go routines that may have been launched.
 func kmsPrefixTransformer(ctx context.Context, config *apiserverconfig.KMSConfiguration) (value.PrefixTransformer, healthChecker, *kmsState, error) {
 	kmsName := config.Name
 	switch config.APIVersion {
