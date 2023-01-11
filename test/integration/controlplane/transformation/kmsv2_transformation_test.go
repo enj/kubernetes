@@ -322,6 +322,10 @@ resources:
     - customresourcedefinitions.apiextensions.k8s.io
     - pandas.awesome.bears.com
     - apiservices.apiregistration.k8s.io
+    - *.*  # encrypt everything
+    - *.awesome.bears.com  # encrypt everything in this group
+    - * # valid way to encrypt all resources in the core group
+    - foos.* # not valid
     providers:
     - kms:
        apiVersion: v2

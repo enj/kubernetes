@@ -739,9 +739,20 @@ func (s StaticTransformers) TransformerForResource(resource schema.GroupResource
 }
 
 func transformerFromOverrides(transformerOverrides map[schema.GroupResource]value.Transformer, resource schema.GroupResource) value.Transformer {
-	transformer := transformerOverrides[resource]
-	if transformer == nil {
-		return identity.NewEncryptCheckTransformer()
+	if encryptAllTransformer, ok := transformerOverrides[schema.GroupResource{Group: "*", Resource: "*"}]; ok {
+		return encryptAllTransformer
 	}
-	return transformer
+
+	transformer := transformerOverrides[resource]
+	if transformer != nil {
+		return transformer
+	}
+
+	// gone: newResource := schema.GroupResource{Group: resource.Group, Resource: "*"}
+	// no need: check the map for it
+
+	// check the map for *.*
+
+	// finally
+	return identity.NewEncryptCheckTransformer()
 }

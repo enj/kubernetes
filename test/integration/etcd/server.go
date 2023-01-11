@@ -191,6 +191,7 @@ func StartRealAPIServerOrDie(t *testing.T, configFuncs ...func(*options.ServerRu
 		t.Fatal(err)
 	}
 
+	// here is the CRD stuff
 	// create CRDs so we can make sure that custom resources do not get lost
 	CreateTestCRDs(t, apiextensionsclientset.NewForConfigOrDie(kubeClientConfig), false, GetCustomResourceDefinitionData()...)
 

@@ -27,6 +27,13 @@ import (
 // GetEtcdStorageData returns etcd data for all persisted objects.
 // It is exported so that it can be reused across multiple tests.
 // It returns a new map on every invocation to prevent different tests from mutating shared state.
+// this has one of every resource
+// unit tests for all the validation on config errors
+// integration test would set *.*
+// create one of everything using this data (including CRDs and CRs)
+// use the etcd client directly, and do a recursive get at the root
+// give me everything that matches /* and then check all have the encrypted prefix
+// docs should state that you could have performance impact
 func GetEtcdStorageData() map[schema.GroupVersionResource]StorageData {
 	return GetEtcdStorageDataForNamespace("etcdstoragepathtestnamespace")
 }
