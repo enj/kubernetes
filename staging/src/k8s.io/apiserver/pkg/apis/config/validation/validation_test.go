@@ -370,6 +370,62 @@ func TestStructure(t *testing.T) {
 					"foo", fmt.Sprintf(duplicateKMSConfigNameErrFmt, "foo")),
 			},
 		},
+		{
+			desc: "config should error when other resources are specified along with *.* at first position",
+			in: &config.EncryptionConfiguration{
+				Resources: []config.ResourceConfiguration{
+					{
+						Resources: []string{
+							"*.*",
+							"secrets",
+						},
+					},
+				},
+			},
+			reload: false,
+			want: field.ErrorList{
+				field.Invalid(
+					root,
+					[]config.ResourceConfiguration{
+						{
+							Resources: []string{
+								"*.*",
+								"secrets",
+							},
+						},
+					},
+					encryptAllErrFmt,
+				),
+			},
+		},
+		{
+			desc: "config should error when other resources are specified along with *.* at later position",
+			in: &config.EncryptionConfiguration{
+				Resources: []config.ResourceConfiguration{
+					{
+						Resources: []string{
+							"secrets",
+							"*.*",
+						},
+					},
+				},
+			},
+			reload: false,
+			want: field.ErrorList{
+				field.Invalid(
+					root,
+					[]config.ResourceConfiguration{
+						{
+							Resources: []string{
+								"secrets",
+								"*.*",
+							},
+						},
+					},
+					encryptAllErrFmt,
+				),
+			},
+		},
 	}
 
 	for _, tt := range testCases {

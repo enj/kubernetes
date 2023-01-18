@@ -34,13 +34,20 @@ import (
 	"testing"
 	"time"
 
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"golang.org/x/crypto/cryptobyte"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/storage/value"
 	aestransformer "k8s.io/apiserver/pkg/storage/value/encrypt/aes"
 	mock "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/testing/v1beta1"
+	"k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/client-go/dynamic"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	kmsapi "k8s.io/kms/apis/v1beta1"
+	"k8s.io/kubernetes/test/integration"
+	"k8s.io/kubernetes/test/integration/etcd"
 )
 
 const (
@@ -531,6 +538,96 @@ resources:
 	if _, err = test.restClient.CoreV1().ConfigMaps("").List(context.TODO(), metav1.ListOptions{}); err != nil {
 		t.Fatalf("failed to list configmaps, err: %v", err)
 	}
+}
+
+func TestEncryptAll(t *testing.T) {
+	encryptionConfig := `
+kind: EncryptionConfiguration
+apiVersion: apiserver.config.k8s.io/v1
+resources:
+  - resources:
+    - '*.*'
+    providers:
+    - kms:
+        name: encrypt-all-kms-provider
+        cachesize: 1000
+        endpoint: unix:///@encrypt-all-kms-provider.sock		
+`
+
+	t.Run("encrypt all resources", func(t *testing.T) {
+		pluginMock, err := mock.NewBase64Plugin("@encrypt-all-kms-provider.sock")
+		if err != nil {
+			t.Fatalf("failed to create mock of KMS Plugin: %v", err)
+		}
+
+		go pluginMock.Start()
+		if err := mock.WaitForBase64PluginToBeUp(pluginMock); err != nil {
+			t.Fatalf("Failed start plugin, err: %v", err)
+		}
+		defer pluginMock.CleanUp()
+
+		defer featuregatetesting.SetFeatureGateDuringTest(t, feature.DefaultFeatureGate, "AllAlpha", true)()
+		defer featuregatetesting.SetFeatureGateDuringTest(t, feature.DefaultFeatureGate, "AllBeta", true)()
+		test, err := newTransformTest(t, encryptionConfig, false, "", false)
+		if err != nil {
+			t.Fatalf("failed to start KUBE API Server with encryptionConfig")
+		}
+		defer test.cleanUp()
+
+		_, serverResources, err := test.restClient.Discovery().ServerGroupsAndResources()
+		if err != nil {
+			t.Fatal(err)
+		}
+		resources := etcd.GetResources(t, serverResources)
+		client := dynamic.NewForConfigOrDie(test.kubeAPIServer.ClientConfig)
+
+		etcdStorageData := etcd.GetEtcdStorageDataForNamespace(testNamespace)
+		for _, resource := range resources {
+			gvr := resource.Mapping.Resource
+			stub := etcdStorageData[gvr].Stub
+
+			// continue if stub is empty
+			if stub == "" {
+				t.Errorf("skipping resource %s because stub is empty", gvr)
+				continue
+			}
+
+			dynamicClient, obj, err := etcd.JSONToUnstructured(stub, testNamespace, &meta.RESTMapping{
+				Resource:         gvr,
+				GroupVersionKind: gvr.GroupVersion().WithKind(resource.Mapping.GroupVersionKind.Kind),
+				Scope:            resource.Mapping.Scope,
+			}, client)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = dynamicClient.Create(context.Background(), obj, metav1.CreateOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		rawClient, etcdClient, err := integration.GetEtcdClients(test.kubeAPIServer.ServerOpts.Etcd.StorageConfig.Transport)
+		if err != nil {
+			t.Fatalf("failed to create etcd client: %v", err)
+		}
+		// kvClient is a wrapper around rawClient and to avoid leaking goroutines we need to
+		// close the client (which we can do by closing rawClient).
+		defer rawClient.Close()
+
+		response, err := etcdClient.Get(context.Background(), "/", clientv3.WithPrefix())
+		if err != nil {
+			t.Fatalf("failed to retrieve secret from etcd %v", err)
+		}
+
+		// assert that all resources are encrypted
+		wantPrefix := "k8s:enc:kms:v1:encrypt-all-kms-provider:"
+		for _, kv := range response.Kvs {
+			if !bytes.HasPrefix(kv.Value, []byte(wantPrefix)) {
+				t.Fatalf("expected resource %s to be prefixed with %s, but got %s", kv.Key, wantPrefix, kv.Value)
+			}
+		}
+	})
 }
 
 func TestEncryptionConfigHotReloadFileWatch(t *testing.T) {

@@ -42,6 +42,7 @@ const (
 	encryptionConfigNilErr         = "EncryptionConfiguration can't be nil"
 	invalidKMSConfigNameErrFmt     = "invalid KMS provider name %s, must not contain ':'"
 	duplicateKMSConfigNameErrFmt   = "duplicate KMS provider name %s, names must be unique"
+	encryptAllErrFmt               = "no other resources are allowed when encrypting all resources with *.*"
 )
 
 var (
@@ -67,6 +68,52 @@ func ValidateEncryptionConfiguration(c *config.EncryptionConfiguration, reload b
 		allErrs = append(allErrs, field.Required(root, fmt.Sprintf(atLeastOneRequiredErrFmt, root)))
 		return allErrs
 	}
+
+	// check if *.* is present in the resources list
+	encryptAll := false
+	numberOfResources := 0
+	for _, resource := range c.Resources {
+		numberOfResources += len(resource.Resources)
+		for _, res := range resource.Resources {
+			if res == "*.*" {
+				encryptAll = true
+				break
+			}
+		}
+	}
+
+	if encryptAll && numberOfResources > 1 {
+		allErrs = append(
+			allErrs,
+			field.Invalid(
+				root,
+				c.Resources,
+				encryptAllErrFmt,
+			),
+		)
+
+		return allErrs
+	}
+
+	// // validate no other configuration is specified if *.* is present
+	// for i, resource := range c.Resources {
+	// 	if len(resource.Resources) > 1 {
+	// 		for _, res := range resource.Resources {
+	// 			if res == "*.*" {
+	// 				allErrs = append(
+	// 					allErrs,
+	// 					field.Invalid(
+	// 						root.Index(i).Child("resources"),
+	// 						resource.Resources,
+	// 						encryptAllErrFmt,
+	// 					),
+	// 				)
+
+	// 				return allErrs
+	// 			}
+	// 		}
+	// 	}
+	// }
 
 	// kmsProviderNames is used to track config names to ensure they are unique.
 	kmsProviderNames := sets.NewString()
