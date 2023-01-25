@@ -268,12 +268,14 @@ func (c *Config) createLeaseReconciler() reconcilers.EndpointReconciler {
 		klog.Fatalf("Error creating storage factory config: %v", err)
 	}
 
-	// assign the transformers to the apiServerIPInfo config
+	// assign transformers to the apiServerIPInfo config
 	apiServerIPInfoRESTOptions, err := c.GenericConfig.RESTOptionsGetter.GetRESTOptions(api.Resource("apiServerIPInfo"))
 	if err != nil {
 		klog.Fatalf("Error getting apiServerIPInfo REST options: %v", err)
 	}
-	config.Transformer = apiServerIPInfoRESTOptions.StorageConfig.Transformer
+	if apiServerIPInfoRESTOptions.StorageConfig.Transformer != nil {
+		config.Transformer = apiServerIPInfoRESTOptions.StorageConfig.Transformer
+	}
 
 	masterLeases, err := reconcilers.NewLeases(config, "/masterleases/", ttl)
 	if err != nil {

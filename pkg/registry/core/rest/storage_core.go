@@ -203,7 +203,9 @@ func (c LegacyRESTStorageProvider) NewLegacyRESTStorage(apiResourceConfigSource 
 	if err != nil {
 		return LegacyRESTStorage{}, genericapiserver.APIGroupInfo{}, err
 	}
-	serviceipallocationsConfig.Transformer = serviceipallocationsRESTOptions.StorageConfig.Transformer
+	if serviceipallocationsRESTOptions.StorageConfig.Transformer != nil {
+		serviceipallocationsConfig.Transformer = serviceipallocationsRESTOptions.StorageConfig.Transformer
+	}
 
 	serviceClusterIPAllocator, err := ipallocator.New(&serviceClusterIPRange, func(max int, rangeSpec string, offset int) (allocator.Interface, error) {
 		var mem allocator.Snapshottable
