@@ -152,6 +152,10 @@ func TLSConfigFor(c *Config) (*tls.Config, error) {
 		// If we use are reloading files, we need to handle certificate rotation properly
 		// TODO: We can also add rotation here when c.HasCertCallback() is true
 		if c.TLS.ReloadTLSFiles {
+			if !c.TLS.CallerHandlesDialer {
+				return nil, fmt.Errorf("caller does not understand dialer contract")
+			}
+
 			if c.DialHolder == nil || !isValidHolders(c) {
 				return nil, fmt.Errorf("missing or misconfigured holder for dialer callback")
 			}

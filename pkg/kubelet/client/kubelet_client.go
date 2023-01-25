@@ -148,7 +148,8 @@ func (c *KubeletClientConfig) transportConfig() *transport.Config {
 			KeyFile:  c.TLSClientConfig.KeyFile,
 			// transport.loadTLSFiles would set this to true because we are only using files
 			// it is clearer to set it explicitly here so we remember that this is happening
-			ReloadTLSFiles: true,
+			ReloadTLSFiles:      true,
+			CallerHandlesDialer: true,
 		},
 	}
 	if !cfg.HasCA() {

@@ -97,6 +97,13 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		}
 	}
 
+	// assert that we know how to handle the dailer and reset it at the end
+	origCallerHandlesDialer := config.TLS.CallerHandlesDialer
+	defer func() {
+		config.TLS.CallerHandlesDialer = origCallerHandlesDialer
+	}()
+	config.TLS.CallerHandlesDialer = true
+
 	// Get the TLS options for this client config
 	tlsConfig, err := TLSConfigFor(config)
 	if err != nil {

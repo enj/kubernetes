@@ -249,6 +249,7 @@ func isClientConfigStillValid(kubeconfigPath string) (bool, error) {
 	}
 	// prevent TLSConfigFor from getting mad about invalid dialer config with TLS reloading
 	// this is okay because we do not plan on using this TLS config
+	transportConfig.TLS.CallerHandlesDialer = true
 	if transportConfig.DialHolder == nil {
 		transportConfig.DialHolder = &transport.DialHolder{Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 			return nil, errors.New("unexpected call to dialer")
