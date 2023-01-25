@@ -17,7 +17,6 @@ limitations under the License.
 package transport
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -87,33 +86,26 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		}
 	}
 
+	dialHolderWasNil := config.DialHolder == nil
+
+	if dialHolderWasNil {
+		config.DialHolder = &DialHolder{
+			Dial: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+		}
+	}
+
 	// Get the TLS options for this client config
 	tlsConfig, err := TLSConfigFor(config)
 	if err != nil {
 		return nil, err
 	}
 	// The options didn't require a custom TLS config
-	if tlsConfig == nil && config.DialHolder == nil && config.Proxy == nil {
+	if tlsConfig == nil && dialHolderWasNil && config.Proxy == nil {
+		config.DialHolder = nil // reset the changes made to config
 		return http.DefaultTransport, nil
-	}
-
-	var dial func(ctx context.Context, network, address string) (net.Conn, error)
-	if config.DialHolder != nil {
-		dial = config.DialHolder.Dial
-	} else {
-		dial = (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext
-	}
-
-	// If we use are reloading files, we need to handle certificate rotation properly
-	// TODO(jackkleeman): We can also add rotation here when config.HasCertCallback() is true
-	if config.TLS.ReloadTLSFiles {
-		dynamicCertDialer := certRotatingDialer(tlsConfig.GetClientCertificate, dial)
-		tlsConfig.GetClientCertificate = dynamicCertDialer.GetClientCertificate
-		dial = dynamicCertDialer.connDialer.DialContext
-		go dynamicCertDialer.Run(DialerStopCh)
 	}
 
 	proxy := http.ProxyFromEnvironment
@@ -126,7 +118,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		TLSHandshakeTimeout: 10 * time.Second,
 		TLSClientConfig:     tlsConfig,
 		MaxIdleConnsPerHost: idleConnsPerHost,
-		DialContext:         dial,
+		DialContext:         config.DialHolder.Dial,
 		DisableCompression:  config.DisableCompression,
 	})
 

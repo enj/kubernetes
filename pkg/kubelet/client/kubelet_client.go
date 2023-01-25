@@ -19,6 +19,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -28,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/server/egressselector"
-	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/transport"
 	nodeutil "k8s.io/kubernetes/pkg/util/node"
 )
@@ -45,19 +45,22 @@ type KubeletClientConfig struct {
 	PreferredAddressTypes []string
 
 	// TLSClientConfig contains settings to enable transport layer security
-	restclient.TLSClientConfig
-
-	// Server requires Bearer authentication
-	BearerToken string `datapolicy:"token"`
+	TLSClientConfig KubeletTLSConfig
 
 	// HTTPTimeout is used by the client to timeout http requests to Kubelet.
 	HTTPTimeout time.Duration
 
-	// Dial is a custom dialer used for the client
-	Dial utilnet.DialFunc
-
 	// Lookup will give us a dialer if the egress selector is configured for it
 	Lookup egressselector.Lookup
+}
+
+type KubeletTLSConfig struct {
+	// Server requires TLS client certificate authentication
+	CertFile string
+	// Server requires TLS client certificate authentication
+	KeyFile string
+	// Trusted root certificates for server
+	CAFile string
 }
 
 // ConnectionInfo provides the information needed to connect to a kubelet
@@ -89,10 +92,34 @@ func makeTransport(config *KubeletClientConfig, insecureSkipTLSVerify bool) (htt
 	// do the insecureSkipTLSVerify on the pre-transport *before* we go get a potentially cached connection.
 	// transportConfig always produces a new struct pointer.
 	preTLSConfig := config.transportConfig()
-	if insecureSkipTLSVerify && preTLSConfig != nil {
+	if insecureSkipTLSVerify {
 		preTLSConfig.TLS.Insecure = true
 		preTLSConfig.TLS.CAData = nil
 		preTLSConfig.TLS.CAFile = ""
+	}
+
+	if config.Lookup != nil {
+		// Assuming EgressSelector if SSHTunnel is not turned on.
+		// We will not get a dialer if egress selector is disabled.
+		networkContext := egressselector.Cluster.AsNetworkContext()
+		dialer, err := config.Lookup(networkContext)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get context dialer for 'cluster': got %v", err)
+		}
+		if dialer != nil {
+			preTLSConfig.DialHolder = &transport.DialHolder{Dial: dialer}
+		}
+	}
+
+	dialHolderWasNil := preTLSConfig.DialHolder == nil
+
+	if dialHolderWasNil {
+		preTLSConfig.DialHolder = &transport.DialHolder{
+			Dial: (&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+		}
 	}
 
 	tlsConfig, err := transport.TLSConfigFor(preTLSConfig)
@@ -101,40 +128,28 @@ func makeTransport(config *KubeletClientConfig, insecureSkipTLSVerify bool) (htt
 	}
 
 	rt := http.DefaultTransport
-	dialer := config.Dial
-	if dialer == nil && config.Lookup != nil {
-		// Assuming EgressSelector if SSHTunnel is not turned on.
-		// We will not get a dialer if egress selector is disabled.
-		networkContext := egressselector.Cluster.AsNetworkContext()
-		dialer, err = config.Lookup(networkContext)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get context dialer for 'cluster': got %v", err)
-		}
-	}
-	if dialer != nil || tlsConfig != nil {
+	if !dialHolderWasNil || tlsConfig != nil {
 		// If SSH Tunnel is turned on
 		rt = utilnet.SetOldTransportDefaults(&http.Transport{
-			DialContext:     dialer,
+			DialContext:     preTLSConfig.DialHolder.Dial,
 			TLSClientConfig: tlsConfig,
 		})
 	}
 
-	return transport.HTTPWrappersForConfig(config.transportConfig(), rt)
+	return transport.HTTPWrappersForConfig(preTLSConfig, rt)
 }
 
 // transportConfig converts a client config to an appropriate transport config.
 func (c *KubeletClientConfig) transportConfig() *transport.Config {
 	cfg := &transport.Config{
 		TLS: transport.TLSConfig{
-			CAFile:     c.CAFile,
-			CAData:     c.CAData,
-			CertFile:   c.CertFile,
-			CertData:   c.CertData,
-			KeyFile:    c.KeyFile,
-			KeyData:    c.KeyData,
-			NextProtos: c.NextProtos,
+			CAFile:   c.TLSClientConfig.CAFile,
+			CertFile: c.TLSClientConfig.CertFile,
+			KeyFile:  c.TLSClientConfig.KeyFile,
+			// transport.loadTLSFiles would set this to true because we are only using files
+			// it is clearer to set it explicitly here so we remember that this is happening
+			ReloadTLSFiles: true,
 		},
-		BearerToken: c.BearerToken,
 	}
 	if !cfg.HasCA() {
 		cfg.TLS.Insecure = true

@@ -26,6 +26,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -245,6 +246,13 @@ func isClientConfigStillValid(kubeconfigPath string) (bool, error) {
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("unable to load transport configuration from existing bootstrap client config read from %s: %v", kubeconfigPath, err))
 		return false, nil
+	}
+	// prevent TLSConfigFor from getting mad about invalid dialer config with TLS reloading
+	// this is okay because we do not plan on using this TLS config
+	if transportConfig.DialHolder == nil {
+		transportConfig.DialHolder = &transport.DialHolder{Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			return nil, errors.New("unexpected call to dialer")
+		}}
 	}
 	// has side effect of populating transport config data fields
 	if _, err := transport.TLSConfigFor(transportConfig); err != nil {

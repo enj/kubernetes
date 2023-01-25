@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"sync"
@@ -146,6 +147,24 @@ func TLSConfigFor(c *Config) (*tls.Config, error) {
 			// anything. Return an empty tls.Certificate, no client cert will
 			// be sent to the server.
 			return &tls.Certificate{}, nil
+		}
+
+		// If we use are reloading files, we need to handle certificate rotation properly
+		// TODO: We can also add rotation here when c.HasCertCallback() is true
+		if c.TLS.ReloadTLSFiles {
+			if c.DialHolder == nil || !isValidHolders(c) {
+				return nil, fmt.Errorf("missing or misconfigured holder for dialer callback")
+			}
+
+			dynamicCertDialer := certRotatingDialer(tlsConfig.GetClientCertificate, c.DialHolder.Dial)
+			tlsConfig.GetClientCertificate = dynamicCertDialer.GetClientCertificate
+			var dynamicCertDialerRunOnce sync.Once
+			c.DialHolder.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+				dynamicCertDialerRunOnce.Do(func() {
+					go dynamicCertDialer.Run(DialerStopCh) // only leak this go routine if we actually dial
+				})
+				return dynamicCertDialer.connDialer.DialContext(ctx, network, address)
+			}
 		}
 	}
 
