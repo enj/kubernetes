@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"sync"
@@ -147,6 +148,25 @@ func TLSConfigFor(c *Config) (*tls.Config, error) {
 			// be sent to the server.
 			return &tls.Certificate{}, nil
 		}
+	}
+
+	var dial func(ctx context.Context, network, address string) (net.Conn, error)
+	if c.DialHolder != nil {
+		dial = c.DialHolder.Dial
+	} else {
+		dial = (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext
+	}
+
+	if c.TLS.ReloadTLSFiles {
+		// If we use are reloading files, we need to handle certificate rotation properly
+		// TODO: We can also add rotation here when config.HasCertCallback() is true
+		dynamicCertDialer := certRotatingDialer(tlsConfig.GetClientCertificate, dial)
+		tlsConfig.GetClientCertificate = dynamicCertDialer.GetClientCertificate
+		dial = dynamicCertDialer.connDialer.DialContext
+		go dynamicCertDialer.Run(DialerStopCh)
 	}
 
 	return tlsConfig, nil

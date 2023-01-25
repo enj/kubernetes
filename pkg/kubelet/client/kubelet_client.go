@@ -45,7 +45,7 @@ type KubeletClientConfig struct {
 	PreferredAddressTypes []string
 
 	// TLSClientConfig contains settings to enable transport layer security
-	restclient.TLSClientConfig
+	TLS restclient.TLSClientConfig
 
 	// Server requires Bearer authentication
 	BearerToken string `datapolicy:"token"`
@@ -126,13 +126,13 @@ func makeTransport(config *KubeletClientConfig, insecureSkipTLSVerify bool) (htt
 func (c *KubeletClientConfig) transportConfig() *transport.Config {
 	cfg := &transport.Config{
 		TLS: transport.TLSConfig{
-			CAFile:     c.CAFile,
-			CAData:     c.CAData,
-			CertFile:   c.CertFile,
-			CertData:   c.CertData,
-			KeyFile:    c.KeyFile,
-			KeyData:    c.KeyData,
-			NextProtos: c.NextProtos,
+			CAFile:     c.TLS.CAFile,
+			CAData:     c.TLS.CAData,
+			CertFile:   c.TLS.CertFile,
+			CertData:   c.TLS.CertData,
+			KeyFile:    c.TLS.KeyFile,
+			KeyData:    c.TLS.KeyData,
+			NextProtos: c.TLS.NextProtos,
 		},
 		BearerToken: c.BearerToken,
 	}

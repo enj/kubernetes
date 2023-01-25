@@ -210,13 +210,13 @@ func (s *ServerRunOptions) Flags() (fss cliflag.NamedFlagSets) {
 	fs.DurationVar(&s.KubeletConfig.HTTPTimeout, "kubelet-timeout", s.KubeletConfig.HTTPTimeout,
 		"Timeout for kubelet operations.")
 
-	fs.StringVar(&s.KubeletConfig.CertFile, "kubelet-client-certificate", s.KubeletConfig.CertFile,
+	fs.StringVar(&s.KubeletConfig.TLS.CertFile, "kubelet-client-certificate", s.KubeletConfig.TLS.CertFile,
 		"Path to a client cert file for TLS.")
 
-	fs.StringVar(&s.KubeletConfig.KeyFile, "kubelet-client-key", s.KubeletConfig.KeyFile,
+	fs.StringVar(&s.KubeletConfig.TLS.KeyFile, "kubelet-client-key", s.KubeletConfig.TLS.KeyFile,
 		"Path to a client key file for TLS.")
 
-	fs.StringVar(&s.KubeletConfig.CAFile, "kubelet-certificate-authority", s.KubeletConfig.CAFile,
+	fs.StringVar(&s.KubeletConfig.TLS.CAFile, "kubelet-certificate-authority", s.KubeletConfig.TLS.CAFile,
 		"Path to a cert file for the certificate authority.")
 
 	fs.StringVar(&s.ProxyClientCertFile, "proxy-client-cert-file", s.ProxyClientCertFile, ""+

@@ -17,9 +17,7 @@ limitations under the License.
 package transport
 
 import (
-	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -95,25 +93,6 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 	// The options didn't require a custom TLS config
 	if tlsConfig == nil && config.DialHolder == nil && config.Proxy == nil {
 		return http.DefaultTransport, nil
-	}
-
-	var dial func(ctx context.Context, network, address string) (net.Conn, error)
-	if config.DialHolder != nil {
-		dial = config.DialHolder.Dial
-	} else {
-		dial = (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext
-	}
-
-	// If we use are reloading files, we need to handle certificate rotation properly
-	// TODO(jackkleeman): We can also add rotation here when config.HasCertCallback() is true
-	if config.TLS.ReloadTLSFiles {
-		dynamicCertDialer := certRotatingDialer(tlsConfig.GetClientCertificate, dial)
-		tlsConfig.GetClientCertificate = dynamicCertDialer.GetClientCertificate
-		dial = dynamicCertDialer.connDialer.DialContext
-		go dynamicCertDialer.Run(DialerStopCh)
 	}
 
 	proxy := http.ProxyFromEnvironment
