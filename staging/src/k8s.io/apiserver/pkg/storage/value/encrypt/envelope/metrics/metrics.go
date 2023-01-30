@@ -17,7 +17,10 @@ limitations under the License.
 package metrics
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
+	"hash"
 	"sync"
 	"time"
 
@@ -25,6 +28,7 @@ import (
 	"google.golang.org/grpc/status"
 	"k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
+	"k8s.io/utils/lru"
 )
 
 const (
@@ -33,6 +37,12 @@ const (
 	FromStorageLabel = "from_storage"
 	ToStorageLabel   = "to_storage"
 )
+
+type metricLabels struct {
+	transformationType string
+	providerName       string
+	keyIDHash          string
+}
 
 /*
  * By default, all the following metrics are defined as falling under
@@ -46,9 +56,13 @@ var (
 	lockLastFromStorage sync.Mutex
 	lockLastToStorage   sync.Mutex
 
-	lastFromStorage time.Time
-	lastToStorage   time.Time
+	lastFromStorage                                 time.Time
+	lastToStorage                                   time.Time
+	keyIDHashTotalMetricLabels                      *lru.Cache
+	keyIDHashStatusLastTimestampSecondsMetricLabels *lru.Cache
+	cacheSize                                       int = 10
 
+	// These metrics are made public to be used by unit tests.
 	dekCacheFillPercent = metrics.NewGauge(
 		&metrics.GaugeOpts{
 			Namespace:      namespace,
@@ -59,7 +73,7 @@ var (
 		},
 	)
 
-	dekCacheInterArrivals = metrics.NewHistogramVec(
+	DekCacheInterArrivals = metrics.NewHistogramVec(
 		&metrics.HistogramOpts{
 			Namespace:      namespace,
 			Subsystem:      subsystem,
@@ -84,16 +98,91 @@ var (
 		},
 		[]string{"provider_name", "method_name", "grpc_status_code"},
 	)
+
+	// keyIDHashTotal is the number of times a keyID is used
+	// e.g. apiserver_envelope_encryption_key_id_hash_total counter
+	// apiserver_envelope_encryption_key_id_hash_total{key_id_hash="sha256",
+	// provider_name="providerName",transformation_type="from_storage"} 1
+	KeyIDHashTotal = metrics.NewCounterVec(
+		&metrics.CounterOpts{
+			Namespace:      namespace,
+			Subsystem:      subsystem,
+			Name:           "key_id_hash_total",
+			Help:           "Number of times a keyID is used split by transformation type and provider.",
+			StabilityLevel: metrics.ALPHA,
+		},
+		[]string{"transformation_type", "provider_name", "key_id_hash"},
+	)
+
+	// keyIDHashLastTimestampSeconds is the last time in seconds when a keyID was used
+	// e.g. apiserver_envelope_encryption_key_id_hash_last_timestamp_seconds{key_id_hash="sha256", provider_name="providerName",transformation_type="from_storage"} 1.674865558833728e+09
+	KeyIDHashLastTimestampSeconds = metrics.NewGaugeVec(
+		&metrics.GaugeOpts{
+			Namespace:      namespace,
+			Subsystem:      subsystem,
+			Name:           "key_id_hash_last_timestamp_seconds",
+			Help:           "The last time in seconds when a keyID was used.",
+			StabilityLevel: metrics.ALPHA,
+		},
+		[]string{"transformation_type", "provider_name", "key_id_hash"},
+	)
+
+	// keyIDHashStatusLastTimestampSeconds is the last time in seconds when a keyID was returned by the Status RPC call.
+	// e.g. apiserver_envelope_encryption_key_id_hash_status_last_timestamp_seconds{key_id_hash="sha256", provider_name="providerName"} 1.674865558833728e+09
+	KeyIDHashStatusLastTimestampSeconds = metrics.NewGaugeVec(
+		&metrics.GaugeOpts{
+			Namespace:      namespace,
+			Subsystem:      subsystem,
+			Name:           "key_id_hash_status_last_timestamp_seconds",
+			Help:           "The last time in seconds when a keyID was returned by the Status RPC call.",
+			StabilityLevel: metrics.ALPHA,
+		},
+		[]string{"provider_name", "key_id_hash"},
+	)
 )
 
 var registerMetricsFunc sync.Once
+var hashPool *sync.Pool
 
+func registerMetrics() {
+	keyIDHashTotalMetricLabels = lru.NewWithEvictionFunc(cacheSize, func(key lru.Key, value interface{}) {
+		item := value.(*metricLabels)
+		KeyIDHashTotal.DeleteLabelValues(item.transformationType, item.providerName, item.keyIDHash)
+		KeyIDHashLastTimestampSeconds.DeleteLabelValues(item.transformationType, item.providerName, item.keyIDHash)
+	})
+	keyIDHashStatusLastTimestampSecondsMetricLabels = lru.NewWithEvictionFunc(cacheSize, func(key lru.Key, value interface{}) {
+		item := value.(*metricLabels)
+		KeyIDHashStatusLastTimestampSeconds.DeleteLabelValues(item.providerName, item.keyIDHash)
+	})
+}
 func RegisterMetrics() {
 	registerMetricsFunc.Do(func() {
+		registerMetrics()
+		hashPool = &sync.Pool{
+			New: func() interface{} {
+				return sha256.New()
+			},
+		}
 		legacyregistry.MustRegister(dekCacheFillPercent)
-		legacyregistry.MustRegister(dekCacheInterArrivals)
+		legacyregistry.MustRegister(DekCacheInterArrivals)
+		legacyregistry.MustRegister(KeyIDHashTotal)
+		legacyregistry.MustRegister(KeyIDHashLastTimestampSeconds)
+		legacyregistry.MustRegister(KeyIDHashStatusLastTimestampSeconds)
 		legacyregistry.MustRegister(KMSOperationsLatencyMetric)
 	})
+}
+
+// RecordKeyID records total count and last time in seconds when a KeyID was used for TransformFromStorage and TransformToStorage operations
+func RecordKeyID(transformationType, providerName, keyID string) {
+	keyIDHash := addLabelToCache(keyIDHashTotalMetricLabels, transformationType, providerName, keyID)
+	KeyIDHashTotal.WithLabelValues(transformationType, providerName, keyIDHash).Inc()
+	KeyIDHashLastTimestampSeconds.WithLabelValues(transformationType, providerName, keyIDHash).SetToCurrentTime()
+}
+
+// RecordKeyIDFromStatus records last time in seconds when a KeyID was returned by the Status RPC call.
+func RecordKeyIDFromStatus(providerName, keyID string) {
+	keyIDHash := addLabelToCache(keyIDHashStatusLastTimestampSecondsMetricLabels, "", providerName, keyID)
+	KeyIDHashStatusLastTimestampSeconds.WithLabelValues(providerName, keyIDHash).SetToCurrentTime()
 }
 
 func RecordArrival(transformationType string, start time.Time) {
@@ -105,7 +194,7 @@ func RecordArrival(transformationType string, start time.Time) {
 		if lastFromStorage.IsZero() {
 			lastFromStorage = start
 		}
-		dekCacheInterArrivals.WithLabelValues(transformationType).Observe(start.Sub(lastFromStorage).Seconds())
+		DekCacheInterArrivals.WithLabelValues(transformationType).Observe(start.Sub(lastFromStorage).Seconds())
 		lastFromStorage = start
 	case ToStorageLabel:
 		lockLastToStorage.Lock()
@@ -114,7 +203,7 @@ func RecordArrival(transformationType string, start time.Time) {
 		if lastToStorage.IsZero() {
 			lastToStorage = start
 		}
-		dekCacheInterArrivals.WithLabelValues(transformationType).Observe(start.Sub(lastToStorage).Seconds())
+		DekCacheInterArrivals.WithLabelValues(transformationType).Observe(start.Sub(lastToStorage).Seconds())
 		lastToStorage = start
 	}
 }
@@ -146,4 +235,41 @@ func getErrorCode(err error) string {
 	// This is not gRPC error. The operation must have failed before gRPC
 	// method was called, otherwise we would get gRPC error.
 	return "unknown-non-grpc"
+}
+
+func getHash(h hash.Hash, data string) string {
+	h.Reset()
+	h.Write([]byte(data))
+	result := fmt.Sprintf("sha256:%x", h.Sum(nil))
+	hashPool.Put(h)
+	return result
+}
+
+// getCachedItem fetches the metricLabels corresponding to cache key from cache, if it exists.
+func getCachedItem(cache *lru.Cache, key string) *metricLabels {
+	value, found := cache.Get(key)
+	if found {
+		return value.(*metricLabels)
+	}
+
+	return nil
+}
+
+func addLabelToCache(c *lru.Cache, transformationType, providerName, keyID string) string {
+	h := hashPool.Get().(hash.Hash)
+	keyIDHash := ""
+	// only get hash if the keyID is not empty
+	if len(keyID) > 0 {
+		keyIDHash = getHash(h, keyID)
+	}
+	cacheKey := providerName + keyIDHash
+	cachedItem := getCachedItem(c, cacheKey)
+	if cachedItem == nil {
+		c.Add(cacheKey, &metricLabels{
+			transformationType: transformationType,
+			providerName:       providerName,
+			keyIDHash:          keyIDHash,
+		})
+	}
+	return keyIDHash
 }

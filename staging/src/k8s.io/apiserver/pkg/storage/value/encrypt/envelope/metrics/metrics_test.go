@@ -18,7 +18,10 @@ package metrics
 
 import (
 	"fmt"
+	"hash"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +29,13 @@ import (
 	"google.golang.org/grpc/status"
 	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/component-base/metrics/testutil"
+)
+
+const (
+	testKeyHash1              = "sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+	testKeyHash2              = "sha256:d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+	testKeyHash3              = "sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
+	testProviderNameForMetric = "providerName"
 )
 
 func TestRecordKMSOperationLatency(t *testing.T) {
@@ -170,6 +180,165 @@ func TestRecordKMSOperationLatency(t *testing.T) {
 			defer KMSOperationsLatencyMetric.Reset()
 			if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(tt.want), "apiserver_envelope_encryption_kms_operations_latency_seconds"); err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestEnvelopeMetrics_Serial(t *testing.T) {
+
+	testCases := []struct {
+		desc               string
+		keyID              string
+		metrics            []string
+		providerName       string
+		transformationType string
+		want               string
+	}{
+		{
+			desc:  "keyIDHash total",
+			keyID: "1",
+			metrics: []string{
+				"apiserver_envelope_encryption_key_id_hash_total",
+			},
+			providerName:       testProviderNameForMetric,
+			transformationType: "from_storage",
+			want: fmt.Sprintf(`
+			# HELP apiserver_envelope_encryption_key_id_hash_total [ALPHA] Number of times a keyID is used split by transformation type and provider.
+			# TYPE apiserver_envelope_encryption_key_id_hash_total counter
+			apiserver_envelope_encryption_key_id_hash_total{key_id_hash="%s",provider_name="%s",transformation_type="from_storage"} 1
+			`, testKeyHash1, testProviderNameForMetric),
+		},
+		{
+			desc:  "keyIDHash total more labels",
+			keyID: "2",
+			metrics: []string{
+				"apiserver_envelope_encryption_key_id_hash_total",
+			},
+			providerName:       testProviderNameForMetric,
+			transformationType: "from_storage",
+			want: fmt.Sprintf(`
+			# HELP apiserver_envelope_encryption_key_id_hash_total [ALPHA] Number of times a keyID is used split by transformation type and provider.
+        	# TYPE apiserver_envelope_encryption_key_id_hash_total counter
+        	apiserver_envelope_encryption_key_id_hash_total{key_id_hash="%s",provider_name="%s",transformation_type="from_storage"} 1
+        	apiserver_envelope_encryption_key_id_hash_total{key_id_hash="%s",provider_name="%s",transformation_type="from_storage"} 1
+			`, testKeyHash1, testProviderNameForMetric, testKeyHash2, testProviderNameForMetric),
+		},
+		{
+			desc:  "keyIDHash total same labels",
+			keyID: "2",
+			metrics: []string{
+				"apiserver_envelope_encryption_key_id_hash_total",
+			},
+			providerName:       testProviderNameForMetric,
+			transformationType: "from_storage",
+			want: fmt.Sprintf(`
+			# HELP apiserver_envelope_encryption_key_id_hash_total [ALPHA] Number of times a keyID is used split by transformation type and provider.
+			# TYPE apiserver_envelope_encryption_key_id_hash_total counter
+			apiserver_envelope_encryption_key_id_hash_total{key_id_hash="%s",provider_name="%s",transformation_type="from_storage"} 1
+			apiserver_envelope_encryption_key_id_hash_total{key_id_hash="%s",provider_name="%s",transformation_type="from_storage"} 2
+			`, testKeyHash1, testProviderNameForMetric, testKeyHash2, testProviderNameForMetric),
+		},
+		{
+			desc:  "keyIDHash total exceeds limit, remove first label, and empty keyID",
+			keyID: "",
+			metrics: []string{
+				"apiserver_envelope_encryption_key_id_hash_total",
+			},
+			providerName:       testProviderNameForMetric,
+			transformationType: "from_storage",
+			want: fmt.Sprintf(`
+			# HELP apiserver_envelope_encryption_key_id_hash_total [ALPHA] Number of times a keyID is used split by transformation type and provider.
+			# TYPE apiserver_envelope_encryption_key_id_hash_total counter
+			apiserver_envelope_encryption_key_id_hash_total{key_id_hash="%s",provider_name="%s",transformation_type="from_storage"} 2
+			apiserver_envelope_encryption_key_id_hash_total{key_id_hash="%s",provider_name="%s",transformation_type="from_storage"} 1
+			`, testKeyHash2, testProviderNameForMetric, "", testProviderNameForMetric),
+		},
+		{
+			desc:  "keyIDHash total exceeds limit 2, remove first label",
+			keyID: "1",
+			metrics: []string{
+				"apiserver_envelope_encryption_key_id_hash_total",
+			},
+			providerName:       testProviderNameForMetric,
+			transformationType: "from_storage",
+			want: fmt.Sprintf(`
+			# HELP apiserver_envelope_encryption_key_id_hash_total [ALPHA] Number of times a keyID is used split by transformation type and provider.
+			# TYPE apiserver_envelope_encryption_key_id_hash_total counter
+			apiserver_envelope_encryption_key_id_hash_total{key_id_hash="%s",provider_name="%s",transformation_type="from_storage"} 1
+			apiserver_envelope_encryption_key_id_hash_total{key_id_hash="%s",provider_name="%s",transformation_type="from_storage"} 1
+			`, "", testProviderNameForMetric, testKeyHash1, testProviderNameForMetric),
+		},
+	}
+
+	KeyIDHashTotal.Reset()
+	cacheSize = 2
+	RegisterMetrics()
+	registerMetrics()
+
+	for _, tt := range testCases {
+		t.Run(tt.desc, func(t *testing.T) {
+			RecordKeyID(tt.transformationType, tt.providerName, tt.keyID)
+			// We are not resetting the metric here as each test is not independent // in order to validate the behavior when the metric labels exceed the
+			// limit to ensure the labels are not unbounded.
+			if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(tt.want), tt.metrics...); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestEnvelopeMetrics_Parallel(t *testing.T) {
+
+	testCases := []struct {
+		desc               string
+		metrics            []string
+		providerName       string
+		transformationType string
+		want               string
+	}{
+		{
+			desc: "keyIDHash total exceeds limit, remove first label, and empty keyID",
+			metrics: []string{
+				"apiserver_envelope_encryption_key_id_hash_total",
+			},
+			providerName:       testProviderNameForMetric,
+			transformationType: "from_storage",
+			want:               ``,
+		},
+	}
+	KeyIDHashTotal.Reset()
+	cacheSize = 3
+	RegisterMetrics()
+	registerMetrics()
+
+	for _, tt := range testCases {
+		t.Run(tt.desc, func(t *testing.T) {
+			defer KeyIDHashTotal.Reset()
+			var wg sync.WaitGroup
+			for i := 1; i < 100; i++ {
+				wg.Add(1)
+				go func(k int) {
+					defer wg.Done()
+					RecordKeyID(tt.transformationType, tt.providerName, strconv.Itoa(k))
+				}(i)
+			}
+			wg.Wait()
+
+			totalLabels := 0
+			h := hashPool.Get().(hash.Hash)
+			for i := 1; i < 100; i++ {
+				key := getHash(h, strconv.Itoa(i))
+				count, err := testutil.GetCounterMetricValue(KeyIDHashTotal.WithLabelValues(tt.transformationType, tt.providerName, key))
+				if err != nil {
+					t.Fatalf("failed to get metric value, error: %v", err)
+				}
+				if count > 0 {
+					totalLabels++
+				}
+			}
+			if totalLabels != cacheSize {
+				t.Fatalf("expected total labels to be the same as cacheSize %d, got %d", cacheSize, totalLabels)
 			}
 		})
 	}
