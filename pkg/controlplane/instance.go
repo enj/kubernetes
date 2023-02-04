@@ -263,11 +263,11 @@ func (c *Config) createLeaseReconciler() reconcilers.EndpointReconciler {
 	endpointsAdapter := reconcilers.NewEndpointsAdapter(endpointClient, endpointSliceClient)
 
 	ttl := c.ExtraConfig.MasterEndpointReconcileTTL
-	config, err := c.ExtraConfig.StorageFactory.NewConfig(api.Resource("apiServerIPInfo"))
+	opts, err := c.GenericConfig.RESTOptionsGetter.GetRESTOptions(api.Resource("apiServerIPInfo"))
 	if err != nil {
 		klog.Fatalf("Error creating storage factory config: %v", err)
 	}
-	masterLeases, err := reconcilers.NewLeases(config, "/masterleases/", ttl)
+	masterLeases, err := reconcilers.NewLeases(opts.StorageConfig, "/masterleases/", ttl)
 	if err != nil {
 		klog.Fatalf("Error creating leases: %v", err)
 	}
