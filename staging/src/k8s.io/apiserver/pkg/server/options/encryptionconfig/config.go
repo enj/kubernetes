@@ -228,7 +228,9 @@ func getTransformerOverridesAndKMSPluginProbes(ctx context.Context, config *apis
 		probes = append(probes, p...)
 	}
 
-	return transformers, probes, &kmsUsed, nil
+	// we know these transformers are static so it is always correct to use this static lookup cache here
+	// this cache is used to make sure that frequent calls to TransformerForResource are cheap map lookups
+	return &cachedStaticResourceTransformers{transformers: transformers}, probes, &kmsUsed, nil
 }
 
 // check encrypts and decrypts test data against KMS-Plugin's gRPC endpoint.
@@ -811,4 +813,20 @@ func unwrapSingleUnionTransformers(transformers unionTransformers) value.Transfo
 	}
 
 	return transformers
+}
+
+var _ ResourceTransformers = &cachedStaticResourceTransformers{}
+
+type cachedStaticResourceTransformers struct {
+	cache        sync.Map
+	transformers ResourceTransformers // this must be a static implementation
+}
+
+func (c *cachedStaticResourceTransformers) TransformerForResource(resource schema.GroupResource) value.Transformer {
+	if val, ok := c.cache.Load(resource); ok {
+		return val.(value.Transformer)
+	}
+
+	val, _ := c.cache.LoadOrStore(resource, c.transformers.TransformerForResource(resource))
+	return val.(value.Transformer)
 }

@@ -802,7 +802,7 @@ func getTransformerFromEncryptionConfig(t *testing.T, encryptionConfigPath strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	transformers := encryptionConfiguration.Transformers.(staticTransformers)
+	transformers := encryptionConfiguration.Transformers.(*cachedStaticResourceTransformers).transformers.(staticTransformers)
 	if len(transformers) != 1 || len(transformers[0].resources) != 1 {
 		t.Fatalf("input config does not have exactly one resource: %s", encryptionConfigPath)
 	}
