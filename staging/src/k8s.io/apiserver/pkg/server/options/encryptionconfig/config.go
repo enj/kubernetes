@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	apiserverconfig "k8s.io/apiserver/pkg/apis/config"
 	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/config/v1"
@@ -128,8 +129,8 @@ func (h *kmsv2PluginProbe) toHealthzCheck(idx int) healthz.HealthChecker {
 
 // EncryptionConfiguration represents the parsed and normalized encryption configuration for the apiserver.
 type EncryptionConfiguration struct {
-	// Transformers is a list of value.Transformer that will be used to encrypt and decrypt data.
-	Transformers map[schema.GroupResource]value.Transformer
+	// Transformers defines the per resource value.Transformer that will be used to encrypt and decrypt data.
+	Transformers ResourceTransformers
 
 	// HealthChecks is a list of healthz.HealthChecker that will be used to check the health of the encryption providers.
 	HealthChecks []healthz.HealthChecker
@@ -177,7 +178,7 @@ func LoadEncryptionConfig(ctx context.Context, filepath string, reload bool) (*E
 // getTransformerOverridesAndKMSPluginHealthzCheckers creates the set of transformers and KMS healthz checks based on the given config.
 // It may launch multiple go routines whose lifecycle is controlled by ctx.
 // In case of an error, the caller is responsible for canceling ctx to clean up any go routines that may have been launched.
-func getTransformerOverridesAndKMSPluginHealthzCheckers(ctx context.Context, config *apiserverconfig.EncryptionConfiguration) (map[schema.GroupResource]value.Transformer, []healthz.HealthChecker, *kmsState, error) {
+func getTransformerOverridesAndKMSPluginHealthzCheckers(ctx context.Context, config *apiserverconfig.EncryptionConfiguration) (ResourceTransformers, []healthz.HealthChecker, *kmsState, error) {
 	var kmsHealthChecks []healthz.HealthChecker
 	transformers, probes, kmsUsed, err := getTransformerOverridesAndKMSPluginProbes(ctx, config)
 	if err != nil {
@@ -198,37 +199,33 @@ type healthChecker interface {
 // getTransformerOverridesAndKMSPluginProbes creates the set of transformers and KMS probes based on the given config.
 // It may launch multiple go routines whose lifecycle is controlled by ctx.
 // In case of an error, the caller is responsible for canceling ctx to clean up any go routines that may have been launched.
-func getTransformerOverridesAndKMSPluginProbes(ctx context.Context, config *apiserverconfig.EncryptionConfiguration) (map[schema.GroupResource]value.Transformer, []healthChecker, *kmsState, error) {
-	resourceToPrefixTransformer := map[schema.GroupResource][]value.PrefixTransformer{}
+func getTransformerOverridesAndKMSPluginProbes(ctx context.Context, config *apiserverconfig.EncryptionConfiguration) (ResourceTransformers, []healthChecker, *kmsState, error) {
+	transformers := make(staticTransformers, 0, len(config.Resources))
 	var probes []healthChecker
 	var kmsUsed kmsState
 
-	// For each entry in the configuration
 	for _, resourceConfig := range config.Resources {
 		resourceConfig := resourceConfig
 
-		transformers, p, used, err := prefixTransformersAndProbes(ctx, resourceConfig)
+		prefixTransformers, p, used, err := prefixTransformersAndProbes(ctx, resourceConfig)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 		kmsUsed.accumulate(used)
 
-		// For each resource, create a list of providers to use
+		set := transformerSet{
+			resources:   sets.New[schema.GroupResource](),
+			transformer: value.NewPrefixTransformers(fmt.Errorf("no matching prefix found"), prefixTransformers...),
+		}
+
 		for _, resource := range resourceConfig.Resources {
 			resource := resource
 			gr := schema.ParseGroupResource(resource)
-			resourceToPrefixTransformer[gr] = append(
-				resourceToPrefixTransformer[gr], transformers...)
+			set.resources.Insert(gr)
 		}
 
+		transformers = append(transformers, set)
 		probes = append(probes, p...)
-	}
-
-	transformers := make(map[schema.GroupResource]value.Transformer, len(resourceToPrefixTransformer))
-	for gr, transList := range resourceToPrefixTransformer {
-		gr := gr
-		transList := transList
-		transformers[gr] = value.NewPrefixTransformers(fmt.Errorf("no matching prefix found"), transList...)
 	}
 
 	return transformers, probes, &kmsUsed, nil
@@ -669,7 +666,7 @@ type DynamicTransformers struct {
 }
 
 type transformTracker struct {
-	transformerOverrides  map[schema.GroupResource]value.Transformer
+	transformerOverrides  ResourceTransformers
 	kmsPluginHealthzCheck healthz.HealthChecker
 	closeTransformers     context.CancelFunc
 	kmsCloseGracePeriod   time.Duration
@@ -677,7 +674,7 @@ type transformTracker struct {
 
 // NewDynamicTransformers returns transformers, health checks for kms providers and an ability to close transformers.
 func NewDynamicTransformers(
-	transformerOverrides map[schema.GroupResource]value.Transformer,
+	transformerOverrides ResourceTransformers,
 	kmsPluginHealthzCheck healthz.HealthChecker,
 	closeTransformers context.CancelFunc,
 	kmsCloseGracePeriod time.Duration,
@@ -717,7 +714,7 @@ func (d *DynamicTransformers) TransformerForResource(resource schema.GroupResour
 
 // Set sets the transformer overrides. This method is not go routine safe and must only be called by the same, single caller throughout the lifetime of this object.
 func (d *DynamicTransformers) Set(
-	transformerOverrides map[schema.GroupResource]value.Transformer,
+	transformerOverrides ResourceTransformers,
 	closeTransformers context.CancelFunc,
 	kmsPluginHealthzCheck healthz.HealthChecker,
 	kmsCloseGracePeriod time.Duration,
@@ -758,25 +755,60 @@ func (r *resourceTransformer) TransformToStorage(ctx context.Context, data []byt
 }
 
 func (r *resourceTransformer) transformer() value.Transformer {
-	return transformerFromOverrides(r.transformTracker.Load().(*transformTracker).transformerOverrides, r.resource)
+	return r.transformTracker.Load().(*transformTracker).transformerOverrides.TransformerForResource(r.resource)
 }
 
 type ResourceTransformers interface {
 	TransformerForResource(resource schema.GroupResource) value.Transformer
 }
 
-var _ ResourceTransformers = &StaticTransformers{}
+var _ ResourceTransformers = &staticTransformers{}
 
-type StaticTransformers map[schema.GroupResource]value.Transformer
+type staticTransformers []transformerSet
 
-func (s StaticTransformers) TransformerForResource(resource schema.GroupResource) value.Transformer {
-	return transformerFromOverrides(s, resource)
+type transformerSet struct {
+	resources   sets.Set[schema.GroupResource]
+	transformer value.Transformer
 }
 
-func transformerFromOverrides(transformerOverrides map[schema.GroupResource]value.Transformer, resource schema.GroupResource) value.Transformer {
-	transformer := transformerOverrides[resource]
-	if transformer == nil {
+func (s staticTransformers) TransformerForResource(resource schema.GroupResource) value.Transformer {
+	var transformers unionTransformers
+
+	allResources := schema.GroupResource{
+		Group:    "*",
+		Resource: "*",
+	}
+
+	allInGroup := schema.GroupResource{
+		Group:    resource.Group,
+		Resource: "*",
+	}
+
+	for _, override := range s {
+		override := override
+
+		hasWildcard := override.resources.Has(allResources) || override.resources.Has(allInGroup)
+
+		if hasWildcard || override.resources.Has(resource) {
+			transformers = append(transformers, override.transformer)
+		}
+
+		if hasWildcard {
+			return unwrapSingleUnionTransformers(transformers) // the first wildcard terminates accumulation
+		}
+	}
+
+	if len(transformers) == 0 {
 		return identity.NewEncryptCheckTransformer()
 	}
-	return transformer
+
+	return unwrapSingleUnionTransformers(transformers)
+}
+
+func unwrapSingleUnionTransformers(transformers unionTransformers) value.Transformer {
+	if len(transformers) == 1 {
+		return transformers[0]
+	}
+
+	return transformers
 }
