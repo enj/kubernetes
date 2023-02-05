@@ -27,6 +27,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -230,7 +231,12 @@ func getTransformerOverridesAndKMSPluginProbes(ctx context.Context, config *apis
 
 	// we know these transformers are static so it is always correct to use this static lookup cache here
 	// this cache is used to make sure that frequent calls to TransformerForResource are cheap map lookups
-	return &cachedStaticResourceTransformers{transformers: transformers}, probes, &kmsUsed, nil
+	cachedTransformers := &cachedStaticResourceTransformers{transformers: transformers}
+
+	// prevent unbounded cache growth if custom resources are frequently churned through
+	go cachedTransformers.gcCustomResourceTransformers(ctx)
+
+	return cachedTransformers, probes, &kmsUsed, nil
 }
 
 // check encrypts and decrypts test data against KMS-Plugin's gRPC endpoint.
@@ -829,4 +835,65 @@ func (c *cachedStaticResourceTransformers) TransformerForResource(resource schem
 
 	val, _ := c.cache.LoadOrStore(resource, c.transformers.TransformerForResource(resource))
 	return val.(value.Transformer)
+}
+
+func (c *cachedStaticResourceTransformers) gcCustomResourceTransformers(ctx context.Context) {
+	const (
+		defBufferSize = 2_000
+		maxBufferSize = 10_000
+		minGCLimit    = 1_000
+	)
+
+	var count int
+	customResources := make([]schema.GroupResource, 0, defBufferSize)
+
+	_ = wait.PollUntilWithContext(
+		ctx,
+		time.Minute,
+		func(ctx context.Context) (bool, error) {
+			count = 0
+			customResources = customResources[:0]
+			if cap(customResources) > maxBufferSize {
+				customResources = make([]schema.GroupResource, 0, defBufferSize)
+			}
+
+			c.cache.Range(func(key, _ any) bool {
+				resource := key.(schema.GroupResource)
+
+				if isCoreResource(resource) {
+					return true // ignore core resources since they are always needed
+				}
+
+				count++
+				customResources = append(customResources, resource)
+				return true
+			})
+
+			if count < minGCLimit {
+				return false, nil // return early, no need to GC
+			}
+
+			for i, customResource := range customResources {
+				customResource := customResource
+				c.cache.Delete(customResource)
+
+				if i+minGCLimit >= len(customResources) {
+					return false, nil // enough resources have been garbage collected
+				}
+			}
+
+			return false, nil
+		})
+}
+
+func isCoreResource(resource schema.GroupResource) bool {
+	group := resource.Group
+
+	if len(group) == 0 ||
+		strings.HasSuffix(group, ".k8s.io") ||
+		!strings.Contains(group, ".") {
+		return true
+	}
+
+	return false
 }
