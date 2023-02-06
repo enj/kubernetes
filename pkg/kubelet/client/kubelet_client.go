@@ -27,7 +27,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/server/egressselector"
-	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/transport"
 	nodeutil "k8s.io/kubernetes/pkg/util/node"
 )
@@ -93,8 +92,7 @@ func makeTransport(config *KubeletClientConfig, insecureSkipTLSVerify bool) (htt
 	transportConfig := config.transportConfig()
 	if insecureSkipTLSVerify {
 		transportConfig.TLS.Insecure = true
-		transportConfig.TLS.CAData = nil
-		transportConfig.TLS.CAFile = ""
+		transportConfig.TLS.CAFile = "" // we are only using files so we can ignore CAData
 	}
 
 	if config.Lookup != nil {
