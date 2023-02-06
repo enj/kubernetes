@@ -26,7 +26,6 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/server/egressselector"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/transport"
@@ -52,9 +51,6 @@ type KubeletClientConfig struct {
 
 	// HTTPTimeout is used by the client to timeout http requests to Kubelet.
 	HTTPTimeout time.Duration
-
-	// Dial is a custom dialer used for the client
-	Dial utilnet.DialFunc
 
 	// Lookup will give us a dialer if the egress selector is configured for it
 	Lookup egressselector.Lookup
@@ -88,51 +84,40 @@ func MakeInsecureTransport(config *KubeletClientConfig) (http.RoundTripper, erro
 func makeTransport(config *KubeletClientConfig, insecureSkipTLSVerify bool) (http.RoundTripper, error) {
 	// do the insecureSkipTLSVerify on the pre-transport *before* we go get a potentially cached connection.
 	// transportConfig always produces a new struct pointer.
-	preTLSConfig := config.transportConfig()
-	if insecureSkipTLSVerify && preTLSConfig != nil {
-		preTLSConfig.TLS.Insecure = true
-		preTLSConfig.TLS.CAData = nil
-		preTLSConfig.TLS.CAFile = ""
+	transportConfig := config.transportConfig()
+	if insecureSkipTLSVerify {
+		transportConfig.TLS.Insecure = true
+		transportConfig.TLS.CAData = nil
+		transportConfig.TLS.CAFile = ""
 	}
 
-	tlsConfig, err := transport.TLSConfigFor(preTLSConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	rt := http.DefaultTransport
-	dialer := config.Dial
-	if dialer == nil && config.Lookup != nil {
+	if config.Lookup != nil {
 		// Assuming EgressSelector if SSHTunnel is not turned on.
 		// We will not get a dialer if egress selector is disabled.
 		networkContext := egressselector.Cluster.AsNetworkContext()
-		dialer, err = config.Lookup(networkContext)
+		dialer, err := config.Lookup(networkContext)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get context dialer for 'cluster': got %v", err)
 		}
+		if dialer != nil {
+			transportConfig.DialHolder = &transport.DialHolder{Dial: dialer}
+		}
 	}
-	if dialer != nil || tlsConfig != nil {
-		// If SSH Tunnel is turned on
-		rt = utilnet.SetOldTransportDefaults(&http.Transport{
-			DialContext:     dialer,
-			TLSClientConfig: tlsConfig,
-		})
-	}
-
-	return transport.HTTPWrappersForConfig(config.transportConfig(), rt)
+	return transport.New(transportConfig)
 }
 
 // transportConfig converts a client config to an appropriate transport config.
 func (c *KubeletClientConfig) transportConfig() *transport.Config {
 	cfg := &transport.Config{
 		TLS: transport.TLSConfig{
-			CAFile:     c.CAFile,
-			CAData:     c.CAData,
-			CertFile:   c.CertFile,
-			CertData:   c.CertData,
-			KeyFile:    c.KeyFile,
-			KeyData:    c.KeyData,
-			NextProtos: c.NextProtos,
+			CAFile:         c.CAFile,
+			CAData:         c.CAData,
+			CertFile:       c.CertFile,
+			CertData:       c.CertData,
+			KeyFile:        c.KeyFile,
+			KeyData:        c.KeyData,
+			ReloadTLSFiles: true,
+			NextProtos:     c.NextProtos,
 		},
 		BearerToken: c.BearerToken,
 	}
