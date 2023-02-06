@@ -44,16 +44,22 @@ type KubeletClientConfig struct {
 	PreferredAddressTypes []string
 
 	// TLSClientConfig contains settings to enable transport layer security
-	restclient.TLSClientConfig
-
-	// Server requires Bearer authentication
-	BearerToken string `datapolicy:"token"`
+	TLSClientConfig KubeletTLSConfig
 
 	// HTTPTimeout is used by the client to timeout http requests to Kubelet.
 	HTTPTimeout time.Duration
 
 	// Lookup will give us a dialer if the egress selector is configured for it
 	Lookup egressselector.Lookup
+}
+
+type KubeletTLSConfig struct {
+	// Server requires TLS client certificate authentication
+	CertFile string
+	// Server requires TLS client certificate authentication
+	KeyFile string
+	// Trusted root certificates for server
+	CAFile string
 }
 
 // ConnectionInfo provides the information needed to connect to a kubelet
@@ -110,16 +116,13 @@ func makeTransport(config *KubeletClientConfig, insecureSkipTLSVerify bool) (htt
 func (c *KubeletClientConfig) transportConfig() *transport.Config {
 	cfg := &transport.Config{
 		TLS: transport.TLSConfig{
-			CAFile:         c.CAFile,
-			CAData:         c.CAData,
-			CertFile:       c.CertFile,
-			CertData:       c.CertData,
-			KeyFile:        c.KeyFile,
-			KeyData:        c.KeyData,
+			CAFile:   c.TLSClientConfig.CAFile,
+			CertFile: c.TLSClientConfig.CertFile,
+			KeyFile:  c.TLSClientConfig.KeyFile,
+			// transport.loadTLSFiles would set this to true because we are only using files
+			// it is clearer to set it explicitly here so we remember that this is happening
 			ReloadTLSFiles: true,
-			NextProtos:     c.NextProtos,
 		},
-		BearerToken: c.BearerToken,
 	}
 	if !cfg.HasCA() {
 		cfg.TLS.Insecure = true
