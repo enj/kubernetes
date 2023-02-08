@@ -18,7 +18,6 @@ package encryption
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
 	"strings"
 	"sync"
@@ -29,12 +28,16 @@ import (
 	"k8s.io/kms/service"
 )
 
+var (
+	// emptyContext is an empty slice of bytes.
+	emptyContext = DefaultContext([]byte{})
+)
+
 const (
 	referenceSuffix = ".reference.encryption.k8s.io"
 	// referenceKEKAnnotationKey is the key used to store the localKEK in the annotations.
-	referenceKEKAnnotationKey               = "encrypted-kek" + referenceSuffix
-	referenceAuthenticatedDataAnnotationKey = "authenticated-data" + referenceSuffix
-	numAnnotations                          = 2
+	referenceKEKAnnotationKey = "encrypted-kek" + referenceSuffix
+	numAnnotations            = 1
 )
 
 // LocalKEKService adds an additional KEK layer to reduce calls to the remote
@@ -109,7 +112,7 @@ func (m *LocalKEKService) getTransformerForEncryption(uid string) (Transformer, 
 }
 
 func copyResponseAndAddLocalKEKAnnotation(resp *service.EncryptResponse) *service.EncryptResponse {
-	annotations := make(map[string][]byte, len(resp.Annotations)+numAnnotations-1)
+	annotations := make(map[string][]byte, len(resp.Annotations)+numAnnotations)
 	for s, bytes := range resp.Annotations {
 		s := s
 		bytes := bytes
@@ -131,12 +134,7 @@ func (m *LocalKEKService) Encrypt(ctx context.Context, uid string, pt []byte) (*
 		return nil, err
 	}
 
-	authenticatedData, err := generateAuthenticatedData(32)
-	if err != nil {
-		return nil, err
-	}
-
-	ct, err := transformer.TransformToStorage(ctx, pt, DefaultContext(authenticatedData))
+	ct, err := transformer.TransformToStorage(ctx, pt, emptyContext)
 	if err != nil {
 		klog.V(2).InfoS("encrypt plaintext", "id", uid, "err", err)
 		return nil, err
@@ -145,27 +143,8 @@ func (m *LocalKEKService) Encrypt(ctx context.Context, uid string, pt []byte) (*
 	return &service.EncryptResponse{
 		Ciphertext:  ct,
 		KeyID:       resp.KeyID, // TODO what about rotation ??
-		Annotations: addAuthenticatedDataToAnnotations(resp.Annotations, authenticatedData),
+		Annotations: resp.Annotations,
 	}, nil
-}
-
-func generateAuthenticatedData(length int) (key []byte, err error) {
-	key = make([]byte, length)
-	if _, err = rand.Read(key); err != nil {
-		return nil, err
-	}
-	return key, nil
-}
-
-func addAuthenticatedDataToAnnotations(annotations map[string][]byte, data []byte) map[string][]byte {
-	annotationsOut := make(map[string][]byte, len(annotations)+1)
-	for s, bytes := range annotations {
-		s := s
-		bytes := bytes
-		annotationsOut[s] = bytes
-	}
-	annotationsOut[referenceAuthenticatedDataAnnotationKey] = data
-	return annotationsOut
 }
 
 func (m *LocalKEKService) getTransformerForDecryption(ctx context.Context, uid string, req *service.DecryptRequest) (Transformer, error) {
@@ -204,9 +183,6 @@ func (m *LocalKEKService) Decrypt(ctx context.Context, uid string, req *service.
 	if _, ok := req.Annotations[referenceKEKAnnotationKey]; !ok {
 		return nil, fmt.Errorf("unable to find local KEK for request with uid %q", uid)
 	}
-	if _, ok := req.Annotations[referenceAuthenticatedDataAnnotationKey]; !ok {
-		return nil, fmt.Errorf("unable to find authenticated data for request with uid %q", uid)
-	}
 
 	transformer, err := m.getTransformerForDecryption(ctx, uid, req)
 	if err != nil {
@@ -214,7 +190,7 @@ func (m *LocalKEKService) Decrypt(ctx context.Context, uid string, req *service.
 		return nil, fmt.Errorf("failed to get transformer for decryption: %w", err)
 	}
 
-	pt, _, err := transformer.TransformFromStorage(ctx, req.Ciphertext, DefaultContext(req.Annotations[referenceAuthenticatedDataAnnotationKey]))
+	pt, _, err := transformer.TransformFromStorage(ctx, req.Ciphertext, emptyContext)
 	if err != nil {
 		klog.V(2).InfoS("decrypt ciphertext with pulled key", "id", uid, "err", err)
 		return nil, err
