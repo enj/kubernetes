@@ -218,8 +218,16 @@ func getTransformerOverridesAndKMSPluginProbes(ctx context.Context, config *apis
 		for _, resource := range resourceConfig.Resources {
 			resource := resource
 			gr := schema.ParseGroupResource(resource)
-			resourceToPrefixTransformer[gr] = append(
-				resourceToPrefixTransformer[gr], transformers...)
+
+			if _, masked := resourceToPrefixTransformer[schema.GroupResource{
+				Group:    "*",
+				Resource: "*",
+			}]; masked {
+				// an earlier rule already configured a transformer for *.*, masking this rule
+				continue
+			}
+
+			resourceToPrefixTransformer[gr] = append(resourceToPrefixTransformer[gr], transformers...)
 		}
 
 		probes = append(probes, p...)
@@ -777,17 +785,26 @@ func (s StaticTransformers) TransformerForResource(resource schema.GroupResource
 	return transformerFromOverrides(s, resource)
 }
 
+var anyGroupAnyResource = schema.GroupResource{
+	Group:    "*",
+	Resource: "*",
+}
+
 func transformerFromOverrides(transformerOverrides map[schema.GroupResource]value.Transformer, resource schema.GroupResource) value.Transformer {
-	if encryptAllTransformer, ok := transformerOverrides[schema.GroupResource{
-		Group:    "*",
-		Resource: "*",
-	}]; ok {
-		return encryptAllTransformer
+	if transformer := transformerOverrides[resource]; transformer != nil {
+		return transformer
 	}
 
-	transformer := transformerOverrides[resource]
-	if transformer == nil {
-		return identity.NewEncryptCheckTransformer()
+	if transformer := transformerOverrides[schema.GroupResource{
+		Group:    resource.Group,
+		Resource: "*",
+	}]; transformer != nil {
+		return transformer
 	}
-	return transformer
+
+	if transformer := transformerOverrides[anyGroupAnyResource]; transformer != nil {
+		return transformer
+	}
+
+	return identity.NewEncryptCheckTransformer()
 }

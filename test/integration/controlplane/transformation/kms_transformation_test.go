@@ -457,7 +457,6 @@ resources:
 	}
 
 	rawConfigmapEnvelope, err := test.readRawRecordFromETCD(test.getETCDPathForResource(test.storageConfig.Prefix, "", "configmaps", testConfigmap, testNamespace))
-
 	if err != nil {
 		t.Fatalf("failed to read %s from etcd: %v", test.getETCDPathForResource(test.storageConfig.Prefix, "", "configmaps", testConfigmap, testNamespace), err)
 	}
@@ -568,7 +567,7 @@ resources:
 
 		defer featuregatetesting.SetFeatureGateDuringTest(t, feature.DefaultFeatureGate, "AllAlpha", true)()
 		defer featuregatetesting.SetFeatureGateDuringTest(t, feature.DefaultFeatureGate, "AllBeta", true)()
-		test, err := newTransformTest(t, encryptionConfig, false, "", false)
+		test, err := newTransformTest(t, encryptionConfig, false, "")
 		if err != nil {
 			t.Fatalf("failed to start KUBE API Server with encryptionConfig")
 		}
@@ -628,6 +627,109 @@ resources:
 			}
 		}
 	})
+}
+
+func TestEncryptAllWithWildcard(t *testing.T) {
+	encryptionConfig := `
+kind: EncryptionConfiguration
+apiVersion: apiserver.config.k8s.io/v1
+resources:
+  - resources:
+    - configmaps
+    providers:
+    - identity: {}
+  - resources:
+    - '*.batch'
+    - '*.apps'
+    - '*.'
+    providers:
+    - kms:
+        name: kms-provider
+        cachesize: 1000
+        endpoint: unix:///@kms-provider.sock	
+`
+	pluginMock, err := mock.NewBase64Plugin("@kms-provider.sock")
+	if err != nil {
+		t.Fatalf("failed to create mock of KMS Plugin: %v", err)
+	}
+
+	go pluginMock.Start()
+	if err := mock.WaitForBase64PluginToBeUp(pluginMock); err != nil {
+		t.Fatalf("Failed start plugin, err: %v", err)
+	}
+	defer pluginMock.CleanUp()
+
+	test, err := newTransformTest(t, encryptionConfig, false, "")
+	if err != nil {
+		t.Fatalf("failed to start KUBE API Server with encryptionConfig\n %s, error: %v", encryptionConfig, err)
+	}
+	defer test.cleanUp()
+
+	wantPrefix := "k8s:enc:kms:v1:kms-provider:"
+
+	// create job
+	_, err = test.createJob("test-job", "default")
+	if err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
+
+	rawJobsEnvelope, err := test.readRawRecordFromETCD(test.getETCDPathForResource(test.storageConfig.Prefix, "", "jobs", "test-job", "default"))
+	if err != nil {
+		t.Fatalf("failed to read %s from etcd: %v", test.getETCDPathForResource(test.storageConfig.Prefix, "", "jobs", "test-job", "default"), err)
+	}
+
+	// assert prefix for jobs
+	if !bytes.HasPrefix(rawJobsEnvelope.Kvs[0].Value, []byte(wantPrefix)) {
+		t.Fatalf("expected jobs to be prefixed with %s, but got %s", wantPrefix, rawJobsEnvelope.Kvs[0].Value)
+	}
+
+	// create deployment
+	_, err = test.createDeployment("test-deployment", "default")
+	if err != nil {
+		t.Fatalf("failed to create deployment: %v", err)
+	}
+
+	rawDeploymentsEnvelope, err := test.readRawRecordFromETCD(test.getETCDPathForResource(test.storageConfig.Prefix, "", "deployments", "test-deployment", "default"))
+	if err != nil {
+		t.Fatalf("failed to read %s from etcd: %v", test.getETCDPathForResource(test.storageConfig.Prefix, "", "deployments", "test-deployment", "default"), err)
+	}
+
+	// assert prefix for deployments
+	if !bytes.HasPrefix(rawDeploymentsEnvelope.Kvs[0].Value, []byte(wantPrefix)) {
+		t.Fatalf("expected deployments to be prefixed with %s, but got %s", wantPrefix, rawDeploymentsEnvelope.Kvs[0].Value)
+	}
+
+	// create secret
+	test.secret, err = test.createSecret(testSecret, testNamespace)
+	if err != nil {
+		t.Fatalf("Failed to create test secret, error: %v", err)
+	}
+
+	rawSecretEnvelope, err := test.getRawSecretFromETCD()
+	if err != nil {
+		t.Fatalf("failed to read secrets from etcd: %v", err)
+	}
+
+	// assert prefix for secrets
+	if !bytes.HasPrefix(rawSecretEnvelope, []byte(wantPrefix)) {
+		t.Fatalf("expected secrets to be prefixed with %s, but got %s", wantPrefix, rawSecretEnvelope)
+	}
+
+	// create config map
+	_, err = test.createConfigMap(testConfigmap, testNamespace)
+	if err != nil {
+		t.Fatalf("Failed to create test configmap, error: %v", err)
+	}
+
+	rawConfigMapEnvelope, err := test.readRawRecordFromETCD(test.getETCDPathForResource(test.storageConfig.Prefix, "", "configmaps", testConfigmap, testNamespace))
+	if err != nil {
+		t.Fatalf("failed to read configmaps from etcd: %v", err)
+	}
+
+	// assert prefix for configmaps
+	if bytes.HasPrefix(rawConfigMapEnvelope.Kvs[0].Value, []byte(wantPrefix)) {
+		t.Fatalf("expected configmaps to be not encrypted, got %s", rawConfigMapEnvelope.Kvs[0].Value)
+	}
 }
 
 func TestEncryptionConfigHotReloadFileWatch(t *testing.T) {

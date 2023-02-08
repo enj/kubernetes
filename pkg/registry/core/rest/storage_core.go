@@ -192,26 +192,16 @@ func (c LegacyRESTStorageProvider) NewLegacyRESTStorage(apiResourceConfigSource 
 		return LegacyRESTStorage{}, genericapiserver.APIGroupInfo{}, fmt.Errorf("service clusterIPRange is missing")
 	}
 
-	serviceStorageConfig, err := c.StorageFactory.NewConfig(api.Resource("services"))
+	opts, err := restOptionsGetter.GetRESTOptions(api.Resource("services"))
 	if err != nil {
 		return LegacyRESTStorage{}, genericapiserver.APIGroupInfo{}, err
-	}
-
-	// assign transformer for serviceipallocations config
-	serviceipallocationsConfig := serviceStorageConfig.ForResource(api.Resource("serviceipallocations"))
-	serviceipallocationsRESTOptions, err := restOptionsGetter.GetRESTOptions(api.Resource("serviceipallocations"))
-	if err != nil {
-		return LegacyRESTStorage{}, genericapiserver.APIGroupInfo{}, err
-	}
-	if serviceipallocationsRESTOptions.StorageConfig.Transformer != nil {
-		serviceipallocationsConfig.Transformer = serviceipallocationsRESTOptions.StorageConfig.Transformer
 	}
 
 	serviceClusterIPAllocator, err := ipallocator.New(&serviceClusterIPRange, func(max int, rangeSpec string, offset int) (allocator.Interface, error) {
 		var mem allocator.Snapshottable
 		mem = allocator.NewAllocationMapWithOffset(max, rangeSpec, offset)
 		// TODO etcdallocator package to return a storage interface via the storageFactory
-		etcd, err := serviceallocator.NewEtcd(mem, "/ranges/serviceips", serviceipallocationsConfig)
+		etcd, err := serviceallocator.NewEtcd(mem, "/ranges/serviceips", opts.StorageConfig.ForResource(api.Resource("serviceipallocations")))
 		if err != nil {
 			return nil, err
 		}
@@ -232,7 +222,7 @@ func (c LegacyRESTStorageProvider) NewLegacyRESTStorage(apiResourceConfigSource 
 			var mem allocator.Snapshottable
 			mem = allocator.NewAllocationMapWithOffset(max, rangeSpec, offset)
 			// TODO etcdallocator package to return a storage interface via the storageFactory
-			etcd, err := serviceallocator.NewEtcd(mem, "/ranges/secondaryserviceips", serviceipallocationsConfig)
+			etcd, err := serviceallocator.NewEtcd(mem, "/ranges/secondaryserviceips", opts.StorageConfig.ForResource(api.Resource("serviceipallocations")))
 			if err != nil {
 				return nil, err
 			}
@@ -250,14 +240,7 @@ func (c LegacyRESTStorageProvider) NewLegacyRESTStorage(apiResourceConfigSource 
 	serviceNodePortAllocator, err := portallocator.New(c.ServiceNodePortRange, func(max int, rangeSpec string, offset int) (allocator.Interface, error) {
 		mem := allocator.NewAllocationMapWithOffset(max, rangeSpec, offset)
 		// TODO etcdallocator package to return a storage interface via the storageFactory
-		servicenodeportallocationsConfig := serviceStorageConfig.ForResource(api.Resource("servicenodeportallocations"))
-		servicenodeportallocationsRESTOptions, err := restOptionsGetter.GetRESTOptions(api.Resource("servicenodeportallocations"))
-		if err != nil {
-			return nil, err
-		}
-		servicenodeportallocationsConfig.Transformer = servicenodeportallocationsRESTOptions.StorageConfig.Transformer
-
-		etcd, err := serviceallocator.NewEtcd(mem, "/ranges/servicenodeports", servicenodeportallocationsConfig)
+		etcd, err := serviceallocator.NewEtcd(mem, "/ranges/servicenodeports", opts.StorageConfig.ForResource(api.Resource("servicenodeportallocations")))
 		if err != nil {
 			return nil, err
 		}

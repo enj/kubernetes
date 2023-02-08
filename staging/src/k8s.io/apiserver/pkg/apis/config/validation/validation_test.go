@@ -371,13 +371,23 @@ func TestStructure(t *testing.T) {
 			},
 		},
 		{
-			desc: "config should error when other resources are specified along with *.* at first position",
+			desc: "config should error when events.k8s.io group is used",
 			in: &config.EncryptionConfiguration{
 				Resources: []config.ResourceConfiguration{
 					{
 						Resources: []string{
-							"*.*",
-							"secrets",
+							"events.events.k8s.io",
+						},
+						Providers: []config.ProviderConfiguration{
+							{
+								KMS: &config.KMSConfiguration{
+									Name:       "foo",
+									Endpoint:   "unix:///tmp/kms-provider.socket",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									CacheSize:  &cacheSize,
+									APIVersion: "v1",
+								},
+							},
 						},
 					},
 				},
@@ -389,23 +399,43 @@ func TestStructure(t *testing.T) {
 					[]config.ResourceConfiguration{
 						{
 							Resources: []string{
-								"*.*",
-								"secrets",
+								"events.events.k8s.io",
+							},
+							Providers: []config.ProviderConfiguration{
+								{
+									KMS: &config.KMSConfiguration{
+										Name:       "foo",
+										Endpoint:   "unix:///tmp/kms-provider.socket",
+										Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+										CacheSize:  &cacheSize,
+										APIVersion: "v1",
+									},
+								},
 							},
 						},
 					},
-					encryptAllErrFmt,
+					eventsGroupErr,
 				),
 			},
 		},
 		{
-			desc: "config should error when other resources are specified along with *.* at later position",
+			desc: "config should error when extensions group is used",
 			in: &config.EncryptionConfiguration{
 				Resources: []config.ResourceConfiguration{
 					{
 						Resources: []string{
-							"secrets",
-							"*.*",
+							"*.extensions",
+						},
+						Providers: []config.ProviderConfiguration{
+							{
+								KMS: &config.KMSConfiguration{
+									Name:       "foo",
+									Endpoint:   "unix:///tmp/kms-provider.socket",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									CacheSize:  &cacheSize,
+									APIVersion: "v1",
+								},
+							},
 						},
 					},
 				},
@@ -417,12 +447,70 @@ func TestStructure(t *testing.T) {
 					[]config.ResourceConfiguration{
 						{
 							Resources: []string{
-								"secrets",
-								"*.*",
+								"*.extensions",
+							},
+							Providers: []config.ProviderConfiguration{
+								{
+									KMS: &config.KMSConfiguration{
+										Name:       "foo",
+										Endpoint:   "unix:///tmp/kms-provider.socket",
+										Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+										CacheSize:  &cacheSize,
+										APIVersion: "v1",
+									},
+								},
 							},
 						},
 					},
-					encryptAllErrFmt,
+					extensionsGroupErr,
+				),
+			},
+		},
+		{
+			desc: "config should error when '*' resource is used",
+			in: &config.EncryptionConfiguration{
+				Resources: []config.ResourceConfiguration{
+					{
+						Resources: []string{
+							"*",
+						},
+						Providers: []config.ProviderConfiguration{
+							{
+								KMS: &config.KMSConfiguration{
+									Name:       "foo",
+									Endpoint:   "unix:///tmp/kms-provider.socket",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									CacheSize:  &cacheSize,
+									APIVersion: "v1",
+								},
+							},
+						},
+					},
+				},
+			},
+			reload: false,
+			want: field.ErrorList{
+				field.Invalid(
+					root,
+					[]config.ResourceConfiguration{
+						{
+							Resources: []string{
+								"*",
+							},
+							Providers: []config.ProviderConfiguration{
+								{
+									KMS: &config.KMSConfiguration{
+										Name:       "foo",
+										Endpoint:   "unix:///tmp/kms-provider.socket",
+										Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+										CacheSize:  &cacheSize,
+										APIVersion: "v1",
+									},
+								},
+							},
+						},
+					},
+					starResourceErr,
 				),
 			},
 		},
