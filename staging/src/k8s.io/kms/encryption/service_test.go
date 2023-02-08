@@ -346,7 +346,7 @@ func TestService(t *testing.T) {
 		Ciphertext: encryptMessage,
 		KeyID:      keyID,
 		Annotations: map[string][]byte{
-			LocalKEKID: anonKey,
+			referenceKEKAnnotationKey: anonKey,
 		},
 	}
 
@@ -458,7 +458,7 @@ func TestService(t *testing.T) {
 				Ciphertext: encryptMessage,
 				KeyID:      keyID,
 				Annotations: map[string][]byte{
-					LocalKEKID: anonKey,
+					referenceKEKAnnotationKey: anonKey,
 				},
 			},
 			err: errCreateTransformer,
@@ -494,7 +494,7 @@ func TestService(t *testing.T) {
 				Ciphertext: encryptMessage,
 				KeyID:      keyID,
 				Annotations: map[string][]byte{
-					LocalKEKID: storeKey,
+					referenceKEKAnnotationKey: storeKey,
 				},
 			},
 			err: errLocallyDecrypt,
@@ -530,7 +530,7 @@ func TestService(t *testing.T) {
 				Ciphertext: encryptMessage,
 				KeyID:      keyID,
 				Annotations: map[string][]byte{
-					LocalKEKID: storeKey,
+					referenceKEKAnnotationKey: storeKey,
 				},
 			},
 		},
@@ -592,7 +592,7 @@ type testStore struct {
 	get func([]byte) (Transformer, bool)
 }
 
-var _ Store = (*testStore)(nil)
+var _ TransformerCache = (*testStore)(nil)
 
 func (t *testStore) Add(key []byte, transformer Transformer) {
 	t.add(key, transformer)

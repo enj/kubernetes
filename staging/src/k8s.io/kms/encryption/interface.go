@@ -18,13 +18,13 @@ package encryption
 
 import "context"
 
-// Store is a simple interface to store and retrieve Transformer. It is expected
+// TransformerCache is a simple interface to store and retrieve Transformer. It is expected
 // to be thread-safe.
-type Store interface {
+type TransformerCache interface {
 	// Add adds a transformer to the store with its encrypted key as key.
-	Add([]byte, Transformer)
+	Add(encryptedKey []byte, transformer Transformer)
 	// Get returns a transformer from the store by its encrypted key as key.
-	Get([]byte) (Transformer, bool)
+	Get(encryptedKey []byte) (Transformer, bool)
 }
 
 // CreateTransformer enables the creation of a Transformer based on a key.
