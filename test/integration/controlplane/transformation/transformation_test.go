@@ -49,6 +49,7 @@ import (
 	"k8s.io/kubernetes/test/integration"
 	"k8s.io/kubernetes/test/integration/etcd"
 	"k8s.io/kubernetes/test/integration/framework"
+	"k8s.io/utils/pointer"
 	"sigs.k8s.io/yaml"
 )
 
@@ -375,7 +376,7 @@ func (e *transformTest) createDeployment(name, namespace string) (*appsv1.Deploy
 			Namespace: namespace,
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: int32Ptr(2),
+			Replicas: pointer.Int32(2),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					"app": "nginx",
@@ -411,8 +412,6 @@ func (e *transformTest) createDeployment(name, namespace string) (*appsv1.Deploy
 
 	return deployment, nil
 }
-
-func int32Ptr(i int32) *int32 { return &i }
 
 func gvr(group, version, resource string) schema.GroupVersionResource {
 	return schema.GroupVersionResource{Group: group, Version: version, Resource: resource}

@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apiserver/pkg/apis/config"
@@ -43,8 +44,8 @@ const (
 	invalidKMSConfigNameErrFmt     = "invalid KMS provider name %s, must not contain ':'"
 	duplicateKMSConfigNameErrFmt   = "duplicate KMS provider name %s, names must be unique"
 	eventsGroupErr                 = "'*.events.k8s.io' and 'events' has same representation in etcd. Use 'events' instead in the config file"
-	extensionsGroupErr             = "'extensions' is deprecated."
-	starResourceErr                = "Use '*.' to encrypt all the resources from core API group"
+	extensionsGroupErr             = "'extensions' group has been removed and cannot be used for encryption."
+	starResourceErr                = "Use '*.' to encrypt all the resources from core API group or *.* to encrypt all resources"
 )
 
 var (
@@ -71,57 +72,52 @@ func ValidateEncryptionConfiguration(c *config.EncryptionConfiguration, reload b
 		return allErrs
 	}
 
-	eventsGroupFound := false
-	extensionsGroupFound := false
-	starResourceFound := false
-	for _, resource := range c.Resources {
-		for _, res := range resource.Resources {
-			// check if group is 'events.k8s.io'
-			if strings.HasSuffix(res, ".events.k8s.io") {
-				eventsGroupFound = true
-			}
-			// check if group is 'extensions'
-			if strings.HasSuffix(res, ".extensions") {
-				extensionsGroupFound = true
-			}
+	// check for invalid resource '*' and invalid groups 'events.k8s.io' and 'extensions'
+	for i, resource := range c.Resources {
+		ii := root.Index(i)
+		for j, res := range resource.Resources {
+			jj := ii.Child("resources").Index(j)
+
 			// check if resource is '*'
 			if res == "*" {
-				starResourceFound = true
+				allErrs = append(
+					allErrs,
+					field.Invalid(
+						jj,
+						resource.Resources,
+						starResourceErr,
+					),
+				)
+				continue
+			}
+
+			// check if group is 'events.k8s.io'
+			gr := schema.ParseGroupResource(res)
+			if gr.Group == "events.k8s.io" {
+				allErrs = append(
+					allErrs,
+					field.Invalid(
+						jj,
+						resource.Resources,
+						eventsGroupErr,
+					),
+				)
+				continue
+			}
+
+			// check if group is 'extensions'
+			if gr.Group == "extensions" {
+				allErrs = append(
+					allErrs,
+					field.Invalid(
+						jj,
+						resource.Resources,
+						extensionsGroupErr,
+					),
+				)
+				continue
 			}
 		}
-	}
-
-	if eventsGroupFound {
-		allErrs = append(
-			allErrs,
-			field.Invalid(
-				root,
-				c.Resources,
-				eventsGroupErr,
-			),
-		)
-	}
-
-	if extensionsGroupFound {
-		allErrs = append(
-			allErrs,
-			field.Invalid(
-				root,
-				c.Resources,
-				extensionsGroupErr,
-			),
-		)
-	}
-
-	if starResourceFound {
-		allErrs = append(
-			allErrs,
-			field.Invalid(
-				root,
-				c.Resources,
-				starResourceErr,
-			),
-		)
 	}
 
 	// kmsProviderNames is used to track config names to ensure they are unique.

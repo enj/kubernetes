@@ -619,6 +619,16 @@ resources:
 			t.Fatalf("failed to retrieve secret from etcd %v", err)
 		}
 
+		// assert that total key values in response in greater than 0
+		if len(response.Kvs) == 0 {
+			t.Fatalf("expected total number of keys to be greater than 0, but got %d", len(response.Kvs))
+		}
+
+		// assert that total response keys are greater or equal to total resources
+		if len(response.Kvs) < len(resources) {
+			t.Fatalf("expected total number of keys to be greater or equal to total resources, but got %d", len(response.Kvs))
+		}
+
 		// assert that all resources are encrypted
 		wantPrefix := "k8s:enc:kms:v1:encrypt-all-kms-provider:"
 		for _, kv := range response.Kvs {

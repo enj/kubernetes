@@ -219,12 +219,20 @@ func getTransformerOverridesAndKMSPluginProbes(ctx context.Context, config *apis
 			resource := resource
 			gr := schema.ParseGroupResource(resource)
 
+			// check if resource is masked by *.group rule
 			if _, masked := resourceToPrefixTransformer[schema.GroupResource{
-				Group:    "*",
+				Group:    gr.Group,
 				Resource: "*",
 			}]; masked {
+				// an earlier rule already configured a transformer for *.group, masking this rule
+				// return error since this is not allowed
+				return nil, nil, nil, fmt.Errorf("resource %s is masked by earlier rule %s", gr, schema.GroupResource{Group: gr.Group, Resource: "*"})
+			}
+
+			if _, masked := resourceToPrefixTransformer[anyGroupAnyResource]; masked {
 				// an earlier rule already configured a transformer for *.*, masking this rule
-				continue
+				// return error since this is not allowed
+				return nil, nil, nil, fmt.Errorf("resource %s is masked by earlier rule %s", gr, anyGroupAnyResource)
 			}
 
 			resourceToPrefixTransformer[gr] = append(resourceToPrefixTransformer[gr], transformers...)
