@@ -381,4 +381,25 @@ func TestEnvelopeMetricsLRUKey(t *testing.T) {
 	if totalLabels != cacheSize {
 		t.Fatalf("expected total labels to be the same as cacheSize %d, got %d", cacheSize, totalLabels)
 	}
+
+	validMetrics := 0
+	metricFamilies, err := legacyregistry.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range metricFamilies {
+		if family.GetName() != "apiserver_envelope_encryption_key_id_hash_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			if metric.Counter.GetValue() != 1 {
+				t.Errorf("invalid metric seen: %s", metric.String())
+			} else {
+				validMetrics++
+			}
+		}
+	}
+	if validMetrics != cacheSize {
+		t.Fatalf("expected total valid metrics to be the same as cacheSize %d, got %d", cacheSize, validMetrics)
+	}
 }
