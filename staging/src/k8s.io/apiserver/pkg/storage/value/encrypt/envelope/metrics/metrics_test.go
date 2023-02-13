@@ -18,7 +18,6 @@ package metrics
 
 import (
 	"fmt"
-	"hash"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +26,8 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/component-base/metrics/testutil"
 )
@@ -186,7 +187,6 @@ func TestRecordKMSOperationLatency(t *testing.T) {
 }
 
 func TestEnvelopeMetrics_Serial(t *testing.T) {
-
 	testCases := []struct {
 		desc               string
 		keyID              string
@@ -274,7 +274,7 @@ func TestEnvelopeMetrics_Serial(t *testing.T) {
 	KeyIDHashTotal.Reset()
 	cacheSize = 2
 	RegisterMetrics()
-	registerMetrics()
+	registerLRUMetrics()
 
 	for _, tt := range testCases {
 		t.Run(tt.desc, func(t *testing.T) {
@@ -289,28 +289,22 @@ func TestEnvelopeMetrics_Serial(t *testing.T) {
 }
 
 func TestEnvelopeMetrics_Parallel(t *testing.T) {
-
 	testCases := []struct {
 		desc               string
-		metrics            []string
 		providerName       string
 		transformationType string
-		want               string
 	}{
 		{
-			desc: "keyIDHash total exceeds limit, remove first label, and empty keyID",
-			metrics: []string{
-				"apiserver_envelope_encryption_key_id_hash_total",
-			},
+			desc:               "keyIDHash total exceeds limit",
 			providerName:       testProviderNameForMetric,
 			transformationType: "from_storage",
-			want:               ``,
 		},
 	}
-	KeyIDHashTotal.Reset()
-	cacheSize = 3
 	RegisterMetrics()
-	registerMetrics()
+
+	cacheSize = 3
+	registerLRUMetrics()
+	KeyIDHashTotal.Reset()
 
 	for _, tt := range testCases {
 		t.Run(tt.desc, func(t *testing.T) {
@@ -326,9 +320,8 @@ func TestEnvelopeMetrics_Parallel(t *testing.T) {
 			wg.Wait()
 
 			totalLabels := 0
-			h := hashPool.Get().(hash.Hash)
 			for i := 1; i < 100; i++ {
-				key := getHash(h, strconv.Itoa(i))
+				key := getHash(strconv.Itoa(i))
 				count, err := testutil.GetCounterMetricValue(KeyIDHashTotal.WithLabelValues(tt.transformationType, tt.providerName, key))
 				if err != nil {
 					t.Fatalf("failed to get metric value, error: %v", err)
@@ -341,5 +334,51 @@ func TestEnvelopeMetrics_Parallel(t *testing.T) {
 				t.Fatalf("expected total labels to be the same as cacheSize %d, got %d", cacheSize, totalLabels)
 			}
 		})
+	}
+}
+
+func TestEnvelopeMetricsLRUKey(t *testing.T) {
+	RegisterMetrics()
+
+	cacheSize = 3
+	registerLRUMetrics()
+	KeyIDHashTotal.Reset()
+	defer KeyIDHashTotal.Reset()
+
+	var record sync.Map
+
+	var wg sync.WaitGroup
+	for i := 1; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			keyID := rand.String(32)
+			key := metricLabels{
+				transformationType: rand.String(32),
+				providerName:       rand.String(32),
+				keyIDHash:          getHash(keyID),
+			}
+			record.Store(key, nil)
+			RecordKeyID(key.transformationType, key.providerName, keyID)
+		}()
+	}
+	wg.Wait()
+
+	totalLabels := 0
+
+	record.Range(func(key, _ any) bool {
+		k := key.(metricLabels)
+		count, err := testutil.GetCounterMetricValue(KeyIDHashTotal.WithLabelValues(k.transformationType, k.providerName, k.keyIDHash))
+		if err != nil {
+			t.Fatalf("failed to get metric value, error: %v", err)
+		}
+		if count > 0 {
+			totalLabels++
+		}
+		return true
+	})
+
+	if totalLabels != cacheSize {
+		t.Fatalf("expected total labels to be the same as cacheSize %d, got %d", cacheSize, totalLabels)
 	}
 }

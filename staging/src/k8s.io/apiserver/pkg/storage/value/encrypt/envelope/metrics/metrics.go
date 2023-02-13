@@ -26,6 +26,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
 	"k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/utils/lru"
@@ -144,20 +145,27 @@ var (
 var registerMetricsFunc sync.Once
 var hashPool *sync.Pool
 
-func registerMetrics() {
-	keyIDHashTotalMetricLabels = lru.NewWithEvictionFunc(cacheSize, func(key lru.Key, value interface{}) {
-		item := value.(*metricLabels)
+func registerLRUMetrics() {
+	if keyIDHashTotalMetricLabels != nil {
+		keyIDHashTotalMetricLabels.Clear()
+	}
+	if keyIDHashStatusLastTimestampSecondsMetricLabels != nil {
+		keyIDHashStatusLastTimestampSecondsMetricLabels.Clear()
+	}
+
+	keyIDHashTotalMetricLabels = lru.NewWithEvictionFunc(cacheSize, func(key lru.Key, _ interface{}) {
+		item := key.(metricLabels)
 		KeyIDHashTotal.DeleteLabelValues(item.transformationType, item.providerName, item.keyIDHash)
 		KeyIDHashLastTimestampSeconds.DeleteLabelValues(item.transformationType, item.providerName, item.keyIDHash)
 	})
-	keyIDHashStatusLastTimestampSecondsMetricLabels = lru.NewWithEvictionFunc(cacheSize, func(key lru.Key, value interface{}) {
-		item := value.(*metricLabels)
+	keyIDHashStatusLastTimestampSecondsMetricLabels = lru.NewWithEvictionFunc(cacheSize, func(key lru.Key, _ interface{}) {
+		item := key.(metricLabels)
 		KeyIDHashStatusLastTimestampSeconds.DeleteLabelValues(item.providerName, item.keyIDHash)
 	})
 }
 func RegisterMetrics() {
 	registerMetricsFunc.Do(func() {
-		registerMetrics()
+		registerLRUMetrics()
 		hashPool = &sync.Pool{
 			New: func() interface{} {
 				return sha256.New()
@@ -237,7 +245,8 @@ func getErrorCode(err error) string {
 	return "unknown-non-grpc"
 }
 
-func getHash(h hash.Hash, data string) string {
+func getHash(data string) string {
+	h := hashPool.Get().(hash.Hash)
 	h.Reset()
 	h.Write([]byte(data))
 	result := fmt.Sprintf("sha256:%x", h.Sum(nil))
@@ -245,31 +254,16 @@ func getHash(h hash.Hash, data string) string {
 	return result
 }
 
-// getCachedItem fetches the metricLabels corresponding to cache key from cache, if it exists.
-func getCachedItem(cache *lru.Cache, key string) *metricLabels {
-	value, found := cache.Get(key)
-	if found {
-		return value.(*metricLabels)
-	}
-
-	return nil
-}
-
 func addLabelToCache(c *lru.Cache, transformationType, providerName, keyID string) string {
-	h := hashPool.Get().(hash.Hash)
 	keyIDHash := ""
 	// only get hash if the keyID is not empty
 	if len(keyID) > 0 {
-		keyIDHash = getHash(h, keyID)
+		keyIDHash = getHash(keyID)
 	}
-	cacheKey := providerName + keyIDHash
-	cachedItem := getCachedItem(c, cacheKey)
-	if cachedItem == nil {
-		c.Add(cacheKey, &metricLabels{
-			transformationType: transformationType,
-			providerName:       providerName,
-			keyIDHash:          keyIDHash,
-		})
-	}
+	c.Add(metricLabels{
+		transformationType: transformationType,
+		providerName:       providerName,
+		keyIDHash:          keyIDHash,
+	}, nil) // value is irrelevant, this is a set and not a map
 	return keyIDHash
 }
