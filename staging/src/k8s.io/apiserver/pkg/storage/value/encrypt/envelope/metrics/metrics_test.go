@@ -345,8 +345,6 @@ func TestEnvelopeMetricsLRUKey(t *testing.T) {
 	KeyIDHashTotal.Reset()
 	defer KeyIDHashTotal.Reset()
 
-	var record sync.Map
-
 	var wg sync.WaitGroup
 	for i := 1; i < 100; i++ {
 		wg.Add(1)
@@ -358,29 +356,10 @@ func TestEnvelopeMetricsLRUKey(t *testing.T) {
 				providerName:       rand.String(32),
 				keyIDHash:          getHash(keyID),
 			}
-			record.Store(key, nil)
 			RecordKeyID(key.transformationType, key.providerName, keyID)
 		}()
 	}
 	wg.Wait()
-
-	totalLabels := 0
-
-	record.Range(func(key, _ any) bool {
-		k := key.(metricLabels)
-		count, err := testutil.GetCounterMetricValue(KeyIDHashTotal.WithLabelValues(k.transformationType, k.providerName, k.keyIDHash))
-		if err != nil {
-			t.Fatalf("failed to get metric value, error: %v", err)
-		}
-		if count > 0 {
-			totalLabels++
-		}
-		return true
-	})
-
-	if totalLabels != cacheSize {
-		t.Fatalf("expected total labels to be the same as cacheSize %d, got %d", cacheSize, totalLabels)
-	}
 
 	validMetrics := 0
 	metricFamilies, err := legacyregistry.DefaultGatherer.Gather()
