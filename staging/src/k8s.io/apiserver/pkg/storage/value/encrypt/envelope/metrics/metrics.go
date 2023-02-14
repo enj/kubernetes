@@ -29,6 +29,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"k8s.io/klog/v2"
+
 	"k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/utils/lru"
@@ -106,7 +108,7 @@ var (
 	// e.g. apiserver_envelope_encryption_key_id_hash_total counter
 	// apiserver_envelope_encryption_key_id_hash_total{key_id_hash="sha256",
 	// provider_name="providerName",transformation_type="from_storage"} 1
-	KeyIDHashTotal = &filterMetric[metrics.CounterMetric]{registerable: metrics.NewCounterVec(
+	KeyIDHashTotal = &filterMetric2{registerable2: metrics.NewCounterVec(
 		&metrics.CounterOpts{
 			Namespace:      namespace,
 			Subsystem:      subsystem,
@@ -159,6 +161,7 @@ func registerLRUMetrics() {
 		item := key.(metricLabels)
 		KeyIDHashTotal.DeleteLabelValues(item.transformationType, item.providerName, item.keyIDHash)
 		KeyIDHashLastTimestampSeconds.DeleteLabelValues(item.transformationType, item.providerName, item.keyIDHash)
+		klog.Errorf("0000000: %#v", item)
 	})
 	keyIDHashStatusLastTimestampSecondsMetricLabels = lru.NewWithEvictionFunc(cacheSize, func(key lru.Key, _ interface{}) {
 		item := key.(metricLabels)
@@ -285,6 +288,37 @@ func (f *filterMetric[T]) Collect(c chan<- prometheus.Metric) {
 	metricsCh := make(chan prometheus.Metric)
 	go func() {
 		f.registerable.Collect(metricsCh)
+		close(metricsCh)
+	}()
+	metric := &dto.Metric{}
+	for m := range metricsCh {
+		metric.Reset()
+		if err := m.Write(metric); err != nil {
+			c <- m // let the caller figure it out on the error cases
+			continue
+		}
+		if metric.GetCounter().GetValue() == 0 && metric.GetGauge().GetValue() == 0 {
+			continue // filter out empty metrics
+		}
+		c <- m
+	}
+}
+
+type registerable2 interface {
+	metrics.Registerable
+	WithLabelValues(lvs ...string) metrics.CounterMetric
+	DeleteLabelValues(lvs ...string) bool
+	Reset()
+}
+
+type filterMetric2 struct {
+	registerable2
+}
+
+func (f *filterMetric2) Collect(c chan<- prometheus.Metric) {
+	metricsCh := make(chan prometheus.Metric)
+	go func() {
+		f.registerable2.Collect(metricsCh)
 		close(metricsCh)
 	}()
 	metric := &dto.Metric{}

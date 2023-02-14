@@ -345,6 +345,8 @@ func TestEnvelopeMetricsLRUKey(t *testing.T) {
 	KeyIDHashTotal.Reset()
 	defer KeyIDHashTotal.Reset()
 
+	_, _ = legacyregistry.DefaultGatherer.Gather()
+
 	var record sync.Map
 
 	var wg sync.WaitGroup
@@ -379,7 +381,7 @@ func TestEnvelopeMetricsLRUKey(t *testing.T) {
 	})
 
 	if totalLabels != cacheSize {
-		t.Fatalf("expected total labels to be the same as cacheSize %d, got %d", cacheSize, totalLabels)
+		t.Errorf("expected total labels to be the same as cacheSize %d, got %d", cacheSize, totalLabels)
 	}
 
 	validMetrics := 0
@@ -396,6 +398,7 @@ func TestEnvelopeMetricsLRUKey(t *testing.T) {
 				t.Errorf("invalid metric seen: %s", metric.String())
 			} else {
 				validMetrics++
+				t.Error(metric.Counter.String())
 			}
 		}
 	}
