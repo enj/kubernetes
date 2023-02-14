@@ -24,6 +24,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -173,7 +175,7 @@ func RegisterMetrics() {
 		}
 		legacyregistry.MustRegister(dekCacheFillPercent)
 		legacyregistry.MustRegister(DekCacheInterArrivals)
-		legacyregistry.MustRegister(KeyIDHashTotal)
+		legacyregistry.MustRegister(&filterCounterMetric{Registerable: KeyIDHashTotal})
 		legacyregistry.MustRegister(KeyIDHashLastTimestampSeconds)
 		legacyregistry.MustRegister(KeyIDHashStatusLastTimestampSeconds)
 		legacyregistry.MustRegister(KMSOperationsLatencyMetric)
@@ -266,4 +268,27 @@ func addLabelToCache(c *lru.Cache, transformationType, providerName, keyID strin
 		keyIDHash:          keyIDHash,
 	}, nil) // value is irrelevant, this is a set and not a map
 	return keyIDHash
+}
+
+type filterCounterMetric struct {
+	metrics.Registerable
+}
+
+func (f *filterCounterMetric) Collect(c chan<- prometheus.Metric) {
+	metricsCh := make(chan prometheus.Metric)
+	go func() {
+		f.Registerable.Collect(metricsCh)
+		close(metricsCh)
+	}()
+	metric := dto.Metric{}
+	for m := range metricsCh {
+		metric.Reset()
+		if err := m.Write(&metric); err != nil {
+			continue // TODO??
+		}
+		if metric.GetCounter().GetValue() == 0 {
+			continue
+		}
+		c <- m
+	}
 }
