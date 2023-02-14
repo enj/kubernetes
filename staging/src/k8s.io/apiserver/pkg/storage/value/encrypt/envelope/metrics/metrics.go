@@ -106,7 +106,7 @@ var (
 	// e.g. apiserver_envelope_encryption_key_id_hash_total counter
 	// apiserver_envelope_encryption_key_id_hash_total{key_id_hash="sha256",
 	// provider_name="providerName",transformation_type="from_storage"} 1
-	KeyIDHashTotal = metrics.NewCounterVec(
+	KeyIDHashTotal = &filterMetric[metrics.CounterMetric]{registerable: metrics.NewCounterVec(
 		&metrics.CounterOpts{
 			Namespace:      namespace,
 			Subsystem:      subsystem,
@@ -115,11 +115,11 @@ var (
 			StabilityLevel: metrics.ALPHA,
 		},
 		[]string{"transformation_type", "provider_name", "key_id_hash"},
-	)
+	)}
 
 	// keyIDHashLastTimestampSeconds is the last time in seconds when a keyID was used
 	// e.g. apiserver_envelope_encryption_key_id_hash_last_timestamp_seconds{key_id_hash="sha256", provider_name="providerName",transformation_type="from_storage"} 1.674865558833728e+09
-	KeyIDHashLastTimestampSeconds = metrics.NewGaugeVec(
+	KeyIDHashLastTimestampSeconds = &filterMetric[metrics.GaugeMetric]{registerable: metrics.NewGaugeVec(
 		&metrics.GaugeOpts{
 			Namespace:      namespace,
 			Subsystem:      subsystem,
@@ -128,11 +128,11 @@ var (
 			StabilityLevel: metrics.ALPHA,
 		},
 		[]string{"transformation_type", "provider_name", "key_id_hash"},
-	)
+	)}
 
 	// keyIDHashStatusLastTimestampSeconds is the last time in seconds when a keyID was returned by the Status RPC call.
 	// e.g. apiserver_envelope_encryption_key_id_hash_status_last_timestamp_seconds{key_id_hash="sha256", provider_name="providerName"} 1.674865558833728e+09
-	KeyIDHashStatusLastTimestampSeconds = metrics.NewGaugeVec(
+	KeyIDHashStatusLastTimestampSeconds = &filterMetric[metrics.GaugeMetric]{registerable: metrics.NewGaugeVec(
 		&metrics.GaugeOpts{
 			Namespace:      namespace,
 			Subsystem:      subsystem,
@@ -141,7 +141,7 @@ var (
 			StabilityLevel: metrics.ALPHA,
 		},
 		[]string{"provider_name", "key_id_hash"},
-	)
+	)}
 )
 
 var registerMetricsFunc sync.Once
@@ -175,7 +175,7 @@ func RegisterMetrics() {
 		}
 		legacyregistry.MustRegister(dekCacheFillPercent)
 		legacyregistry.MustRegister(DekCacheInterArrivals)
-		legacyregistry.MustRegister(&filterCounterMetric{Registerable: KeyIDHashTotal})
+		legacyregistry.MustRegister(KeyIDHashTotal)
 		legacyregistry.MustRegister(KeyIDHashLastTimestampSeconds)
 		legacyregistry.MustRegister(KeyIDHashStatusLastTimestampSeconds)
 		legacyregistry.MustRegister(KMSOperationsLatencyMetric)
@@ -270,24 +270,32 @@ func addLabelToCache(c *lru.Cache, transformationType, providerName, keyID strin
 	return keyIDHash
 }
 
-type filterCounterMetric struct {
+type registerable[T metrics.CounterMetric] interface {
 	metrics.Registerable
+	WithLabelValues(lvs ...string) T
+	DeleteLabelValues(lvs ...string) bool
+	Reset()
 }
 
-func (f *filterCounterMetric) Collect(c chan<- prometheus.Metric) {
+type filterMetric[T metrics.CounterMetric] struct {
+	registerable[T]
+}
+
+func (f *filterMetric[T]) Collect(c chan<- prometheus.Metric) {
 	metricsCh := make(chan prometheus.Metric)
 	go func() {
-		f.Registerable.Collect(metricsCh)
+		f.registerable.Collect(metricsCh)
 		close(metricsCh)
 	}()
-	metric := dto.Metric{}
+	metric := &dto.Metric{}
 	for m := range metricsCh {
 		metric.Reset()
-		if err := m.Write(&metric); err != nil {
-			continue // TODO??
-		}
-		if metric.GetCounter().GetValue() == 0 {
+		if err := m.Write(metric); err != nil {
+			c <- m // let the caller figure it out on the error cases
 			continue
+		}
+		if metric.GetCounter().GetValue() == 0 && metric.GetGauge().GetValue() == 0 {
+			continue // filter out empty metrics
 		}
 		c <- m
 	}
