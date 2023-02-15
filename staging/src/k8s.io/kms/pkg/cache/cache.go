@@ -109,6 +109,7 @@ func (e *EncryptedKeyToTransformer) gc(ctx context.Context) {
 	}
 
 	// TODO can we do better than random deletes, maybe hold the keys in the a linked list?
+	// TODO range is O(N) which would be pretty bad at high sizes
 	e.cache.Range(func(key, value any) bool {
 		select {
 		case <-ctx.Done():
@@ -117,7 +118,9 @@ func (e *EncryptedKeyToTransformer) gc(ctx context.Context) {
 		}
 
 		// TODO should this keep deleting until say 90%?
-		e.cache.Delete(key)
+		if _, loaded := e.cache.LoadAndDelete(key); !loaded {
+			panic("unexpected missing key") // TODO what is best here?
+		}
 		if newSize := e.size.Add(-1); newSize <= e.minSize {
 			return false // stop deleting
 		}
