@@ -74,7 +74,7 @@ func newCache(ctx context.Context, minSize, bucket int64, interval time.Duration
 	}
 	go func() {
 		delCount := minSize / bucket
-		_ = wait.PollImmediateInfiniteWithContext(ctx, interval, func(ctx context.Context) (bool, error) {
+		_ = wait.PollInfiniteWithContext(ctx, interval, func(ctx context.Context) (bool, error) {
 			e.gc(ctx, delCount)
 			return false, nil
 		})
