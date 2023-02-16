@@ -17,6 +17,7 @@ limitations under the License.
 package cache
 
 import (
+	"container/list"
 	"context"
 	"crypto/sha256"
 	"hash"
@@ -25,7 +26,6 @@ import (
 	"time"
 	"unsafe"
 
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kms/pkg/value"
 )
 
@@ -53,6 +53,8 @@ type EncryptedKeyToTransformer struct {
 	// hashPool is a per cache pool of hash.Hash (to avoid allocations from building the Hash)
 	// SHA-256 is used to prevent collisions
 	hashPool sync.Pool
+
+	hashes chan string
 }
 
 func New(ctx context.Context) *EncryptedKeyToTransformer {
@@ -63,6 +65,7 @@ func newCache(ctx context.Context, minSize, bucket int64, interval time.Duration
 	if minSize%bucket != 0 {
 		panic("invalid GC bucket size")
 	}
+	delCount := minSize / bucket
 
 	e := &EncryptedKeyToTransformer{
 		minSize: minSize,
@@ -71,14 +74,9 @@ func newCache(ctx context.Context, minSize, bucket int64, interval time.Duration
 				return sha256.New()
 			},
 		},
+		hashes: make(chan string, delCount), // TODO should this be buffered or not?
 	}
-	go func() {
-		delCount := minSize / bucket
-		_ = wait.PollInfiniteWithContext(ctx, interval, func(ctx context.Context) (bool, error) {
-			e.gc(ctx, delCount)
-			return false, nil
-		})
-	}()
+	go e.gcLoop(ctx, delCount, interval) // TODO maybe better as a Run?
 	return e
 }
 
@@ -98,33 +96,46 @@ func (e *EncryptedKeyToTransformer) Set(key []byte, transformer value.Transforme
 		panic("transformer must not be nil")
 	}
 	e.size.Add(1)
-	if _, loaded := e.cache.LoadOrStore(e.keyFunc(key), transformer); loaded {
+	keyHash := e.keyFunc(key)
+	if _, loaded := e.cache.LoadOrStore(keyHash, transformer); loaded {
 		panic("duplicate key") // TODO what is best here?
+	}
+	// in a separate go routine, inform the GC about this hash
+	go func() {
+		e.hashes <- keyHash
+	}()
+}
+
+func (e *EncryptedKeyToTransformer) gcLoop(ctx context.Context, delCount int64, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+
+	var hashes list.List
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if e.size.Load() <= e.minSize {
+				continue // nothing to do, cache is still too small
+			}
+			e.gc(ctx, delCount, &hashes)
+		case keyHash := <-e.hashes:
+			hashes.PushBack(keyHash)
+		}
 	}
 }
 
-func (e *EncryptedKeyToTransformer) gc(ctx context.Context, delCount int64) {
-	select {
-	case <-ctx.Done():
-		return
-	default:
-	}
-
-	if e.size.Load() <= e.minSize {
-		return // nothing to do, cache is still too small
-	}
-
+func (e *EncryptedKeyToTransformer) gc(ctx context.Context, delCount int64, hashes *list.List) {
 	var count int64
-
-	// TODO can we do better than random deletes, maybe hold the keys in the a linked list?
-	// TODO range is O(N) which would be pretty bad at high sizes
-	e.cache.Range(func(key, value any) bool {
+	for {
 		select {
 		case <-ctx.Done():
-			return false // stop deleting early
+			return // stop deleting early
 		default:
 		}
 
+		key := hashes.Remove(hashes.Front())
 		if _, loaded := e.cache.LoadAndDelete(key); !loaded {
 			panic("unexpected missing key") // TODO what is best here?
 		}
@@ -132,10 +143,10 @@ func (e *EncryptedKeyToTransformer) gc(ctx context.Context, delCount int64) {
 		// always delete at least delCount entries and, if needed, keep deleting until we reach minSize
 		newSize := e.size.Add(-1)
 		count++
-		keepDeleting := newSize > e.minSize || count < delCount
-
-		return keepDeleting
-	})
+		if keepDeleting := newSize > e.minSize || count < delCount; !keepDeleting {
+			return
+		}
+	}
 }
 
 // keyFunc generates a string key by hashing the inputs.
