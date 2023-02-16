@@ -22,7 +22,6 @@ import (
 	"crypto/sha256"
 	"hash"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -33,9 +32,12 @@ const (
 	// if the cache size is less than this value, we will not GC.
 	// this means that the cache will take at least 152 MB before
 	// we start to shrink it back down.
-	size       = 1 << 20
-	gcInterval = 5 * time.Minute
-	gcBucket   = 1 << 5
+	minCacheSize = 1 << 20
+
+	gcInterval       = 5 * time.Minute
+	gcBuckets        = 1 << 5
+	gcDelCount       = minCacheSize / gcBuckets
+	cacheSizeAfterGC = minCacheSize - gcDelCount
 )
 
 // EncryptedKeyToTransformer TODO comment
@@ -47,9 +49,8 @@ type EncryptedKeyToTransformer struct {
 	// we never expect a map key to be used more than once.
 	// TODO consider etcd path -> key bytes -> transformer
 	cache sync.Map
-	size  atomic.Int64
 
-	minSize int64
+	minSize int
 	// hashPool is a per cache pool of hash.Hash (to avoid allocations from building the Hash)
 	// SHA-256 is used to prevent collisions
 	hashPool sync.Pool
@@ -58,15 +59,10 @@ type EncryptedKeyToTransformer struct {
 }
 
 func New(ctx context.Context) *EncryptedKeyToTransformer {
-	return newCache(ctx, size, gcBucket, gcInterval)
+	return newCache(ctx, minCacheSize, cacheSizeAfterGC, gcInterval)
 }
 
-func newCache(ctx context.Context, minSize, bucket int64, interval time.Duration) *EncryptedKeyToTransformer {
-	if minSize%bucket != 0 {
-		panic("invalid GC bucket size")
-	}
-	delCount := minSize / bucket
-
+func newCache(ctx context.Context, minSize, sizeAfterGC int, interval time.Duration) *EncryptedKeyToTransformer {
 	e := &EncryptedKeyToTransformer{
 		minSize: minSize,
 		hashPool: sync.Pool{
@@ -74,9 +70,9 @@ func newCache(ctx context.Context, minSize, bucket int64, interval time.Duration
 				return sha256.New()
 			},
 		},
-		hashes: make(chan string, delCount), // TODO should this be buffered or not?
+		hashes: make(chan string, minSize-sizeAfterGC), // TODO should this be buffered or not?
 	}
-	go e.gcLoop(ctx, delCount, interval) // TODO maybe better as a Run?
+	go e.gcLoop(ctx, sizeAfterGC, interval) // TODO maybe better as a Run?
 	return e
 }
 
@@ -95,7 +91,6 @@ func (e *EncryptedKeyToTransformer) Set(key []byte, transformer value.Transforme
 	if transformer == nil {
 		panic("transformer must not be nil")
 	}
-	e.size.Add(1)
 	keyHash := e.keyFunc(key)
 	if _, loaded := e.cache.LoadOrStore(keyHash, transformer); loaded {
 		panic("duplicate key") // TODO what is best here?
@@ -106,29 +101,32 @@ func (e *EncryptedKeyToTransformer) Set(key []byte, transformer value.Transforme
 	}()
 }
 
-func (e *EncryptedKeyToTransformer) gcLoop(ctx context.Context, delCount int64, interval time.Duration) {
+func (e *EncryptedKeyToTransformer) gcLoop(ctx context.Context, sizeAfterGC int, interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 
 	var hashes list.List
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			if e.size.Load() <= e.minSize {
-				continue // nothing to do, cache is still too small
-			}
-			e.gc(ctx, delCount, &hashes)
-		case keyHash := <-e.hashes:
-			hashes.PushBack(keyHash)
-		}
+	for done := e.gcIter(ctx, sizeAfterGC, t, &hashes); !done; {
 	}
 }
 
-func (e *EncryptedKeyToTransformer) gc(ctx context.Context, delCount int64, hashes *list.List) {
-	var count int64
-	for {
+func (e *EncryptedKeyToTransformer) gcIter(ctx context.Context, sizeAfterGC int, ticker *time.Ticker, hashes *list.List) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	case <-ticker.C:
+		if hashes.Len() <= e.minSize {
+			return false // nothing to do, approximate cache size is still too small
+		}
+		e.deleteOldKeys(ctx, sizeAfterGC, hashes)
+	case keyHash := <-e.hashes:
+		hashes.PushBack(keyHash)
+	}
+	return false
+}
+
+func (e *EncryptedKeyToTransformer) deleteOldKeys(ctx context.Context, sizeAfterGC int, hashes *list.List) {
+	for keepDeleting := hashes.Len() > sizeAfterGC; keepDeleting; {
 		select {
 		case <-ctx.Done():
 			return // stop deleting early
@@ -138,13 +136,6 @@ func (e *EncryptedKeyToTransformer) gc(ctx context.Context, delCount int64, hash
 		key := hashes.Remove(hashes.Front())
 		if _, loaded := e.cache.LoadAndDelete(key); !loaded {
 			panic("unexpected missing key") // TODO what is best here?
-		}
-
-		// always delete at least delCount entries and, if needed, keep deleting until we reach minSize
-		newSize := e.size.Add(-1)
-		count++
-		if keepDeleting := newSize > e.minSize || count < delCount; !keepDeleting {
-			return
 		}
 	}
 }
