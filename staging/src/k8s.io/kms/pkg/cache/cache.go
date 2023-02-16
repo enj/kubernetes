@@ -33,8 +33,9 @@ const (
 	// if the cache size is less than this value, we will not GC.
 	// this means that the cache will take at least 152 MB before
 	// we start to shrink it back down.
-	size       = 1_000_000
+	size       = 1 << 20
 	gcInterval = 5 * time.Minute
+	gcBucket   = 1 << 5
 )
 
 // EncryptedKeyToTransformer TODO comment
@@ -55,10 +56,14 @@ type EncryptedKeyToTransformer struct {
 }
 
 func New(ctx context.Context) *EncryptedKeyToTransformer {
-	return newCache(ctx, size, gcInterval)
+	return newCache(ctx, size, gcBucket, gcInterval)
 }
 
-func newCache(ctx context.Context, minSize int64, interval time.Duration) *EncryptedKeyToTransformer {
+func newCache(ctx context.Context, minSize, bucket int64, interval time.Duration) *EncryptedKeyToTransformer {
+	if minSize%bucket != 0 {
+		panic("invalid GC bucket size")
+	}
+
 	e := &EncryptedKeyToTransformer{
 		minSize: minSize,
 		hashPool: sync.Pool{
@@ -68,8 +73,9 @@ func newCache(ctx context.Context, minSize int64, interval time.Duration) *Encry
 		},
 	}
 	go func() {
+		delCount := minSize / bucket
 		_ = wait.PollImmediateInfiniteWithContext(ctx, interval, func(ctx context.Context) (bool, error) {
-			e.gc(ctx)
+			e.gc(ctx, delCount)
 			return false, nil
 		})
 	}()
@@ -97,7 +103,7 @@ func (e *EncryptedKeyToTransformer) Set(key []byte, transformer value.Transforme
 	}
 }
 
-func (e *EncryptedKeyToTransformer) gc(ctx context.Context) {
+func (e *EncryptedKeyToTransformer) gc(ctx context.Context, delCount int64) {
 	select {
 	case <-ctx.Done():
 		return
@@ -108,6 +114,8 @@ func (e *EncryptedKeyToTransformer) gc(ctx context.Context) {
 		return // nothing to do, cache is still too small
 	}
 
+	var count int64
+
 	// TODO can we do better than random deletes, maybe hold the keys in the a linked list?
 	// TODO range is O(N) which would be pretty bad at high sizes
 	e.cache.Range(func(key, value any) bool {
@@ -117,14 +125,16 @@ func (e *EncryptedKeyToTransformer) gc(ctx context.Context) {
 		default:
 		}
 
-		// TODO should this keep deleting until say 90%?
 		if _, loaded := e.cache.LoadAndDelete(key); !loaded {
 			panic("unexpected missing key") // TODO what is best here?
 		}
-		if newSize := e.size.Add(-1); newSize <= e.minSize {
-			return false // stop deleting
-		}
-		return true // keep deleting
+
+		// always delete at least delCount entries and, if needed, keep deleting until we reach minSize
+		newSize := e.size.Add(-1)
+		count++
+		keepDeleting := newSize > e.minSize || count < delCount
+
+		return keepDeleting
 	})
 }
 
