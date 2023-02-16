@@ -108,6 +108,7 @@ func (e *EncryptedKeyToTransformer) gcLoop(ctx context.Context, sizeAfterGC int,
 	var hashes list.List
 	for done := e.gcIter(ctx, sizeAfterGC, t, &hashes); !done; {
 	}
+	// TODO drain e.hashes to prevent any go routine leaks on exit
 }
 
 func (e *EncryptedKeyToTransformer) gcIter(ctx context.Context, sizeAfterGC int, ticker *time.Ticker, hashes *list.List) bool {
