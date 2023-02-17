@@ -32,7 +32,8 @@ const (
 	// if the cache size is less than this value, we will not GC.
 	// this means that the cache will take at least 152 MB before
 	// we start to shrink it back down.
-	minCacheSize = 1 << 20
+	// TODO fix this comment
+	minCacheSize = 1 << 18
 
 	gcInterval       = time.Minute
 	gcBuckets        = 1 << 5
@@ -47,8 +48,10 @@ type EncryptedKeyToTransformer struct {
 	// each value is 120 bytes for AES: 2 * (32 + 28)
 	// since the map key is expected to be random noise,
 	// we never expect a map key to be used more than once.
+	keyToTransformerCache sync.Map
+
 	// TODO consider etcd path -> key bytes -> transformer
-	cache sync.Map
+	nameToTransformerCache sync.Map
 
 	minSize int
 	// hashPool is a per cache pool of hash.Hash (to avoid allocations from building the Hash)
@@ -58,7 +61,13 @@ type EncryptedKeyToTransformer struct {
 	hashes chan string
 }
 
+type nameRecord struct {
+	hash        string
+	transformer value.Transformer
+}
+
 // TODO gave cache a name for metrics
+// TODO make a NewBig and NewSmall
 func New(ctx context.Context) *EncryptedKeyToTransformer {
 	return newCache(ctx, minCacheSize, cacheSizeAfterGC, gcInterval)
 }
@@ -77,27 +86,57 @@ func newCache(ctx context.Context, minSize, sizeAfterGC int, interval time.Durat
 	return e
 }
 
-func (e *EncryptedKeyToTransformer) Get(key []byte) value.Transformer {
-	record, ok := e.cache.Load(e.keyFunc(key))
+func (e *EncryptedKeyToTransformer) Get(key []byte, name string) value.Transformer {
 	// TODO metrics record cache hit+miss
+
+	keyHash := e.keyFunc(key)
+
+	record, ok := e.keyToTransformerCache.Load(keyHash)
+	if ok {
+		return record.(value.Transformer)
+	}
+
+	// name is optional, nothing to lookup if it is not provided
+	if len(name) == 0 {
+		return nil
+	}
+
+	nameLookup, ok := e.nameToTransformerCache.Load(name)
 	if !ok {
 		return nil
 	}
-	return record.(value.Transformer)
+	nameLookupRecord := nameLookup.(*nameRecord)
+
+	if nameLookupRecord.hash != keyHash {
+		return nil
+	}
+
+	return nameLookupRecord.transformer
 }
 
-func (e *EncryptedKeyToTransformer) Set(key []byte, transformer value.Transformer) {
+func (e *EncryptedKeyToTransformer) Set(key []byte, name string, transformer value.Transformer) {
 	if len(key) == 0 {
 		panic("key must not be empty")
 	}
 	if transformer == nil {
 		panic("transformer must not be nil")
 	}
+
 	keyHash := e.keyFunc(key)
-	if _, loaded := e.cache.LoadOrStore(keyHash, transformer); loaded {
+
+	if _, loaded := e.keyToTransformerCache.LoadOrStore(keyHash, transformer); loaded {
 		panic("duplicate key") // TODO what is best here?
 	}
+
+	// name is optional, only store a nameRecord if we need to
+	if len(name) > 0 {
+		// names are not required to be unique so we do not checked for loaded here
+		// TODO might need an atomic to track this cache's size?
+		e.nameToTransformerCache.Store(name, &nameRecord{hash: keyHash, transformer: transformer})
+	}
+
 	// in a separate go routine, inform the GC about this hash
+	// we always do this at the end, after both maps have recorded the insertion
 	go func() {
 		e.hashes <- keyHash
 	}()
@@ -140,7 +179,7 @@ func (e *EncryptedKeyToTransformer) deleteOldKeys(ctx context.Context, sizeAfter
 		}
 
 		key := hashes.Remove(hashes.Front())
-		if _, loaded := e.cache.LoadAndDelete(key); !loaded {
+		if _, loaded := e.keyToTransformerCache.LoadAndDelete(key); !loaded {
 			panic("unexpected missing key") // TODO what is best here?
 		}
 	}
