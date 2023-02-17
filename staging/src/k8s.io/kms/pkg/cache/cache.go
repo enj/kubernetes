@@ -58,12 +58,17 @@ type EncryptedKeyToTransformer struct {
 	// SHA-256 is used to prevent collisions
 	hashPool sync.Pool
 
-	hashes chan string
+	hashes chan hashAndName
 }
 
 type nameRecord struct {
 	hash        string
 	transformer value.Transformer
+}
+
+type hashAndName struct {
+	hash string
+	name string
 }
 
 // TODO gave cache a name for metrics
@@ -80,7 +85,7 @@ func newCache(ctx context.Context, minSize, sizeAfterGC int, interval time.Durat
 				return sha256.New()
 			},
 		},
-		hashes: make(chan string, minSize-sizeAfterGC), // TODO should this be buffered or not?
+		hashes: make(chan hashAndName, minSize-sizeAfterGC), // TODO should this be buffered or not?
 	}
 	go e.gcLoop(ctx, sizeAfterGC, interval) // TODO maybe better as a Run?
 	return e
@@ -131,14 +136,13 @@ func (e *EncryptedKeyToTransformer) Set(key []byte, name string, transformer val
 	// name is optional, only store a nameRecord if we need to
 	if len(name) > 0 {
 		// names are not required to be unique so we do not checked for loaded here
-		// TODO might need an atomic to track this cache's size?
 		e.nameToTransformerCache.Store(name, &nameRecord{hash: keyHash, transformer: transformer})
 	}
 
 	// in a separate go routine, inform the GC about this hash
 	// we always do this at the end, after both maps have recorded the insertion
 	go func() {
-		e.hashes <- keyHash
+		e.hashes <- hashAndName{hash: keyHash, name: name}
 	}()
 }
 
@@ -178,9 +182,17 @@ func (e *EncryptedKeyToTransformer) deleteOldKeys(ctx context.Context, sizeAfter
 		default:
 		}
 
-		key := hashes.Remove(hashes.Front())
-		if _, loaded := e.keyToTransformerCache.LoadAndDelete(key); !loaded {
+		key := hashes.Remove(hashes.Front()).(hashAndName)
+		if _, loaded := e.keyToTransformerCache.LoadAndDelete(key.hash); !loaded {
 			panic("unexpected missing key") // TODO what is best here?
+		}
+		if len(key.name) > 0 {
+			// TODO metrics around cache miss/hit here?
+			// TODO I think this cache is guaranteed to always be either smaller or the exact same
+			//  size as the key based cache because names will have duplicates whereas keys will not
+			//  so I do not think we need to track the size of this case in a separate manner unless
+			//  we do not want items being removed from this cache "too soon" due to name collisions
+			e.nameToTransformerCache.Delete(key.name) // ignore loaded because duplicate names are possible
 		}
 	}
 }
