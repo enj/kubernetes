@@ -34,7 +34,7 @@ const (
 	// we start to shrink it back down.
 	minCacheSize = 1 << 20
 
-	gcInterval       = 5 * time.Minute
+	gcInterval       = time.Minute
 	gcBuckets        = 1 << 5
 	gcDelCount       = minCacheSize / gcBuckets
 	cacheSizeAfterGC = minCacheSize - gcDelCount
