@@ -58,6 +58,7 @@ type EncryptedKeyToTransformer struct {
 	hashes chan string
 }
 
+// TODO gave cache a name for metrics
 func New(ctx context.Context) *EncryptedKeyToTransformer {
 	return newCache(ctx, minCacheSize, cacheSizeAfterGC, gcInterval)
 }
@@ -78,6 +79,7 @@ func newCache(ctx context.Context, minSize, sizeAfterGC int, interval time.Durat
 
 func (e *EncryptedKeyToTransformer) Get(key []byte) value.Transformer {
 	record, ok := e.cache.Load(e.keyFunc(key))
+	// TODO metrics record cache hit+miss
 	if !ok {
 		return nil
 	}
@@ -117,9 +119,12 @@ func (e *EncryptedKeyToTransformer) gcIter(ctx context.Context, sizeAfterGC int,
 		return true
 	case <-ticker.C:
 		if hashes.Len() <= e.minSize {
+			// TODO metrics record no GC
 			return false // nothing to do, approximate cache size is still too small
 		}
+		// TODO metrics record GC run start with start size (and/or percentage)
 		e.deleteOldKeys(ctx, sizeAfterGC, hashes)
+		// TODO metrics record GC run stop with stop size (and/or percentage)
 	case keyHash := <-e.hashes:
 		hashes.PushBack(keyHash)
 	}
