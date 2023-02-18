@@ -51,6 +51,9 @@ type EncryptedKeyToTransformer struct {
 	keyToTransformerCache sync.Map
 
 	// TODO consider etcd path -> key bytes -> transformer
+	// nameToTransformerCache is guaranteed to always be either smaller or the exact same
+	// size as keyToTransformerCache because names will have duplicates whereas keys will not.
+	// thus we do not need to track the size of this cache in a separate manner.
 	nameToTransformerCache sync.Map
 
 	minSize int
@@ -61,7 +64,7 @@ type EncryptedKeyToTransformer struct {
 	hashes chan hashAndName
 }
 
-type nameRecord struct {
+type cacheRecord struct {
 	hash        string
 	transformer value.Transformer
 }
@@ -98,7 +101,7 @@ func (e *EncryptedKeyToTransformer) Get(key []byte, name string) value.Transform
 
 	record, ok := e.keyToTransformerCache.Load(keyHash)
 	if ok {
-		return record.(value.Transformer)
+		return record.(*cacheRecord).transformer
 	}
 
 	// name is optional, nothing to lookup if it is not provided
@@ -110,7 +113,7 @@ func (e *EncryptedKeyToTransformer) Get(key []byte, name string) value.Transform
 	if !ok {
 		return nil
 	}
-	nameLookupRecord := nameLookup.(*nameRecord)
+	nameLookupRecord := nameLookup.(*cacheRecord)
 
 	if nameLookupRecord.hash != keyHash {
 		return nil
@@ -129,14 +132,17 @@ func (e *EncryptedKeyToTransformer) Set(key []byte, name string, transformer val
 
 	keyHash := e.keyFunc(key)
 
-	if _, loaded := e.keyToTransformerCache.LoadOrStore(keyHash, transformer); loaded {
+	// store pointer so we can compare the address between the two caches on GC later
+	record := &cacheRecord{hash: keyHash, transformer: transformer}
+
+	if _, loaded := e.keyToTransformerCache.LoadOrStore(keyHash, record); loaded {
 		panic("duplicate key") // TODO what is best here?
 	}
 
 	// name is optional, only store a nameRecord if we need to
 	if len(name) > 0 {
 		// names are not required to be unique so we do not checked for loaded here
-		e.nameToTransformerCache.Store(name, &nameRecord{hash: keyHash, transformer: transformer})
+		e.nameToTransformerCache.Store(name, record)
 	}
 
 	// in a separate go routine, inform the GC about this hash
@@ -183,17 +189,27 @@ func (e *EncryptedKeyToTransformer) deleteOldKeys(ctx context.Context, sizeAfter
 		}
 
 		key := hashes.Remove(hashes.Front()).(hashAndName)
-		if _, loaded := e.keyToTransformerCache.LoadAndDelete(key.hash); !loaded {
+
+		keyRecord, keyRecordLoaded := e.keyToTransformerCache.LoadAndDelete(key.hash)
+		if !keyRecordLoaded {
 			panic("unexpected missing key") // TODO what is best here?
 		}
-		if len(key.name) > 0 {
-			// TODO metrics around cache miss/hit here?
-			// TODO I think this cache is guaranteed to always be either smaller or the exact same
-			//  size as the key based cache because names will have duplicates whereas keys will not
-			//  so I do not think we need to track the size of this case in a separate manner unless
-			//  we do not want items being removed from this cache "too soon" due to name collisions
-			e.nameToTransformerCache.Delete(key.name) // ignore loaded because duplicate names are possible
+
+		if len(key.name) == 0 {
+			continue // use of the name cache is optional
 		}
+
+		nameRecord, nameRecordLoaded := e.nameToTransformerCache.LoadAndDelete(key.name)
+		if !nameRecordLoaded { // TODO metrics around cache miss/hit here?
+			continue // duplicate names are possible so this could have already been deleted
+		}
+
+		if keyRecord == nameRecord {
+			continue // deletion from name cache is valid because the values have the same pointer address
+		}
+
+		// otherwise, we put the value for the name cache back, unless Set puts a new value before us
+		e.nameToTransformerCache.LoadOrStore(key.name, nameRecord) // TODO loaded metric for this
 	}
 }
 
