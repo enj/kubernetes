@@ -552,21 +552,24 @@ func withAudit(ctx context.Context) context.Context {
 }
 
 func TestUnsafeConversions(t *testing.T) {
+	const size = 1024 // needs to be large to force allocations
+
 	t.Run("toBytes semantics", func(t *testing.T) {
-		b := toBytes("panda")
-		if len(b) != 5 {
+		s := utilrand.String(size)
+		b := toBytes(s)
+		if len(b) != size {
 			t.Errorf("unexpected length: %d", len(b))
 		}
-		if cap(b) != 5 {
+		if cap(b) != size {
 			t.Errorf("unexpected capacity: %d", cap(b))
 		}
-		if !bytes.Equal(b, []byte("panda")) {
+		if !bytes.Equal(b, []byte(s)) {
 			t.Errorf("unexpected equality failure: %#v", b)
 		}
 	})
 
 	t.Run("toBytes allocations", func(t *testing.T) {
-		s := utilrand.String(1024) // needs to be large to force allocations
+		s := utilrand.String(size)
 		f := func() {
 			b := toBytes(s)
 			if len(b) != 1024 {
