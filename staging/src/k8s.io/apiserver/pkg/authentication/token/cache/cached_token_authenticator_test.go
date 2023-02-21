@@ -33,6 +33,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	auditinternal "k8s.io/apiserver/pkg/apis/audit"
 	"k8s.io/apiserver/pkg/audit"
@@ -565,9 +566,12 @@ func TestUnsafeConversions(t *testing.T) {
 	})
 
 	t.Run("toBytes allocations", func(t *testing.T) {
-		const s = "panda"
+		s := utilrand.String(1024) // needs to be large to force allocations
 		f := func() {
-			_ = toBytes(s)
+			b := toBytes(s)
+			if len(b) != 1024 {
+				t.Errorf("invalid length: %d", len(b))
+			}
 		}
 		allocs := testing.AllocsPerRun(100, f)
 		if allocs > 0 {
