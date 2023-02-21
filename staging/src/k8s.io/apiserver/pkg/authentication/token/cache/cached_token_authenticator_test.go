@@ -621,6 +621,8 @@ func TestUnsafeConversions(t *testing.T) {
 }
 
 func TestKeyFunc(t *testing.T) {
+	t.Parallel()
+
 	hashPool := &sync.Pool{
 		New: func() interface{} {
 			return hmac.New(sha256.New, []byte("098c9e46-b7f4-4358-bb3c-35cb7495b836")) // deterministic HMAC for testing
@@ -635,6 +637,8 @@ func TestKeyFunc(t *testing.T) {
 	keyWithoutAuds := "\x054a \xa5\x8e\xea\xb2?\x8c\x88\xb9,e\n5\xe7ȵ>\xfdK\x0e\x93+\x02˿&\xf98\x1e"
 
 	t.Run("has audiences", func(t *testing.T) {
+		t.Parallel()
+
 		key := keyFunc(hashPool, auds, jwtToken)
 		if key != keyWithAuds {
 			t.Errorf("unexpected equality failure: %#v", key)
@@ -642,6 +646,8 @@ func TestKeyFunc(t *testing.T) {
 	})
 
 	t.Run("nil audiences", func(t *testing.T) {
+		t.Parallel()
+
 		key := keyFunc(hashPool, nil, jwtToken)
 		if key != keyWithoutAuds {
 			t.Errorf("unexpected equality failure: %#v", key)
