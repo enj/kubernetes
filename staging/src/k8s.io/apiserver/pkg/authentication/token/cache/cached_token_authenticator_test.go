@@ -552,9 +552,13 @@ func withAudit(ctx context.Context) context.Context {
 }
 
 func TestUnsafeConversions(t *testing.T) {
+	t.Parallel()
+
 	const size = 1024 // needs to be large to force allocations
 
 	t.Run("toBytes semantics", func(t *testing.T) {
+		t.Parallel()
+
 		s := utilrand.String(size)
 		b := toBytes(s)
 		if len(b) != size {
@@ -569,6 +573,8 @@ func TestUnsafeConversions(t *testing.T) {
 	})
 
 	t.Run("toBytes allocations", func(t *testing.T) {
+		t.Parallel()
+
 		s := utilrand.String(size)
 		f := func() {
 			b := toBytes(s)
@@ -583,6 +589,8 @@ func TestUnsafeConversions(t *testing.T) {
 	})
 
 	t.Run("toString semantics", func(t *testing.T) {
+		t.Parallel()
+
 		b := []byte(utilrand.String(size))
 		s := toString(b)
 		if len(s) != size {
@@ -594,6 +602,8 @@ func TestUnsafeConversions(t *testing.T) {
 	})
 
 	t.Run("toString allocations", func(t *testing.T) {
+		t.Parallel()
+
 		b := []byte(utilrand.String(size))
 		f := func() {
 			s := toString(b)
