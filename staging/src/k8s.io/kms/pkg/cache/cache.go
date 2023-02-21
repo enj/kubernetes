@@ -142,6 +142,7 @@ func (e *EncryptedKeyToTransformer) Set(key []byte, name string, transformer val
 	// name is optional, only store a nameRecord if we need to
 	if len(name) > 0 {
 		// names are not required to be unique so we do not checked for loaded here
+		// TODO hash name after https://github.com/kubernetes/kubernetes/pull/115935 is fixed
 		e.nameToTransformerCache.Store(name, record)
 	}
 
