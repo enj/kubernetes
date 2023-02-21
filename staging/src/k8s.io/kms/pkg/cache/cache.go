@@ -57,11 +57,10 @@ type EncryptedKeyToTransformer struct {
 	nameToTransformerCache sync.Map
 
 	minSize int
-	// hashPool is a per cache pool of hash.Hash (to avoid allocations from building the Hash)
-	// SHA-256 is used to prevent collisions
-	hashPool sync.Pool
 
 	hashes chan hashAndName
+
+	keyFunc getKeyFunc
 }
 
 type cacheRecord struct {
@@ -74,21 +73,19 @@ type hashAndName struct {
 	name string
 }
 
+type getKeyFunc func(keyBytes []byte) string
+
 // TODO gave cache a name for metrics
 // TODO make a NewBig and NewSmall
 func New(ctx context.Context) *EncryptedKeyToTransformer {
-	return newCache(ctx, minCacheSize, cacheSizeAfterGC, gcInterval)
+	return newCache(ctx, minCacheSize, cacheSizeAfterGC, gcInterval, keyFunc())
 }
 
-func newCache(ctx context.Context, minSize, sizeAfterGC int, interval time.Duration) *EncryptedKeyToTransformer {
+func newCache(ctx context.Context, minSize, sizeAfterGC int, interval time.Duration, keyFunc getKeyFunc) *EncryptedKeyToTransformer {
 	e := &EncryptedKeyToTransformer{
 		minSize: minSize,
-		hashPool: sync.Pool{
-			New: func() interface{} {
-				return sha256.New()
-			},
-		},
-		hashes: make(chan hashAndName, minSize-sizeAfterGC), // TODO should this be buffered or not?
+		hashes:  make(chan hashAndName, minSize-sizeAfterGC), // TODO should this be buffered or not?
+		keyFunc: keyFunc,
 	}
 	go e.gcLoop(ctx, sizeAfterGC, interval) // TODO maybe better as a Run?
 	return e
@@ -216,17 +213,27 @@ func (e *EncryptedKeyToTransformer) deleteOldKeys(ctx context.Context, sizeAfter
 
 // keyFunc generates a string key by hashing the inputs.
 // This lowers the memory requirement of the cache.
-func (e *EncryptedKeyToTransformer) keyFunc(keyBytes []byte) string {
-	h := e.hashPool.Get().(hash.Hash)
-	h.Reset()
-
-	if _, err := h.Write(keyBytes); err != nil {
-		panic(err) // Write() on hash never fails
+func keyFunc() getKeyFunc {
+	// hashPool is a per cache pool of hash.Hash (to avoid allocations from building the Hash)
+	// SHA-256 is used to prevent collisions
+	hashPool := sync.Pool{
+		New: func() interface{} {
+			return sha256.New()
+		},
 	}
-	key := toString(h.Sum(nil)) // skip base64 encoding to save an allocation
-	e.hashPool.Put(h)
 
-	return key
+	return func(keyBytes []byte) string {
+		h := hashPool.Get().(hash.Hash)
+		h.Reset()
+
+		if _, err := h.Write(keyBytes); err != nil {
+			panic(err) // Write() on hash never fails
+		}
+		key := toString(h.Sum(nil)) // skip base64 encoding to save an allocation
+		hashPool.Put(h)
+
+		return key
+	}
 }
 
 // toString performs unholy acts to avoid allocations
