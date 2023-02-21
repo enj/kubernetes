@@ -572,8 +572,33 @@ func TestUnsafeConversions(t *testing.T) {
 		s := utilrand.String(size)
 		f := func() {
 			b := toBytes(s)
-			if len(b) != 1024 {
+			if len(b) != size {
 				t.Errorf("invalid length: %d", len(b))
+			}
+		}
+		allocs := testing.AllocsPerRun(100, f)
+		if allocs > 0 {
+			t.Errorf("expected zero allocations, got %v", allocs)
+		}
+	})
+
+	t.Run("toString semantics", func(t *testing.T) {
+		b := []byte(utilrand.String(size))
+		s := toString(b)
+		if len(s) != size {
+			t.Errorf("unexpected length: %d", len(s))
+		}
+		if s != string(b) {
+			t.Errorf("unexpected equality failure: %#v", s)
+		}
+	})
+
+	t.Run("toString allocations", func(t *testing.T) {
+		b := []byte(utilrand.String(size))
+		f := func() {
+			s := toString(b)
+			if len(s) != size {
+				t.Errorf("invalid length: %d", len(s))
 			}
 		}
 		allocs := testing.AllocsPerRun(100, f)
