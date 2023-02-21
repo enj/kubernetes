@@ -557,7 +557,7 @@ func TestUnsafeConversions(t *testing.T) {
 			t.Errorf("unexpected length: %d", len(b))
 		}
 		if cap(b) != 5 {
-			t.Errorf("unexpected capacity: %d", len(b))
+			t.Errorf("unexpected capacity: %d", cap(b))
 		}
 		if !bytes.Equal(b, []byte("panda")) {
 			t.Errorf("unexpected equality failure: %#v", b)
