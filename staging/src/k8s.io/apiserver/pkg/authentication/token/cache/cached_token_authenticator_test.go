@@ -17,6 +17,7 @@ limitations under the License.
 package cache
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -31,6 +32,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+
 	"k8s.io/apimachinery/pkg/util/uuid"
 	auditinternal "k8s.io/apiserver/pkg/apis/audit"
 	"k8s.io/apiserver/pkg/audit"
@@ -546,4 +548,30 @@ func withAudit(ctx context.Context) context.Context {
 	ac := audit.AuditContextFrom(ctx)
 	ac.Event = &auditinternal.Event{Level: auditinternal.LevelMetadata}
 	return ctx
+}
+
+func TestUnsafeConversions(t *testing.T) {
+	t.Run("toBytes semantics", func(t *testing.T) {
+		b := toBytes("panda")
+		if len(b) != 5 {
+			t.Errorf("unexpected length: %d", len(b))
+		}
+		if cap(b) != 5 {
+			t.Errorf("unexpected capacity: %d", len(b))
+		}
+		if !bytes.Equal(b, []byte("panda")) {
+			t.Errorf("unexpected equality failure: %#v", b)
+		}
+	})
+
+	t.Run("toBytes allocations", func(t *testing.T) {
+		const s = "panda"
+		f := func() {
+			_ = toBytes(s)
+		}
+		allocs := testing.AllocsPerRun(100, f)
+		if allocs > 0 {
+			t.Errorf("expected zero allocations, got %v", allocs)
+		}
+	})
 }
