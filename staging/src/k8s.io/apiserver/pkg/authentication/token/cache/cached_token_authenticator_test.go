@@ -591,7 +591,8 @@ func TestUnsafeConversions(t *testing.T) {
 	t.Run("toString semantics", func(t *testing.T) {
 		t.Parallel()
 
-		b := []byte(utilrand.String(size))
+		hashed := sha256.Sum256([]byte(utilrand.String(size)))
+		b := bytes.Repeat(hashed[:], size/sha256.Size)
 		s := toString(b)
 		if len(s) != size {
 			t.Errorf("unexpected length: %d", len(s))
@@ -604,7 +605,8 @@ func TestUnsafeConversions(t *testing.T) {
 	t.Run("toString allocations", func(t *testing.T) {
 		t.Parallel()
 
-		b := []byte(utilrand.String(size))
+		hashed := sha256.Sum256([]byte(utilrand.String(size)))
+		b := bytes.Repeat(hashed[:], size/sha256.Size)
 		f := func() {
 			s := toString(b)
 			if len(s) != size {
