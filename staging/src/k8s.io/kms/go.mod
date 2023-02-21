@@ -6,6 +6,7 @@ go 1.19
 
 require (
 	github.com/gogo/protobuf v1.3.2
+	github.com/google/go-cmp v0.5.9
 	google.golang.org/grpc v1.51.0
 	k8s.io/apimachinery v0.0.0
 	k8s.io/klog/v2 v2.80.1
