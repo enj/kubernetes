@@ -64,6 +64,41 @@ func TestSet(t *testing.T) {
 				)
 			},
 		},
+		{
+			name: "set and overwrite path",
+			f: func(t *testing.T, c *EncryptedKeyToTransformer) {
+				transformer1 := testTransformer()
+				transformer2 := testTransformer()
+
+				c.Set([]byte("e-dek-001"), "/a/path/to/pandas", transformer1)
+				c.Set([]byte("e-dek-002"), "/a/path/to/pandas", transformer2)
+
+				assertCacheMatches(t, c,
+					map[string]*cacheRecord{
+						"e-dek-001": {
+							hash:        "e-dek-001",
+							transformer: transformer1,
+						},
+						"e-dek-002": {
+							hash:        "e-dek-002",
+							transformer: transformer2,
+						},
+					},
+					map[string]*cacheRecord{
+						"/a/path/to/pandas": {
+							hash:        "e-dek-002",
+							transformer: transformer2,
+						},
+					},
+					map[string]string{
+						"e-dek-002": "/a/path/to/pandas",
+					},
+					map[string]string{
+						"/a/path/to/pandas": "e-dek-002",
+					},
+				)
+			},
+		},
 	} {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
