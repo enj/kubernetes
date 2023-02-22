@@ -58,11 +58,19 @@ func TestSet(t *testing.T) {
 func assertCacheMatches(t *testing.T, c *EncryptedKeyToTransformer, wantKeyCache, wantNameCache map[string]cacheRecord) {
 	t.Helper()
 
-	if diff := cmp.Diff(wantKeyCache, dumpMap(&c.keyToTransformerCache)); len(diff) > 0 {
+	if diff := cmp.Diff(wantKeyCache, dumpMap(&c.keyToTransformerCache),
+		cmp.AllowUnexported(cacheRecord{}),
+		cmp.FilterPath(func(path cmp.Path) bool {
+			return path.String() == "transformer.block"
+		}, cmp.Ignore())); len(diff) > 0 {
 		t.Errorf("key cache has unexpected diff (-want +got):\n%s", diff)
 	}
 
-	if diff := cmp.Diff(wantNameCache, dumpMap(&c.nameToTransformerCache)); len(diff) > 0 {
+	if diff := cmp.Diff(wantNameCache, dumpMap(&c.nameToTransformerCache),
+		cmp.AllowUnexported(cacheRecord{}),
+		cmp.FilterPath(func(path cmp.Path) bool {
+			return path.String() == "transformer.block"
+		}, cmp.Ignore())); len(diff) > 0 {
 		t.Errorf("name cache has unexpected diff (-want +got):\n%s", diff)
 	}
 }
