@@ -29,36 +29,55 @@ import (
 )
 
 func TestSet(t *testing.T) {
-	ctx := testContext(t)
+	t.Parallel()
 
-	c := newCache(ctx, 5, 4, time.Second, testKeyFunc)
+	for _, tt := range []struct {
+		name string
+		f    func(*testing.T, *EncryptedKeyToTransformer)
+	}{
+		{
+			name: "simple set",
+			f: func(t *testing.T, c *EncryptedKeyToTransformer) {
+				transformer := testTransformer()
 
-	assertCacheMatches(t, c, nil, nil, nil, nil)
+				c.Set([]byte("e-dek-001"), "/a/path/to/pandas", transformer)
 
-	transformer := testTransformer()
-
-	c.Set([]byte("e-dek-001"), "/a/path/to/pandas", transformer)
-
-	assertCacheMatches(t, c,
-		map[string]*cacheRecord{
-			"e-dek-001": {
-				hash:        "e-dek-001",
-				transformer: transformer,
+				assertCacheMatches(t, c,
+					map[string]*cacheRecord{
+						"e-dek-001": {
+							hash:        "e-dek-001",
+							transformer: transformer,
+						},
+					},
+					map[string]*cacheRecord{
+						"/a/path/to/pandas": {
+							hash:        "e-dek-001",
+							transformer: transformer,
+						},
+					},
+					map[string]string{
+						"e-dek-001": "/a/path/to/pandas",
+					},
+					map[string]string{
+						"/a/path/to/pandas": "e-dek-001",
+					},
+				)
 			},
 		},
-		map[string]*cacheRecord{
-			"/a/path/to/pandas": {
-				hash:        "e-dek-001",
-				transformer: transformer,
-			},
-		},
-		map[string]string{
-			"e-dek-001": "/a/path/to/pandas",
-		},
-		map[string]string{
-			"/a/path/to/pandas": "e-dek-001",
-		},
-	)
+	} {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := testContext(t)
+
+			c := newCache(ctx, 5, 4, time.Second, testKeyFunc)
+
+			assertCacheMatches(t, c, nil, nil, nil, nil)
+
+			tt.f(t, c)
+		})
+	}
 }
 
 func assertCacheMatches(t *testing.T, c *EncryptedKeyToTransformer,
