@@ -33,54 +33,89 @@ func TestSet(t *testing.T) {
 
 	c := newCache(ctx, 5, 4, time.Second, testKeyFunc)
 
-	assertCacheMatches(t, c, nil, nil)
+	assertCacheMatches(t, c, nil, nil, nil, nil)
 
 	transformer := testTransformer()
 
-	c.Set([]byte("hello"), "panda", transformer)
+	c.Set([]byte("e-dek-001"), "/a/path/to/pandas", transformer)
 
 	assertCacheMatches(t, c,
-		map[string]cacheRecord{
-			"hello": {
-				hash:        "hello",
+		map[string]*cacheRecord{
+			"e-dek-001": {
+				hash:        "e-dek-001",
 				transformer: transformer,
 			},
 		},
-		map[string]cacheRecord{
-			"panda": {
-				hash:        "hello",
+		map[string]*cacheRecord{
+			"/a/path/to/pandas": {
+				hash:        "e-dek-001",
 				transformer: transformer,
 			},
+		},
+		map[string]string{
+			"e-dek-001": "/a/path/to/pandas",
+		},
+		map[string]string{
+			"/a/path/to/pandas": "e-dek-001",
 		},
 	)
 }
 
-func assertCacheMatches(t *testing.T, c *EncryptedKeyToTransformer, wantKeyCache, wantNameCache map[string]cacheRecord) {
+func assertCacheMatches(t *testing.T, c *EncryptedKeyToTransformer,
+	wantKeyCache, wantNameCache map[string]*cacheRecord,
+	wantEqKeyCache, wantEqNameCache map[string]string) {
 	t.Helper()
 
-	if diff := cmp.Diff(wantKeyCache, dumpMap(&c.keyToTransformerCache),
+	gotKeyCache := dumpMap(&c.keyToTransformerCache)
+	if diff := cmp.Diff(wantKeyCache, gotKeyCache,
 		cmp.AllowUnexported(cacheRecord{}),
 		cmp.FilterPath(func(path cmp.Path) bool {
-			return path.String() == "transformer.block"
+			return path.String() == "transformer.block" // TODO remove this filter
 		}, cmp.Ignore())); len(diff) > 0 {
 		t.Errorf("key cache has unexpected diff (-want +got):\n%s", diff)
 	}
 
-	if diff := cmp.Diff(wantNameCache, dumpMap(&c.nameToTransformerCache),
+	gotNameCache := dumpMap(&c.nameToTransformerCache)
+	if diff := cmp.Diff(wantNameCache, gotNameCache,
 		cmp.AllowUnexported(cacheRecord{}),
 		cmp.FilterPath(func(path cmp.Path) bool {
 			return path.String() == "transformer.block"
 		}, cmp.Ignore())); len(diff) > 0 {
 		t.Errorf("name cache has unexpected diff (-want +got):\n%s", diff)
 	}
+
+	gotEqKeyCache := mapKeysWithEqualValues(gotKeyCache, gotNameCache)
+	if diff := cmp.Diff(wantEqKeyCache, gotEqKeyCache); len(diff) > 0 {
+		t.Errorf("equal key cache values has unexpected diff (-want +got):\n%s", diff)
+	}
+
+	gotEqNameCache := mapKeysWithEqualValues(gotNameCache, gotKeyCache)
+	if diff := cmp.Diff(wantEqNameCache, gotEqNameCache); len(diff) > 0 {
+		t.Errorf("equal name cache values has unexpected diff (-want +got):\n%s", diff)
+	}
 }
 
-func dumpMap(m *sync.Map) map[string]cacheRecord {
-	out := map[string]cacheRecord{}
+func dumpMap(m *sync.Map) map[string]*cacheRecord {
+	out := map[string]*cacheRecord{}
 	m.Range(func(key, value any) bool {
-		out[key.(string)] = *(value.(*cacheRecord)) // TODO need to check for pointer equality too
+		out[key.(string)] = value.(*cacheRecord)
 		return true
 	})
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func mapKeysWithEqualValues(a, b map[string]*cacheRecord) map[string]string {
+	out := map[string]string{}
+	for k, v := range a {
+		for kk, vv := range b {
+			if v == vv {
+				out[k] = kk
+			}
+		}
+	}
 	if len(out) == 0 {
 		return nil
 	}
