@@ -24,7 +24,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"k8s.io/kms/pkg/encrypt/aes"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/kms/pkg/value"
 )
 
@@ -86,20 +86,12 @@ func assertCacheMatches(t *testing.T, c *EncryptedKeyToTransformer,
 	t.Helper()
 
 	gotKeyCache := dumpMap(&c.keyToTransformerCache)
-	if diff := cmp.Diff(wantKeyCache, gotKeyCache,
-		cmp.AllowUnexported(cacheRecord{}),
-		cmp.FilterPath(func(path cmp.Path) bool {
-			return path.String() == "transformer.block" // TODO remove this filter
-		}, cmp.Ignore())); len(diff) > 0 {
+	if diff := cmp.Diff(wantKeyCache, gotKeyCache, cmp.AllowUnexported(cacheRecord{}, fakeTransformer{})); len(diff) > 0 {
 		t.Errorf("key cache has unexpected diff (-want +got):\n%s", diff)
 	}
 
 	gotNameCache := dumpMap(&c.nameToTransformerCache)
-	if diff := cmp.Diff(wantNameCache, gotNameCache,
-		cmp.AllowUnexported(cacheRecord{}),
-		cmp.FilterPath(func(path cmp.Path) bool {
-			return path.String() == "transformer.block"
-		}, cmp.Ignore())); len(diff) > 0 {
+	if diff := cmp.Diff(wantNameCache, gotNameCache, cmp.AllowUnexported(cacheRecord{}, fakeTransformer{})); len(diff) > 0 {
 		t.Errorf("name cache has unexpected diff (-want +got):\n%s", diff)
 	}
 
@@ -143,7 +135,12 @@ func mapKeysWithEqualValues(a, b map[string]*cacheRecord) map[string]string {
 
 func testKeyFunc(keyBytes []byte) string { return string(keyBytes) }
 
-func testTransformer() value.Transformer { return aes.NewGCMTransformer(nil) }
+type fakeTransformer struct {
+	uniq              int // for comparisons
+	value.Transformer     // panics if any method is called
+}
+
+func testTransformer() value.Transformer { return &fakeTransformer{uniq: utilrand.Int()} }
 
 func testContext(t *testing.T) context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
