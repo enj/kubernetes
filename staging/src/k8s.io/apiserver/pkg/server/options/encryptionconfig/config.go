@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
 	apiserverconfig "k8s.io/apiserver/pkg/apis/config"
 	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/config/v1"
@@ -55,16 +56,18 @@ import (
 )
 
 const (
-	aesCBCTransformerPrefixV1    = "k8s:enc:aescbc:v1:"
-	aesGCMTransformerPrefixV1    = "k8s:enc:aesgcm:v1:"
-	secretboxTransformerPrefixV1 = "k8s:enc:secretbox:v1:"
-	kmsTransformerPrefixV1       = "k8s:enc:kms:v1:"
-	kmsTransformerPrefixV2       = "k8s:enc:kms:v2:"
-	kmsPluginHealthzInterval     = 1 * time.Minute
-	kmsPluginHealthzNegativeTTL  = 3 * time.Second
-	kmsPluginHealthzPositiveTTL  = 20 * time.Second
-	kmsAPIVersionV1              = "v1"
-	kmsAPIVersionV2              = "v2"
+	aesCBCTransformerPrefixV1        = "k8s:enc:aescbc:v1:"
+	aesGCMTransformerPrefixV1        = "k8s:enc:aesgcm:v1:"
+	secretboxTransformerPrefixV1     = "k8s:enc:secretbox:v1:"
+	kmsTransformerPrefixV1           = "k8s:enc:kms:v1:"
+	kmsTransformerPrefixV2           = "k8s:enc:kms:v2:"
+	kmsPluginHealthzPositiveInterval = 1 * time.Minute
+	kmsPluginHealthzNegativeInterval = 10 * time.Second
+	kmsPluginDEKReuseInterval        = 3 * time.Minute
+	kmsPluginHealthzNegativeTTL      = 3 * time.Second
+	kmsPluginHealthzPositiveTTL      = 20 * time.Second
+	kmsAPIVersionV1                  = "v1"
+	kmsAPIVersionV2                  = "v2"
 	// this name is used for two different healthz endpoints:
 	// - when one or more KMS v2 plugins are in use and no KMS v1 plugins are in use
 	//   in this case, all v2 plugins are probed via this single endpoint
@@ -88,7 +91,7 @@ type kmsPluginProbe struct {
 }
 
 type kmsv2PluginProbe struct {
-	keyID        atomic.Pointer[string]
+	state        atomic.Pointer[envelopekmsv2.State]
 	name         string
 	ttl          time.Duration
 	service      kmsservice.Service
@@ -267,7 +270,7 @@ func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 	h.l.Lock()
 	defer h.l.Unlock()
 
-	if (time.Since(h.lastResponse.received)) < h.ttl {
+	if time.Since(h.lastResponse.received) < h.ttl {
 		return h.lastResponse.err
 	}
 
@@ -277,12 +280,11 @@ func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 		h.ttl = kmsPluginHealthzNegativeTTL
 		return fmt.Errorf("failed to perform status section of the healthz check for KMS Provider %s, error: %w", h.name, err)
 	}
-	// we coast on the last valid key ID that we have observed
-	if errCode, err := envelopekmsv2.ValidateKeyID(p.KeyID); err == nil {
-		h.keyID.Store(&p.KeyID)
-		metrics.RecordKeyIDFromStatus(h.name, p.KeyID)
-	} else {
-		metrics.RecordInvalidKeyIDFromStatus(h.name, string(errCode))
+
+	if err := h.rotateDEKOnKeyIDChange(ctx, p.KeyID, string(uuid.NewUUID())); err != nil {
+		h.lastResponse = &kmsPluginHealthzResponse{err: err, received: time.Now()}
+		h.ttl = kmsPluginHealthzNegativeTTL
+		return err
 	}
 
 	if err := isKMSv2ProviderHealthy(h.name, p); err != nil {
@@ -296,13 +298,86 @@ func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 	return nil
 }
 
-// getCurrentKeyID returns the latest keyID from the last Status() call or err if keyID is empty
-func (h *kmsv2PluginProbe) getCurrentKeyID(ctx context.Context) (string, error) {
-	keyID := *h.keyID.Load()
-	if len(keyID) == 0 {
-		return "", fmt.Errorf("got unexpected empty keyID")
+// rotateDEKOnKeyIDChange tries to rotate to a new DEK if the key ID returned by Status does not match the
+// current state.  If a successful rotation is performed, the new DEK and keyID overwrite the existing state.
+// On any failure during rotation (including mismatch between status and encrypt calls), the current state is
+// preserved and will remain valid to use for encryption until its expiration (the system attempts to coast).
+// If the key ID returned by Status matches the current state, the expiration of the current state is extended
+// and no rotation is performed.
+func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKeyID, uid string) error {
+	errCode, err := envelopekmsv2.ValidateKeyID(statusKeyID)
+	if err != nil {
+		metrics.RecordInvalidKeyIDFromStatus(h.name, string(errCode))
+		return nil // let isKMSv2ProviderHealthy handle this error
 	}
-	return keyID, nil
+
+	metrics.RecordKeyIDFromStatus(h.name, statusKeyID)
+
+	// we do not check ValidateEncryptCapability here because it is fine to re-use an old key
+	// that was mark as expired during an unhealthy period.  as long as the key ID matches
+	// what we expect then there is no need to rotate here.
+	state, errState := h.getCurrentState()
+
+	// allow reads indefinitely in all cases
+	// allow writes indefinitely as long as there is no error
+	// allow writes for only up to kmsPluginDEKReuseInterval from now when there are errors
+	expirationTimestamp := envelopekmsv2.ValidateEncryptCapabilityNowFunc().Add(kmsPluginDEKReuseInterval) // start the timer before we make the network calls
+
+	// state is valid and status keyID is unchanged from when we generated this DEK so there is no need to rotate it
+	// just move the expiration of the current state forward by the reuse interval
+	if errState == nil && state.KeyID == statusKeyID {
+		state.ExpirationTimestamp = expirationTimestamp
+		h.state.Store(&state)
+		return nil
+	}
+
+	transformer, resp, errGen := envelopekmsv2.GenerateTransformer(ctx, uid, h.service)
+
+	if resp == nil {
+		resp = &kmsservice.EncryptResponse{} // avoid nil panics
+	}
+
+	// happy path, should be the common case
+	// TODO maybe add success metrics?
+	if errGen == nil && resp.KeyID == statusKeyID {
+		h.state.Store(&envelopekmsv2.State{
+			Transformer:         transformer,
+			EncryptedDEK:        resp.Ciphertext,
+			KeyID:               resp.KeyID,
+			Annotations:         resp.Annotations,
+			UID:                 uid,
+			ExpirationTimestamp: expirationTimestamp,
+		})
+		return nil
+	}
+
+	return fmt.Errorf("failed to rotate DEK uid=%q, errState=%v, errGen=%v, statusKeyID=%q, encryptKeyID=%q, stateKeyID=%q, expirationTimestamp=%s",
+		uid, errState, errGen, statusKeyID, resp.KeyID, state.KeyID, state.ExpirationTimestamp.Format(time.RFC3339))
+}
+
+// getCurrentState returns the latest state from the last status and encrypt calls.
+// If the returned error is nil, the state is considered valid indefinitely for read requests.
+// For write requests, the caller must also check that state.ValidateEncryptCapability does not error.
+func (h *kmsv2PluginProbe) getCurrentState() (envelopekmsv2.State, error) {
+	state := *h.state.Load()
+
+	if state.Transformer == nil {
+		return envelopekmsv2.State{}, fmt.Errorf("got unexpected nil transformer")
+	}
+
+	if len(state.EncryptedDEK) == 0 {
+		return envelopekmsv2.State{}, fmt.Errorf("got unexpected empty EDEK")
+	}
+
+	if len(state.KeyID) == 0 {
+		return envelopekmsv2.State{}, fmt.Errorf("got unexpected empty keyID")
+	}
+
+	if state.ExpirationTimestamp.IsZero() {
+		return envelopekmsv2.State{}, fmt.Errorf("got unexpected zero expirationTimestamp")
+	}
+
+	return state, nil
 }
 
 // isKMSv2ProviderHealthy checks if the KMSv2-Plugin is healthy.
@@ -379,7 +454,10 @@ func prefixTransformersAndProbes(ctx context.Context, config apiserverconfig.Res
 			transformer, transformerErr = aesPrefixTransformer(provider.AESGCM, aestransformer.NewGCMTransformer, aesGCMTransformerPrefixV1)
 
 		case provider.AESCBC != nil:
-			transformer, transformerErr = aesPrefixTransformer(provider.AESCBC, aestransformer.NewCBCTransformer, aesCBCTransformerPrefixV1)
+			cbcTransformer := func(block cipher.Block) (value.Transformer, error) {
+				return aestransformer.NewCBCTransformer(block), nil
+			}
+			transformer, transformerErr = aesPrefixTransformer(provider.AESCBC, cbcTransformer, aesCBCTransformerPrefixV1)
 
 		case provider.Secretbox != nil:
 			transformer, transformerErr = secretboxPrefixTransformer(provider.Secretbox)
@@ -411,7 +489,7 @@ func prefixTransformersAndProbes(ctx context.Context, config apiserverconfig.Res
 	return transformers, probes, &kmsUsed, nil
 }
 
-type blockTransformerFunc func(cipher.Block) value.Transformer
+type blockTransformerFunc func(cipher.Block) (value.Transformer, error)
 
 func aesPrefixTransformer(config *apiserverconfig.AESConfiguration, fn blockTransformerFunc, prefix string) (value.PrefixTransformer, error) {
 	var result value.PrefixTransformer
@@ -441,11 +519,15 @@ func aesPrefixTransformer(config *apiserverconfig.AESConfiguration, fn blockTran
 		if err != nil {
 			return result, fmt.Errorf("error while creating cipher for named key %s: %s", keyData.Name, err)
 		}
+		transformer, err := fn(block)
+		if err != nil {
+			return result, fmt.Errorf("error while creating transformer for named key %s: %s", keyData.Name, err)
+		}
 
 		// Create a new PrefixTransformer for this key
 		keyTransformers = append(keyTransformers,
 			value.PrefixTransformer{
-				Transformer: fn(block),
+				Transformer: transformer,
 				Prefix:      []byte(keyData.Name + ":"),
 			})
 	}
@@ -582,27 +664,46 @@ func kmsPrefixTransformer(ctx context.Context, config *apiserverconfig.KMSConfig
 			l:            &sync.Mutex{},
 			lastResponse: &kmsPluginHealthzResponse{},
 		}
-		// initialize keyID so that Load always works
-		keyID := ""
-		probe.keyID.Store(&keyID)
+		// initialize state so that Load always works
+		probe.state.Store(&envelopekmsv2.State{})
+
+		runProbeCheckAndLog := func(ctx context.Context) error {
+			if err := probe.check(ctx); err != nil {
+				klog.VDepth(1, 2).ErrorS(err, "kms plugin failed health check probe", "name", kmsName)
+				return err
+			}
+			return nil
+		}
 
 		// prime keyID by running the check inline once (this prevents unit tests from flaking)
 		// ignore the error here since we want to support the plugin starting up async with the API server
-		_ = probe.check(ctx)
+		_ = runProbeCheckAndLog(ctx)
 		// make sure that the plugin's key ID is reasonably up-to-date
 		go wait.PollUntilWithContext(
 			ctx,
-			kmsPluginHealthzInterval,
+			kmsPluginHealthzPositiveInterval,
 			func(ctx context.Context) (bool, error) {
-				if err := probe.check(ctx); err != nil {
-					klog.V(2).ErrorS(err, "kms plugin failed health check probe", "name", kmsName)
+				if err := runProbeCheckAndLog(ctx); err == nil {
+					return false, nil
 				}
+
+				// TODO add integration test for quicker error poll on failure
+				// if we fail, block the outer polling and start a new quicker poll inline
+				// this limits the chance that our DEK expires during a transient failure
+				_ = wait.PollUntilWithContext(
+					ctx,
+					kmsPluginHealthzNegativeInterval,
+					func(ctx context.Context) (bool, error) {
+						return runProbeCheckAndLog(ctx) == nil, nil
+					},
+				)
+
 				return false, nil
 			})
 
 		// using AES-GCM by default for encrypting data with KMSv2
 		transformer := value.PrefixTransformer{
-			Transformer: envelopekmsv2.NewEnvelopeTransformer(envelopeService, kmsName, probe.getCurrentKeyID, probe.check),
+			Transformer: envelopekmsv2.NewEnvelopeTransformer(envelopeService, kmsName, probe.getCurrentState),
 			Prefix:      []byte(kmsTransformerPrefixV2 + kmsName + ":"),
 		}
 
@@ -617,12 +718,17 @@ func kmsPrefixTransformer(ctx context.Context, config *apiserverconfig.KMSConfig
 }
 
 func envelopePrefixTransformer(config *apiserverconfig.KMSConfiguration, envelopeService envelope.Service, prefix string) value.PrefixTransformer {
-	baseTransformerFunc := func(block cipher.Block) value.Transformer {
+	baseTransformerFunc := func(block cipher.Block) (value.Transformer, error) {
+		gcm, err := aestransformer.NewGCMTransformer(block)
+		if err != nil {
+			return nil, err
+		}
+
 		// v1.24: write using AES-CBC only but support reads via AES-CBC and AES-GCM (so we can move to AES-GCM)
 		// v1.25: write using AES-GCM only but support reads via AES-GCM and fallback to AES-CBC for backwards compatibility
 		// TODO(aramase): Post v1.25: We cannot drop CBC read support until we automate storage migration.
 		// We could have a release note that hard requires users to perform storage migration.
-		return unionTransformers{aestransformer.NewGCMTransformer(block), aestransformer.NewCBCTransformer(block)}
+		return unionTransformers{gcm, aestransformer.NewCBCTransformer(block)}, nil
 	}
 
 	return value.PrefixTransformer{

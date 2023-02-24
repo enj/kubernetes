@@ -18,6 +18,7 @@ limitations under the License.
 package kmsv2
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"sync"
@@ -40,7 +41,7 @@ func TestSimpleCacheSetError(t *testing.T) {
 		{
 			name:        "empty key",
 			key:         []byte{},
-			transformer: nil,
+			transformer: &envelopeTransformer{},
 		},
 		{
 			name:        "nil transformer",
@@ -99,7 +100,7 @@ func TestKeyFunc(t *testing.T) {
 func TestSimpleCache(t *testing.T) {
 	fakeClock := testingclock.NewFakeClock(time.Now())
 	cache := newSimpleCache(fakeClock, 5*time.Second)
-	envelopeTransformer := &envelopeTransformer{}
+	transformer := &envelopeTransformer{}
 
 	wg := sync.WaitGroup{}
 	for i := 0; i < 10; i++ {
@@ -107,7 +108,7 @@ func TestSimpleCache(t *testing.T) {
 		wg.Add(1)
 		go func(key string) {
 			defer wg.Done()
-			cache.set([]byte(key), envelopeTransformer)
+			cache.set([]byte(key), transformer)
 		}(k)
 	}
 	wg.Wait()
@@ -118,7 +119,7 @@ func TestSimpleCache(t *testing.T) {
 
 	for i := 0; i < 10; i++ {
 		k := fmt.Sprintf("key-%d", i)
-		if cache.get([]byte(k)) != envelopeTransformer {
+		if cache.get([]byte(k)).(*decryptOnlyTransformer).transformer != transformer {
 			t.Fatalf("Expected to get the transformer for key %v", k)
 		}
 	}
@@ -131,4 +132,53 @@ func TestSimpleCache(t *testing.T) {
 			t.Fatalf("Expected to get nil for key %v", k)
 		}
 	}
+}
+
+func TestCannotEncryptFromCache(t *testing.T) {
+	fakeClock := testingclock.NewFakeClock(time.Now())
+	cache := newSimpleCache(fakeClock, 5*time.Second)
+
+	// this transformer never errors and has deterministic output
+	transformer := alwaysWorksTransformer{}
+
+	cache.set([]byte("key-001"), transformer)
+
+	if cache.cache.Len() != 1 {
+		t.Fatalf("expected one items in the cache, got %v", cache.cache.Len())
+	}
+
+	shouldBeDecryptOnly := cache.get([]byte("key-001"))
+	if shouldBeDecryptOnly == nil {
+		t.Fatal("could not get transformer")
+	}
+
+	// decryption should always work
+	out, stale, err := shouldBeDecryptOnly.TransformFromStorage(context.Background(), nil, nil)
+	if err != nil || stale || string(out) != "panda" {
+		t.Fatalf("unexpected decrypt failure: out=%v, stale=%v, err=%v", string(out), stale, err)
+	}
+
+	// encrypt from the cache should never work
+	out, err = shouldBeDecryptOnly.TransformToStorage(context.Background(), nil, nil)
+	if err == nil || err.Error() != "transformer does not support encryption" || len(out) != 0 {
+		t.Fatalf("unexpected encrypt output: out=%v, err=%v", string(out), err)
+	}
+
+	// encrypt without the cache should work
+	out, err = transformer.TransformToStorage(context.Background(), nil, nil)
+	if err != nil || string(out) != "snorlax" {
+		t.Fatalf("unexpected encrypt failure: out=%v, err=%v", string(out), err)
+	}
+}
+
+var _ value.Transformer = alwaysWorksTransformer{}
+
+type alwaysWorksTransformer struct{}
+
+func (a alwaysWorksTransformer) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) (out []byte, stale bool, err error) {
+	return []byte("panda"), false, nil
+}
+
+func (a alwaysWorksTransformer) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) (out []byte, err error) {
+	return []byte("snorlax"), nil
 }
