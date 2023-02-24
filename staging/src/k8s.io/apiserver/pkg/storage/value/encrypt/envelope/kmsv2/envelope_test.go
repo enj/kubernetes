@@ -29,7 +29,6 @@ import (
 	"time"
 
 	"k8s.io/apiserver/pkg/storage/value"
-	aestransformer "k8s.io/apiserver/pkg/storage/value/encrypt/aes"
 	kmstypes "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2/v2alpha1"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
@@ -147,7 +146,7 @@ func TestEnvelopeCaching(t *testing.T) {
 				func(ctx context.Context) error {
 					return nil
 				},
-				aestransformer.NewGCMTransformer, tt.cacheTTL, fakeClock)
+				tt.cacheTTL, fakeClock)
 
 			ctx := testContext(t)
 			dataCtx := value.DefaultContext([]byte(testContextText))
@@ -229,7 +228,7 @@ func TestEnvelopeTransformerKeyIDGetter(t *testing.T) {
 				func(ctx context.Context) error {
 					return nil
 				},
-				aestransformer.NewGCMTransformer)
+			)
 
 			ctx := testContext(t)
 			dataCtx := value.DefaultContext([]byte(testContextText))
@@ -300,7 +299,7 @@ func TestTransformToStorageError(t *testing.T) {
 				func(ctx context.Context) error {
 					return nil
 				},
-				aestransformer.NewGCMTransformer)
+			)
 			ctx := testContext(t)
 			dataCtx := value.DefaultContext([]byte(testContextText))
 
@@ -592,7 +591,7 @@ func TestEnvelopeMetrics(t *testing.T) {
 			metrics.RecordInvalidKeyIDFromStatus(testProviderName, errCode)
 			return nil
 		},
-		aestransformer.NewGCMTransformer)
+	)
 
 	dataCtx := value.DefaultContext([]byte(testContextText))
 
