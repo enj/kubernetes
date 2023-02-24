@@ -87,8 +87,14 @@ type kmsPluginProbe struct {
 	l            *sync.Mutex
 }
 
+type kmsv2State struct {
+	transformer value.Transformer
+	resp        *kmsservice.EncryptResponse
+	timestamp   time.Time
+}
+
 type kmsv2PluginProbe struct {
-	keyID        atomic.Pointer[string]
+	state        atomic.Pointer[kmsv2State]
 	name         string
 	ttl          time.Duration
 	service      kmsservice.Service
@@ -279,7 +285,10 @@ func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 	}
 	// we coast on the last valid key ID that we have observed
 	if errCode, err := envelopekmsv2.ValidateKeyID(p.KeyID); err == nil {
-		h.keyID.Store(&p.KeyID)
+
+		t, r, err2 := envelopekmsv2.GenerateTransformer(ctx, h.service)
+
+		h.state.Store(&p.KeyID)
 		metrics.RecordKeyIDFromStatus(h.name, p.KeyID)
 	} else {
 		metrics.RecordInvalidKeyIDFromStatus(h.name, string(errCode))
@@ -296,13 +305,23 @@ func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 	return nil
 }
 
-// getCurrentKeyID returns the latest keyID from the last Status() call or err if keyID is empty
-func (h *kmsv2PluginProbe) getCurrentKeyID(ctx context.Context) (string, error) {
-	keyID := *h.keyID.Load()
-	if len(keyID) == 0 {
-		return "", fmt.Errorf("got unexpected empty keyID")
+// getCurrentState returns the latest state from the last Status() call or err if state is empty  // TODO fix
+func (h *kmsv2PluginProbe) getCurrentState() (value.Transformer, *kmsservice.EncryptResponse, error) {
+	state := *h.state.Load()
+
+	if state.transformer == nil || state.resp == nil {
+		return nil, nil, fmt.Errorf("got unexpected empty state")
 	}
-	return keyID, nil
+
+	if len(state.resp.KeyID) == 0 {
+		return nil, nil, fmt.Errorf("got unexpected empty keyID")
+	}
+
+	if len(state.resp.Ciphertext) == 0 {
+		return nil, nil, fmt.Errorf("got unexpected empty EDEK")
+	}
+
+	return state.transformer, state.resp, nil
 }
 
 // isKMSv2ProviderHealthy checks if the KMSv2-Plugin is healthy.
@@ -582,9 +601,8 @@ func kmsPrefixTransformer(ctx context.Context, config *apiserverconfig.KMSConfig
 			l:            &sync.Mutex{},
 			lastResponse: &kmsPluginHealthzResponse{},
 		}
-		// initialize keyID so that Load always works
-		keyID := ""
-		probe.keyID.Store(&keyID)
+		// initialize state so that Load always works
+		probe.state.Store(&kmsv2State{})
 
 		// prime keyID by running the check inline once (this prevents unit tests from flaking)
 		// ignore the error here since we want to support the plugin starting up async with the API server
@@ -602,7 +620,7 @@ func kmsPrefixTransformer(ctx context.Context, config *apiserverconfig.KMSConfig
 
 		// using AES-GCM by default for encrypting data with KMSv2
 		transformer := value.PrefixTransformer{
-			Transformer: envelopekmsv2.NewEnvelopeTransformer(envelopeService, kmsName, probe.getCurrentKeyID, probe.check),
+			Transformer: envelopekmsv2.NewEnvelopeTransformer(envelopeService, kmsName, probe.getCurrentState),
 			Prefix:      []byte(kmsTransformerPrefixV2 + kmsName + ":"),
 		}
 
