@@ -87,14 +87,8 @@ type kmsPluginProbe struct {
 	l            *sync.Mutex
 }
 
-type kmsv2State struct {
-	transformer value.Transformer
-	resp        *kmsservice.EncryptResponse
-	timestamp   time.Time
-}
-
 type kmsv2PluginProbe struct {
-	state        atomic.Pointer[kmsv2State]
+	state        atomic.Pointer[envelopekmsv2.State]
 	name         string
 	ttl          time.Duration
 	service      kmsservice.Service
@@ -283,15 +277,11 @@ func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 		h.ttl = kmsPluginHealthzNegativeTTL
 		return fmt.Errorf("failed to perform status section of the healthz check for KMS Provider %s, error: %w", h.name, err)
 	}
-	// we coast on the last valid key ID that we have observed
-	if errCode, err := envelopekmsv2.ValidateKeyID(p.KeyID); err == nil {
 
-		t, r, err2 := envelopekmsv2.GenerateTransformer(ctx, h.service)
-
-		h.state.Store(&p.KeyID)
-		metrics.RecordKeyIDFromStatus(h.name, p.KeyID)
-	} else {
-		metrics.RecordInvalidKeyIDFromStatus(h.name, string(errCode))
+	if err := h.rotateDEK(ctx, p.KeyID); err != nil {
+		h.lastResponse = &kmsPluginHealthzResponse{err: err, received: time.Now()}
+		h.ttl = kmsPluginHealthzNegativeTTL
+		return err
 	}
 
 	if err := isKMSv2ProviderHealthy(h.name, p); err != nil {
@@ -305,23 +295,42 @@ func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 	return nil
 }
 
+func (h *kmsv2PluginProbe) rotateDEK(ctx context.Context, keyID string) error {
+
+	// we coast on the last valid key ID that we have observed
+	if errCode, err := envelopekmsv2.ValidateKeyID(keyID); err == nil {
+
+		t, r, err2 := envelopekmsv2.GenerateTransformer(ctx, h.service)
+
+		h.state.Store(&keyID)
+		metrics.RecordKeyIDFromStatus(h.name, keyID)
+	} else {
+		metrics.RecordInvalidKeyIDFromStatus(h.name, string(errCode))
+	}
+
+}
+
 // getCurrentState returns the latest state from the last Status() call or err if state is empty  // TODO fix
-func (h *kmsv2PluginProbe) getCurrentState() (value.Transformer, *kmsservice.EncryptResponse, error) {
+func (h *kmsv2PluginProbe) getCurrentState() (envelopekmsv2.State, error) {
 	state := *h.state.Load()
 
-	if state.transformer == nil || state.resp == nil {
-		return nil, nil, fmt.Errorf("got unexpected empty state")
+	if state.Transformer == nil {
+		return envelopekmsv2.State{}, fmt.Errorf("got unexpected nil transformer")
 	}
 
-	if len(state.resp.KeyID) == 0 {
-		return nil, nil, fmt.Errorf("got unexpected empty keyID")
+	if len(state.EncryptedDEK) == 0 {
+		return envelopekmsv2.State{}, fmt.Errorf("got unexpected empty EDEK")
 	}
 
-	if len(state.resp.Ciphertext) == 0 {
-		return nil, nil, fmt.Errorf("got unexpected empty EDEK")
+	if len(state.KeyID) == 0 {
+		return envelopekmsv2.State{}, fmt.Errorf("got unexpected empty keyID")
 	}
 
-	return state.transformer, state.resp, nil
+	if state.Timestamp.IsZero() {
+		return envelopekmsv2.State{}, fmt.Errorf("got unexpected zero timestamp")
+	}
+
+	return state, nil
 }
 
 // isKMSv2ProviderHealthy checks if the KMSv2-Plugin is healthy.
@@ -602,7 +611,7 @@ func kmsPrefixTransformer(ctx context.Context, config *apiserverconfig.KMSConfig
 			lastResponse: &kmsPluginHealthzResponse{},
 		}
 		// initialize state so that Load always works
-		probe.state.Store(&kmsv2State{})
+		probe.state.Store(&envelopekmsv2.State{})
 
 		// prime keyID by running the check inline once (this prevents unit tests from flaking)
 		// ignore the error here since we want to support the plugin starting up async with the API server

@@ -62,8 +62,25 @@ const (
 	errKeyIDTooLongCode ErrCodeKeyID = "too_long"
 )
 
-type StateFunc func() (value.Transformer, *kmsservice.EncryptResponse, error)
+type StateFunc func() (State, error)
 type ErrCodeKeyID string
+
+type State struct {
+	Transformer  value.Transformer
+	EncryptedDEK []byte
+	KeyID        string
+	Annotations  map[string][]byte
+
+	Timestamp time.Time
+}
+
+func (s *State) validateEncryptCapability() error {
+	// allow reads indefinitely but writes for only up to an hour
+	if valid := time.Since(s.Timestamp) < time.Hour; !valid {
+		return fmt.Errorf("EDEK with keyID %q and creation time %s is expired", s.KeyID, s.Timestamp.Format(time.RFC3339))
+	}
+	return nil
+}
 
 type envelopeTransformer struct {
 	envelopeService kmsservice.Service
@@ -100,14 +117,18 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 		return nil, false, err
 	}
 
-	// start with the assumption that the current write transformer is also the read transformer
-	transformer, resp, err := t.stateFunc()
+	state, err := t.stateFunc()
 	if err != nil {
 		return nil, false, err
 	}
 
+	// start with the assumption that the current write transformer is also the read transformer
+	// TODO we get a cache miss every time this rotates
+	transformer := state.Transformer
+
 	// if the current write transformer is not what was used to encrypt this data, check in the cache
-	if subtle.ConstantTimeCompare(resp.Ciphertext, encryptedObject.EncryptedDEK) != 1 {
+	if subtle.ConstantTimeCompare(state.EncryptedDEK, encryptedObject.EncryptedDEK) != 1 {
+		// TODO value.RecordStateMiss() metric
 		transformer = t.cache.get(encryptedObject.EncryptedDEK)
 	}
 
@@ -139,7 +160,7 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 	}
 
 	// data is considered stale if the key ID does not match our current write transformer
-	return out, stale || encryptedObject.KeyID != resp.KeyID, nil
+	return out, stale || encryptedObject.KeyID != state.KeyID, nil
 
 }
 
@@ -147,23 +168,26 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 func (t *envelopeTransformer) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, error) {
 	metrics.RecordArrival(metrics.ToStorageLabel, time.Now())
 
-	transformer, resp, err := t.stateFunc()
+	state, err := t.stateFunc()
+	if err != nil {
+		return nil, err
+	}
+	if err := state.validateEncryptCapability(); err != nil {
+		return nil, err
+	}
+
+	result, err := state.Transformer.TransformToStorage(ctx, data, dataCtx)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := transformer.TransformToStorage(ctx, data, dataCtx)
-	if err != nil {
-		return nil, err
-	}
-
-	metrics.RecordKeyID(metrics.ToStorageLabel, t.providerName, resp.KeyID)
+	metrics.RecordKeyID(metrics.ToStorageLabel, t.providerName, state.KeyID)
 
 	encObject := &kmstypes.EncryptedObject{
-		KeyID:         resp.KeyID,
-		EncryptedDEK:  resp.Ciphertext,
+		KeyID:         state.KeyID,
+		EncryptedDEK:  state.EncryptedDEK,
 		EncryptedData: result,
-		Annotations:   resp.Annotations,
+		Annotations:   state.Annotations,
 	}
 
 	// Serialize the EncryptedObject to a byte array.
