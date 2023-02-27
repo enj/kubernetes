@@ -212,8 +212,8 @@ func testStateFunc(ctx context.Context, envelopeService kmsservice.Service, cloc
 	}
 }
 
-// Test keyIDGetter as part of envelopeTransformer, throws error if returned err or staleness is incorrect.
-func TestEnvelopeTransformerKeyIDGetter(t *testing.T) {
+// TestEnvelopeTransformerStateFunc validates that staleness checks on read honor the data returned from the StateFunc.
+func TestEnvelopeTransformerStateFunc(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {
 		desc          string
@@ -222,19 +222,19 @@ func TestEnvelopeTransformerKeyIDGetter(t *testing.T) {
 		testKeyID     string
 	}{
 		{
-			desc:          "keyIDGetter returns err",
+			desc:          "stateFunc returns err",
 			expectedStale: false,
 			testErr:       fmt.Errorf("failed to perform status section of the healthz check for KMS Provider"),
 			testKeyID:     "",
 		},
 		{
-			desc:          "keyIDGetter returns same keyID",
+			desc:          "stateFunc returns same keyID",
 			expectedStale: false,
 			testErr:       nil,
 			testKeyID:     testKeyVersion,
 		},
 		{
-			desc:          "keyIDGetter returns different keyID",
+			desc:          "stateFunc returns different keyID",
 			expectedStale: true,
 			testErr:       nil,
 			testKeyID:     "2",
@@ -249,13 +249,14 @@ func TestEnvelopeTransformerKeyIDGetter(t *testing.T) {
 			ctx := testContext(t)
 
 			envelopeService := newTestEnvelopeService()
+			state, err := testStateFunc(ctx, envelopeService, &clock.RealClock{})()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stateErr error
+
 			envelopeTransformer := NewEnvelopeTransformer(envelopeService, testProviderName,
-				func(ctx context.Context) (string, error) {
-					return tt.testKeyID, tt.testErr
-				},
-				func(ctx context.Context) error {
-					return nil
-				},
+				func() (State, error) { return state, stateErr },
 			)
 
 			dataCtx := value.DefaultContext(testContextText)
@@ -265,6 +266,10 @@ func TestEnvelopeTransformerKeyIDGetter(t *testing.T) {
 			if err != nil {
 				t.Fatalf("envelopeTransformer: error while transforming data (%v) to storage: %s", originalText, err)
 			}
+
+			// inject test data before performing a read
+			state.KeyID = tt.testKeyID
+			stateErr = tt.testErr
 
 			_, stale, err := envelopeTransformer.TransformFromStorage(ctx, transformedData, dataCtx)
 			if tt.testErr != nil {
