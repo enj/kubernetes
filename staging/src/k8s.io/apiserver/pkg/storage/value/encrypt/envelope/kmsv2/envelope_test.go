@@ -312,12 +312,7 @@ func TestTransformToStorageError(t *testing.T) {
 			envelopeService := newTestEnvelopeService()
 			envelopeService.SetAnnotations(tt.annotations)
 			envelopeTransformer := NewEnvelopeTransformer(envelopeService, testProviderName,
-				func(ctx context.Context) (string, error) {
-					return "", nil
-				},
-				func(ctx context.Context) error {
-					return nil
-				},
+				testStateFunc(ctx, envelopeService, clock.RealClock{}),
 			)
 			dataCtx := value.DefaultContext(testContextText)
 
