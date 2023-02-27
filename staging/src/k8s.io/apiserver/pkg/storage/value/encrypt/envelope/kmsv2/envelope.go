@@ -117,7 +117,7 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 		return nil, false, err
 	}
 
-	state, err := t.stateFunc()
+	state, err := t.stateFunc() // no need to call state.ValidateEncryptCapability on reads
 	if err != nil {
 		return nil, false, err
 	}

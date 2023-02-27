@@ -359,7 +359,9 @@ func (h *kmsv2PluginProbe) attemptToRotateDEK(ctx context.Context, statusKeyID s
 		uid, errState, errGen, statusKeyID, resp.KeyID, state.KeyID, state.Timestamp.Format(time.RFC3339))
 }
 
-// getCurrentState returns the latest state from the last Status() call or err if state is empty  // TODO fix
+// getCurrentState returns the latest state from the last status and encrypt calls.
+// If the returned error is nil, the state is considered valid indefinitely for read requests.
+// For write requests, the caller must also check that state.ValidateEncryptCapability does not error.
 func (h *kmsv2PluginProbe) getCurrentState() (envelopekmsv2.State, error) {
 	state := *h.state.Load()
 
