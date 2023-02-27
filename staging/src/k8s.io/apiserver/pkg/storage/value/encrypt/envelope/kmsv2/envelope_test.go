@@ -234,6 +234,9 @@ func TestEnvelopeTransformerKeyIDGetter(t *testing.T) {
 		tt := tt
 		t.Run(tt.desc, func(t *testing.T) {
 			t.Parallel()
+
+			ctx := testContext(t)
+
 			envelopeService := newTestEnvelopeService()
 			envelopeTransformer := NewEnvelopeTransformer(envelopeService, testProviderName,
 				func(ctx context.Context) (string, error) {
@@ -244,8 +247,7 @@ func TestEnvelopeTransformerKeyIDGetter(t *testing.T) {
 				},
 			)
 
-			ctx := testContext(t)
-			dataCtx := value.DefaultContext([]byte(testContextText))
+			dataCtx := value.DefaultContext(testContextText)
 			originalText := []byte(testText)
 
 			transformedData, err := envelopeTransformer.TransformToStorage(ctx, originalText, dataCtx)
@@ -304,6 +306,9 @@ func TestTransformToStorageError(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+
+			ctx := testContext(t)
+
 			envelopeService := newTestEnvelopeService()
 			envelopeService.SetAnnotations(tt.annotations)
 			envelopeTransformer := NewEnvelopeTransformer(envelopeService, testProviderName,
@@ -314,8 +319,7 @@ func TestTransformToStorageError(t *testing.T) {
 					return nil
 				},
 			)
-			ctx := testContext(t)
-			dataCtx := value.DefaultContext([]byte(testContextText))
+			dataCtx := value.DefaultContext(testContextText)
 
 			_, err := envelopeTransformer.TransformToStorage(ctx, []byte(testText), dataCtx)
 			if err == nil {
@@ -607,7 +611,7 @@ func TestEnvelopeMetrics(t *testing.T) {
 		},
 	)
 
-	dataCtx := value.DefaultContext([]byte(testContextText))
+	dataCtx := value.DefaultContext(testContextText)
 
 	kmsv2Transformer := value.PrefixTransformer{Prefix: []byte("k8s:enc:kms:v2:"), Transformer: envelopeTransformer}
 
@@ -666,7 +670,9 @@ func TestEnvelopeMetrics(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			tt.prefix.TransformFromStorage(ctx, transformedData, dataCtx)
+			if _, _, err := tt.prefix.TransformFromStorage(ctx, transformedData, dataCtx); err != nil {
+				t.Fatal(err)
+			}
 
 			if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(tt.want), tt.metrics...); err != nil {
 				t.Fatal(err)
