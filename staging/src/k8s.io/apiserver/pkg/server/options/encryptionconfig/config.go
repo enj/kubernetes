@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
 	apiserverconfig "k8s.io/apiserver/pkg/apis/config"
 	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/config/v1"
@@ -278,7 +279,7 @@ func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 		return fmt.Errorf("failed to perform status section of the healthz check for KMS Provider %s, error: %w", h.name, err)
 	}
 
-	if err := h.rotateDEK(ctx, p.KeyID); err != nil {
+	if err := h.attemptToRotateDEK(ctx, p.KeyID); err != nil {
 		h.lastResponse = &kmsPluginHealthzResponse{err: err, received: time.Now()}
 		h.ttl = kmsPluginHealthzNegativeTTL
 		return err
@@ -295,19 +296,67 @@ func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 	return nil
 }
 
-func (h *kmsv2PluginProbe) rotateDEK(ctx context.Context, keyID string) error {
-
-	// we coast on the last valid key ID that we have observed
-	if errCode, err := envelopekmsv2.ValidateKeyID(keyID); err == nil {
-
-		t, r, err2 := envelopekmsv2.GenerateTransformer(ctx, h.service)
-
-		h.state.Store(&keyID)
-		metrics.RecordKeyIDFromStatus(h.name, keyID)
-	} else {
+// attemptToRotateDEK tries to rotate to a new DEK.  On success, the new DEK and keyID overwrite the existing state.
+// On any failure (including mismatch between status and encrypt calls), the current state is preserved.
+// If the current state is still valid, no error is returned - that is, we do not report unhealthy while we have
+// a pre-existing DEK that is considered valid.  This means that any transient encryption failure or mismatch
+// between status and encrypt only results in log statements - the system attempts to coasts otherwise.
+// In practice this means that reads will coast indefinitely on the last valid state whereas writes will coast
+// until the DEK is considered to be expired.
+func (h *kmsv2PluginProbe) attemptToRotateDEK(ctx context.Context, statusKeyID string) error {
+	errCode, err := envelopekmsv2.ValidateKeyID(statusKeyID)
+	if err != nil {
 		metrics.RecordInvalidKeyIDFromStatus(h.name, string(errCode))
+		return nil // let isKMSv2ProviderHealthy handle this error
 	}
 
+	metrics.RecordKeyIDFromStatus(h.name, statusKeyID)
+
+	now := time.Now().UTC() // start the timer before we make the network calls
+
+	uid := string(uuid.NewUUID())
+
+	transformer, resp, errGen := envelopekmsv2.GenerateTransformer(ctx, uid, h.service)
+
+	if resp == nil {
+		resp = &kmsservice.EncryptResponse{} // avoid nil panics
+	}
+
+	// happy path, should be the common case
+	// TODO maybe add success metrics?
+	if errGen == nil && resp.KeyID == statusKeyID {
+		h.state.Store(&envelopekmsv2.State{
+			Transformer:  transformer,
+			EncryptedDEK: resp.Ciphertext,
+			KeyID:        resp.KeyID,
+			Annotations:  resp.Annotations,
+			Timestamp:    now,
+		})
+		return nil
+	}
+
+	// determine if our current state is valid
+	state, errState := h.getCurrentState()
+	if errState == nil {
+		errState = state.ValidateEncryptCapability()
+	}
+
+	// TODO maybe add metrics for time until this starts failing?
+	if errState == nil {
+		klog.InfoS("unable to rotate DEK, coasting on previous valid state",
+			"uid", uid,
+			"errGen", errGen,
+			"statusKeyID", statusKeyID,
+			"encryptKeyID", resp.KeyID,
+			"stateKeyID", state.KeyID,
+			"stateTimestamp", state.Timestamp.Format(time.RFC3339),
+		)
+		return nil // we can coast because the current state is valid
+	}
+
+	// our current state is not valid and we cannot seem to generate a new DEK
+	return fmt.Errorf("failed to rotate DEK uid=%q, errState=%v, errGen=%v, statusKeyID=%q, encryptKeyID=%q, stateKeyID=%q, stateTimestamp=%s",
+		uid, errState, errGen, statusKeyID, resp.KeyID, state.KeyID, state.Timestamp.Format(time.RFC3339))
 }
 
 // getCurrentState returns the latest state from the last Status() call or err if state is empty  // TODO fix

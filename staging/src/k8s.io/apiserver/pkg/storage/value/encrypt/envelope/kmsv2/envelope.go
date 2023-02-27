@@ -74,7 +74,7 @@ type State struct {
 	Timestamp time.Time
 }
 
-func (s *State) validateEncryptCapability() error {
+func (s *State) ValidateEncryptCapability() error {
 	// allow reads indefinitely but writes for only up to an hour
 	if valid := time.Since(s.Timestamp) < time.Hour; !valid {
 		return fmt.Errorf("EDEK with keyID %q and creation time %s is expired", s.KeyID, s.Timestamp.Format(time.RFC3339))
@@ -172,7 +172,7 @@ func (t *envelopeTransformer) TransformToStorage(ctx context.Context, data []byt
 	if err != nil {
 		return nil, err
 	}
-	if err := state.validateEncryptCapability(); err != nil {
+	if err := state.ValidateEncryptCapability(); err != nil {
 		return nil, err
 	}
 
@@ -227,15 +227,13 @@ func (t *envelopeTransformer) doDecode(originalData []byte) (*kmstypes.Encrypted
 	return o, nil
 }
 
-func GenerateTransformer(ctx context.Context, envelopeService kmsservice.Service) (value.Transformer, *kmsservice.EncryptResponse, error) {
+func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsservice.Service) (value.Transformer, *kmsservice.EncryptResponse, error) {
 	newKey, err := generateKey(32)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	uid := string(uuid.NewUUID())
-
-	klog.V(6).InfoS("encrypting content using envelope service", "uid", uid) // TODO: "key", string(dataCtx.AuthenticatedData())
+	klog.V(6).InfoS("encrypting content using envelope service", "uid", uid)
 
 	resp, err := envelopeService.Encrypt(ctx, uid, newKey)
 	if err != nil {
