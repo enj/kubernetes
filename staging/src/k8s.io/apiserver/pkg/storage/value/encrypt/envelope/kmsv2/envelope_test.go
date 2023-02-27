@@ -612,14 +612,7 @@ func TestValidateEncryptedDEK(t *testing.T) {
 func TestEnvelopeMetrics(t *testing.T) {
 	envelopeService := newTestEnvelopeService()
 	envelopeTransformer := NewEnvelopeTransformer(envelopeService, testProviderName,
-		func(ctx context.Context) (string, error) {
-			return testKeyVersion, nil
-		},
-		// health probe check to ensure keyID freshness
-		func(ctx context.Context) error {
-			metrics.RecordInvalidKeyIDFromStatus(testProviderName, errCode)
-			return nil
-		},
+		testStateFunc(testContext(t), envelopeService, &clock.RealClock{}),
 	)
 
 	dataCtx := value.DefaultContext(testContextText)
@@ -644,25 +637,8 @@ func TestEnvelopeMetrics(t *testing.T) {
 				# HELP apiserver_envelope_encryption_key_id_hash_total [ALPHA] Number of times a keyID is used split by transformation type and provider.
 				# TYPE apiserver_envelope_encryption_key_id_hash_total counter
 				apiserver_envelope_encryption_key_id_hash_total{key_id_hash="%s",provider_name="%s",transformation_type="%s"} 1
-        		apiserver_envelope_encryption_key_id_hash_total{key_id_hash="%s",provider_name="%s",transformation_type="%s"} 1
+				apiserver_envelope_encryption_key_id_hash_total{key_id_hash="%s",provider_name="%s",transformation_type="%s"} 1
 				`, testKeyHash, testProviderName, metrics.FromStorageLabel, testKeyHash, testProviderName, metrics.ToStorageLabel),
-		},
-		{
-			// keyVersionFromEncrypt is returned from kms v2 envelope service
-			// when it is different from the key ID returned from last status call
-			// it will trigger health probe check immediately to ensure keyID freshness
-			// during probe check above, it will call RecordInvalidKeyIDFromStatus
-			desc:                  "invalid KeyID From Status Total",
-			keyVersionFromEncrypt: "2",
-			prefix:                value.NewPrefixTransformers(nil, kmsv2Transformer),
-			metrics: []string{
-				"apiserver_envelope_encryption_invalid_key_id_from_status_total",
-			},
-			want: fmt.Sprintf(`
-			# HELP apiserver_envelope_encryption_invalid_key_id_from_status_total [ALPHA] Number of times an invalid keyID is returned by the Status RPC call split by error.
-			# TYPE apiserver_envelope_encryption_invalid_key_id_from_status_total counter
-			apiserver_envelope_encryption_invalid_key_id_from_status_total{error="%s",provider_name="%s"} 1
-			`, errCode, testProviderName),
 		},
 	}
 
