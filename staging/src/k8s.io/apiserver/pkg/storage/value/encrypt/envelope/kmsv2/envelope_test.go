@@ -28,12 +28,14 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apiserver/pkg/storage/value"
 	kmstypes "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2/v2alpha1"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/component-base/metrics/testutil"
 	kmsservice "k8s.io/kms/pkg/service"
+	"k8s.io/utils/clock"
 	testingclock "k8s.io/utils/clock/testing"
 )
 
@@ -137,19 +139,15 @@ func TestEnvelopeCaching(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.desc, func(t *testing.T) {
+			ctx := testContext(t)
+
 			envelopeService := newTestEnvelopeService()
 			fakeClock := testingclock.NewFakeClock(time.Now())
 			envelopeTransformer := newEnvelopeTransformerWithClock(envelopeService, testProviderName,
-				func(ctx context.Context) (string, error) {
-					return "", nil
-				},
-				func(ctx context.Context) error {
-					return nil
-				},
+				testStateFunc(ctx, envelopeService, fakeClock),
 				tt.cacheTTL, fakeClock)
 
-			ctx := testContext(t)
-			dataCtx := value.DefaultContext([]byte(testContextText))
+			dataCtx := value.DefaultContext(testContextText)
 			originalText := []byte(testText)
 
 			transformedData, err := envelopeTransformer.TransformToStorage(ctx, originalText, dataCtx)
@@ -184,6 +182,22 @@ func TestEnvelopeCaching(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func testStateFunc(ctx context.Context, envelopeService kmsservice.Service, clock clock.Clock) func() (State, error) {
+	return func() (State, error) {
+		transformer, resp, errGen := GenerateTransformer(ctx, string(uuid.NewUUID()), envelopeService)
+		if errGen != nil {
+			return State{}, errGen
+		}
+		return State{
+			Transformer:  transformer,
+			EncryptedDEK: resp.Ciphertext,
+			KeyID:        resp.KeyID,
+			Annotations:  resp.Annotations,
+			Timestamp:    clock.Now(),
+		}, nil
 	}
 }
 

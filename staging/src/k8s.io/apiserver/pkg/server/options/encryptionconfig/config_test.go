@@ -529,7 +529,7 @@ func TestKMSPluginHealthz(t *testing.T) {
 		ttl:  3 * time.Second,
 	}
 	keyID := "1"
-	kmsv2Probe.state.Store(&keyID)
+	kmsv2Probe.state.Store(&envelopekmsv2.State{KeyID: keyID})
 
 	testCases := []struct {
 		desc    string
