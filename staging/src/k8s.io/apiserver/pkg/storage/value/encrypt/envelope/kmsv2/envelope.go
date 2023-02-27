@@ -123,7 +123,6 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 	}
 
 	// start with the assumption that the current write transformer is also the read transformer
-	// TODO we get a cache miss every time this rotates
 	transformer := state.Transformer
 
 	// if the current write transformer is not what was used to encrypt this data, check in the cache
@@ -175,6 +174,10 @@ func (t *envelopeTransformer) TransformToStorage(ctx context.Context, data []byt
 	if err := state.ValidateEncryptCapability(); err != nil {
 		return nil, err
 	}
+
+	// this prevents a cache miss every time the DEK rotates
+	// TODO see if we can do this inside the stateFunc control loop
+	t.cache.set(state.EncryptedDEK, state.Transformer)
 
 	result, err := state.Transformer.TransformToStorage(ctx, data, dataCtx)
 	if err != nil {

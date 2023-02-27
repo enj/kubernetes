@@ -143,8 +143,14 @@ func TestEnvelopeCaching(t *testing.T) {
 
 			envelopeService := newTestEnvelopeService()
 			fakeClock := testingclock.NewFakeClock(time.Now())
+
+			state, err := testStateFunc(ctx, envelopeService, fakeClock)()
+			if err != nil {
+				t.Fatal(err)
+			}
+
 			envelopeTransformer := newEnvelopeTransformerWithClock(envelopeService, testProviderName,
-				testStateFunc(ctx, envelopeService, fakeClock),
+				func() (State, error) { return state, nil },
 				tt.cacheTTL, fakeClock)
 
 			dataCtx := value.DefaultContext(testContextText)
@@ -162,8 +168,13 @@ func TestEnvelopeCaching(t *testing.T) {
 				t.Fatalf("envelopeTransformer transformed data incorrectly. Expected: %v, got %v", originalText, untransformedData)
 			}
 
-			envelopeService.SetDisabledStatus(tt.simulateKMSPluginFailure)
 			fakeClock.Step(2 * time.Minute)
+			state, err = testStateFunc(ctx, envelopeService, fakeClock)()
+			if err != nil {
+				t.Fatal(err)
+			}
+			envelopeService.SetDisabledStatus(tt.simulateKMSPluginFailure)
+
 			// Subsequent read for the same data should work fine due to caching.
 			untransformedData, _, err = envelopeTransformer.TransformFromStorage(ctx, transformedData, dataCtx)
 			if tt.expectedError != "" {
