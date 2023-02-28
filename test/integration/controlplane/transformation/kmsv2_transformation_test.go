@@ -333,9 +333,9 @@ resources:
 	}
 
 	// Invalid the DEK by moving the current time forward
-	origNowFunc := kmsv2.NowFunc
-	t.Cleanup(func() { kmsv2.NowFunc = origNowFunc })
-	kmsv2.NowFunc = func() time.Time { return origNowFunc().Add(2 * time.Hour) }
+	origNowFunc := kmsv2.ValidateEncryptCapabilityNowFunc
+	t.Cleanup(func() { kmsv2.ValidateEncryptCapabilityNowFunc = origNowFunc })
+	kmsv2.ValidateEncryptCapabilityNowFunc = func() time.Time { return origNowFunc().Add(2 * time.Hour) }
 
 	// 6. when kms-plugin is down, expect creation of new pod and encryption to fail because the DEK is invalid
 	_, err = test.createPod(testNamespace, dynamicClient)

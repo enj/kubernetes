@@ -62,8 +62,8 @@ const (
 	errKeyIDTooLongCode ErrCodeKeyID = "too_long"
 )
 
-// NowFunc is exported so integration tests can override it.
-var NowFunc = time.Now
+// ValidateEncryptCapabilityNowFunc is exported so integration tests can override it.
+var ValidateEncryptCapabilityNowFunc = time.Now
 
 type StateFunc func() (State, error)
 type ErrCodeKeyID string
@@ -78,7 +78,7 @@ type State struct {
 }
 
 func (s *State) ValidateEncryptCapability() error {
-	if now := NowFunc(); now.After(s.ExpirationTimestamp) {
+	if now := ValidateEncryptCapabilityNowFunc(); now.After(s.ExpirationTimestamp) {
 		return fmt.Errorf("EDEK with keyID %q expired at %s (current time is %s)",
 			s.KeyID, s.ExpirationTimestamp.Format(time.RFC3339), now.Format(time.RFC3339))
 	}
