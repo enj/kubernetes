@@ -203,11 +203,11 @@ func testStateFunc(ctx context.Context, envelopeService kmsservice.Service, cloc
 			return State{}, errGen
 		}
 		return State{
-			Transformer:  transformer,
-			EncryptedDEK: resp.Ciphertext,
-			KeyID:        resp.KeyID,
-			Annotations:  resp.Annotations,
-			Timestamp:    clock.Now(),
+			Transformer:         transformer,
+			EncryptedDEK:        resp.Ciphertext,
+			KeyID:               resp.KeyID,
+			Annotations:         resp.Annotations,
+			ExpirationTimestamp: clock.Now().Add(time.Hour),
 		}, nil
 	}
 }

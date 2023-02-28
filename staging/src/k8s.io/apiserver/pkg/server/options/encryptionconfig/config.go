@@ -312,7 +312,8 @@ func (h *kmsv2PluginProbe) attemptToRotateDEK(ctx context.Context, statusKeyID s
 
 	metrics.RecordKeyIDFromStatus(h.name, statusKeyID)
 
-	now := time.Now().UTC() // start the timer before we make the network calls
+	// allow reads indefinitely but writes for only up to an hour
+	expirationTimestamp := time.Now().Add(time.Hour) // start the timer before we make the network calls
 
 	uid := string(uuid.NewUUID())
 
@@ -326,11 +327,11 @@ func (h *kmsv2PluginProbe) attemptToRotateDEK(ctx context.Context, statusKeyID s
 	// TODO maybe add success metrics?
 	if errGen == nil && resp.KeyID == statusKeyID {
 		h.state.Store(&envelopekmsv2.State{
-			Transformer:  transformer,
-			EncryptedDEK: resp.Ciphertext,
-			KeyID:        resp.KeyID,
-			Annotations:  resp.Annotations,
-			Timestamp:    now,
+			Transformer:         transformer,
+			EncryptedDEK:        resp.Ciphertext,
+			KeyID:               resp.KeyID,
+			Annotations:         resp.Annotations,
+			ExpirationTimestamp: expirationTimestamp,
 		})
 		return nil
 	}
@@ -349,14 +350,14 @@ func (h *kmsv2PluginProbe) attemptToRotateDEK(ctx context.Context, statusKeyID s
 			"statusKeyID", statusKeyID,
 			"encryptKeyID", resp.KeyID,
 			"stateKeyID", state.KeyID,
-			"stateTimestamp", state.Timestamp.Format(time.RFC3339),
+			"expirationTimestamp", state.ExpirationTimestamp.Format(time.RFC3339),
 		)
 		return nil // we can coast because the current state is valid
 	}
 
 	// our current state is not valid and we cannot seem to generate a new DEK
-	return fmt.Errorf("failed to rotate DEK uid=%q, errState=%v, errGen=%v, statusKeyID=%q, encryptKeyID=%q, stateKeyID=%q, stateTimestamp=%s",
-		uid, errState, errGen, statusKeyID, resp.KeyID, state.KeyID, state.Timestamp.Format(time.RFC3339))
+	return fmt.Errorf("failed to rotate DEK uid=%q, errState=%v, errGen=%v, statusKeyID=%q, encryptKeyID=%q, stateKeyID=%q, expirationTimestamp=%s",
+		uid, errState, errGen, statusKeyID, resp.KeyID, state.KeyID, state.ExpirationTimestamp.Format(time.RFC3339))
 }
 
 // getCurrentState returns the latest state from the last status and encrypt calls.
@@ -377,8 +378,8 @@ func (h *kmsv2PluginProbe) getCurrentState() (envelopekmsv2.State, error) {
 		return envelopekmsv2.State{}, fmt.Errorf("got unexpected empty keyID")
 	}
 
-	if state.Timestamp.IsZero() {
-		return envelopekmsv2.State{}, fmt.Errorf("got unexpected zero timestamp")
+	if state.ExpirationTimestamp.IsZero() {
+		return envelopekmsv2.State{}, fmt.Errorf("got unexpected zero expirationTimestamp")
 	}
 
 	return state, nil

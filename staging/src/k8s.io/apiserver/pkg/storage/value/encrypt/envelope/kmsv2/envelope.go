@@ -71,13 +71,13 @@ type State struct {
 	KeyID        string
 	Annotations  map[string][]byte
 
-	Timestamp time.Time
+	ExpirationTimestamp time.Time
 }
 
 func (s *State) ValidateEncryptCapability() error {
-	// allow reads indefinitely but writes for only up to an hour
-	if valid := time.Since(s.Timestamp) < time.Hour; !valid {
-		return fmt.Errorf("EDEK with keyID %q and creation time %s is expired", s.KeyID, s.Timestamp.Format(time.RFC3339))
+	if now := time.Now(); now.After(s.ExpirationTimestamp) {
+		return fmt.Errorf("EDEK with keyID %q expired at %s (current time is %s)",
+			s.KeyID, s.ExpirationTimestamp.Format(time.RFC3339), now.Format(time.RFC3339))
 	}
 	return nil
 }
