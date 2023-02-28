@@ -28,6 +28,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
+
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apiserver/pkg/storage/value"
 	kmstypes "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2/v2alpha1"
@@ -44,11 +46,6 @@ const (
 	testContextText = "0123456789"
 	testKeyHash     = "sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
 	testKeyVersion  = "1"
-	testCacheTTL    = 10 * time.Second
-)
-
-var (
-	errCode = "empty"
 )
 
 // testEnvelopeService is a mock Envelope service which can be used to simulate remote Envelope services
@@ -149,18 +146,18 @@ func TestEnvelopeCaching(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			envelopeTransformer := newEnvelopeTransformerWithClock(envelopeService, testProviderName,
+			transformer := newEnvelopeTransformerWithClock(envelopeService, testProviderName,
 				func() (State, error) { return state, nil },
 				tt.cacheTTL, fakeClock)
 
 			dataCtx := value.DefaultContext(testContextText)
 			originalText := []byte(testText)
 
-			transformedData, err := envelopeTransformer.TransformToStorage(ctx, originalText, dataCtx)
+			transformedData, err := transformer.TransformToStorage(ctx, originalText, dataCtx)
 			if err != nil {
 				t.Fatalf("envelopeTransformer: error while transforming data to storage: %s", err)
 			}
-			untransformedData, _, err := envelopeTransformer.TransformFromStorage(ctx, transformedData, dataCtx)
+			untransformedData, _, err := transformer.TransformFromStorage(ctx, transformedData, dataCtx)
 			if err != nil {
 				t.Fatalf("could not decrypt Envelope transformer's encrypted data even once: %v", err)
 			}
@@ -176,7 +173,7 @@ func TestEnvelopeCaching(t *testing.T) {
 			envelopeService.SetDisabledStatus(tt.simulateKMSPluginFailure)
 
 			// Subsequent read for the same data should work fine due to caching.
-			untransformedData, _, err = envelopeTransformer.TransformFromStorage(ctx, transformedData, dataCtx)
+			untransformedData, _, err = transformer.TransformFromStorage(ctx, transformedData, dataCtx)
 			if tt.expectedError != "" {
 				if err == nil {
 					t.Fatalf("expected error: %v, got nil", tt.expectedError)
@@ -212,8 +209,8 @@ func testStateFunc(ctx context.Context, envelopeService kmsservice.Service, cloc
 	}
 }
 
-// TestEnvelopeTransformerStateFunc validates that staleness checks on read honor the data returned from the StateFunc.
-func TestEnvelopeTransformerStateFunc(t *testing.T) {
+// TestEnvelopeTransformerStaleness validates that staleness checks on read honor the data returned from the StateFunc.
+func TestEnvelopeTransformerStaleness(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {
 		desc          string
@@ -255,14 +252,14 @@ func TestEnvelopeTransformerStateFunc(t *testing.T) {
 			}
 			var stateErr error
 
-			envelopeTransformer := NewEnvelopeTransformer(envelopeService, testProviderName,
+			transformer := NewEnvelopeTransformer(envelopeService, testProviderName,
 				func() (State, error) { return state, stateErr },
 			)
 
 			dataCtx := value.DefaultContext(testContextText)
 			originalText := []byte(testText)
 
-			transformedData, err := envelopeTransformer.TransformToStorage(ctx, originalText, dataCtx)
+			transformedData, err := transformer.TransformToStorage(ctx, originalText, dataCtx)
 			if err != nil {
 				t.Fatalf("envelopeTransformer: error while transforming data (%v) to storage: %s", originalText, err)
 			}
@@ -271,7 +268,7 @@ func TestEnvelopeTransformerStateFunc(t *testing.T) {
 			state.KeyID = tt.testKeyID
 			stateErr = tt.testErr
 
-			_, stale, err := envelopeTransformer.TransformFromStorage(ctx, transformedData, dataCtx)
+			_, stale, err := transformer.TransformFromStorage(ctx, transformedData, dataCtx)
 			if tt.testErr != nil {
 				if err == nil {
 					t.Fatalf("envelopeTransformer: expected error: %v, got nil", tt.testErr)
@@ -289,6 +286,112 @@ func TestEnvelopeTransformerStateFunc(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEnvelopeTransformerStateFunc(t *testing.T) {
+	t.Parallel()
+
+	ctx := testContext(t)
+
+	envelopeService := newTestEnvelopeService()
+	state, err := testStateFunc(ctx, envelopeService, &clock.RealClock{})()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// start with a broken state
+	stateErr := fmt.Errorf("some state error")
+
+	transformer := NewEnvelopeTransformer(envelopeService, testProviderName,
+		func() (State, error) { return state, stateErr },
+	)
+
+	dataCtx := value.DefaultContext(testContextText)
+	originalText := []byte(testText)
+
+	t.Run("nothing works when the state is broken", func(t *testing.T) {
+		_, err := transformer.TransformToStorage(ctx, originalText, dataCtx)
+		if err != stateErr {
+			t.Fatalf("expected state error, got: %v", err)
+		}
+		data, err := proto.Marshal(&kmstypes.EncryptedObject{
+			EncryptedData: []byte{1},
+			KeyID:         "2",
+			EncryptedDEK:  []byte{3},
+			Annotations:   nil,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, err = transformer.TransformFromStorage(ctx, data, dataCtx)
+		if err != stateErr {
+			t.Fatalf("expected state error, got: %v", err)
+		}
+	})
+
+	// fix the state
+	stateErr = nil
+
+	var encryptedData []byte
+
+	t.Run("everything works when the state is fixed", func(t *testing.T) {
+		encryptedData, err = transformer.TransformToStorage(ctx, originalText, dataCtx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, err = transformer.TransformFromStorage(ctx, encryptedData, dataCtx)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	// break the plugin
+	envelopeService.SetDisabledStatus(true)
+
+	t.Run("everything works even when the plugin is down but the state is valid", func(t *testing.T) {
+		data, err := transformer.TransformToStorage(ctx, originalText, dataCtx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, err = transformer.TransformFromStorage(ctx, data, dataCtx)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	// make the state invalid
+	state.ExpirationTimestamp = time.Now().Add(-time.Hour)
+
+	t.Run("writes fail when the plugin is down and the state is invalid", func(t *testing.T) {
+		_, err := transformer.TransformToStorage(ctx, originalText, dataCtx)
+		if !strings.Contains(errString(err), `EDEK with keyID "1" expired at`) {
+			t.Fatalf("expected expiration error, got: %v", err)
+		}
+	})
+
+	t.Run("reads succeed when the plugin is down and the state is invalid", func(t *testing.T) {
+		_, _, err = transformer.TransformFromStorage(ctx, encryptedData, dataCtx)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("reads for a different DEK fail when the plugin is down and the state is invalid", func(t *testing.T) {
+		obj := &kmstypes.EncryptedObject{}
+		if err := proto.Unmarshal(encryptedData, obj); err != nil {
+			t.Fatal(err)
+		}
+		obj.EncryptedDEK = append(obj.EncryptedDEK, 1) // skip StateFunc transformer
+		data, err := proto.Marshal(obj)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, _, err = transformer.TransformFromStorage(ctx, data, dataCtx)
+		if errString(err) != "failed to decrypt DEK, error: Envelope service was disabled" {
+			t.Fatal(err)
+		}
+	})
 }
 
 func TestTransformToStorageError(t *testing.T) {
@@ -327,12 +430,12 @@ func TestTransformToStorageError(t *testing.T) {
 
 			envelopeService := newTestEnvelopeService()
 			envelopeService.SetAnnotations(tt.annotations)
-			envelopeTransformer := NewEnvelopeTransformer(envelopeService, testProviderName,
+			transformer := NewEnvelopeTransformer(envelopeService, testProviderName,
 				testStateFunc(ctx, envelopeService, clock.RealClock{}),
 			)
 			dataCtx := value.DefaultContext(testContextText)
 
-			_, err := envelopeTransformer.TransformToStorage(ctx, []byte(testText), dataCtx)
+			_, err := transformer.TransformToStorage(ctx, []byte(testText), dataCtx)
 			if err == nil {
 				t.Fatalf("expected error, got nil")
 			}
@@ -344,7 +447,7 @@ func TestTransformToStorageError(t *testing.T) {
 }
 
 func TestEncodeDecode(t *testing.T) {
-	envelopeTransformer := &envelopeTransformer{}
+	transformer := &envelopeTransformer{}
 
 	obj := &kmstypes.EncryptedObject{
 		EncryptedData: []byte{0x01, 0x02, 0x03},
@@ -352,11 +455,11 @@ func TestEncodeDecode(t *testing.T) {
 		EncryptedDEK:  []byte{0x04, 0x05, 0x06},
 	}
 
-	data, err := envelopeTransformer.doEncode(obj)
+	data, err := transformer.doEncode(obj)
 	if err != nil {
 		t.Fatalf("envelopeTransformer: error while encoding data: %s", err)
 	}
-	got, err := envelopeTransformer.doDecode(data)
+	got, err := transformer.doDecode(data)
 	if err != nil {
 		t.Fatalf("envelopeTransformer: error while decoding data: %s", err)
 	}
@@ -611,13 +714,13 @@ func TestValidateEncryptedDEK(t *testing.T) {
 
 func TestEnvelopeMetrics(t *testing.T) {
 	envelopeService := newTestEnvelopeService()
-	envelopeTransformer := NewEnvelopeTransformer(envelopeService, testProviderName,
+	transformer := NewEnvelopeTransformer(envelopeService, testProviderName,
 		testStateFunc(testContext(t), envelopeService, &clock.RealClock{}),
 	)
 
 	dataCtx := value.DefaultContext(testContextText)
 
-	kmsv2Transformer := value.PrefixTransformer{Prefix: []byte("k8s:enc:kms:v2:"), Transformer: envelopeTransformer}
+	kmsv2Transformer := value.PrefixTransformer{Prefix: []byte("k8s:enc:kms:v2:"), Transformer: transformer}
 
 	testCases := []struct {
 		desc                  string
@@ -666,4 +769,12 @@ func TestEnvelopeMetrics(t *testing.T) {
 			}
 		})
 	}
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	return err.Error()
 }
