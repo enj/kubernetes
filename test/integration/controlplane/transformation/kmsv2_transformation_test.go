@@ -29,12 +29,14 @@ import (
 	"time"
 
 	"github.com/gogo/protobuf/proto"
+	clientv3 "go.etcd.io/etcd/client/v3"
 
+	corev1 "k8s.io/api/core/v1"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/features"
@@ -46,9 +48,11 @@ import (
 	kmsv2mock "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/testing/v2alpha1"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	kmsv2api "k8s.io/kms/apis/v2alpha1"
 	kmsv2svc "k8s.io/kms/pkg/service"
+	"k8s.io/kubernetes/test/integration"
 	"k8s.io/kubernetes/test/integration/etcd"
 )
 
@@ -92,7 +96,7 @@ func (r envelopekmsv2) plainTextPayload(secretETCDPath string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to initialize AES Cipher: %v", err)
 	}
 	ctx := context.Background()
-	dataCtx := value.DefaultContext([]byte(secretETCDPath))
+	dataCtx := value.DefaultContext(secretETCDPath)
 	aesgcmTransformer := aestransformer.NewGCMTransformer(block)
 	data, err := r.cipherTextPayload()
 	if err != nil {
@@ -167,7 +171,7 @@ resources:
 		plainTextDEK: plainTextDEK,
 	}
 
-	wantPrefix := string(envelopeData.prefix())
+	wantPrefix := envelopeData.prefix()
 	if !bytes.HasPrefix(rawEnvelope, []byte(wantPrefix)) {
 		t.Fatalf("expected secret to be prefixed with %s, but got %s", wantPrefix, rawEnvelope)
 	}
@@ -178,7 +182,7 @@ resources:
 	if err != nil {
 		t.Fatalf("failed to get ciphertext DEK from KMSv2 Plugin: %v", err)
 	}
-	decryptResponse, err := pluginMock.Decrypt(ctx, &kmsv2api.DecryptRequest{Uid: string(types.UID(uuid.NewUUID())), Ciphertext: ciphertext})
+	decryptResponse, err := pluginMock.Decrypt(ctx, &kmsv2api.DecryptRequest{Uid: string(uuid.NewUUID()), Ciphertext: ciphertext})
 	if err != nil {
 		t.Fatalf("failed to decrypt DEK, %v", err)
 	}
@@ -351,6 +355,100 @@ resources:
 	version7 := updatedNewPod.GetResourceVersion()
 	if version5 != version7 {
 		t.Fatalf("Resource version should not have changed again after the initial version updated as a result of the keyID update. old pod: %v, new pod: %v", newPod, updatedNewPod)
+	}
+}
+
+func TestKMSv2ProviderDEKReuse(t *testing.T) {
+	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2, true)()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	t.Cleanup(cancel)
+
+	encryptionConfig := `
+kind: EncryptionConfiguration
+apiVersion: apiserver.config.k8s.io/v1
+resources:
+  - resources:
+    - pods
+    providers:
+    - kms:
+       apiVersion: v2
+       name: kms-provider
+       endpoint: unix:///@kms-provider.sock
+`
+	pluginMock, err := kmsv2mock.NewBase64Plugin("@kms-provider.sock")
+	if err != nil {
+		t.Fatalf("failed to create mock of KMSv2 Plugin: %v", err)
+	}
+
+	go pluginMock.Start()
+	if err := kmsv2mock.WaitForBase64PluginToBeUp(pluginMock); err != nil {
+		t.Fatalf("Failed start plugin, err: %v", err)
+	}
+	defer pluginMock.CleanUp()
+
+	test, err := newTransformTest(t, encryptionConfig, false, "")
+	if err != nil {
+		t.Fatalf("failed to start KUBE API Server with encryptionConfig\n %s, error: %v", encryptionConfig, err)
+	}
+	t.Cleanup(test.cleanUp)
+
+	client := kubernetes.NewForConfigOrDie(test.kubeAPIServer.ClientConfig)
+
+	const podCount = 1_000
+
+	for i := 0; i < podCount; i++ {
+		if _, err := client.CoreV1().Pods(testNamespace).Create(ctx, &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				GenerateName: "dek-reuse-",
+			},
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
+					{
+						Name:  "busybox",
+						Image: "busybox",
+					},
+				},
+			},
+		}, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rawClient, etcdClient, err := integration.GetEtcdClients(test.kubeAPIServer.ServerOpts.Etcd.StorageConfig.Transport)
+	if err != nil {
+		t.Fatalf("failed to create etcd client: %v", err)
+	}
+	t.Cleanup(func() { _ = rawClient.Close() })
+
+	response, err := etcdClient.Get(ctx,
+		"/"+test.kubeAPIServer.ServerOpts.Etcd.StorageConfig.Prefix+"/pods/"+testNamespace+"/",
+		clientv3.WithPrefix())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(response.Kvs) != podCount {
+		t.Fatalf("expected %d KVs, but got %d", podCount, len(response.Kvs))
+	}
+
+	out := make([]kmstypes.EncryptedObject, len(response.Kvs))
+	for i, kv := range response.Kvs {
+		v := bytes.TrimPrefix(kv.Value, []byte("k8s:enc:kms:v2:kms-provider:"))
+		if err := proto.Unmarshal(v, &out[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	uniqueDEKs := sets.NewString()
+	for _, object := range out {
+		uniqueDEKs.Insert(string(object.EncryptedDEK))
+	}
+
+	// if the test times out in a minute and the provider stays healthy the whole time (as it should)
+	// we should never make more than 4 DEKs during the whole run (generally speaking there should only be 1)
+	if uniqueDEKs.Len() > 4 {
+		t.Errorf("expected less than five DEKs, got: %d", uniqueDEKs.Len())
 	}
 }
 
