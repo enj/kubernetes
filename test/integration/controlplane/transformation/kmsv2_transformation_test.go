@@ -41,6 +41,7 @@ import (
 	"k8s.io/apiserver/pkg/server/options/encryptionconfig"
 	"k8s.io/apiserver/pkg/storage/value"
 	aestransformer "k8s.io/apiserver/pkg/storage/value/encrypt/aes"
+	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2"
 	kmstypes "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2/v2alpha1"
 	kmsv2mock "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/testing/v2alpha1"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -213,8 +214,10 @@ resources:
 // 1. When the key ID is unchanged, the resource version must not change
 // 2. When the key ID changes, the resource version changes (but only once)
 // 3. For all subsequent updates, the resource version must not change
-// 4. When kms-plugin is down, expect creation of new pod and encryption to fail
-// 5. when kms-plugin is down, no-op update for a pod should succeed and not result in RV change
+// 4. When kms-plugin is down, expect creation of new pod and encryption to succeed while the DEK is valid
+// 5. when kms-plugin is down, no-op update for a pod should succeed and not result in RV change while the DEK is valid
+// 6. When kms-plugin is down, expect creation of new pod and encryption to fail once the DEK is invalid
+// 7. when kms-plugin is down, no-op update for a pod should succeed and not result in RV change even once the DEK is valid
 func TestKMSv2ProviderKeyIDStaleness(t *testing.T) {
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2, true)()
 
@@ -247,14 +250,16 @@ resources:
 	}
 	defer test.cleanUp()
 
-	testPod, err := test.createPod(testNamespace, dynamic.NewForConfigOrDie(test.kubeAPIServer.ClientConfig))
+	dynamicClient := dynamic.NewForConfigOrDie(test.kubeAPIServer.ClientConfig)
+
+	testPod, err := test.createPod(testNamespace, dynamicClient)
 	if err != nil {
 		t.Fatalf("Failed to create test pod, error: %v, ns: %s", err, testNamespace)
 	}
 	version1 := testPod.GetResourceVersion()
 
 	// 1. no-op update for the test pod should not result in any RV change
-	updatedPod, err := test.inplaceUpdatePod(testNamespace, testPod, dynamic.NewForConfigOrDie(test.kubeAPIServer.ClientConfig))
+	updatedPod, err := test.inplaceUpdatePod(testNamespace, testPod, dynamicClient)
 	if err != nil {
 		t.Fatalf("Failed to update test pod, error: %v, ns: %s", err, testNamespace)
 	}
@@ -272,7 +277,7 @@ resources:
 	version3 := ""
 	err = wait.Poll(time.Second, time.Minute,
 		func() (bool, error) {
-			updatedPod, err = test.inplaceUpdatePod(testNamespace, updatedPod, dynamic.NewForConfigOrDie(test.kubeAPIServer.ClientConfig))
+			updatedPod, err = test.inplaceUpdatePod(testNamespace, updatedPod, dynamicClient)
 			if err != nil {
 				return false, err
 			}
@@ -291,7 +296,7 @@ resources:
 	}
 
 	// 3. no-op update for the updated pod should not result in RV change
-	updatedPod, err = test.inplaceUpdatePod(testNamespace, updatedPod, dynamic.NewForConfigOrDie(test.kubeAPIServer.ClientConfig))
+	updatedPod, err = test.inplaceUpdatePod(testNamespace, updatedPod, dynamicClient)
 	if err != nil {
 		t.Fatalf("Failed to update test pod, error: %v, ns: %s", err, testNamespace)
 	}
@@ -300,25 +305,52 @@ resources:
 		t.Fatalf("Resource version should not have changed again after the initial version updated as a result of the keyID update. old pod: %v, new pod: %v", testPod, updatedPod)
 	}
 
-	// 4. when kms-plugin is down, expect creation of new pod and encryption to fail
+	// delete the pod so that it can be recreated
+	if err := test.deletePod(testNamespace, dynamicClient); err != nil {
+		t.Fatalf("failed to delete test pod: %v", err)
+	}
+
+	// 4. when kms-plugin is down, expect creation of new pod and encryption to succeed because the DEK is still valid
 	pluginMock.EnterFailedState()
 	mustBeUnHealthy(t, "/kms-providers",
 		"internal server error: kms-provider-0: rpc error: code = FailedPrecondition desc = failed precondition - key disabled",
 		test.kubeAPIServer.ClientConfig)
 
-	_, err = test.createPod(testNamespace, dynamic.NewForConfigOrDie(test.kubeAPIServer.ClientConfig))
-	if err == nil || !strings.Contains(err.Error(), "failed to encrypt") {
-		t.Fatalf("Create test pod should have failed due to encryption, ns: %s", testNamespace)
+	newPod, err := test.createPod(testNamespace, dynamicClient)
+	if err != nil {
+		t.Fatalf("Create test pod should have suceeded due to valid DEK, ns: %s, got: %v", testNamespace, err)
 	}
+	version5 := newPod.GetResourceVersion()
 
-	// 5. when kms-plugin is down, no-op update for a pod should succeed and not result in RV change
-	updatedPod, err = test.inplaceUpdatePod(testNamespace, updatedPod, dynamic.NewForConfigOrDie(test.kubeAPIServer.ClientConfig))
+	// 5. when kms-plugin is down and DEK is valid, no-op update for a pod should succeed and not result in RV change
+	updatedPod, err = test.inplaceUpdatePod(testNamespace, newPod, dynamicClient)
 	if err != nil {
 		t.Fatalf("Failed to perform no-op update on pod when kms-plugin is down, error: %v, ns: %s", err, testNamespace)
 	}
-	version5 := updatedPod.GetResourceVersion()
-	if version3 != version5 {
-		t.Fatalf("Resource version should not have changed again after the initial version updated as a result of the keyID update. old pod: %v, new pod: %v", testPod, updatedPod)
+	version6 := updatedPod.GetResourceVersion()
+	if version5 != version6 {
+		t.Fatalf("Resource version should not have changed again after the initial version updated as a result of the keyID update. old pod: %v, new pod: %v", newPod, updatedPod)
+	}
+
+	// Invalid the DEK by moving the current time forward
+	origNowFunc := kmsv2.NowFunc
+	t.Cleanup(func() { kmsv2.NowFunc = origNowFunc })
+	kmsv2.NowFunc = func() time.Time { return origNowFunc().Add(2 * time.Hour) }
+
+	// 6. when kms-plugin is down, expect creation of new pod and encryption to fail because the DEK is invalid
+	_, err = test.createPod(testNamespace, dynamicClient)
+	if err == nil || !strings.Contains(err.Error(), `EDEK with keyID "2" expired at 2`) {
+		t.Fatalf("Create test pod should have failed due to encryption, ns: %s, got: %v", testNamespace, err)
+	}
+
+	// 7. when kms-plugin is down and DEK is invalid, no-op update for a pod should succeed and not result in RV change
+	updatedNewPod, err := test.inplaceUpdatePod(testNamespace, newPod, dynamicClient)
+	if err != nil {
+		t.Fatalf("Failed to perform no-op update on pod when kms-plugin is down, error: %v, ns: %s", err, testNamespace)
+	}
+	version7 := updatedNewPod.GetResourceVersion()
+	if version5 != version7 {
+		t.Fatalf("Resource version should not have changed again after the initial version updated as a result of the keyID update. old pod: %v, new pod: %v", newPod, updatedNewPod)
 	}
 }
 
