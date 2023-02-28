@@ -35,7 +35,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/uuid"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/storage/value"
-	aestransformer "k8s.io/apiserver/pkg/storage/value/encrypt/aes"
 	kmstypes "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2/v2alpha1"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
@@ -209,6 +208,7 @@ func testStateFunc(ctx context.Context, envelopeService kmsservice.Service, cloc
 			EncryptedDEK:        resp.Ciphertext,
 			KeyID:               resp.KeyID,
 			Annotations:         resp.Annotations,
+			UID:                 "panda",
 			ExpirationTimestamp: clock.Now().Add(time.Hour),
 		}, nil
 	}
@@ -788,7 +788,8 @@ func TestEnvelopeLogging(t *testing.T) {
 			desc: "no request info in context",
 			ctx:  testContext(t),
 			wantLogs: []string{
-				`"encrypting content using envelope service" uid="UID" key="0123456789" group="" version="" resource="" subresource="" verb="" namespace="" name=""`,
+				`"encrypting content using envelope service" uid="UID"`,
+				`"encrypting content using cached DEK" uid="UID" key="0123456789" group="" version="" resource="" subresource="" verb="" namespace="" name=""`,
 				`"decrypting content using envelope service" uid="UID" key="0123456789" group="" version="" resource="" subresource="" verb="" namespace="" name=""`,
 			},
 		},
@@ -804,7 +805,8 @@ func TestEnvelopeLogging(t *testing.T) {
 				Verb:        "update",
 			}),
 			wantLogs: []string{
-				`"encrypting content using envelope service" uid="UID" key="0123456789" group="awesome.bears.com" version="v1" resource="pandas" subresource="status" verb="update" namespace="kube-system" name="panda"`,
+				`"encrypting content using envelope service" uid="UID"`,
+				`"encrypting content using cached DEK" uid="UID" key="0123456789" group="awesome.bears.com" version="v1" resource="pandas" subresource="status" verb="update" namespace="kube-system" name="panda"`,
 				`"decrypting content using envelope service" uid="UID" key="0123456789" group="awesome.bears.com" version="v1" resource="pandas" subresource="status" verb="update" namespace="kube-system" name="panda"`,
 			},
 		},
@@ -820,19 +822,14 @@ func TestEnvelopeLogging(t *testing.T) {
 
 			envelopeService := newTestEnvelopeService()
 			fakeClock := testingclock.NewFakeClock(time.Now())
-			envelopeTransformer := newEnvelopeTransformerWithClock(envelopeService, testProviderName,
-				func(ctx context.Context) (string, error) {
-					return "1", nil
-				},
-				func(ctx context.Context) error {
-					return nil
-				},
-				aestransformer.NewGCMTransformer, 1*time.Second, fakeClock)
+			transformer := newEnvelopeTransformerWithClock(envelopeService, testProviderName,
+				testStateFunc(tc.ctx, envelopeService, clock.RealClock{}),
+				1*time.Second, fakeClock)
 
 			dataCtx := value.DefaultContext([]byte(testContextText))
 			originalText := []byte(testText)
 
-			transformedData, err := envelopeTransformer.TransformToStorage(tc.ctx, originalText, dataCtx)
+			transformedData, err := transformer.TransformToStorage(tc.ctx, originalText, dataCtx)
 			if err != nil {
 				t.Fatalf("envelopeTransformer: error while transforming data to storage: %v", err)
 			}
@@ -840,7 +837,7 @@ func TestEnvelopeLogging(t *testing.T) {
 			// advance the clock to trigger cache to expire, so we make a decrypt call that will log
 			fakeClock.Step(2 * time.Second)
 
-			_, _, err = envelopeTransformer.TransformFromStorage(tc.ctx, transformedData, dataCtx)
+			_, _, err = transformer.TransformFromStorage(tc.ctx, transformedData, dataCtx)
 			if err != nil {
 				t.Fatalf("could not decrypt Envelope transformer's encrypted data even once: %v", err)
 			}

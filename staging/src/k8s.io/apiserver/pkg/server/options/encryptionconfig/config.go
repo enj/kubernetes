@@ -331,6 +331,7 @@ func (h *kmsv2PluginProbe) attemptToRotateDEK(ctx context.Context, statusKeyID s
 			EncryptedDEK:        resp.Ciphertext,
 			KeyID:               resp.KeyID,
 			Annotations:         resp.Annotations,
+			UID:                 uid,
 			ExpirationTimestamp: expirationTimestamp,
 		})
 		return nil

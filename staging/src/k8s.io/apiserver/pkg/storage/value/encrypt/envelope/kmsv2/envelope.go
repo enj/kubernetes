@@ -75,6 +75,8 @@ type State struct {
 	KeyID        string
 	Annotations  map[string][]byte
 
+	UID string
+
 	ExpirationTimestamp time.Time
 }
 
@@ -182,6 +184,11 @@ func (t *envelopeTransformer) TransformToStorage(ctx context.Context, data []byt
 	// this prevents a cache miss every time the DEK rotates
 	// TODO see if we can do this inside the stateFunc control loop
 	t.cache.set(state.EncryptedDEK, state.Transformer)
+
+	requestInfo := getRequestInfoFromContext(ctx)
+	klog.V(6).InfoS("encrypting content using cached DEK", "uid", state.UID, "key", string(dataCtx.AuthenticatedData()),
+		"group", requestInfo.APIGroup, "version", requestInfo.APIVersion, "resource", requestInfo.Resource, "subresource", requestInfo.Subresource,
+		"verb", requestInfo.Verb, "namespace", requestInfo.Namespace, "name", requestInfo.Name)
 
 	result, err := state.Transformer.TransformToStorage(ctx, data, dataCtx)
 	if err != nil {
