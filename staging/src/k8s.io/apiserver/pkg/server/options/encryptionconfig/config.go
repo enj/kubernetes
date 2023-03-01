@@ -313,7 +313,7 @@ func (h *kmsv2PluginProbe) attemptToRotateDEK(ctx context.Context, statusKeyID s
 	metrics.RecordKeyIDFromStatus(h.name, statusKeyID)
 
 	// allow reads indefinitely but writes for only up to an hour
-	expirationTimestamp := time.Now().Add(time.Hour) // start the timer before we make the network calls
+	expirationTimestamp := envelopekmsv2.ValidateEncryptCapabilityNowFunc().Add(time.Hour) // start the timer before we make the network calls
 
 	uid := string(uuid.NewUUID())
 

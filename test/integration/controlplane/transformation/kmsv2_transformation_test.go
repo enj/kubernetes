@@ -322,7 +322,7 @@ resources:
 
 	newPod, err := test.createPod(testNamespace, dynamicClient)
 	if err != nil {
-		t.Fatalf("Create test pod should have suceeded due to valid DEK, ns: %s, got: %v", testNamespace, err)
+		t.Fatalf("Create test pod should have succeeded due to valid DEK, ns: %s, got: %v", testNamespace, err)
 	}
 	version5 := newPod.GetResourceVersion()
 
