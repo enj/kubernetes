@@ -130,6 +130,7 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 	transformer := state.Transformer
 
 	// if the current write transformer is not what was used to encrypt this data, check in the cache
+	// TODO: consider marking this as a stale read to support DEK defragmentation
 	if subtle.ConstantTimeCompare(state.EncryptedDEK, encryptedObject.EncryptedDEK) != 1 {
 		// TODO value.RecordStateMiss() metric
 		transformer = t.cache.get(encryptedObject.EncryptedDEK)

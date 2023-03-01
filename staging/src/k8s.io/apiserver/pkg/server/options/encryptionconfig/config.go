@@ -62,6 +62,7 @@ const (
 	kmsTransformerPrefixV1       = "k8s:enc:kms:v1:"
 	kmsTransformerPrefixV2       = "k8s:enc:kms:v2:"
 	kmsPluginHealthzInterval     = 1 * time.Minute
+	kmsPluginDEKReuseInterval    = 2 * time.Minute
 	kmsPluginHealthzNegativeTTL  = 3 * time.Second
 	kmsPluginHealthzPositiveTTL  = 20 * time.Second
 	kmsAPIVersionV1              = "v1"
@@ -95,6 +96,26 @@ type kmsv2PluginProbe struct {
 	service      kmsservice.Service
 	lastResponse *kmsPluginHealthzResponse
 	l            *sync.Mutex
+}
+
+var _ value.Transformer = &kmsv2DEKUsedTracker{}
+
+type kmsv2DEKUsedTracker struct {
+	used        atomic.Bool
+	transformer value.Transformer
+}
+
+func (u *kmsv2DEKUsedTracker) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) (out []byte, stale bool, err error) {
+	return u.transformer.TransformFromStorage(ctx, data, dataCtx)
+}
+
+func (u *kmsv2DEKUsedTracker) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) (out []byte, err error) {
+	u.used.Store(true)
+	return u.transformer.TransformToStorage(ctx, data, dataCtx)
+}
+
+func (u *kmsv2DEKUsedTracker) hasBeenUsedForEncryption() bool {
+	return u.used.Load()
 }
 
 type kmsHealthChecker []healthz.HealthChecker
@@ -312,8 +333,20 @@ func (h *kmsv2PluginProbe) attemptToRotateDEK(ctx context.Context, statusKeyID s
 
 	metrics.RecordKeyIDFromStatus(h.name, statusKeyID)
 
-	// allow reads indefinitely but writes for only up to an hour
-	expirationTimestamp := envelopekmsv2.ValidateEncryptCapabilityNowFunc().Add(time.Hour) // start the timer before we make the network calls
+	// determine if our current state is valid
+	state, errState := h.getCurrentState()
+	if errState == nil {
+		errState = state.ValidateEncryptCapability()
+	}
+
+	// state is valid and status keyID is unchanged from when we generated this DEK
+	// and the DEK was never used to encrypt anything, so there is no need to rotate it
+	if errState == nil && state.KeyID == statusKeyID && !state.Transformer.(*kmsv2DEKUsedTracker).hasBeenUsedForEncryption() {
+		return nil
+	}
+
+	// allow reads indefinitely but writes for only up to kmsPluginDEKReuseInterval from now
+	expirationTimestamp := envelopekmsv2.ValidateEncryptCapabilityNowFunc().Add(kmsPluginDEKReuseInterval) // start the timer before we make the network calls
 
 	uid := string(uuid.NewUUID())
 
@@ -327,7 +360,7 @@ func (h *kmsv2PluginProbe) attemptToRotateDEK(ctx context.Context, statusKeyID s
 	// TODO maybe add success metrics?
 	if errGen == nil && resp.KeyID == statusKeyID {
 		h.state.Store(&envelopekmsv2.State{
-			Transformer:         transformer,
+			Transformer:         &kmsv2DEKUsedTracker{transformer: transformer},
 			EncryptedDEK:        resp.Ciphertext,
 			KeyID:               resp.KeyID,
 			Annotations:         resp.Annotations,
@@ -335,12 +368,6 @@ func (h *kmsv2PluginProbe) attemptToRotateDEK(ctx context.Context, statusKeyID s
 			ExpirationTimestamp: expirationTimestamp,
 		})
 		return nil
-	}
-
-	// determine if our current state is valid
-	state, errState := h.getCurrentState()
-	if errState == nil {
-		errState = state.ValidateEncryptCapability()
 	}
 
 	// TODO maybe add metrics for time until this starts failing?

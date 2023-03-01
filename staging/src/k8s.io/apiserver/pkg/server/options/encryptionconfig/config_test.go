@@ -30,10 +30,12 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/sets"
 	apiserverconfig "k8s.io/apiserver/pkg/apis/config"
 	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/storage/value"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope"
+	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2"
 	envelopekmsv2 "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope/metrics"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -959,5 +961,73 @@ func TestComputeEncryptionConfigHash(t *testing.T) {
 	sum := computeEncryptionConfigHash([]byte(""))
 	if expect != sum {
 		t.Errorf("expected hash %q but got %q", expect, sum)
+	}
+}
+
+func Test_kmsv2PluginProbe_attemptToRotateDEK(t *testing.T) {
+	origNowFunc := kmsv2.ValidateEncryptCapabilityNowFunc
+	now := origNowFunc() // freeze time
+	t.Cleanup(func() { kmsv2.ValidateEncryptCapabilityNowFunc = origNowFunc })
+	kmsv2.ValidateEncryptCapabilityNowFunc = func() time.Time { return now }
+
+	tests := []struct {
+		name        string
+		service     kmsservice.Service
+		state       envelopekmsv2.State
+		statusKeyID string
+		wantState   envelopekmsv2.State
+		wantLogs    string
+		wantMetrics string
+		wantErr     string
+	}{
+		{
+			name:        "happy path, no previous state",
+			service:     &testKMSv2EnvelopeService{keyID: "1"},
+			state:       envelopekmsv2.State{},
+			statusKeyID: "1",
+			wantState: envelopekmsv2.State{
+				KeyID:               "1",
+				Annotations:         nil,
+				ExpirationTimestamp: now.Add(2 * time.Minute),
+			},
+			wantLogs:    "",
+			wantMetrics: "",
+			wantErr:     "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := testContext(t)
+
+			h := &kmsv2PluginProbe{
+				name:    "panda",
+				service: tt.service,
+			}
+			h.state.Store(&tt.state)
+
+			err := h.attemptToRotateDEK(ctx, tt.statusKeyID)
+
+			ignoredFields := sets.NewString("Transformer", "EncryptedDEK", "UID")
+
+			if diff := cmp.Diff(tt.wantState, *h.state.Load(),
+				cmp.FilterPath(func(path cmp.Path) bool { return ignoredFields.Has(path.String()) }, cmp.Ignore()),
+			); len(diff) > 0 {
+				t.Errorf("state mismatch (-want +got):\n%s", diff)
+			}
+
+			// TODO check transformer has been used
+
+			if diff := cmp.Diff(tt.wantLogs, "TODO_GOT"); len(diff) > 0 && false {
+				t.Errorf("logs mismatch (-want +got):\n%s", diff)
+			}
+
+			if diff := cmp.Diff(tt.wantMetrics, "TODO_GOT"); len(diff) > 0 && false {
+				t.Errorf("metrics mismatch (-want +got):\n%s", diff)
+			}
+
+			if errString(err) != tt.wantErr {
+				t.Errorf("attemptToRotateDEK() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
 	}
 }
