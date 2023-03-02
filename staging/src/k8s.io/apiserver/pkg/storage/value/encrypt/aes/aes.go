@@ -32,7 +32,13 @@ import (
 	"k8s.io/apiserver/pkg/storage/value"
 )
 
-// gcm implements AEAD encryption of the provided values given a cipher.Block algorithm.
+type gcm struct {
+	block     cipher.Block // TODO move to cipher.AEAD
+	nonceFunc func([]byte) error
+}
+
+// NewGCMTransformer takes the given block cipher and performs encryption and decryption on the given data.
+// It implements AEAD encryption of the provided values given a cipher.Block algorithm.
 // The authenticated data provided as part of the value.Context method must match when the same
 // value is set to and loaded from storage. In order to ensure that values cannot be copied by
 // an attacker from a location under their control, use characteristics of the storage location
@@ -45,10 +51,8 @@ import (
 // therefore transformers using this implementation *must* ensure they allow for frequent key
 // rotation. Future work should include investigation of AES-GCM-SIV as an alternative to
 // random nonces.
-// TODO fix this comment.
-type gcm struct {
-	block     cipher.Block // TODO move to cipher.AEAD
-	nonceFunc func([]byte) error
+func NewGCMTransformer(block cipher.Block) value.Transformer {
+	return &gcm{block: block, nonceFunc: randomNonce}
 }
 
 // TODO comment
@@ -74,12 +78,6 @@ func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) value.Transformer 
 	}
 
 	return &gcm{block: block, nonceFunc: nonceFunc}
-}
-
-// NewGCMTransformer takes the given block cipher and performs encryption and decryption on the given
-// data.
-func NewGCMTransformer(block cipher.Block) value.Transformer {
-	return &gcm{block: block, nonceFunc: randomNonce}
 }
 
 func randomNonce(b []byte) error {
