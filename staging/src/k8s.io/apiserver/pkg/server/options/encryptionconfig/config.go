@@ -487,7 +487,10 @@ func prefixTransformersAndProbes(ctx context.Context, config apiserverconfig.Res
 			transformer, transformerErr = aesPrefixTransformer(provider.AESGCM, aestransformer.NewGCMTransformer, aesGCMTransformerPrefixV1)
 
 		case provider.AESCBC != nil:
-			transformer, transformerErr = aesPrefixTransformer(provider.AESCBC, aestransformer.NewCBCTransformer, aesCBCTransformerPrefixV1)
+			cbcTransformer := func(block cipher.Block) (value.Transformer, error) {
+				return aestransformer.NewCBCTransformer(block), nil
+			}
+			transformer, transformerErr = aesPrefixTransformer(provider.AESCBC, cbcTransformer, aesCBCTransformerPrefixV1)
 
 		case provider.Secretbox != nil:
 			transformer, transformerErr = secretboxPrefixTransformer(provider.Secretbox)
@@ -519,7 +522,7 @@ func prefixTransformersAndProbes(ctx context.Context, config apiserverconfig.Res
 	return transformers, probes, &kmsUsed, nil
 }
 
-type blockTransformerFunc func(cipher.Block) value.Transformer
+type blockTransformerFunc func(cipher.Block) (value.Transformer, error)
 
 func aesPrefixTransformer(config *apiserverconfig.AESConfiguration, fn blockTransformerFunc, prefix string) (value.PrefixTransformer, error) {
 	var result value.PrefixTransformer
@@ -549,11 +552,15 @@ func aesPrefixTransformer(config *apiserverconfig.AESConfiguration, fn blockTran
 		if err != nil {
 			return result, fmt.Errorf("error while creating cipher for named key %s: %s", keyData.Name, err)
 		}
+		transformer, err := fn(block)
+		if err != nil {
+			return result, fmt.Errorf("error while creating transformer for named key %s: %s", keyData.Name, err)
+		}
 
 		// Create a new PrefixTransformer for this key
 		keyTransformers = append(keyTransformers,
 			value.PrefixTransformer{
-				Transformer: fn(block),
+				Transformer: transformer,
 				Prefix:      []byte(keyData.Name + ":"),
 			})
 	}
@@ -724,12 +731,17 @@ func kmsPrefixTransformer(ctx context.Context, config *apiserverconfig.KMSConfig
 }
 
 func envelopePrefixTransformer(config *apiserverconfig.KMSConfiguration, envelopeService envelope.Service, prefix string) value.PrefixTransformer {
-	baseTransformerFunc := func(block cipher.Block) value.Transformer {
+	baseTransformerFunc := func(block cipher.Block) (value.Transformer, error) {
+		gcm, err := aestransformer.NewGCMTransformer(block)
+		if err != nil {
+			return nil, err
+		}
+
 		// v1.24: write using AES-CBC only but support reads via AES-CBC and AES-GCM (so we can move to AES-GCM)
 		// v1.25: write using AES-GCM only but support reads via AES-GCM and fallback to AES-CBC for backwards compatibility
 		// TODO(aramase): Post v1.25: We cannot drop CBC read support until we automate storage migration.
 		// We could have a release note that hard requires users to perform storage migration.
-		return unionTransformers{aestransformer.NewGCMTransformer(block), aestransformer.NewCBCTransformer(block)}
+		return unionTransformers{gcm, aestransformer.NewCBCTransformer(block)}, nil
 	}
 
 	return value.PrefixTransformer{

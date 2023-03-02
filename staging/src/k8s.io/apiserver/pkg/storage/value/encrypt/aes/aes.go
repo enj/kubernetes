@@ -33,7 +33,7 @@ import (
 )
 
 type gcm struct {
-	block     cipher.Block // TODO move to cipher.AEAD
+	aead      cipher.AEAD
 	nonceFunc func([]byte) error
 }
 
@@ -51,12 +51,22 @@ type gcm struct {
 // therefore transformers using this implementation *must* ensure they allow for frequent key
 // rotation. Future work should include investigation of AES-GCM-SIV as an alternative to
 // random nonces.
-func NewGCMTransformer(block cipher.Block) value.Transformer {
-	return &gcm{block: block, nonceFunc: randomNonce}
+func NewGCMTransformer(block cipher.Block) (value.Transformer, error) {
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	return &gcm{aead: aead, nonceFunc: randomNonce}, nil
 }
 
 // TODO comment
-func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) value.Transformer {
+func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) (value.Transformer, error) {
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
 	var nonce atomic.Uint64
 	nonceFunc := func(b []byte) error {
 		// we only need 8 bytes to store our 64 bit incrementing nonce
@@ -77,7 +87,7 @@ func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) value.Transformer 
 		return nil
 	}
 
-	return &gcm{block: block, nonceFunc: nonceFunc}
+	return &gcm{aead: aead, nonceFunc: nonceFunc}, nil
 }
 
 func randomNonce(b []byte) error {
@@ -86,31 +96,23 @@ func randomNonce(b []byte) error {
 }
 
 func (t *gcm) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
-	aead, err := cipher.NewGCM(t.block)
-	if err != nil {
-		return nil, false, err
-	}
-	nonceSize := aead.NonceSize()
+	nonceSize := t.aead.NonceSize()
 	if len(data) < nonceSize {
 		return nil, false, fmt.Errorf("the stored data was shorter than the required size")
 	}
-	result, err := aead.Open(nil, data[:nonceSize], data[nonceSize:], dataCtx.AuthenticatedData())
+	result, err := t.aead.Open(nil, data[:nonceSize], data[nonceSize:], dataCtx.AuthenticatedData())
 	return result, false, err
 }
 
 func (t *gcm) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, error) { // TODO unit test changes
-	aead, err := cipher.NewGCM(t.block)
-	if err != nil {
-		return nil, err
-	}
-	nonceSize := aead.NonceSize()
-	result := make([]byte, nonceSize+aead.Overhead()+len(data))
+	nonceSize := t.aead.NonceSize()
+	result := make([]byte, nonceSize+t.aead.Overhead()+len(data))
 
 	if err := t.nonceFunc(result[:nonceSize]); err != nil {
 		return nil, fmt.Errorf("failed to write nonce for AES-GCM: %w", err)
 	}
 
-	cipherText := aead.Seal(result[nonceSize:nonceSize], result[:nonceSize], data, dataCtx.AuthenticatedData())
+	cipherText := t.aead.Seal(result[nonceSize:nonceSize], result[:nonceSize], data, dataCtx.AuthenticatedData())
 	return result[:nonceSize+len(cipherText)], nil
 }
 

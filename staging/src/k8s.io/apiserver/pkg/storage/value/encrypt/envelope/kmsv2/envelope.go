@@ -268,7 +268,7 @@ func generateAESTransformer(key []byte) (value.Transformer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return aestransformer.NewGCMTransformerWithUniqueKeyUnsafe(block), nil
+	return aestransformer.NewGCMTransformerWithUniqueKeyUnsafe(block)
 }
 
 // generateKey generates a random key using system randomness.
