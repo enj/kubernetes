@@ -155,7 +155,7 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 			return nil, false, fmt.Errorf("failed to decrypt DEK, error: %w", err)
 		}
 
-		transformer, err = t.addTransformer(encryptedObject.EncryptedDEK, key)
+		transformer, err = t.addTransformerForDecryption(encryptedObject.EncryptedDEK, key)
 		if err != nil {
 			return nil, false, err
 		}
@@ -209,14 +209,14 @@ func (t *envelopeTransformer) TransformToStorage(ctx context.Context, data []byt
 	return t.doEncode(encObject)
 }
 
-// addTransformer inserts a new transformer to the Envelope cache of DEKs for future reads.
-func (t *envelopeTransformer) addTransformer(encKey []byte, key []byte) (value.Transformer, error) {
+// addTransformerForDecryption inserts a new transformer to the Envelope cache of DEKs for future reads.
+func (t *envelopeTransformer) addTransformerForDecryption(encKey []byte, key []byte) (value.Transformer, error) {
 	transformer, err := generateAESTransformer(key)
 	if err != nil {
 		return nil, err
 	}
 	// TODO(aramase): Add metrics for cache fill percentage with custom cache implementation.
-	t.cache.set(encKey, transformer)
+	t.cache.set(encKey, transformer) // TODO wrap in decrypt only mode
 	return transformer, nil
 }
 
@@ -268,7 +268,7 @@ func generateAESTransformer(key []byte) (value.Transformer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return aestransformer.NewGCMTransformer(block), nil
+	return aestransformer.NewGCMTransformerWithUniqueKeyUnsafe(block), nil
 }
 
 // generateKey generates a random key using system randomness.

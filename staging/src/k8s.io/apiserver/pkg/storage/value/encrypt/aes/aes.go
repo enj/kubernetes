@@ -45,15 +45,46 @@ import (
 // therefore transformers using this implementation *must* ensure they allow for frequent key
 // rotation. Future work should include investigation of AES-GCM-SIV as an alternative to
 // random nonces.
+// TODO fix this comment.
 type gcm struct {
-	block cipher.Block
-	nonce atomic.Uint64
+	block     cipher.Block // TODO move to cipher.AEAD
+	nonceFunc func([]byte) error
+}
+
+// TODO comment
+func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) value.Transformer {
+	var nonce atomic.Uint64
+	nonceFunc := func(b []byte) error {
+		// we only need 8 bytes to store our 64 bit incrementing nonce
+		// instead of leaving the unused bytes as zeros, set those to random bits
+		// this mostly protects us from weird edge cases like a VM restore that rewinds our atomic counter
+		randNonceSize := len(b) - 8
+
+		if err := randomNonce(b[:randNonceSize]); err != nil {
+			return err
+		}
+
+		incrementingNonce := nonce.Add(1)
+		if incrementingNonce == 0 {
+			// TODO os.Exit
+			panic("aes-gcm detected nonce overflow") // this should never happen, and is unrecoverable if it does
+		}
+		binary.LittleEndian.PutUint64(b[randNonceSize:], incrementingNonce)
+		return nil
+	}
+
+	return &gcm{block: block, nonceFunc: nonceFunc}
 }
 
 // NewGCMTransformer takes the given block cipher and performs encryption and decryption on the given
 // data.
 func NewGCMTransformer(block cipher.Block) value.Transformer {
-	return &gcm{block: block}
+	return &gcm{block: block, nonceFunc: randomNonce}
+}
+
+func randomNonce(b []byte) error {
+	_, err := rand.Read(b)
+	return err
 }
 
 func (t *gcm) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
@@ -77,24 +108,9 @@ func (t *gcm) TransformToStorage(ctx context.Context, data []byte, dataCtx value
 	nonceSize := aead.NonceSize()
 	result := make([]byte, nonceSize+aead.Overhead()+len(data))
 
-	// we only need 8 bytes to store our 64 bit incrementing nonce
-	// instead of leaving the unused bytes as zeros, set those to random bits
-	// this mostly protects us from weird edge cases like a VM restore that rewinds our atomic counter
-	randNonceSize := nonceSize - 8
-
-	n, err := rand.Read(result[:randNonceSize])
-	if err != nil {
-		return nil, err
+	if err := t.nonceFunc(result[:nonceSize]); err != nil {
+		return nil, fmt.Errorf("failed to write nonce for AES-GCM: %w", err)
 	}
-	if n != randNonceSize {
-		return nil, fmt.Errorf("unable to read sufficient random bytes")
-	}
-
-	incrementingNonce := t.nonce.Add(1)
-	if incrementingNonce == 0 {
-		panic("aes-gcm detected nonce overflow") // this should never happen, and is unrecoverable if it does
-	}
-	binary.LittleEndian.PutUint64(result[randNonceSize:nonceSize], incrementingNonce)
 
 	cipherText := aead.Seal(result[nonceSize:nonceSize], result[:nonceSize], data, dataCtx.AuthenticatedData())
 	return result[:nonceSize+len(cipherText)], nil
