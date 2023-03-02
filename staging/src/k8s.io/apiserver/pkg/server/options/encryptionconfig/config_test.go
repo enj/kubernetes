@@ -268,7 +268,7 @@ func TestEncryptionProviderConfigCorrect(t *testing.T) {
 	kmsFirstTransformer := kmsFirstEncryptionConfiguration.Transformers[schema.ParseGroupResource("secrets")]
 	kmsv2FirstTransformer := kmsv2FirstEncryptionConfiguration.Transformers[schema.ParseGroupResource("secrets")]
 
-	dataCtx := value.DefaultContext([]byte(sampleContextText))
+	dataCtx := value.DefaultContext(sampleContextText)
 	originalText := []byte(sampleText)
 
 	transformers := []struct {
@@ -730,6 +730,7 @@ func TestKMSv2PluginHealthzTTL(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.desc, func(t *testing.T) {
+			tt.probe.state.Store(&kmsv2.State{})
 			_ = tt.probe.check(ctx)
 			if tt.probe.ttl != tt.wantTTL {
 				t.Fatalf("want ttl %v, got ttl %v", tt.wantTTL, tt.probe.ttl)
@@ -808,6 +809,7 @@ func TestKMSv2InvalidKeyID(t *testing.T) {
 	for _, tt := range testCases {
 		t.Run(tt.desc, func(t *testing.T) {
 			defer metrics.InvalidKeyIDFromStatusTotal.Reset()
+			tt.probe.state.Store(&kmsv2.State{})
 			_ = tt.probe.check(ctx)
 			if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(tt.want), tt.metrics...); err != nil {
 				t.Fatal(err)
@@ -840,7 +842,7 @@ func testCBCKeyRotationWithProviders(t *testing.T, firstEncryptionConfig, firstP
 	p := getTransformerFromEncryptionConfig(t, firstEncryptionConfig)
 
 	ctx := context.Background()
-	dataCtx := value.DefaultContext([]byte("authenticated_data"))
+	dataCtx := value.DefaultContext("authenticated_data")
 
 	out, err := p.TransformToStorage(ctx, []byte("firstvalue"), dataCtx)
 	if err != nil {
@@ -858,7 +860,7 @@ func testCBCKeyRotationWithProviders(t *testing.T, firstEncryptionConfig, firstP
 	}
 
 	// verify changing the context fails storage
-	_, _, err = p.TransformFromStorage(ctx, out, value.DefaultContext([]byte("incorrect_context")))
+	_, _, err = p.TransformFromStorage(ctx, out, value.DefaultContext("incorrect_context"))
 	if err != nil {
 		t.Fatalf("CBC mode does not support authentication: %v", err)
 	}
