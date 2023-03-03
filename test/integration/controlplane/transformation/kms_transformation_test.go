@@ -600,7 +600,7 @@ resources:
 				t.Fatal(err)
 			}
 
-			_, err = dynamicClient.Create(context.Background(), obj, metav1.CreateOptions{})
+			_, err = dynamicClient.Create(context.TODO(), obj, metav1.CreateOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -614,7 +614,7 @@ resources:
 		// close the client (which we can do by closing rawClient).
 		defer rawClient.Close()
 
-		response, err := etcdClient.Get(context.Background(), "/"+test.kubeAPIServer.ServerOpts.Etcd.StorageConfig.Prefix, clientv3.WithPrefix())
+		response, err := etcdClient.Get(context.TODO(), "/"+test.kubeAPIServer.ServerOpts.Etcd.StorageConfig.Prefix, clientv3.WithPrefix())
 		if err != nil {
 			t.Fatalf("failed to retrieve secret from etcd %v", err)
 		}
@@ -632,7 +632,15 @@ resources:
 		// assert that all resources are encrypted
 		wantPrefix := "k8s:enc:kms:v1:encrypt-all-kms-provider:"
 		for _, kv := range response.Kvs {
-			if !bytes.HasPrefix(kv.Value, []byte(wantPrefix)) {
+			// following resources are not encrypted as they are not REST APIs and hence are not expected to be encrypted
+			if strings.Contains(kv.String(), "masterleases") ||
+				strings.Contains(kv.String(), "serviceips") ||
+				strings.Contains(kv.String(), "servicenodeports") {
+				// assert that these resources are not encrypted with any provider
+				if bytes.HasPrefix(kv.Value, []byte("k8s:enc")) {
+					t.Fatalf("expected resource %s to not be prefixed with %s, but got %s", kv.Key, wantPrefix, kv.Value)
+				}
+			} else if !bytes.HasPrefix(kv.Value, []byte(wantPrefix)) {
 				t.Fatalf("expected resource %s to be prefixed with %s, but got %s", kv.Key, wantPrefix, kv.Value)
 			}
 		}

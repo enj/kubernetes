@@ -21,6 +21,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -43,9 +44,12 @@ const (
 	encryptionConfigNilErr         = "EncryptionConfiguration can't be nil"
 	invalidKMSConfigNameErrFmt     = "invalid KMS provider name %s, must not contain ':'"
 	duplicateKMSConfigNameErrFmt   = "duplicate KMS provider name %s, names must be unique"
-	eventsGroupErr                 = "'*.events.k8s.io' and 'events' has same representation in etcd. Use 'events' instead in the config file"
-	extensionsGroupErr             = "'extensions' group has been removed and cannot be used for encryption."
-	starResourceErr                = "Use '*.' to encrypt all the resources from core API group or *.* to encrypt all resources"
+	eventsGroupErr                 = "'*.events.k8s.io' objects are stored using the 'events' API group in etcd. Use 'events' instead in the config file"
+	extensionsGroupErr             = "'extensions' group has been removed and cannot be used for encryption"
+	starResourceErr                = "use '*.' to encrypt all the resources from core API group or *.* to encrypt all resources"
+	anyGroupAnyResourceErr         = "using resources other than '*.*' in the same resource list is not allowed as they will be masked"
+	nonRESTAPIResourceErr          = "resources which does not have REST API/s cannot be encrypted"
+	resourceNameErr                = "resource name should not contain capital letters"
 )
 
 var (
@@ -75,8 +79,28 @@ func ValidateEncryptionConfiguration(c *config.EncryptionConfiguration, reload b
 	// check for invalid resource '*' and invalid groups 'events.k8s.io' and 'extensions'
 	for i, resource := range c.Resources {
 		ii := root.Index(i)
+		isAnyGroupAndResource := false
 		for j, res := range resource.Resources {
 			jj := ii.Child("resources").Index(j)
+
+			// check if resource name has capital letters
+			if hasCapital(res) {
+				allErrs = append(
+					allErrs,
+					field.Invalid(
+						jj,
+						resource.Resources,
+						resourceNameErr,
+					),
+				)
+				continue
+			}
+
+			// check if resource is '*.*'
+			if res == "*.*" {
+				isAnyGroupAndResource = true
+				continue
+			}
 
 			// check if resource is '*'
 			if res == "*" {
@@ -86,6 +110,24 @@ func ValidateEncryptionConfiguration(c *config.EncryptionConfiguration, reload b
 						jj,
 						resource.Resources,
 						starResourceErr,
+					),
+				)
+				continue
+			}
+
+			// check if resource is:
+			// 'apiserveripinfo' OR
+			// 'serviceipallocations' OR
+			// 'servicenodeportallocations' OR
+			if res == "apiserveripinfo" ||
+				res == "serviceipallocations" ||
+				res == "servicenodeportallocations" {
+				allErrs = append(
+					allErrs,
+					field.Invalid(
+						jj,
+						resource.Resources,
+						nonRESTAPIResourceErr,
 					),
 				)
 				continue
@@ -117,6 +159,18 @@ func ValidateEncryptionConfiguration(c *config.EncryptionConfiguration, reload b
 				)
 				continue
 			}
+		}
+
+		// set an error if resource is '*.*' and there are other resources
+		if isAnyGroupAndResource && len(resource.Resources) > 1 {
+			allErrs = append(
+				allErrs,
+				field.Invalid(
+					ii.Child("resources"),
+					resource.Resources,
+					starResourceErr,
+				),
+			)
 		}
 	}
 
@@ -316,4 +370,9 @@ func validateKMSConfigName(c *config.KMSConfiguration, fieldPath *field.Path, km
 	}
 
 	return allErrs
+}
+
+func hasCapital(input string) bool {
+	regex := regexp.MustCompile("[A-Z]")
+	return regex.MatchString(input)
 }

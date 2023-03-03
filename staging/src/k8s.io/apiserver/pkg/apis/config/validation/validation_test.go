@@ -402,6 +402,56 @@ func TestStructure(t *testing.T) {
 					eventsGroupErr,
 				),
 			},
+		}, {
+			desc: "config should error when events.k8s.io group is used later in the list",
+			in: &config.EncryptionConfiguration{
+				Resources: []config.ResourceConfiguration{
+					{
+						Resources: []string{
+							"secrets",
+						},
+						Providers: []config.ProviderConfiguration{
+							{
+								KMS: &config.KMSConfiguration{
+									Name:       "foo",
+									Endpoint:   "unix:///tmp/kms-provider.socket",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									CacheSize:  &cacheSize,
+									APIVersion: "v1",
+								},
+							},
+						},
+					},
+					{
+						Resources: []string{
+							"secret",
+							"events.events.k8s.io",
+						},
+						Providers: []config.ProviderConfiguration{
+							{
+								KMS: &config.KMSConfiguration{
+									Name:       "foo",
+									Endpoint:   "unix:///tmp/kms-provider.socket",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									CacheSize:  &cacheSize,
+									APIVersion: "v1",
+								},
+							},
+						},
+					},
+				},
+			},
+			reload: false,
+			want: field.ErrorList{
+				field.Invalid(
+					root.Index(1).Child("resources").Index(1),
+					[]string{
+						"secret",
+						"events.events.k8s.io",
+					},
+					eventsGroupErr,
+				),
+			},
 		},
 		{
 			desc: "config should error when *.events.k8s.io group is used",
@@ -532,6 +582,39 @@ func TestStructure(t *testing.T) {
 						"*",
 					},
 					starResourceErr,
+				),
+			},
+		},
+		{
+			desc: "should error when resource name has capital letters",
+			in: &config.EncryptionConfiguration{
+				Resources: []config.ResourceConfiguration{
+					{
+						Resources: []string{
+							"apiServerIPInfo",
+						},
+						Providers: []config.ProviderConfiguration{
+							{
+								KMS: &config.KMSConfiguration{
+									Name:       "foo",
+									Endpoint:   "unix:///tmp/kms-provider.socket",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									CacheSize:  &cacheSize,
+									APIVersion: "v1",
+								},
+							},
+						},
+					},
+				},
+			},
+			reload: false,
+			want: field.ErrorList{
+				field.Invalid(
+					root.Index(0).Child("resources").Index(0),
+					[]string{
+						"apiServerIPInfo",
+					},
+					resourceNameErr,
 				),
 			},
 		},

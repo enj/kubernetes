@@ -22,6 +22,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -653,11 +654,10 @@ func TestWildcardMasking(t *testing.T) {
 	testCases := []struct {
 		desc          string
 		config        *apiserverconfig.EncryptionConfiguration
-		expectedError bool
-		errorString   string
+		expectedError error
 	}{
 		{
-			desc: "resources masked by *.group",
+			desc: "resources masked by *. group",
 			config: &apiserverconfig.EncryptionConfiguration{
 				Resources: []apiserverconfig.ResourceConfiguration{
 					{
@@ -680,8 +680,48 @@ func TestWildcardMasking(t *testing.T) {
 					},
 				},
 			},
-			expectedError: true,
-			errorString:   fmt.Sprintf("resource secrets is masked by earlier rule %s", schema.GroupResource{Group: "", Resource: "*"}),
+			expectedError: fmt.Errorf("resource secrets is masked by earlier rule %s", schema.GroupResource{Group: "", Resource: "*"}),
+		},
+		{
+			desc: "resources masked by *. group in multiple configurations",
+			config: &apiserverconfig.EncryptionConfiguration{
+				Resources: []apiserverconfig.ResourceConfiguration{
+					{
+						Resources: []string{
+							"configmaps",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								KMS: &apiserverconfig.KMSConfiguration{
+									Name:       "kms",
+									APIVersion: "v1",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									Endpoint:   "unix:///tmp/testprovider.sock",
+									CacheSize:  pointer.Int32(10),
+								},
+							},
+						},
+					},
+					{
+						Resources: []string{
+							"*.",
+							"secrets",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								KMS: &apiserverconfig.KMSConfiguration{
+									Name:       "another-kms",
+									APIVersion: "v1",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									Endpoint:   "unix:///tmp/another-testprovider.sock",
+									CacheSize:  pointer.Int32(10),
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedError: fmt.Errorf("resource secrets is masked by earlier rule %s", schema.GroupResource{Group: "", Resource: "*"}),
 		},
 		{
 			desc: "resources masked by *.*",
@@ -707,8 +747,48 @@ func TestWildcardMasking(t *testing.T) {
 					},
 				},
 			},
-			expectedError: true,
-			errorString:   fmt.Sprintf("resource secrets is masked by earlier rule %s", anyGroupAnyResource),
+			expectedError: fmt.Errorf("resource secrets is masked by earlier rule %s", anyGroupAnyResource),
+		},
+		{
+			desc: "resources masked by *.* in multiple configurations",
+			config: &apiserverconfig.EncryptionConfiguration{
+				Resources: []apiserverconfig.ResourceConfiguration{
+					{
+						Resources: []string{
+							"configmaps",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								KMS: &apiserverconfig.KMSConfiguration{
+									Name:       "kms",
+									APIVersion: "v1",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									Endpoint:   "unix:///tmp/testprovider.sock",
+									CacheSize:  pointer.Int32(10),
+								},
+							},
+						},
+					},
+					{
+						Resources: []string{
+							"*.*",
+							"secrets",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								KMS: &apiserverconfig.KMSConfiguration{
+									Name:       "another-kms",
+									APIVersion: "v1",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									Endpoint:   "unix:///tmp/another-testprovider.sock",
+									CacheSize:  pointer.Int32(10),
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedError: fmt.Errorf("resource secrets is masked by earlier rule %s", anyGroupAnyResource),
 		},
 		{
 			desc: "resources *. masked by *.*",
@@ -734,8 +814,48 @@ func TestWildcardMasking(t *testing.T) {
 					},
 				},
 			},
-			expectedError: true,
-			errorString:   fmt.Sprintf("resource * is masked by earlier rule %s", anyGroupAnyResource),
+			expectedError: fmt.Errorf("resource * is masked by earlier rule %s", anyGroupAnyResource),
+		},
+		{
+			desc: "resources *. masked by *.* in multiple configurations",
+			config: &apiserverconfig.EncryptionConfiguration{
+				Resources: []apiserverconfig.ResourceConfiguration{
+					{
+						Resources: []string{
+							"configmaps",
+							"*.*",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								KMS: &apiserverconfig.KMSConfiguration{
+									Name:       "kms",
+									APIVersion: "v1",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									Endpoint:   "unix:///tmp/testprovider.sock",
+									CacheSize:  pointer.Int32(10),
+								},
+							},
+						},
+					},
+					{
+						Resources: []string{
+							"*.",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								KMS: &apiserverconfig.KMSConfiguration{
+									Name:       "another-kms",
+									APIVersion: "v1",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									Endpoint:   "unix:///tmp/another-testprovider.sock",
+									CacheSize:  pointer.Int32(10),
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedError: fmt.Errorf("resource * is masked by earlier rule %s", anyGroupAnyResource),
 		},
 		{
 			desc: "resources not masked by any rule",
@@ -761,50 +881,42 @@ func TestWildcardMasking(t *testing.T) {
 					},
 				},
 			},
-			expectedError: false,
 		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.desc, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			t.Cleanup(func() {
-				cancel()
-			})
-			_, _, _, err := getTransformerOverridesAndKMSPluginProbes(ctx, tc.config)
-			if tc.expectedError && err == nil {
-				t.Errorf("expected error but got none")
-			}
-			if tc.expectedError && err != nil && err.Error() != tc.errorString {
-				t.Errorf("expected error %s but got %s", tc.errorString, err.Error())
-			}
-		})
-	}
-}
-
-func TestWildcardStructure(t *testing.T) {
-	expectedResourceGroups := []schema.GroupResource{
-		{Group: "", Resource: "configmaps"},
-		{Group: "", Resource: "secrets"},
-		{Group: "*", Resource: "*"},
-	}
-
-	config := &apiserverconfig.EncryptionConfiguration{
-		Resources: []apiserverconfig.ResourceConfiguration{
-			{
-				Resources: []string{
-					"configmaps",
-					"secrets",
-					"*.*",
-				},
-				Providers: []apiserverconfig.ProviderConfiguration{
+		{
+			desc: "resources not masked by any rule in multiple configurations",
+			config: &apiserverconfig.EncryptionConfiguration{
+				Resources: []apiserverconfig.ResourceConfiguration{
 					{
-						KMS: &apiserverconfig.KMSConfiguration{
-							Name:       "kms",
-							APIVersion: "v1",
-							Timeout:    &metav1.Duration{Duration: 3 * time.Second},
-							Endpoint:   "unix:///tmp/testprovider.sock",
-							CacheSize:  pointer.Int32(10),
+						Resources: []string{
+							"configmaps",
+							"secrets",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								KMS: &apiserverconfig.KMSConfiguration{
+									Name:       "kms",
+									APIVersion: "v1",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									Endpoint:   "unix:///tmp/testprovider.sock",
+									CacheSize:  pointer.Int32(10),
+								},
+							},
+						},
+					},
+					{
+						Resources: []string{
+							"*.*",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								KMS: &apiserverconfig.KMSConfiguration{
+									Name:       "another-kms",
+									APIVersion: "v1",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									Endpoint:   "unix:///tmp/another-testprovider.sock",
+									CacheSize:  pointer.Int32(10),
+								},
+							},
 						},
 					},
 				},
@@ -812,21 +924,153 @@ func TestWildcardStructure(t *testing.T) {
 		},
 	}
 
-	t.Run("should contain transformers for expected resources", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		t.Cleanup(func() {
-			cancel()
-		})
+	for _, tc := range testCases {
+		t.Run(tc.desc, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
 
-		transformers, _, _, _ := getTransformerOverridesAndKMSPluginProbes(ctx, config)
-
-		// assert if transformers contains expectedResources
-		for _, resource := range expectedResourceGroups {
-			if _, ok := transformers[resource]; !ok {
-				t.Errorf("expected transformer for resource %s but got none", resource.String())
+			_, _, _, err := getTransformerOverridesAndKMSPluginProbes(ctx, tc.config)
+			if errString(err) != errString(tc.expectedError) {
+				t.Errorf("expected error %s but got %s", errString(tc.expectedError), errString(err))
 			}
-		}
-	})
+		})
+	}
+}
+
+func TestWildcardStructure(t *testing.T) {
+	testCases := []struct {
+		desc                         string
+		expectedResourceTransformers map[string]string
+		config                       *apiserverconfig.EncryptionConfiguration
+		errorValue                   error
+		expectedError                bool
+	}{
+		{
+			desc: "should not result in error",
+			expectedResourceTransformers: map[string]string{
+				"configmaps": "k8s:enc:kms:v1:kms:",
+				"secrets":    "k8s:enc:kms:v1:kms:",
+				"*":          "k8s:enc:kms:v1:kms:",
+				"*.*":        "k8s:enc:kms:v1:another-kms:",
+			},
+
+			expectedError: false,
+			errorValue:    nil,
+			config: &apiserverconfig.EncryptionConfiguration{
+				Resources: []apiserverconfig.ResourceConfiguration{
+					{
+						Resources: []string{
+							"configmaps",
+							"secrets",
+							"*.",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								KMS: &apiserverconfig.KMSConfiguration{
+									Name:       "kms",
+									APIVersion: "v1",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									Endpoint:   "unix:///tmp/testprovider.sock",
+									CacheSize:  pointer.Int32(10),
+								},
+							},
+						},
+					},
+					{
+						Resources: []string{
+							"*.*",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								KMS: &apiserverconfig.KMSConfiguration{
+									Name:       "another-kms",
+									APIVersion: "v1",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									Endpoint:   "unix:///tmp/testprovider.sock",
+									CacheSize:  pointer.Int32(10),
+								},
+							},
+							{
+								Identity: &apiserverconfig.IdentityConfiguration{},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			desc:          "should result in error",
+			expectedError: true,
+			errorValue:    fmt.Errorf("resource secrets is masked by earlier rule *"),
+			config: &apiserverconfig.EncryptionConfiguration{
+				Resources: []apiserverconfig.ResourceConfiguration{
+					{
+						Resources: []string{
+							"configmaps",
+							"*.",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								KMS: &apiserverconfig.KMSConfiguration{
+									Name:       "kms",
+									APIVersion: "v1",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									Endpoint:   "unix:///tmp/testprovider.sock",
+									CacheSize:  pointer.Int32(10),
+								},
+							},
+						},
+					},
+					{
+						Resources: []string{
+							"*.*",
+							"secrets",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								KMS: &apiserverconfig.KMSConfiguration{
+									Name:       "kms",
+									APIVersion: "v1",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									Endpoint:   "unix:///tmp/testprovider.sock",
+									CacheSize:  pointer.Int32(10),
+								},
+							},
+							{
+								Identity: &apiserverconfig.IdentityConfiguration{},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.desc, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+
+			transformers, _, _, err := getTransformerOverridesAndKMSPluginProbes(ctx, tc.config)
+			if errString(err) != errString(tc.errorValue) {
+				t.Errorf("expected error %s but got %s", errString(tc.errorValue), errString(err))
+			}
+
+			if !tc.expectedError {
+				// check if expectedResourceTransformers are present
+				for resource, expectedTransformerName := range tc.expectedResourceTransformers {
+					transformer := transformerFromOverrides(transformers, schema.ParseGroupResource(resource))
+					transformerName := string(
+						reflect.ValueOf(transformer).Elem().FieldByName("transformers").Index(0).FieldByName("Prefix").Bytes(),
+					)
+
+					if transformerName != expectedTransformerName {
+						t.Errorf("expected same transformer name but got %v", cmp.Diff(transformerName, expectedTransformerName))
+					}
+				}
+			}
+		})
+	}
 }
 
 func TestKMSPluginHealthzTTL(t *testing.T) {
