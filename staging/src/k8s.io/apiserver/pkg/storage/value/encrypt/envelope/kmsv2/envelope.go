@@ -56,7 +56,12 @@ const (
 	// encryptedDEKMaxSize is the maximum size of the encrypted DEK.
 	encryptedDEKMaxSize = 1 * 1024 // 1 kB
 	// cacheTTL is the default time-to-live for the cache entry.
-	cacheTTL = 1 * time.Hour
+	// this allows the cache to grow to an infinite size for up to a day.
+	// this is meant as a temporary solution until the cache is re-written to not have a TTL.
+	// there is unlikely to be any meaningful memory impact on the server
+	// because the cache will likely never have more than a few thousand entries
+	// and each entry is roughly ~200 bytes in size.
+	cacheTTL = 24 * time.Hour
 	// error code
 	errKeyIDOKCode      ErrCodeKeyID = "ok"
 	errKeyIDEmptyCode   ErrCodeKeyID = "empty"
@@ -183,7 +188,9 @@ func (t *envelopeTransformer) TransformToStorage(ctx context.Context, data []byt
 	}
 
 	// this prevents a cache miss every time the DEK rotates
+	// this has the side benefit of causing the cache to perform a GC
 	// TODO see if we can do this inside the stateFunc control loop
+	// TODO(aramase): Add metrics for cache fill percentage with custom cache implementation.
 	t.cache.set(state.EncryptedDEK, state.Transformer)
 
 	requestInfo := getRequestInfoFromContext(ctx)
@@ -211,12 +218,12 @@ func (t *envelopeTransformer) TransformToStorage(ctx context.Context, data []byt
 
 // addTransformerForDecryption inserts a new transformer to the Envelope cache of DEKs for future reads.
 func (t *envelopeTransformer) addTransformerForDecryption(encKey []byte, key []byte) (value.Transformer, error) {
-	transformer, err := generateAESTransformer(key)
+	transformer, err := generateAESTransformer(key, false)
 	if err != nil {
 		return nil, err
 	}
 	// TODO(aramase): Add metrics for cache fill percentage with custom cache implementation.
-	t.cache.set(encKey, transformer) // TODO wrap in decrypt only mode
+	t.cache.set(encKey, transformer)
 	return transformer, nil
 }
 
@@ -255,7 +262,7 @@ func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsser
 		return nil, nil, fmt.Errorf("failed to encrypt DEK, error: %w", err)
 	}
 
-	transformer, err := generateAESTransformer(newKey)
+	transformer, err := generateAESTransformer(newKey, true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -263,12 +270,17 @@ func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsser
 	return transformer, resp, nil
 }
 
-func generateAESTransformer(key []byte) (value.Transformer, error) {
+func generateAESTransformer(key []byte, forEncryption bool) (value.Transformer, error) { // TODO unit test
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}
-	return aestransformer.NewGCMTransformerWithUniqueKeyUnsafe(block)
+
+	if forEncryption {
+		return aestransformer.NewGCMTransformerWithUniqueKeyUnsafe(block)
+	}
+
+	return aestransformer.NewGCMTransformer(block)
 }
 
 // generateKey generates a random key using system randomness.

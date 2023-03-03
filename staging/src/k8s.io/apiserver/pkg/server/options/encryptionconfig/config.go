@@ -56,17 +56,18 @@ import (
 )
 
 const (
-	aesCBCTransformerPrefixV1    = "k8s:enc:aescbc:v1:"
-	aesGCMTransformerPrefixV1    = "k8s:enc:aesgcm:v1:"
-	secretboxTransformerPrefixV1 = "k8s:enc:secretbox:v1:"
-	kmsTransformerPrefixV1       = "k8s:enc:kms:v1:"
-	kmsTransformerPrefixV2       = "k8s:enc:kms:v2:"
-	kmsPluginHealthzInterval     = 1 * time.Minute
-	kmsPluginDEKReuseInterval    = 2 * time.Minute
-	kmsPluginHealthzNegativeTTL  = 3 * time.Second
-	kmsPluginHealthzPositiveTTL  = 20 * time.Second
-	kmsAPIVersionV1              = "v1"
-	kmsAPIVersionV2              = "v2"
+	aesCBCTransformerPrefixV1        = "k8s:enc:aescbc:v1:"
+	aesGCMTransformerPrefixV1        = "k8s:enc:aesgcm:v1:"
+	secretboxTransformerPrefixV1     = "k8s:enc:secretbox:v1:"
+	kmsTransformerPrefixV1           = "k8s:enc:kms:v1:"
+	kmsTransformerPrefixV2           = "k8s:enc:kms:v2:"
+	kmsPluginHealthzPositiveInterval = 1 * time.Minute
+	kmsPluginHealthzNegativeInterval = 10 * time.Second
+	kmsPluginDEKReuseInterval        = 2 * time.Minute
+	kmsPluginHealthzNegativeTTL      = 3 * time.Second
+	kmsPluginHealthzPositiveTTL      = 20 * time.Second
+	kmsAPIVersionV1                  = "v1"
+	kmsAPIVersionV2                  = "v2"
 	// this name is used for two different healthz endpoints:
 	// - when one or more KMS v2 plugins are in use and no KMS v1 plugins are in use
 	//   in this case, all v2 plugins are probed via this single endpoint
@@ -96,26 +97,6 @@ type kmsv2PluginProbe struct {
 	service      kmsservice.Service
 	lastResponse *kmsPluginHealthzResponse
 	l            *sync.Mutex
-}
-
-var _ value.Transformer = &kmsv2DEKUsedTracker{}
-
-type kmsv2DEKUsedTracker struct {
-	used        atomic.Bool
-	transformer value.Transformer
-}
-
-func (u *kmsv2DEKUsedTracker) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) (out []byte, stale bool, err error) {
-	return u.transformer.TransformFromStorage(ctx, data, dataCtx)
-}
-
-func (u *kmsv2DEKUsedTracker) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) (out []byte, err error) {
-	u.used.Store(true)
-	return u.transformer.TransformToStorage(ctx, data, dataCtx)
-}
-
-func (u *kmsv2DEKUsedTracker) hasBeenUsedForEncryption() bool {
-	return u.used.Load()
 }
 
 type kmsHealthChecker []healthz.HealthChecker
@@ -339,14 +320,18 @@ func (h *kmsv2PluginProbe) attemptToRotateDEK(ctx context.Context, statusKeyID s
 		errState = state.ValidateEncryptCapability()
 	}
 
-	// state is valid and status keyID is unchanged from when we generated this DEK
-	// and the DEK was never used to encrypt anything, so there is no need to rotate it
-	if errState == nil && state.KeyID == statusKeyID && !state.Transformer.(*kmsv2DEKUsedTracker).hasBeenUsedForEncryption() {
+	// allow reads indefinitely in all cases
+	// allow writes indefinitely as long as there is no error
+	// allow writes for only up to kmsPluginDEKReuseInterval from now when there are errors
+	expirationTimestamp := envelopekmsv2.ValidateEncryptCapabilityNowFunc().Add(kmsPluginDEKReuseInterval) // start the timer before we make the network calls
+
+	// state is valid and status keyID is unchanged from when we generated this DEK so there is no need to rotate it
+	// just move the expiration of the current state forward by the reuse interval
+	if errState == nil && state.KeyID == statusKeyID {
+		state.ExpirationTimestamp = expirationTimestamp
+		h.state.Store(&state)
 		return nil
 	}
-
-	// allow reads indefinitely but writes for only up to kmsPluginDEKReuseInterval from now
-	expirationTimestamp := envelopekmsv2.ValidateEncryptCapabilityNowFunc().Add(kmsPluginDEKReuseInterval) // start the timer before we make the network calls
 
 	uid := string(uuid.NewUUID())
 
@@ -360,7 +345,7 @@ func (h *kmsv2PluginProbe) attemptToRotateDEK(ctx context.Context, statusKeyID s
 	// TODO maybe add success metrics?
 	if errGen == nil && resp.KeyID == statusKeyID {
 		h.state.Store(&envelopekmsv2.State{
-			Transformer:         &kmsv2DEKUsedTracker{transformer: transformer},
+			Transformer:         transformer,
 			EncryptedDEK:        resp.Ciphertext,
 			KeyID:               resp.KeyID,
 			Annotations:         resp.Annotations,
@@ -700,17 +685,36 @@ func kmsPrefixTransformer(ctx context.Context, config *apiserverconfig.KMSConfig
 		// initialize state so that Load always works
 		probe.state.Store(&envelopekmsv2.State{})
 
+		runProbeCheckAndLog := func(ctx context.Context) error {
+			if err := probe.check(ctx); err != nil {
+				klog.VDepth(1, 2).ErrorS(err, "kms plugin failed health check probe", "name", kmsName)
+				return err
+			}
+			return nil
+		}
+
 		// prime keyID by running the check inline once (this prevents unit tests from flaking)
 		// ignore the error here since we want to support the plugin starting up async with the API server
-		_ = probe.check(ctx)
+		_ = runProbeCheckAndLog(ctx)
 		// make sure that the plugin's key ID is reasonably up-to-date
 		go wait.PollUntilWithContext(
 			ctx,
-			kmsPluginHealthzInterval,
+			kmsPluginHealthzPositiveInterval,
 			func(ctx context.Context) (bool, error) {
-				if err := probe.check(ctx); err != nil {
-					klog.V(2).ErrorS(err, "kms plugin failed health check probe", "name", kmsName)
+				if err := runProbeCheckAndLog(ctx); err == nil {
+					return false, nil
 				}
+
+				// if we fail, block the outer polling and start a new quicker poll inline
+				// this limits the chance that our DEK expires during a transient failure
+				_ = wait.PollUntilWithContext(
+					ctx,
+					kmsPluginHealthzNegativeInterval,
+					func(ctx context.Context) (bool, error) {
+						return runProbeCheckAndLog(ctx) == nil, nil
+					},
+				)
+
 				return false, nil
 			})
 
