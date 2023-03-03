@@ -445,10 +445,9 @@ resources:
 		uniqueDEKs.Insert(string(object.EncryptedDEK))
 	}
 
-	// if the test times out in a minute and the provider stays healthy the whole time (as it should)
-	// we should never make more than 4 DEKs during the whole run (generally speaking there should only be 1)
-	if uniqueDEKs.Len() > 4 {
-		t.Errorf("expected less than five DEKs, got: %d", uniqueDEKs.Len())
+	// key ID does not change during the test so we should only have a single DEK
+	if uniqueDEKs.Len() != 1 {
+		t.Errorf("expected one DEK, got: %d", uniqueDEKs.Len())
 	}
 }
 
