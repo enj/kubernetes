@@ -354,9 +354,6 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 		return nil
 	}
 
-	// TODO: consider supporting distinct healthz and readyz implementations
-	//  ideally the server would report healthy until ValidateEncryptCapability returned an error
-	//  but it would start failing to be ready as soon as rotation failed, I think?
 	return fmt.Errorf("failed to rotate DEK uid=%q, errState=%v, errGen=%v, statusKeyID=%q, encryptKeyID=%q, stateKeyID=%q, expirationTimestamp=%s",
 		uid, errState, errGen, statusKeyID, resp.KeyID, state.KeyID, state.ExpirationTimestamp.Format(time.RFC3339))
 }
