@@ -1064,8 +1064,8 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			wantEncryptCalls: 0,
 			wantMetrics: `
 			# HELP apiserver_envelope_encryption_invalid_key_id_from_status_total [ALPHA] Number of times an invalid keyID is returned by the Status RPC call split by error.
-        	# TYPE apiserver_envelope_encryption_invalid_key_id_from_status_total counter
-        	apiserver_envelope_encryption_invalid_key_id_from_status_total{error="empty",provider_name="panda"} 1
+			# TYPE apiserver_envelope_encryption_invalid_key_id_from_status_total counter
+			apiserver_envelope_encryption_invalid_key_id_from_status_total{error="empty",provider_name="panda"} 1
 			`,
 			wantErr: "",
 		},
