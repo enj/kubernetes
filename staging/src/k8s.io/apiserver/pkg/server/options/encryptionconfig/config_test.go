@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -77,8 +78,9 @@ func (t *testEnvelopeService) Encrypt(data []byte) ([]byte, error) {
 // testKMSv2EnvelopeService is a mock kmsv2 envelope service which can be used to simulate remote Envelope v2 services
 // for testing of the envelope transformer with other transformers.
 type testKMSv2EnvelopeService struct {
-	err   error
-	keyID string
+	err          error
+	keyID        string
+	encryptCalls int
 }
 
 func (t *testKMSv2EnvelopeService) Decrypt(ctx context.Context, uid string, req *kmsservice.DecryptRequest) ([]byte, error) {
@@ -89,6 +91,7 @@ func (t *testKMSv2EnvelopeService) Decrypt(ctx context.Context, uid string, req 
 }
 
 func (t *testKMSv2EnvelopeService) Encrypt(ctx context.Context, uid string, data []byte) (*kmsservice.EncryptResponse, error) {
+	t.encryptCalls++
 	if t.err != nil {
 		return nil, t.err
 	}
@@ -117,17 +120,17 @@ func newMockErrorEnvelopeService(endpoint string, timeout time.Duration) (envelo
 
 // The factory method to create mock envelope kmsv2 service.
 func newMockEnvelopeKMSv2Service(ctx context.Context, endpoint, providerName string, timeout time.Duration) (kmsservice.Service, error) {
-	return &testKMSv2EnvelopeService{nil, "1"}, nil
+	return &testKMSv2EnvelopeService{nil, "1", 0}, nil
 }
 
 // The factory method to create mock envelope kmsv2 service which always returns error.
 func newMockErrorEnvelopeKMSv2Service(endpoint string, timeout time.Duration) (kmsservice.Service, error) {
-	return &testKMSv2EnvelopeService{errors.New("test"), "1"}, nil
+	return &testKMSv2EnvelopeService{errors.New("test"), "1", 0}, nil
 }
 
 // The factory method to create mock envelope kmsv2 service that always returns invalid keyID.
 func newMockInvalidKeyIDEnvelopeKMSv2Service(ctx context.Context, endpoint string, timeout time.Duration, keyID string) (kmsservice.Service, error) {
-	return &testKMSv2EnvelopeService{nil, keyID}, nil
+	return &testKMSv2EnvelopeService{nil, keyID, 0}, nil
 }
 
 func TestLegacyConfig(t *testing.T) {
@@ -973,13 +976,14 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 	kmsv2.ValidateEncryptCapabilityNowFunc = func() time.Time { return now }
 
 	tests := []struct {
-		name        string
-		service     kmsservice.Service
-		state       envelopekmsv2.State
-		statusKeyID string
-		wantState   envelopekmsv2.State
-		wantMetrics string
-		wantErr     string
+		name             string
+		service          *testKMSv2EnvelopeService
+		state            envelopekmsv2.State
+		statusKeyID      string
+		wantState        envelopekmsv2.State
+		wantEncryptCalls int
+		wantMetrics      string
+		wantErr          string
 	}{
 		{
 			name:        "happy path, no previous state",
@@ -988,11 +992,78 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			statusKeyID: "1",
 			wantState: envelopekmsv2.State{
 				KeyID:               "1",
-				Annotations:         nil,
 				ExpirationTimestamp: now.Add(2 * time.Minute),
 			},
-			wantMetrics: "",
-			wantErr:     "",
+			wantEncryptCalls: 1,
+			wantMetrics:      "",
+			wantErr:          "",
+		},
+		{
+			name:        "happy path, with previous state",
+			service:     &testKMSv2EnvelopeService{err: fmt.Errorf("broken")}, // not called
+			state:       validState("2", now),
+			statusKeyID: "2",
+			wantState: envelopekmsv2.State{
+				KeyID:               "2",
+				ExpirationTimestamp: now.Add(2 * time.Minute),
+			},
+			wantEncryptCalls: 0,
+			wantMetrics:      "",
+			wantErr:          "",
+		},
+		{
+			name:        "previous state expired but key ID matches",
+			service:     &testKMSv2EnvelopeService{err: fmt.Errorf("broken")}, // not called
+			state:       validState("3", now.Add(-time.Hour)),
+			statusKeyID: "3",
+			wantState: envelopekmsv2.State{
+				KeyID:               "3",
+				ExpirationTimestamp: now.Add(2 * time.Minute),
+			},
+			wantEncryptCalls: 0,
+			wantMetrics:      "",
+			wantErr:          "",
+		},
+		{
+			name:        "previous state expired but key ID does not match",
+			service:     &testKMSv2EnvelopeService{keyID: "4"},
+			state:       validState("3", now.Add(-time.Hour)),
+			statusKeyID: "4",
+			wantState: envelopekmsv2.State{
+				KeyID:               "4",
+				ExpirationTimestamp: now.Add(2 * time.Minute),
+			},
+			wantEncryptCalls: 1,
+			wantMetrics:      "",
+			wantErr:          "",
+		},
+		{
+			name:        "service down but key ID does not match",
+			service:     &testKMSv2EnvelopeService{err: fmt.Errorf("broken")},
+			state:       validState("4", now.Add(7*time.Minute)),
+			statusKeyID: "5",
+			wantState: envelopekmsv2.State{
+				KeyID:               "4",
+				ExpirationTimestamp: now.Add(7 * time.Minute),
+			},
+			wantEncryptCalls: 1,
+			wantMetrics:      "",
+			wantErr: `failed to rotate DEK uid="panda", ` +
+				`errState=<nil>, errGen=failed to encrypt DEK, error: broken, statusKeyID="5", ` +
+				`encryptKeyID="", stateKeyID="4", expirationTimestamp=` + now.Add(7*time.Minute).Format(time.RFC3339),
+		},
+		{
+			name:        "invalid status id input",
+			service:     &testKMSv2EnvelopeService{err: fmt.Errorf("broken")}, // not called
+			state:       validState("6", now),
+			statusKeyID: "",
+			wantState: envelopekmsv2.State{
+				KeyID:               "6",
+				ExpirationTimestamp: now,
+			},
+			wantEncryptCalls: 0,
+			wantMetrics:      "",
+			wantErr:          "",
 		},
 	}
 	for _, tt := range tests {
@@ -1005,7 +1076,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			}
 			h.state.Store(&tt.state)
 
-			err := h.rotateDEKOnKeyIDChange(ctx, tt.statusKeyID)
+			err := h.rotateDEKOnKeyIDChange(ctx, tt.statusKeyID, "panda")
 
 			ignoredFields := sets.NewString("Transformer", "EncryptedDEK", "UID")
 
@@ -1015,7 +1086,9 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 				t.Errorf("state mismatch (-want +got):\n%s", diff)
 			}
 
-			// TODO check transformer has been used
+			if tt.wantEncryptCalls != tt.service.encryptCalls {
+				t.Errorf("want %d encryptCalls, got %d", tt.wantEncryptCalls, tt.service.encryptCalls)
+			}
 
 			if diff := cmp.Diff(tt.wantMetrics, "TODO_GOT"); len(diff) > 0 && false {
 				t.Errorf("metrics mismatch (-want +got):\n%s", diff)
@@ -1025,5 +1098,14 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 				t.Errorf("attemptToRotateDEK() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func validState(keyID string, exp time.Time) envelopekmsv2.State {
+	return envelopekmsv2.State{
+		Transformer:         &resourceTransformer{},
+		EncryptedDEK:        []byte{1},
+		KeyID:               keyID,
+		ExpirationTimestamp: exp,
 	}
 }

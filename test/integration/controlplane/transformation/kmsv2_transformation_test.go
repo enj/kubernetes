@@ -356,6 +356,8 @@ resources:
 	if version5 != version7 {
 		t.Fatalf("Resource version should not have changed again after the initial version updated as a result of the keyID update. old pod: %v, new pod: %v", newPod, updatedNewPod)
 	}
+
+	// TODO check total number of DEKs (should be 2?)
 }
 
 func TestKMSv2ProviderDEKReuse(t *testing.T) {

@@ -281,7 +281,7 @@ func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 		return fmt.Errorf("failed to perform status section of the healthz check for KMS Provider %s, error: %w", h.name, err)
 	}
 
-	if err := h.rotateDEKOnKeyIDChange(ctx, p.KeyID); err != nil {
+	if err := h.rotateDEKOnKeyIDChange(ctx, p.KeyID, string(uuid.NewUUID())); err != nil {
 		h.lastResponse = &kmsPluginHealthzResponse{err: err, received: time.Now()}
 		h.ttl = kmsPluginHealthzNegativeTTL
 		return err
@@ -305,7 +305,7 @@ func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 // between status and encrypt only results in log statements - the system attempts to coasts otherwise.
 // In practice this means that reads will coast indefinitely on the last valid state whereas writes will coast
 // until the DEK is considered to be expired.  // TODO fix
-func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKeyID string) error {
+func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKeyID, uid string) error {
 	errCode, err := envelopekmsv2.ValidateKeyID(statusKeyID)
 	if err != nil {
 		metrics.RecordInvalidKeyIDFromStatus(h.name, string(errCode))
@@ -331,8 +331,6 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 		h.state.Store(&state)
 		return nil
 	}
-
-	uid := string(uuid.NewUUID())
 
 	transformer, resp, errGen := envelopekmsv2.GenerateTransformer(ctx, uid, h.service)
 
