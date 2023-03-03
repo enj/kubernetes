@@ -1062,8 +1062,12 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 				ExpirationTimestamp: now,
 			},
 			wantEncryptCalls: 0,
-			wantMetrics:      "",
-			wantErr:          "",
+			wantMetrics: `
+			# HELP apiserver_envelope_encryption_invalid_key_id_from_status_total [ALPHA] Number of times an invalid keyID is returned by the Status RPC call split by error.
+        	# TYPE apiserver_envelope_encryption_invalid_key_id_from_status_total counter
+        	apiserver_envelope_encryption_invalid_key_id_from_status_total{error="empty",provider_name="panda"} 1
+			`,
+			wantErr: "",
 		},
 	}
 	for _, tt := range tests {
@@ -1090,8 +1094,10 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 				t.Errorf("want %d encryptCalls, got %d", tt.wantEncryptCalls, tt.service.encryptCalls)
 			}
 
-			if diff := cmp.Diff(tt.wantMetrics, "TODO_GOT"); len(diff) > 0 && false {
-				t.Errorf("metrics mismatch (-want +got):\n%s", diff)
+			if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(tt.wantMetrics),
+				"apiserver_envelope_encryption_invalid_key_id_from_status_total",
+			); err != nil {
+				t.Fatal(err)
 			}
 
 			if errString(err) != tt.wantErr {
