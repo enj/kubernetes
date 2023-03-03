@@ -966,7 +966,7 @@ func TestComputeEncryptionConfigHash(t *testing.T) {
 	}
 }
 
-func Test_kmsv2PluginProbe_attemptToRotateDEK(t *testing.T) {
+func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 	origNowFunc := kmsv2.ValidateEncryptCapabilityNowFunc
 	now := origNowFunc() // freeze time
 	t.Cleanup(func() { kmsv2.ValidateEncryptCapabilityNowFunc = origNowFunc })
@@ -978,7 +978,6 @@ func Test_kmsv2PluginProbe_attemptToRotateDEK(t *testing.T) {
 		state       envelopekmsv2.State
 		statusKeyID string
 		wantState   envelopekmsv2.State
-		wantLogs    string
 		wantMetrics string
 		wantErr     string
 	}{
@@ -992,7 +991,6 @@ func Test_kmsv2PluginProbe_attemptToRotateDEK(t *testing.T) {
 				Annotations:         nil,
 				ExpirationTimestamp: now.Add(2 * time.Minute),
 			},
-			wantLogs:    "",
 			wantMetrics: "",
 			wantErr:     "",
 		},
@@ -1007,7 +1005,7 @@ func Test_kmsv2PluginProbe_attemptToRotateDEK(t *testing.T) {
 			}
 			h.state.Store(&tt.state)
 
-			err := h.attemptToRotateDEK(ctx, tt.statusKeyID)
+			err := h.rotateDEKOnKeyIDChange(ctx, tt.statusKeyID)
 
 			ignoredFields := sets.NewString("Transformer", "EncryptedDEK", "UID")
 
@@ -1018,10 +1016,6 @@ func Test_kmsv2PluginProbe_attemptToRotateDEK(t *testing.T) {
 			}
 
 			// TODO check transformer has been used
-
-			if diff := cmp.Diff(tt.wantLogs, "TODO_GOT"); len(diff) > 0 && false {
-				t.Errorf("logs mismatch (-want +got):\n%s", diff)
-			}
 
 			if diff := cmp.Diff(tt.wantMetrics, "TODO_GOT"); len(diff) > 0 && false {
 				t.Errorf("metrics mismatch (-want +got):\n%s", diff)
