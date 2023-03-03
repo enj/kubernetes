@@ -226,13 +226,13 @@ func getTransformerOverridesAndKMSPluginProbes(ctx context.Context, config *apis
 			}]; masked {
 				// an earlier rule already configured a transformer for *.group, masking this rule
 				// return error since this is not allowed
-				return nil, nil, nil, fmt.Errorf("resource %s is masked by earlier rule %s", gr, schema.GroupResource{Group: gr.Group, Resource: "*"})
+				return nil, nil, nil, fmt.Errorf("resource %s is masked by earlier rule '*.'", gr)
 			}
 
 			if _, masked := resourceToPrefixTransformer[anyGroupAnyResource]; masked {
 				// an earlier rule already configured a transformer for *.*, masking this rule
 				// return error since this is not allowed
-				return nil, nil, nil, fmt.Errorf("resource %s is masked by earlier rule %s", gr, anyGroupAnyResource)
+				return nil, nil, nil, fmt.Errorf("resource %s is masked by earlier rule %s", grString(gr), anyGroupAnyResource)
 			}
 
 			resourceToPrefixTransformer[gr] = append(resourceToPrefixTransformer[gr], transformers...)
@@ -815,4 +815,12 @@ func transformerFromOverrides(transformerOverrides map[schema.GroupResource]valu
 	}
 
 	return identity.NewEncryptCheckTransformer()
+}
+
+func grString(gr schema.GroupResource) string {
+	if gr.Group == "" && gr.Resource == "*" {
+		return "*."
+	}
+
+	return gr.String()
 }

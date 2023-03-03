@@ -654,7 +654,7 @@ func TestWildcardMasking(t *testing.T) {
 	testCases := []struct {
 		desc          string
 		config        *apiserverconfig.EncryptionConfiguration
-		expectedError error
+		expectedError string
 	}{
 		{
 			desc: "resources masked by *. group",
@@ -680,7 +680,7 @@ func TestWildcardMasking(t *testing.T) {
 					},
 				},
 			},
-			expectedError: fmt.Errorf("resource secrets is masked by earlier rule %s", schema.GroupResource{Group: "", Resource: "*"}),
+			expectedError: "resource secrets is masked by earlier rule '*.'",
 		},
 		{
 			desc: "resources masked by *. group in multiple configurations",
@@ -721,7 +721,7 @@ func TestWildcardMasking(t *testing.T) {
 					},
 				},
 			},
-			expectedError: fmt.Errorf("resource secrets is masked by earlier rule %s", schema.GroupResource{Group: "", Resource: "*"}),
+			expectedError: "resource secrets is masked by earlier rule '*.'",
 		},
 		{
 			desc: "resources masked by *.*",
@@ -747,7 +747,7 @@ func TestWildcardMasking(t *testing.T) {
 					},
 				},
 			},
-			expectedError: fmt.Errorf("resource secrets is masked by earlier rule %s", anyGroupAnyResource),
+			expectedError: "resource secrets is masked by earlier rule *.*",
 		},
 		{
 			desc: "resources masked by *.* in multiple configurations",
@@ -788,7 +788,7 @@ func TestWildcardMasking(t *testing.T) {
 					},
 				},
 			},
-			expectedError: fmt.Errorf("resource secrets is masked by earlier rule %s", anyGroupAnyResource),
+			expectedError: "resource secrets is masked by earlier rule *.*",
 		},
 		{
 			desc: "resources *. masked by *.*",
@@ -814,7 +814,7 @@ func TestWildcardMasking(t *testing.T) {
 					},
 				},
 			},
-			expectedError: fmt.Errorf("resource * is masked by earlier rule %s", anyGroupAnyResource),
+			expectedError: "resource *. is masked by earlier rule *.*",
 		},
 		{
 			desc: "resources *. masked by *.* in multiple configurations",
@@ -855,7 +855,7 @@ func TestWildcardMasking(t *testing.T) {
 					},
 				},
 			},
-			expectedError: fmt.Errorf("resource * is masked by earlier rule %s", anyGroupAnyResource),
+			expectedError: "resource *. is masked by earlier rule *.*",
 		},
 		{
 			desc: "resources not masked by any rule",
@@ -930,8 +930,8 @@ func TestWildcardMasking(t *testing.T) {
 			t.Cleanup(cancel)
 
 			_, _, _, err := getTransformerOverridesAndKMSPluginProbes(ctx, tc.config)
-			if errString(err) != errString(tc.expectedError) {
-				t.Errorf("expected error %s but got %s", errString(tc.expectedError), errString(err))
+			if errString(err) != tc.expectedError {
+				t.Errorf("expected error %s but got %s", tc.expectedError, errString(err))
 			}
 		})
 	}
@@ -949,9 +949,7 @@ func TestWildcardStructure(t *testing.T) {
 			desc: "should not result in error",
 			expectedResourceTransformers: map[string]string{
 				"configmaps": "k8s:enc:kms:v1:kms:",
-				"secrets":    "k8s:enc:kms:v1:kms:",
-				"*":          "k8s:enc:kms:v1:kms:",
-				"*.*":        "k8s:enc:kms:v1:another-kms:",
+				"secrets":    "k8s:enc:kms:v1:another-kms:",
 			},
 
 			expectedError: false,
@@ -961,8 +959,6 @@ func TestWildcardStructure(t *testing.T) {
 					{
 						Resources: []string{
 							"configmaps",
-							"secrets",
-							"*.",
 						},
 						Providers: []apiserverconfig.ProviderConfiguration{
 							{
@@ -978,7 +974,7 @@ func TestWildcardStructure(t *testing.T) {
 					},
 					{
 						Resources: []string{
-							"*.*",
+							"secrets",
 						},
 						Providers: []apiserverconfig.ProviderConfiguration{
 							{
@@ -995,13 +991,30 @@ func TestWildcardStructure(t *testing.T) {
 							},
 						},
 					},
+					{
+						Resources: []string{
+							"*.*",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								AESGCM: &apiserverconfig.AESConfiguration{
+									Keys: []apiserverconfig.Key{
+										{
+											Name:   "yet-another-provider",
+											Secret: "c2VjcmV0IGlzIHNlY3VyZQ==",
+										},
+									},
+								},
+							},
+						},
+					},
 				},
 			},
 		},
 		{
 			desc:          "should result in error",
 			expectedError: true,
-			errorValue:    fmt.Errorf("resource secrets is masked by earlier rule *"),
+			errorValue:    fmt.Errorf("resource secrets is masked by earlier rule '*.'"),
 			config: &apiserverconfig.EncryptionConfiguration{
 				Resources: []apiserverconfig.ResourceConfiguration{
 					{

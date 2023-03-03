@@ -47,7 +47,7 @@ const (
 	eventsGroupErr                 = "'*.events.k8s.io' objects are stored using the 'events' API group in etcd. Use 'events' instead in the config file"
 	extensionsGroupErr             = "'extensions' group has been removed and cannot be used for encryption"
 	starResourceErr                = "use '*.' to encrypt all the resources from core API group or *.* to encrypt all resources"
-	anyGroupAnyResourceErr         = "using resources other than '*.*' in the same resource list is not allowed as they will be masked"
+	wildCardErr                    = "using resources other than '*.*' and '*.' in the same resource list is not allowed as they will be masked"
 	nonRESTAPIResourceErr          = "resources which does not have REST API/s cannot be encrypted"
 	resourceNameErr                = "resource name should not contain capital letters"
 )
@@ -80,6 +80,7 @@ func ValidateEncryptionConfiguration(c *config.EncryptionConfiguration, reload b
 	for i, resource := range c.Resources {
 		ii := root.Index(i)
 		isAnyGroupAndResource := false
+		isAnyResource := false
 		for j, res := range resource.Resources {
 			jj := ii.Child("resources").Index(j)
 
@@ -96,9 +97,15 @@ func ValidateEncryptionConfiguration(c *config.EncryptionConfiguration, reload b
 				continue
 			}
 
-			// check if resource is '*.*'
+			// check if resource is '*.*' and error when they are present within the same resource list
 			if res == "*.*" {
 				isAnyGroupAndResource = true
+				continue
+			}
+
+			// check if resource is '*.' and error when they are present within the same resource list
+			if res == "*." {
+				isAnyResource = true
 				continue
 			}
 
@@ -161,14 +168,14 @@ func ValidateEncryptionConfiguration(c *config.EncryptionConfiguration, reload b
 			}
 		}
 
-		// set an error if resource is '*.*' and there are other resources
-		if isAnyGroupAndResource && len(resource.Resources) > 1 {
+		// set an error if resource is '*.*' OR '*.' within the same resource list and there are other resources
+		if (isAnyGroupAndResource || isAnyResource) && len(resource.Resources) > 1 {
 			allErrs = append(
 				allErrs,
 				field.Invalid(
 					ii.Child("resources"),
 					resource.Resources,
-					starResourceErr,
+					wildCardErr,
 				),
 			)
 		}

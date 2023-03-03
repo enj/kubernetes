@@ -632,16 +632,16 @@ resources:
 		// assert that all resources are encrypted
 		wantPrefix := "k8s:enc:kms:v1:encrypt-all-kms-provider:"
 		for _, kv := range response.Kvs {
-			// following resources are not encrypted as they are not REST APIs and hence are not expected to be encrypted
+			// following resources are not encrypted as they are not REST APIs and hence are not expected to be encrypted because it would be impossible to perform a storage migration on them
 			if strings.Contains(kv.String(), "masterleases") ||
 				strings.Contains(kv.String(), "serviceips") ||
 				strings.Contains(kv.String(), "servicenodeports") {
 				// assert that these resources are not encrypted with any provider
 				if bytes.HasPrefix(kv.Value, []byte("k8s:enc")) {
-					t.Fatalf("expected resource %s to not be prefixed with %s, but got %s", kv.Key, wantPrefix, kv.Value)
+					t.Errorf("expected resource %s to not be prefixed with %s, but got %s", kv.Key, wantPrefix, kv.Value)
 				}
 			} else if !bytes.HasPrefix(kv.Value, []byte(wantPrefix)) {
-				t.Fatalf("expected resource %s to be prefixed with %s, but got %s", kv.Key, wantPrefix, kv.Value)
+				t.Errorf("expected resource %s to be prefixed with %s, but got %s", kv.Key, wantPrefix, kv.Value)
 			}
 		}
 	})
@@ -658,13 +658,18 @@ resources:
     - identity: {}
   - resources:
     - '*.batch'
-    - '*.apps'
-    - '*.'
     providers:
     - kms:
         name: kms-provider
         cachesize: 1000
-        endpoint: unix:///@kms-provider.sock	
+        endpoint: unix:///@kms-provider.sock
+  - resources:
+    - '*.*'
+    providers:
+    - kms:
+        name: encrypt-all-kms-provider
+        cachesize: 1000
+        endpoint: unix:///@encrypt-all-kms-provider.sock
 `
 	pluginMock, err := mock.NewBase64Plugin("@kms-provider.sock")
 	if err != nil {
@@ -677,6 +682,17 @@ resources:
 	}
 	defer pluginMock.CleanUp()
 
+	encryptAllPluginMock, err := mock.NewBase64Plugin("@encrypt-all-kms-provider.sock")
+	if err != nil {
+		t.Fatalf("failed to create mock of KMS Plugin: %v", err)
+	}
+
+	go encryptAllPluginMock.Start()
+	if err := mock.WaitForBase64PluginToBeUp(pluginMock); err != nil {
+		t.Fatalf("Failed start plugin, err: %v", err)
+	}
+	defer encryptAllPluginMock.CleanUp()
+
 	test, err := newTransformTest(t, encryptionConfig, false, "")
 	if err != nil {
 		t.Fatalf("failed to start KUBE API Server with encryptionConfig\n %s, error: %v", encryptionConfig, err)
@@ -684,6 +700,7 @@ resources:
 	defer test.cleanUp()
 
 	wantPrefix := "k8s:enc:kms:v1:kms-provider:"
+	wantPrefixForEncryptAll := "k8s:enc:kms:v1:encrypt-all-kms-provider:"
 
 	// create job
 	_, err = test.createJob("test-job", "default")
@@ -713,8 +730,8 @@ resources:
 	}
 
 	// assert prefix for deployments
-	if !bytes.HasPrefix(rawDeploymentsEnvelope.Kvs[0].Value, []byte(wantPrefix)) {
-		t.Fatalf("expected deployments to be prefixed with %s, but got %s", wantPrefix, rawDeploymentsEnvelope.Kvs[0].Value)
+	if !bytes.HasPrefix(rawDeploymentsEnvelope.Kvs[0].Value, []byte(wantPrefixForEncryptAll)) {
+		t.Fatalf("expected deployments to be prefixed with %s, but got %s", wantPrefixForEncryptAll, rawDeploymentsEnvelope.Kvs[0].Value)
 	}
 
 	// create secret
@@ -729,8 +746,8 @@ resources:
 	}
 
 	// assert prefix for secrets
-	if !bytes.HasPrefix(rawSecretEnvelope, []byte(wantPrefix)) {
-		t.Fatalf("expected secrets to be prefixed with %s, but got %s", wantPrefix, rawSecretEnvelope)
+	if !bytes.HasPrefix(rawSecretEnvelope, []byte(wantPrefixForEncryptAll)) {
+		t.Fatalf("expected secrets to be prefixed with %s, but got %s", wantPrefixForEncryptAll, rawSecretEnvelope)
 	}
 
 	// create config map

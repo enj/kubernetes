@@ -26,6 +26,9 @@ import (
 
 /*
 EncryptionConfiguration stores the complete configuration for encryption providers.
+It also allows the use of wildcards to specify the resources that should be encrypted.
+Use '*.' to encrypt all resources within a group or '*.*' can be used to encrypt all resources in any group.
+Use of wildcards within same resources list along with other resources are not allowed since they will be masked by the wildcard rules.
 example:
 
 	kind: EncryptionConfiguration
@@ -40,6 +43,20 @@ example:
 	      keys:
 	      - name: key1
 	        secret: c2VjcmV0IGlzIHNlY3VyZQ==
+	- resources:
+	  - '*.apps'
+	  providers:
+	  - aescbc:
+	      keys:
+	      - name: key2
+	        secret: c2VjcmV0IGlzIHNlY3VyZSwgb3IgaXMgaXQ/Cg==
+	- resources:
+	  - '*.*'
+	  providers:
+	  - aescbc:
+	      keys:
+	      - name: key3
+	        secret: c2VjcmV0IGlzIHNlY3VyZSwgSSB0aGluaw==
 */
 type EncryptionConfiguration struct {
 	metav1.TypeMeta
