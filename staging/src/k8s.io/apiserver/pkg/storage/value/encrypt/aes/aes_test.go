@@ -98,6 +98,56 @@ func TestGCMUnsafeNonceGen(t *testing.T) {
 	}
 }
 
+func TestGCMNonce(t *testing.T) {
+	t.Run("gcm", func(t *testing.T) {
+		testGCMNonce(t, newGCMTransformer, func(_ int, nonce []byte) {
+			if bytes.Equal(nonce, bytes.Repeat([]byte{0}, len(nonce))) {
+				t.Error("got all zeros for nonce")
+			}
+		})
+	})
+
+	t.Run("gcm unsafe", func(t *testing.T) {
+		testGCMNonce(t, newGCMTransformerWithUniqueKeyUnsafe, func(i int, nonce []byte) {
+			counter := binary.LittleEndian.Uint64(nonce)
+			if uint64(i) != counter-1 {
+				t.Errorf("counter nonce is invalid: want %d, got %d", i, counter-1)
+			}
+		})
+	})
+}
+
+func testGCMNonce(t *testing.T, f func(t testingT, block cipher.Block) value.Transformer, check func(int, []byte)) {
+	block, err := aes.NewCipher([]byte("abcdefghijklmnop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transformer := f(t, block)
+
+	ctx := context.Background()
+	dataCtx := value.DefaultContext("authenticated_data")
+
+	const count = 1_000
+
+	for i := 0; i < count; i++ {
+		i := i
+
+		out, err := transformer.TransformToStorage(ctx, bytes.Repeat([]byte{byte(i % 8)}, count), dataCtx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		nonce := out[:12]
+		randomN := nonce[:4]
+
+		if bytes.Equal(randomN, bytes.Repeat([]byte{0}, len(randomN))) {
+			t.Error("got all zeros for first four bytes")
+		}
+
+		check(i, nonce[4:])
+	}
+}
+
 func TestGCMKeyRotation(t *testing.T) {
 	t.Run("gcm", func(t *testing.T) {
 		testGCMKeyRotation(t, newGCMTransformer)
