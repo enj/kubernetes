@@ -110,8 +110,8 @@ func TestGCMNonce(t *testing.T) {
 	t.Run("gcm unsafe", func(t *testing.T) {
 		testGCMNonce(t, newGCMTransformerWithUniqueKeyUnsafe, func(i int, nonce []byte) {
 			counter := binary.LittleEndian.Uint64(nonce)
-			if uint64(i) != counter-1 {
-				t.Errorf("counter nonce is invalid: want %d, got %d", i, counter-1)
+			if uint64(i+1) != counter { // add one because the counter starts at 1, not 0
+				t.Errorf("counter nonce is invalid: want %d, got %d", i+1, counter)
 			}
 		})
 	})
