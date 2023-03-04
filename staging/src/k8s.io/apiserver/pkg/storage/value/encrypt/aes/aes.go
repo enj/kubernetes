@@ -60,7 +60,13 @@ func NewGCMTransformer(block cipher.Block) (value.Transformer, error) {
 	return &gcm{aead: aead, nonceFunc: randomNonce}, nil
 }
 
-// TODO comment
+// NewGCMTransformerWithUniqueKeyUnsafe is the same as NewGCMTransformer but is unsafe for general
+// use because it makes assumptions about the key underlying the input block cipher.  Specifically,
+// it uses a 96-bit nonce where the first 32 bits are random data and the remaining 64 bits are
+// a monotonically incrementing atomic counter.  This means that the key must be randomly generated
+// on process startup and must be never be used for encryption outside the lifetime of the process.
+// Unlike NewGCMTransformer, this function is immune to the birthday attack and thus the key can
+// be used indefinitely without key rotation.
 func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) (value.Transformer, error) {
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
