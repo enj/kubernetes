@@ -30,6 +30,7 @@ import (
 	"sync/atomic"
 
 	"k8s.io/apiserver/pkg/storage/value"
+	"k8s.io/klog/v2"
 )
 
 type gcm struct {
@@ -86,8 +87,7 @@ func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) (value.Transformer
 
 		incrementingNonce := nonce.Add(1)
 		if incrementingNonce == 0 {
-			// TODO os.Exit
-			panic("aes-gcm detected nonce overflow") // this should never happen, and is unrecoverable if it does
+			klog.Fatal("aes-gcm detected nonce overflow") // this should never happen, and is unrecoverable if it does
 		}
 		binary.LittleEndian.PutUint64(b[randNonceSize:], incrementingNonce)
 		return nil
@@ -110,7 +110,7 @@ func (t *gcm) TransformFromStorage(ctx context.Context, data []byte, dataCtx val
 	return result, false, err
 }
 
-func (t *gcm) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, error) { // TODO unit test changes
+func (t *gcm) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, error) {
 	nonceSize := t.aead.NonceSize()
 	result := make([]byte, nonceSize+t.aead.Overhead()+len(data))
 
