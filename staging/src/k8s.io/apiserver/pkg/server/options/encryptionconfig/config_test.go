@@ -992,7 +992,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			statusKeyID: "1",
 			wantState: envelopekmsv2.State{
 				KeyID:               "1",
-				ExpirationTimestamp: now.Add(2 * time.Minute),
+				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 1,
 			wantMetrics:      "",
@@ -1005,7 +1005,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			statusKeyID: "2",
 			wantState: envelopekmsv2.State{
 				KeyID:               "2",
-				ExpirationTimestamp: now.Add(2 * time.Minute),
+				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 0,
 			wantMetrics:      "",
@@ -1018,7 +1018,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			statusKeyID: "3",
 			wantState: envelopekmsv2.State{
 				KeyID:               "3",
-				ExpirationTimestamp: now.Add(2 * time.Minute),
+				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 0,
 			wantMetrics:      "",
@@ -1031,7 +1031,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			statusKeyID: "4",
 			wantState: envelopekmsv2.State{
 				KeyID:               "4",
-				ExpirationTimestamp: now.Add(2 * time.Minute),
+				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 1,
 			wantMetrics:      "",

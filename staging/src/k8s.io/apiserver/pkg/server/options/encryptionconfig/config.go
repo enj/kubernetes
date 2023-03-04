@@ -63,7 +63,7 @@ const (
 	kmsTransformerPrefixV2           = "k8s:enc:kms:v2:"
 	kmsPluginHealthzPositiveInterval = 1 * time.Minute
 	kmsPluginHealthzNegativeInterval = 10 * time.Second
-	kmsPluginDEKReuseInterval        = 2 * time.Minute
+	kmsPluginDEKReuseInterval        = 3 * time.Minute
 	kmsPluginHealthzNegativeTTL      = 3 * time.Second
 	kmsPluginHealthzPositiveTTL      = 20 * time.Second
 	kmsAPIVersionV1                  = "v1"
@@ -298,13 +298,12 @@ func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 	return nil
 }
 
-// rotateDEKOnKeyIDChange tries to rotate to a new DEK.  On success, the new DEK and keyID overwrite the existing state.
-// On any failure (including mismatch between status and encrypt calls), the current state is preserved.
-// If the current state is still valid, no error is returned - that is, we do not report unhealthy while we have
-// a pre-existing DEK that is considered valid.  This means that any transient encryption failure or mismatch
-// between status and encrypt only results in log statements - the system attempts to coasts otherwise.
-// In practice this means that reads will coast indefinitely on the last valid state whereas writes will coast
-// until the DEK is considered to be expired.  // TODO fix
+// rotateDEKOnKeyIDChange tries to rotate to a new DEK if the key ID returned by Status does not match the
+// current state.  If a successful rotation is performed, the new DEK and keyID overwrite the existing state.
+// On any failure during rotation (including mismatch between status and encrypt calls), the current state is
+// preserved and will remain valid to use for encryption until its expiration (the system attempts to coast).
+// If the key ID returned by Status matches the current state, the expiration of the current state is extended
+// and no rotation is performed.
 func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKeyID, uid string) error {
 	errCode, err := envelopekmsv2.ValidateKeyID(statusKeyID)
 	if err != nil {
