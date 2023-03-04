@@ -118,7 +118,7 @@ func TestSimpleCache(t *testing.T) {
 
 	for i := 0; i < 10; i++ {
 		k := fmt.Sprintf("key-%d", i)
-		if cache.get([]byte(k)) != envelopeTransformer {
+		if cache.get([]byte(k)).(*decryptOnlyTransformer).transformer != envelopeTransformer {
 			t.Fatalf("Expected to get the transformer for key %v", k)
 		}
 	}
