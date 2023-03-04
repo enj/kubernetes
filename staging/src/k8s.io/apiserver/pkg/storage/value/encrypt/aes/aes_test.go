@@ -22,10 +22,12 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"reflect"
+	"sync"
 	"testing"
 
 	"k8s.io/apiserver/pkg/storage/value"
@@ -43,6 +45,53 @@ func TestGCMDataStable(t *testing.T) {
 	// IMPORTANT: If you must fix this test, then all previously encrypted data from previously compiled versions is broken unless you hardcode the nonce size to 12
 	if aead.NonceSize() != 12 {
 		t.Fatalf("The underlying Golang crypto size has changed, old version of AES on disk will not be readable unless the AES implementation is changed to hardcode nonce size.")
+	}
+}
+
+func TestGCMUnsafeNonceGen(t *testing.T) {
+	block, err := aes.NewCipher([]byte("abcdefghijklmnop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transformer := newGCMTransformerWithUniqueKeyUnsafe(t, block)
+
+	ctx := context.Background()
+	dataCtx := value.DefaultContext("authenticated_data")
+
+	const count = 1_000
+
+	counters := make([]uint64, count)
+
+	var wg sync.WaitGroup
+	for i := 0; i < count; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out, err := transformer.TransformToStorage(ctx, bytes.Repeat([]byte{byte(i % 8)}, count), dataCtx)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			nonce := out[:12]
+			randomN := nonce[:4]
+			if bytes.Equal(randomN, bytes.Repeat([]byte{0}, len(randomN))) {
+				t.Error("got all zeros for random four byte nonce")
+			}
+
+			counter := nonce[4:]
+			counters[binary.LittleEndian.Uint64(counter)-1]++ // subtract one because the counter starts at 1, not 0
+		}()
+	}
+	wg.Wait()
+
+	want := make([]uint64, count)
+	for i := range want {
+		want[i] = 1
+	}
+
+	if !reflect.DeepEqual(want, counters) {
+		t.Error("unexpected counter state")
 	}
 }
 
