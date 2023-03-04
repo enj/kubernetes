@@ -68,13 +68,16 @@ func TestGCMUnsafeNonceGen(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+
 			out, err := transformer.TransformToStorage(ctx, bytes.Repeat([]byte{byte(i % 8)}, count), dataCtx)
 			if err != nil {
 				t.Error(err)
 				return
 			}
+
 			nonce := out[:12]
 			randomN := nonce[:4]
+
 			if bytes.Equal(randomN, bytes.Repeat([]byte{0}, len(randomN))) {
 				t.Error("got all zeros for random four byte nonce")
 			}
