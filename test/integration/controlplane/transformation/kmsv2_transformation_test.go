@@ -367,7 +367,11 @@ resources:
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	t.Cleanup(cancel)
 
-	assertPodDEKs(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig, 1, 1, "k8s:enc:kms:v2:kms-provider:")
+	assertPodDEKs(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
+		1, 1,
+		"k8s:enc:kms:v2:kms-provider:",
+		nil,
+	)
 }
 
 func TestKMSv2ProviderDEKReuse(t *testing.T) {
@@ -427,10 +431,19 @@ resources:
 		}
 	}
 
-	assertPodDEKs(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig, podCount, 1, "k8s:enc:kms:v2:kms-provider:")
+	assertPodDEKs(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
+		podCount, 1, // key ID does not change during the test so we should only have a single DEK
+		"k8s:enc:kms:v2:kms-provider:",
+		func(i int, counter uint64, etcdKey string, _ kmstypes.EncryptedObject) {
+			if uint64(i+1) != counter { // add one because the counter starts at 1, not 0
+				t.Errorf("key %s: counter nonce is invalid: want %d, got %d", etcdKey, i+1, counter)
+			}
+		},
+	)
 }
 
-func assertPodDEKs(ctx context.Context, t *testing.T, config storagebackend.Config, podCount, dekCount int, kmsPrefix string) {
+func assertPodDEKs(ctx context.Context, t *testing.T, config storagebackend.Config, podCount, dekCount int, kmsPrefix string,
+	f func(i int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject)) {
 	t.Helper()
 
 	rawClient, etcdClient, err := integration.GetEtcdClients(config.Transport)
@@ -464,9 +477,7 @@ func assertPodDEKs(ctx context.Context, t *testing.T, config storagebackend.Conf
 		}
 
 		counter := binary.LittleEndian.Uint64(count)
-		if uint64(i+1) != counter { // add one because the counter starts at 1, not 0
-			t.Errorf("key %s: counter nonce is invalid: want %d, got %d", string(kv.Key), i+1, counter)
-		}
+		f(i, counter, string(kv.Key), out[i])
 	}
 
 	uniqueDEKs := sets.NewString()
@@ -474,7 +485,6 @@ func assertPodDEKs(ctx context.Context, t *testing.T, config storagebackend.Conf
 		uniqueDEKs.Insert(string(object.EncryptedDEK))
 	}
 
-	// key ID does not change during the test so we should only have a single DEK
 	if uniqueDEKs.Len() != dekCount {
 		t.Errorf("expected %d DEKs, got: %d", dekCount, uniqueDEKs.Len())
 	}
