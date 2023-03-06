@@ -251,7 +251,7 @@ func TestEnvelopeTransformerStaleness(t *testing.T) {
 			ctx := testContext(t)
 
 			envelopeService := newTestEnvelopeService()
-			state, err := testStateFunc(ctx, envelopeService, &clock.RealClock{})()
+			state, err := testStateFunc(ctx, envelopeService, clock.RealClock{})()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -299,7 +299,7 @@ func TestEnvelopeTransformerStateFunc(t *testing.T) {
 	ctx := testContext(t)
 
 	envelopeService := newTestEnvelopeService()
-	state, err := testStateFunc(ctx, envelopeService, &clock.RealClock{})()
+	state, err := testStateFunc(ctx, envelopeService, clock.RealClock{})()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,6 +362,14 @@ func TestEnvelopeTransformerStateFunc(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
+		// assert that this is works even if the cache is empty
+		et := transformer.(*envelopeTransformer)
+		et.cache = newSimpleCache(clock.RealClock{}, et.cache.ttl)
+		_, _, err = transformer.TransformFromStorage(ctx, data, dataCtx)
+		if err != nil {
+			t.Fatal(err)
+		}
 	})
 
 	// make the state invalid
@@ -375,6 +383,14 @@ func TestEnvelopeTransformerStateFunc(t *testing.T) {
 	})
 
 	t.Run("reads succeed when the plugin is down and the state is invalid", func(t *testing.T) {
+		_, _, err = transformer.TransformFromStorage(ctx, encryptedData, dataCtx)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// assert that this is works even if the cache is empty
+		et := transformer.(*envelopeTransformer)
+		et.cache = newSimpleCache(clock.RealClock{}, et.cache.ttl)
 		_, _, err = transformer.TransformFromStorage(ctx, encryptedData, dataCtx)
 		if err != nil {
 			t.Fatal(err)
@@ -720,7 +736,7 @@ func TestValidateEncryptedDEK(t *testing.T) {
 func TestEnvelopeMetrics(t *testing.T) {
 	envelopeService := newTestEnvelopeService()
 	transformer := NewEnvelopeTransformer(envelopeService, testProviderName,
-		testStateFunc(testContext(t), envelopeService, &clock.RealClock{}),
+		testStateFunc(testContext(t), envelopeService, clock.RealClock{}),
 	)
 
 	dataCtx := value.DefaultContext(testContextText)

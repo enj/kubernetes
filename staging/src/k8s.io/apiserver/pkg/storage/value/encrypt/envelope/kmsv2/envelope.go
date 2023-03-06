@@ -138,7 +138,7 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 	// TODO: consider marking this as a stale read to support DEK defragmentation
 	if subtle.ConstantTimeCompare(state.EncryptedDEK, encryptedObject.EncryptedDEK) != 1 {
 		// TODO value.RecordStateMiss() metric
-		transformer = t.cache.get(encryptedObject.EncryptedDEK) // TODO unit test
+		transformer = t.cache.get(encryptedObject.EncryptedDEK)
 	}
 
 	// fallback to the envelope service if we do not have the transformer locally
