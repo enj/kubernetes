@@ -687,6 +687,7 @@ func kmsPrefixTransformer(ctx context.Context, config *apiserverconfig.KMSConfig
 					return false, nil
 				}
 
+				// TODO add integration test for quicker error poll on failure
 				// if we fail, block the outer polling and start a new quicker poll inline
 				// this limits the chance that our DEK expires during a transient failure
 				_ = wait.PollUntilWithContext(
