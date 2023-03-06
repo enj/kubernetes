@@ -23,6 +23,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/aes"
+	"encoding/binary"
 	"fmt"
 	"strings"
 	"testing"
@@ -97,7 +98,10 @@ func (r envelopekmsv2) plainTextPayload(secretETCDPath string) ([]byte, error) {
 	}
 	ctx := context.Background()
 	dataCtx := value.DefaultContext(secretETCDPath)
-	aesgcmTransformer := aestransformer.NewGCMTransformer(block)
+	aesgcmTransformer, err := aestransformer.NewGCMTransformer(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create transformer from block: %v", err)
+	}
 	data, err := r.cipherTextPayload()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cipher text payload: %v", err)
@@ -402,7 +406,7 @@ resources:
 	for i := 0; i < podCount; i++ {
 		if _, err := client.CoreV1().Pods(testNamespace).Create(ctx, &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
-				GenerateName: "dek-reuse-",
+				Name: fmt.Sprintf("dek-reuse-%04d", i+1), // making creation order match returned list order / nonce counter
 			},
 			Spec: corev1.PodSpec{
 				Containers: []corev1.Container{
@@ -439,6 +443,19 @@ resources:
 		v := bytes.TrimPrefix(kv.Value, []byte("k8s:enc:kms:v2:kms-provider:"))
 		if err := proto.Unmarshal(v, &out[i]); err != nil {
 			t.Fatal(err)
+		}
+
+		nonce := out[i].EncryptedData[:12]
+		randN := nonce[:4]
+		count := nonce[4:]
+
+		if bytes.Equal(randN, bytes.Repeat([]byte{0}, len(randN))) {
+			t.Errorf("key %s: got all zeros for first four bytes", string(kv.Key))
+		}
+
+		counter := binary.LittleEndian.Uint64(count)
+		if uint64(i+1) != counter { // add one because the counter starts at 1, not 0
+			t.Errorf("key %s: counter nonce is invalid: want %d, got %d", string(kv.Key), i+1, counter)
 		}
 	}
 
