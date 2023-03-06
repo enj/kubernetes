@@ -329,6 +329,27 @@ resources:
 		t.Fatalf("Resource version should have changed after keyID update. old pod: %v, new pod: %v", testPod, updatedPod)
 	}
 
+	var wantCount uint64
+	wantCount++ // in place update with RV change
+
+	// with the second key we perform encryption during the following steps:
+	// - in place update with RV change
+	// - delete (which does an update to set deletion timestamp)
+	// - create
+	checkDEK := func(_ int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject) {
+		if bytes.Equal(obj.EncryptedDEK, firstEncryptedDEK) {
+			t.Errorf("key %s: incorrectly has the same EDEK", etcdKey)
+		}
+
+		if obj.KeyID != "2" {
+			t.Errorf("key %s: want key ID %s, got %s", etcdKey, "2", obj.KeyID)
+		}
+
+		if wantCount != counter {
+			t.Errorf("key %s: counter nonce is invalid: want %d, got %d", etcdKey, wantCount, counter)
+		}
+	}
+
 	// 3. no-op update for the updated pod should not result in RV change
 	updatedPod, err = test.inplaceUpdatePod(testNamespace, updatedPod, dynamicClient)
 	if err != nil {
@@ -343,6 +364,7 @@ resources:
 	if err := test.deletePod(testNamespace, dynamicClient); err != nil {
 		t.Fatalf("failed to delete test pod: %v", err)
 	}
+	wantCount++ // we cannot assert against the counter being 2 since the pod gets deleted
 
 	// 4. when kms-plugin is down, expect creation of new pod and encryption to succeed because the DEK is still valid
 	pluginMock.EnterFailedState()
@@ -354,6 +376,7 @@ resources:
 	if err != nil {
 		t.Fatalf("Create test pod should have succeeded due to valid DEK, ns: %s, got: %v", testNamespace, err)
 	}
+	wantCount++
 	version5 := newPod.GetResourceVersion()
 
 	// 5. when kms-plugin is down and DEK is valid, no-op update for a pod should succeed and not result in RV change
@@ -388,26 +411,7 @@ resources:
 	}
 
 	assertPodDEKs(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
-		1, 1,
-		"k8s:enc:kms:v2:kms-provider:",
-		func(_ int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject) {
-			if bytes.Equal(obj.EncryptedDEK, firstEncryptedDEK) {
-				t.Errorf("key %s: incorrectly has the same EDEK", etcdKey)
-			}
-
-			if obj.KeyID != "2" {
-				t.Errorf("key %s: want key ID %s, got %s", etcdKey, "2", obj.KeyID)
-			}
-
-			// with the second key we perform encryption during the following steps:
-			// - in place update with RV change
-			// - delete (which does an update to set deletion timestamp)
-			// - create
-			const want = 3
-			if want != counter {
-				t.Errorf("key %s: counter nonce is invalid: want %d, got %d", etcdKey, want, counter)
-			}
-		},
+		1, 1, "k8s:enc:kms:v2:kms-provider:", checkDEK,
 	)
 }
 
