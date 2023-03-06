@@ -74,8 +74,8 @@ func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) (value.Transformer
 		return nil, err
 	}
 
-	// TODO 100k comment
-	// TODO bug comment
+	// even at one million encryptions per second, this counter is enough for half a million years
+	// using this struct avoids alignment bugs: https://pkg.go.dev/sync/atomic#pkg-note-BUG
 	var nonce atomic.Uint64
 	nonceFunc := func(b []byte) error {
 		// we only need 8 bytes to store our 64 bit incrementing nonce
