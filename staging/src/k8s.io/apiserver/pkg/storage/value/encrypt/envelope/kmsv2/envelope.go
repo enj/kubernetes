@@ -270,7 +270,7 @@ func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsser
 	return transformer, resp, nil
 }
 
-func generateAESTransformer(key []byte) (value.Transformer, error) { // TODO unit test, actually remove and do integration test instead
+func generateAESTransformer(key []byte) (value.Transformer, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
