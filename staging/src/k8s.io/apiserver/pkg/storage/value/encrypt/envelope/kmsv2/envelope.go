@@ -218,7 +218,7 @@ func (t *envelopeTransformer) TransformToStorage(ctx context.Context, data []byt
 
 // addTransformerForDecryption inserts a new transformer to the Envelope cache of DEKs for future reads.
 func (t *envelopeTransformer) addTransformerForDecryption(encKey []byte, key []byte) (value.Transformer, error) {
-	transformer, err := generateAESTransformer(key, false)
+	transformer, err := generateAESTransformer(key)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +262,7 @@ func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsser
 		return nil, nil, fmt.Errorf("failed to encrypt DEK, error: %w", err)
 	}
 
-	transformer, err := generateAESTransformer(newKey, true)
+	transformer, err := generateAESTransformer(newKey)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -270,17 +270,12 @@ func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsser
 	return transformer, resp, nil
 }
 
-func generateAESTransformer(key []byte, forEncryption bool) (value.Transformer, error) { // TODO unit test, actually remove and do integration test instead
+func generateAESTransformer(key []byte) (value.Transformer, error) { // TODO unit test, actually remove and do integration test instead
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}
-
-	if forEncryption {
-		return aestransformer.NewGCMTransformerWithUniqueKeyUnsafe(block)
-	}
-
-	return aestransformer.NewGCMTransformer(block)
+	return aestransformer.NewGCMTransformerWithUniqueKeyUnsafe(block)
 }
 
 // generateKey generates a random key using system randomness.
