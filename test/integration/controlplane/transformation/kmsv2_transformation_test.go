@@ -42,6 +42,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/server/options/encryptionconfig"
+	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/apiserver/pkg/storage/value"
 	aestransformer "k8s.io/apiserver/pkg/storage/value/encrypt/aes"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2"
@@ -362,6 +363,11 @@ resources:
 	}
 
 	// TODO check total number of DEKs (should be 2?)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	t.Cleanup(cancel)
+
+	assertPodDEKs(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig, 1, 1, "k8s:enc:kms:v2:kms-provider:")
 }
 
 func TestKMSv2ProviderDEKReuse(t *testing.T) {
@@ -421,15 +427,19 @@ resources:
 		}
 	}
 
-	rawClient, etcdClient, err := integration.GetEtcdClients(test.kubeAPIServer.ServerOpts.Etcd.StorageConfig.Transport)
+	assertPodDEKs(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig, podCount, 1, "k8s:enc:kms:v2:kms-provider:")
+}
+
+func assertPodDEKs(ctx context.Context, t *testing.T, config storagebackend.Config, podCount, dekCount int, kmsPrefix string) {
+	t.Helper()
+
+	rawClient, etcdClient, err := integration.GetEtcdClients(config.Transport)
 	if err != nil {
 		t.Fatalf("failed to create etcd client: %v", err)
 	}
 	t.Cleanup(func() { _ = rawClient.Close() })
 
-	response, err := etcdClient.Get(ctx,
-		"/"+test.kubeAPIServer.ServerOpts.Etcd.StorageConfig.Prefix+"/pods/"+testNamespace+"/",
-		clientv3.WithPrefix())
+	response, err := etcdClient.Get(ctx, "/"+config.Prefix+"/pods/"+testNamespace+"/", clientv3.WithPrefix())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,7 +450,7 @@ resources:
 
 	out := make([]kmstypes.EncryptedObject, len(response.Kvs))
 	for i, kv := range response.Kvs {
-		v := bytes.TrimPrefix(kv.Value, []byte("k8s:enc:kms:v2:kms-provider:"))
+		v := bytes.TrimPrefix(kv.Value, []byte(kmsPrefix))
 		if err := proto.Unmarshal(v, &out[i]); err != nil {
 			t.Fatal(err)
 		}
@@ -465,8 +475,8 @@ resources:
 	}
 
 	// key ID does not change during the test so we should only have a single DEK
-	if uniqueDEKs.Len() != 1 {
-		t.Errorf("expected one DEK, got: %d", uniqueDEKs.Len())
+	if uniqueDEKs.Len() != dekCount {
+		t.Errorf("expected %d DEKs, got: %d", dekCount, uniqueDEKs.Len())
 	}
 }
 
