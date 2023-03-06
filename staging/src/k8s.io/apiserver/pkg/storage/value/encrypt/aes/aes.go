@@ -74,6 +74,8 @@ func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) (value.Transformer
 		return nil, err
 	}
 
+	// TODO 100k comment
+	// TODO bug comment
 	var nonce atomic.Uint64
 	nonceFunc := func(b []byte) error {
 		// we only need 8 bytes to store our 64 bit incrementing nonce

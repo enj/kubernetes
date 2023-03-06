@@ -138,7 +138,7 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 	// TODO: consider marking this as a stale read to support DEK defragmentation
 	if subtle.ConstantTimeCompare(state.EncryptedDEK, encryptedObject.EncryptedDEK) != 1 {
 		// TODO value.RecordStateMiss() metric
-		transformer = t.cache.get(encryptedObject.EncryptedDEK)
+		transformer = t.cache.get(encryptedObject.EncryptedDEK) // TODO unit test
 	}
 
 	// fallback to the envelope service if we do not have the transformer locally
@@ -270,7 +270,7 @@ func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsser
 	return transformer, resp, nil
 }
 
-func generateAESTransformer(key []byte, forEncryption bool) (value.Transformer, error) { // TODO unit test
+func generateAESTransformer(key []byte, forEncryption bool) (value.Transformer, error) { // TODO unit test, actually remove and do integration test instead
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
