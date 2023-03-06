@@ -68,7 +68,7 @@ func (c *simpleCache) set(key []byte, transformer value.Transformer) {
 	if transformer == nil {
 		panic("transformer must not be nil")
 	}
-	c.cache.Set(c.keyFunc(key), &decryptOnlyTransformer{transformer: transformer}, c.ttl) // TODO unit test
+	c.cache.Set(c.keyFunc(key), &decryptOnlyTransformer{transformer: transformer}, c.ttl)
 }
 
 // keyFunc generates a string key by hashing the inputs.
