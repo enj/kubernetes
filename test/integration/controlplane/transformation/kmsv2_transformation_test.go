@@ -276,6 +276,30 @@ resources:
 	if version1 != version2 {
 		t.Fatalf("Resource version should not have changed. old pod: %v, new pod: %v", testPod, updatedPod)
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	t.Cleanup(cancel)
+
+	var firstEncryptedDEK []byte
+	assertPodDEKs(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
+		1, 1,
+		"k8s:enc:kms:v2:kms-provider:",
+		func(_ int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject) {
+			firstEncryptedDEK = obj.EncryptedDEK
+
+			if obj.KeyID != "1" {
+				t.Errorf("key %s: want key ID %s, got %s", etcdKey, "1", obj.KeyID)
+			}
+
+			// with the first key we perform encryption during the following steps:
+			// - create
+			const want = 1
+			if want != counter {
+				t.Errorf("key %s: counter nonce is invalid: want %d, got %d", etcdKey, want, counter)
+			}
+		},
+	)
+
 	// 2. no-op update for the test pod with keyID update should result in RV change
 	pluginMock.UpdateKeyID()
 	if err := kmsv2mock.WaitForBase64PluginToBeUpdated(pluginMock); err != nil {
@@ -286,6 +310,7 @@ resources:
 	version3 := ""
 	err = wait.Poll(time.Second, time.Minute,
 		func() (bool, error) {
+			t.Log("polling for in-place update rv change")
 			updatedPod, err = test.inplaceUpdatePod(testNamespace, updatedPod, dynamicClient)
 			if err != nil {
 				return false, err
@@ -362,15 +387,27 @@ resources:
 		t.Fatalf("Resource version should not have changed again after the initial version updated as a result of the keyID update. old pod: %v, new pod: %v", newPod, updatedNewPod)
 	}
 
-	// TODO check total number of DEKs (should be 2?)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	t.Cleanup(cancel)
-
 	assertPodDEKs(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
 		1, 1,
 		"k8s:enc:kms:v2:kms-provider:",
-		nil,
+		func(_ int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject) {
+			if bytes.Equal(obj.EncryptedDEK, firstEncryptedDEK) {
+				t.Errorf("key %s: incorrectly has the same EDEK", etcdKey)
+			}
+
+			if obj.KeyID != "2" {
+				t.Errorf("key %s: want key ID %s, got %s", etcdKey, "2", obj.KeyID)
+			}
+
+			// with the second key we perform encryption during the following steps:
+			// - in place update with RV change
+			// - delete (which does an update to set deletion timestamp)
+			// - create
+			const want = 3
+			if want != counter {
+				t.Errorf("key %s: counter nonce is invalid: want %d, got %d", etcdKey, want, counter)
+			}
+		},
 	)
 }
 
@@ -434,7 +471,11 @@ resources:
 	assertPodDEKs(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
 		podCount, 1, // key ID does not change during the test so we should only have a single DEK
 		"k8s:enc:kms:v2:kms-provider:",
-		func(i int, counter uint64, etcdKey string, _ kmstypes.EncryptedObject) {
+		func(i int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject) {
+			if obj.KeyID != "1" {
+				t.Errorf("key %s: want key ID %s, got %s", etcdKey, "1", obj.KeyID)
+			}
+
 			if uint64(i+1) != counter { // add one because the counter starts at 1, not 0
 				t.Errorf("key %s: counter nonce is invalid: want %d, got %d", etcdKey, i+1, counter)
 			}
