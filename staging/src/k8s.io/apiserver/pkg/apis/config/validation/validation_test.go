@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -748,7 +749,7 @@ func TestStructure(t *testing.T) {
 						"secrets",
 						"*.",
 					},
-					wildCardErr,
+					overlapErr,
 				),
 			},
 		},
@@ -783,7 +784,7 @@ func TestStructure(t *testing.T) {
 						"secrets",
 						"*.*",
 					},
-					wildCardErr,
+					overlapErr,
 				),
 			},
 		},
@@ -818,7 +819,7 @@ func TestStructure(t *testing.T) {
 						"*.",
 						"*.*",
 					},
-					wildCardErr,
+					overlapErr,
 				),
 			},
 		},
@@ -957,7 +958,7 @@ func TestKMSEndpoint(t *testing.T) {
 			desc: "invalid url",
 			in:   &config.KMSConfiguration{Endpoint: "unix:///foo\n.socket"},
 			want: field.ErrorList{
-				field.Invalid(endpointField, "unix:///foo\n.socket", fmt.Sprintf(invalidURLErrFmt, `"unix:///foo\n.socket"`)),
+				field.Invalid(endpointField, "unix:///foo\n.socket", fmt.Sprintf(invalidURLErrFmt, `parse "unix:///foo\n.socket": net/url: invalid control character in URL`)),
 			},
 		},
 	}
