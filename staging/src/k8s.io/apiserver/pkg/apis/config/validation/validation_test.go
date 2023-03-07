@@ -397,9 +397,7 @@ func TestStructure(t *testing.T) {
 			want: field.ErrorList{
 				field.Invalid(
 					root.Index(0).Child("resources").Index(0),
-					[]string{
-						"events.events.k8s.io",
-					},
+					"events.events.k8s.io",
 					eventsGroupErr,
 				),
 			},
@@ -446,10 +444,7 @@ func TestStructure(t *testing.T) {
 			want: field.ErrorList{
 				field.Invalid(
 					root.Index(1).Child("resources").Index(1),
-					[]string{
-						"secret",
-						"events.events.k8s.io",
-					},
+					"events.events.k8s.io",
 					eventsGroupErr,
 				),
 			},
@@ -480,9 +475,7 @@ func TestStructure(t *testing.T) {
 			want: field.ErrorList{
 				field.Invalid(
 					root.Index(0).Child("resources").Index(0),
-					[]string{
-						"*.events.k8s.io",
-					},
+					"*.events.k8s.io",
 					eventsGroupErr,
 				),
 			},
@@ -513,9 +506,7 @@ func TestStructure(t *testing.T) {
 			want: field.ErrorList{
 				field.Invalid(
 					root.Index(0).Child("resources").Index(0),
-					[]string{
-						"*.extensions",
-					},
+					"*.extensions",
 					extensionsGroupErr,
 				),
 			},
@@ -546,9 +537,7 @@ func TestStructure(t *testing.T) {
 			want: field.ErrorList{
 				field.Invalid(
 					root.Index(0).Child("resources").Index(0),
-					[]string{
-						"foo.extensions",
-					},
+					"foo.extensions",
 					extensionsGroupErr,
 				),
 			},
@@ -579,9 +568,7 @@ func TestStructure(t *testing.T) {
 			want: field.ErrorList{
 				field.Invalid(
 					root.Index(0).Child("resources").Index(0),
-					[]string{
-						"*",
-					},
+					"*",
 					starResourceErr,
 				),
 			},
@@ -612,9 +599,7 @@ func TestStructure(t *testing.T) {
 			want: field.ErrorList{
 				field.Invalid(
 					root.Index(0).Child("resources").Index(0),
-					[]string{
-						"apiServerIPInfo",
-					},
+					"apiServerIPInfo",
 					resourceNameErr,
 				),
 			},
@@ -645,9 +630,7 @@ func TestStructure(t *testing.T) {
 			want: field.ErrorList{
 				field.Invalid(
 					root.Index(0).Child("resources").Index(0),
-					[]string{
-						"apiserveripinfo",
-					},
+					"apiserveripinfo",
 					nonRESTAPIResourceErr,
 				),
 			},
@@ -678,9 +661,7 @@ func TestStructure(t *testing.T) {
 			want: field.ErrorList{
 				field.Invalid(
 					root.Index(0).Child("resources").Index(0),
-					[]string{
-						"serviceipallocations",
-					},
+					"serviceipallocations",
 					nonRESTAPIResourceErr,
 				),
 			},
@@ -711,9 +692,7 @@ func TestStructure(t *testing.T) {
 			want: field.ErrorList{
 				field.Invalid(
 					root.Index(0).Child("resources").Index(0),
-					[]string{
-						"servicenodeportallocations",
-					},
+					"servicenodeportallocations",
 					nonRESTAPIResourceErr,
 				),
 			},
@@ -743,6 +722,38 @@ func TestStructure(t *testing.T) {
 			},
 			reload: false,
 			want:   field.ErrorList{},
+		},
+		{
+			desc: "should error when the same resource across groups is encrypted",
+			in: &config.EncryptionConfiguration{
+				Resources: []config.ResourceConfiguration{
+					{
+						Resources: []string{
+							"*.",
+							"foos.*",
+						},
+						Providers: []config.ProviderConfiguration{
+							{
+								KMS: &config.KMSConfiguration{
+									Name:       "foo",
+									Endpoint:   "unix:///tmp/kms-provider.socket",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									CacheSize:  &cacheSize,
+									APIVersion: "v1",
+								},
+							},
+						},
+					},
+				},
+			},
+			reload: false,
+			want: field.ErrorList{
+				field.Invalid(
+					root.Index(0).Child("resources").Index(1),
+					"foos.*",
+					resourceAcrossGroupErr,
+				),
+			},
 		},
 		{
 			desc: "should error when secrets are specified twice within the same resource list",

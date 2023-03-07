@@ -49,7 +49,7 @@ const (
 	overlapErr                     = "using overlapping resources such as 'secrets' and '*.' in the same resource list is not allowed as they will be masked"
 	nonRESTAPIResourceErr          = "resources which do not have REST API/s cannot be encrypted"
 	resourceNameErr                = "resource name should not contain capital letters"
-	resourceAcrossGroupErr         = "encrypting the same resource across groups is not supported" // TODO unit test
+	resourceAcrossGroupErr         = "encrypting the same resource across groups is not supported"
 	duplicateResourceErr           = "the same resource cannot be specified multiple times"
 )
 
@@ -202,7 +202,7 @@ func validateResourceNames(resources []string, fieldPath *field.Path) field.Erro
 				allErrs,
 				field.Invalid(
 					jj,
-					resources,
+					resources[j],
 					resourceNameErr,
 				),
 			)
@@ -215,7 +215,7 @@ func validateResourceNames(resources []string, fieldPath *field.Path) field.Erro
 				allErrs,
 				field.Invalid(
 					jj,
-					resources,
+					resources[j],
 					starResourceErr,
 				),
 			)
@@ -233,7 +233,7 @@ func validateResourceNames(resources []string, fieldPath *field.Path) field.Erro
 				allErrs,
 				field.Invalid(
 					jj,
-					resources,
+					resources[j],
 					nonRESTAPIResourceErr,
 				),
 			)
@@ -247,7 +247,7 @@ func validateResourceNames(resources []string, fieldPath *field.Path) field.Erro
 				allErrs,
 				field.Invalid(
 					jj,
-					resources,
+					resources[j],
 					eventsGroupErr,
 				),
 			)
@@ -260,7 +260,7 @@ func validateResourceNames(resources []string, fieldPath *field.Path) field.Erro
 				allErrs,
 				field.Invalid(
 					jj,
-					resources,
+					resources[j],
 					extensionsGroupErr,
 				),
 			)
@@ -273,7 +273,7 @@ func validateResourceNames(resources []string, fieldPath *field.Path) field.Erro
 				allErrs,
 				field.Invalid(
 					jj,
-					resources,
+					resources[j],
 					resourceAcrossGroupErr,
 				),
 			)
