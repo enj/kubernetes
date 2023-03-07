@@ -27,13 +27,22 @@ import (
 /*
 EncryptionConfiguration stores the complete configuration for encryption providers.
 It also allows the use of wildcards to specify the resources that should be encrypted.
-Use '*.' to encrypt all resources within a group or '*.*' can be used to encrypt all resources in any group.
-Use of wildcards within same resources list along with other resources are not allowed since they will be masked by the wildcard rules.
-example:
+Use '*.<group>' to encrypt all resources within a group or '*.*' to encrypt all resources.
+'*.' can be used to encrypt all resource in the core group.  '*.*' will encrypt all
+resources, even custom resources that are added after API server start.
+Use of wildcards that overlap within the same resource list or across multiple
+entries are not allowed since part of the configuration would be ineffective.
+Resource lists are processed in order, with earlier lists taking precedence.
+
+Example:
 
 	kind: EncryptionConfiguration
 	apiVersion: apiserver.config.k8s.io/v1
 	resources:
+	- resources:
+	  - events
+	  providers:
+	  - identity: {}  # do not encrypt events even though *.* is specified below
 	- resources:
 	  - secrets
 	  - configmaps
@@ -67,10 +76,13 @@ type EncryptionConfiguration struct {
 // ResourceConfiguration stores per resource configuration.
 type ResourceConfiguration struct {
 	// resources is a list of kubernetes resources which have to be encrypted. The resource names are derived from `resource` or `resource.group` of the group/version/resource.
-	// eg: pandas.awesome.bears.example is a custom resource with 'group': awesome.bears.example, 'resource': pandas)
+	// eg: pandas.awesome.bears.example is a custom resource with 'group': awesome.bears.example, 'resource': pandas.
+	// Use '*.*' to encrypt all resources and '*.<group>' to encrypt all resources in a specific group.
+	// eg: '*.awesome.bears.example' will encrypt all resources in the group 'awesome.bears.example'.
+	// eg: '*.' will encrypt all resources in the core group (such as pods, configmaps, etc).
 	Resources []string
 	// providers is a list of transformers to be used for reading and writing the resources to disk.
-	// eg: aesgcm, aescbc, secretbox, identity.
+	// eg: aesgcm, aescbc, secretbox, identity, kms.
 	Providers []ProviderConfiguration
 }
 

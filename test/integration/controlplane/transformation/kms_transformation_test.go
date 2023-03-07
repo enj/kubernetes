@@ -36,6 +36,7 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"golang.org/x/crypto/cryptobyte"
+
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -550,7 +551,7 @@ resources:
     - kms:
         name: encrypt-all-kms-provider
         cachesize: 1000
-        endpoint: unix:///@encrypt-all-kms-provider.sock		
+        endpoint: unix:///@encrypt-all-kms-provider.sock
 `
 
 	t.Run("encrypt all resources", func(t *testing.T) {
@@ -629,18 +630,22 @@ resources:
 			t.Fatalf("expected total number of keys to be greater or equal to total resources, but got %d", len(response.Kvs))
 		}
 
-		// assert that all resources are encrypted
 		wantPrefix := "k8s:enc:kms:v1:encrypt-all-kms-provider:"
 		for _, kv := range response.Kvs {
-			// following resources are not encrypted as they are not REST APIs and hence are not expected to be encrypted because it would be impossible to perform a storage migration on them
+			// the following resources are not encrypted as they are not REST APIs and hence are not expected
+			// to be encrypted because it would be impossible to perform a storage migration on them
 			if strings.Contains(kv.String(), "masterleases") ||
 				strings.Contains(kv.String(), "serviceips") ||
 				strings.Contains(kv.String(), "servicenodeports") {
 				// assert that these resources are not encrypted with any provider
-				if bytes.HasPrefix(kv.Value, []byte("k8s:enc")) {
-					t.Errorf("expected resource %s to not be prefixed with %s, but got %s", kv.Key, wantPrefix, kv.Value)
+				if bytes.HasPrefix(kv.Value, []byte("k8s:enc:")) {
+					t.Errorf("expected resource %s to not be prefixed with %s, but got %s", kv.Key, "k8s:enc:", kv.Value)
 				}
-			} else if !bytes.HasPrefix(kv.Value, []byte(wantPrefix)) {
+				continue
+			}
+
+			// assert that all other resources are encrypted
+			if !bytes.HasPrefix(kv.Value, []byte(wantPrefix)) {
 				t.Errorf("expected resource %s to be prefixed with %s, but got %s", kv.Key, wantPrefix, kv.Value)
 			}
 		}
@@ -702,7 +707,6 @@ resources:
 	wantPrefix := "k8s:enc:kms:v1:kms-provider:"
 	wantPrefixForEncryptAll := "k8s:enc:kms:v1:encrypt-all-kms-provider:"
 
-	// create job
 	_, err = test.createJob("test-job", "default")
 	if err != nil {
 		t.Fatalf("failed to create job: %v", err)
@@ -718,7 +722,6 @@ resources:
 		t.Fatalf("expected jobs to be prefixed with %s, but got %s", wantPrefix, rawJobsEnvelope.Kvs[0].Value)
 	}
 
-	// create deployment
 	_, err = test.createDeployment("test-deployment", "default")
 	if err != nil {
 		t.Fatalf("failed to create deployment: %v", err)
@@ -734,7 +737,6 @@ resources:
 		t.Fatalf("expected deployments to be prefixed with %s, but got %s", wantPrefixForEncryptAll, rawDeploymentsEnvelope.Kvs[0].Value)
 	}
 
-	// create secret
 	test.secret, err = test.createSecret(testSecret, testNamespace)
 	if err != nil {
 		t.Fatalf("Failed to create test secret, error: %v", err)
@@ -750,7 +752,6 @@ resources:
 		t.Fatalf("expected secrets to be prefixed with %s, but got %s", wantPrefixForEncryptAll, rawSecretEnvelope)
 	}
 
-	// create config map
 	_, err = test.createConfigMap(testConfigmap, testNamespace)
 	if err != nil {
 		t.Fatalf("Failed to create test configmap, error: %v", err)
@@ -761,8 +762,8 @@ resources:
 		t.Fatalf("failed to read configmaps from etcd: %v", err)
 	}
 
-	// assert prefix for configmaps
-	if bytes.HasPrefix(rawConfigMapEnvelope.Kvs[0].Value, []byte(wantPrefix)) {
+	// assert configmaps do not have the encrypted data prefix
+	if bytes.HasPrefix(rawConfigMapEnvelope.Kvs[0].Value, []byte("k8s:enc:")) {
 		t.Fatalf("expected configmaps to be not encrypted, got %s", rawConfigMapEnvelope.Kvs[0].Value)
 	}
 }
