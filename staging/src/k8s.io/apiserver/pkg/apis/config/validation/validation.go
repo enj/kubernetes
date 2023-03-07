@@ -46,7 +46,7 @@ const (
 	eventsGroupErr                 = "'*.events.k8s.io' objects are stored using the 'events' API group in etcd. Use 'events' instead in the config file"
 	extensionsGroupErr             = "'extensions' group has been removed and cannot be used for encryption"
 	starResourceErr                = "use '*.' to encrypt all the resources from core API group or *.* to encrypt all resources"
-	overlapErr                     = "using overlapping resources such as 'secrets' and '*.' in the same resource list is not allowed as they will be masked" // TODO test more
+	overlapErr                     = "using overlapping resources such as 'secrets' and '*.' in the same resource list is not allowed as they will be masked"
 	nonRESTAPIResourceErr          = "resources which do not have REST API/s cannot be encrypted"
 	resourceNameErr                = "resource name should not contain capital letters"
 	resourceAcrossGroupErr         = "encrypting the same resource across groups is not supported" // TODO unit test
