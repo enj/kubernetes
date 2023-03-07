@@ -722,6 +722,86 @@ func TestWildcardMasking(t *testing.T) {
 			expectedError: "resource '*.' is masked by earlier rule '*.'",
 		},
 		{
+			desc: "*.foo masked by *.foo",
+			config: &apiserverconfig.EncryptionConfiguration{
+				Resources: []apiserverconfig.ResourceConfiguration{
+					{
+						Resources: []string{
+							"*.foo",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								KMS: &apiserverconfig.KMSConfiguration{
+									Name:       "kms",
+									APIVersion: "v1",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									Endpoint:   "unix:///tmp/testprovider.sock",
+									CacheSize:  pointer.Int32(10),
+								},
+							},
+						},
+					},
+					{
+						Resources: []string{
+							"*.foo",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								KMS: &apiserverconfig.KMSConfiguration{
+									Name:       "kms2",
+									APIVersion: "v1",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									Endpoint:   "unix:///tmp/testprovider.sock",
+									CacheSize:  pointer.Int32(10),
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedError: "resource '*.foo' is masked by earlier rule '*.foo'",
+		},
+		{
+			desc: "*.* masked by *.*",
+			config: &apiserverconfig.EncryptionConfiguration{
+				Resources: []apiserverconfig.ResourceConfiguration{
+					{
+						Resources: []string{
+							"*.*",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								KMS: &apiserverconfig.KMSConfiguration{
+									Name:       "kms",
+									APIVersion: "v1",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									Endpoint:   "unix:///tmp/testprovider.sock",
+									CacheSize:  pointer.Int32(10),
+								},
+							},
+						},
+					},
+					{
+						Resources: []string{
+							"*.*",
+						},
+						Providers: []apiserverconfig.ProviderConfiguration{
+							{
+								KMS: &apiserverconfig.KMSConfiguration{
+									Name:       "kms2",
+									APIVersion: "v1",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									Endpoint:   "unix:///tmp/testprovider.sock",
+									CacheSize:  pointer.Int32(10),
+								},
+							},
+						},
+					},
+				},
+			},
+			expectedError: "resource '*.*' is masked by earlier rule '*.*'",
+		},
+		{
 			desc: "resources masked by *. group in multiple configurations",
 			config: &apiserverconfig.EncryptionConfiguration{
 				Resources: []apiserverconfig.ResourceConfiguration{
