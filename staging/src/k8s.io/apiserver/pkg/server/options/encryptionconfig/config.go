@@ -220,19 +220,17 @@ func getTransformerOverridesAndKMSPluginProbes(ctx context.Context, config *apis
 			gr := schema.ParseGroupResource(resource)
 
 			// check if resource is masked by *.group rule
-			if _, masked := resourceToPrefixTransformer[schema.GroupResource{
-				Group:    gr.Group,
-				Resource: "*",
-			}]; masked {
+			anyResourceInGroup := schema.GroupResource{Group: gr.Group, Resource: "*"}
+			if _, masked := resourceToPrefixTransformer[anyResourceInGroup]; masked {
 				// an earlier rule already configured a transformer for *.group, masking this rule
 				// return error since this is not allowed
-				return nil, nil, nil, fmt.Errorf("resource %s is masked by earlier rule '*.'", gr)
+				return nil, nil, nil, fmt.Errorf("resource %s is masked by earlier rule %s", grYAMLString(gr), grYAMLString(anyResourceInGroup))
 			}
 
 			if _, masked := resourceToPrefixTransformer[anyGroupAnyResource]; masked {
 				// an earlier rule already configured a transformer for *.*, masking this rule
 				// return error since this is not allowed
-				return nil, nil, nil, fmt.Errorf("resource %s is masked by earlier rule %s", grString(gr), anyGroupAnyResource)
+				return nil, nil, nil, fmt.Errorf("resource %s is masked by earlier rule %s", grYAMLString(gr), grYAMLString(anyGroupAnyResource))
 			}
 
 			resourceToPrefixTransformer[gr] = append(resourceToPrefixTransformer[gr], transformers...)
@@ -817,10 +815,16 @@ func transformerFromOverrides(transformerOverrides map[schema.GroupResource]valu
 	return identity.NewEncryptCheckTransformer()
 }
 
-func grString(gr schema.GroupResource) string {
+func grYAMLString(gr schema.GroupResource) string {
 	if gr.Group == "" && gr.Resource == "*" {
-		return "*."
+		return "'*.'"
 	}
 
-	return gr.String()
+	out := gr.String()
+
+	if gr.Resource == "*" {
+		return "'" + out + "'"
+	}
+
+	return out
 }
