@@ -745,6 +745,115 @@ func TestStructure(t *testing.T) {
 			want:   field.ErrorList{},
 		},
 		{
+			desc: "should error when secrets are specified twice within the same resource list",
+			in: &config.EncryptionConfiguration{
+				Resources: []config.ResourceConfiguration{
+					{
+						Resources: []string{
+							"secrets",
+							"secrets",
+						},
+						Providers: []config.ProviderConfiguration{
+							{
+								KMS: &config.KMSConfiguration{
+									Name:       "foo",
+									Endpoint:   "unix:///tmp/kms-provider.socket",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									CacheSize:  &cacheSize,
+									APIVersion: "v1",
+								},
+							},
+						},
+					},
+				},
+			},
+			reload: false,
+			want: field.ErrorList{
+				field.Invalid(
+					root.Index(0).Child("resources"),
+					[]string{
+						"secrets",
+						"secrets",
+					},
+					duplicateResourceErr,
+				),
+			},
+		},
+		{
+			desc: "should error once when secrets are specified many times within the same resource list",
+			in: &config.EncryptionConfiguration{
+				Resources: []config.ResourceConfiguration{
+					{
+						Resources: []string{
+							"secrets",
+							"secrets",
+							"secrets",
+							"secrets",
+						},
+						Providers: []config.ProviderConfiguration{
+							{
+								KMS: &config.KMSConfiguration{
+									Name:       "foo",
+									Endpoint:   "unix:///tmp/kms-provider.socket",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									CacheSize:  &cacheSize,
+									APIVersion: "v1",
+								},
+							},
+						},
+					},
+				},
+			},
+			reload: false,
+			want: field.ErrorList{
+				field.Invalid(
+					root.Index(0).Child("resources"),
+					[]string{
+						"secrets",
+						"secrets",
+						"secrets",
+						"secrets",
+					},
+					duplicateResourceErr,
+				),
+			},
+		},
+		{
+			desc: "should error when secrets are specified twice within the same resource list, via dot",
+			in: &config.EncryptionConfiguration{
+				Resources: []config.ResourceConfiguration{
+					{
+						Resources: []string{
+							"secrets",
+							"secrets.",
+						},
+						Providers: []config.ProviderConfiguration{
+							{
+								KMS: &config.KMSConfiguration{
+									Name:       "foo",
+									Endpoint:   "unix:///tmp/kms-provider.socket",
+									Timeout:    &metav1.Duration{Duration: 3 * time.Second},
+									CacheSize:  &cacheSize,
+									APIVersion: "v1",
+								},
+							},
+						},
+					},
+				},
+			},
+			reload: false,
+			want: field.ErrorList{
+				field.Invalid(
+					root.Index(0).Child("resources"),
+					[]string{
+						"secrets",
+						"secrets.",
+					},
+					duplicateResourceErr,
+				),
+			},
+		},
+		{
 			desc: "should error when '*.apps' and '*.' and '*.*' are used within the same resource list",
 			in: &config.EncryptionConfiguration{
 				Resources: []config.ResourceConfiguration{

@@ -50,7 +50,7 @@ const (
 	nonRESTAPIResourceErr          = "resources which do not have REST API/s cannot be encrypted"
 	resourceNameErr                = "resource name should not contain capital letters"
 	resourceAcrossGroupErr         = "encrypting the same resource across groups is not supported" // TODO unit test
-	duplicateResourceErr           = "the same resource cannot be specified multiple times"        // TODO unit test
+	duplicateResourceErr           = "the same resource cannot be specified multiple times"
 )
 
 var (
