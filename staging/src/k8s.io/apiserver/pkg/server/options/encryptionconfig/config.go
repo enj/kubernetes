@@ -56,18 +56,18 @@ import (
 )
 
 const (
-	aesCBCTransformerPrefixV1        = "k8s:enc:aescbc:v1:"
-	aesGCMTransformerPrefixV1        = "k8s:enc:aesgcm:v1:"
-	secretboxTransformerPrefixV1     = "k8s:enc:secretbox:v1:"
-	kmsTransformerPrefixV1           = "k8s:enc:kms:v1:"
-	kmsTransformerPrefixV2           = "k8s:enc:kms:v2:"
-	kmsPluginHealthzPositiveInterval = 1 * time.Minute
-	kmsPluginHealthzNegativeInterval = 10 * time.Second
-	kmsPluginDEKReuseInterval        = 3 * time.Minute
-	kmsPluginHealthzNegativeTTL      = 3 * time.Second
-	kmsPluginHealthzPositiveTTL      = 20 * time.Second
-	kmsAPIVersionV1                  = "v1"
-	kmsAPIVersionV2                  = "v2"
+	aesCBCTransformerPrefixV1          = "k8s:enc:aescbc:v1:"
+	aesGCMTransformerPrefixV1          = "k8s:enc:aesgcm:v1:"
+	secretboxTransformerPrefixV1       = "k8s:enc:secretbox:v1:"
+	kmsTransformerPrefixV1             = "k8s:enc:kms:v1:"
+	kmsTransformerPrefixV2             = "k8s:enc:kms:v2:"
+	kmsv2PluginHealthzPositiveInterval = 1 * time.Minute
+	kmsv2PluginHealthzNegativeInterval = 10 * time.Second
+	kmsv2PluginDEKReuseInterval        = 3 * time.Minute
+	kmsPluginHealthzNegativeTTL        = 3 * time.Second
+	kmsPluginHealthzPositiveTTL        = 20 * time.Second
+	kmsAPIVersionV1                    = "v1"
+	kmsAPIVersionV2                    = "v2"
 	// this name is used for two different healthz endpoints:
 	// - when one or more KMS v2 plugins are in use and no KMS v1 plugins are in use
 	//   in this case, all v2 plugins are probed via this single endpoint
@@ -321,7 +321,7 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 	// allow reads indefinitely in all cases
 	// allow writes indefinitely as long as there is no error
 	// allow writes for only up to kmsPluginDEKReuseInterval from now when there are errors
-	expirationTimestamp := envelopekmsv2.ValidateEncryptCapabilityNowFunc().Add(kmsPluginDEKReuseInterval) // start the timer before we make the network calls
+	expirationTimestamp := envelopekmsv2.ValidateEncryptCapabilityNowFunc().Add(kmsv2PluginDEKReuseInterval) // start the timer before we make the network calls
 
 	// state is valid and status keyID is unchanged from when we generated this DEK so there is no need to rotate it
 	// just move the expiration of the current state forward by the reuse interval
@@ -681,7 +681,7 @@ func kmsPrefixTransformer(ctx context.Context, config *apiserverconfig.KMSConfig
 		// make sure that the plugin's key ID is reasonably up-to-date
 		go wait.PollUntilWithContext(
 			ctx,
-			kmsPluginHealthzPositiveInterval,
+			kmsv2PluginHealthzPositiveInterval,
 			func(ctx context.Context) (bool, error) {
 				if err := runProbeCheckAndLog(ctx); err == nil {
 					return false, nil
@@ -692,7 +692,7 @@ func kmsPrefixTransformer(ctx context.Context, config *apiserverconfig.KMSConfig
 				// this limits the chance that our DEK expires during a transient failure
 				_ = wait.PollUntilWithContext(
 					ctx,
-					kmsPluginHealthzNegativeInterval,
+					kmsv2PluginHealthzNegativeInterval,
 					func(ctx context.Context) (bool, error) {
 						return runProbeCheckAndLog(ctx) == nil, nil
 					},
