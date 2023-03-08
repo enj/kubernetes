@@ -34,6 +34,13 @@ import (
 	"k8s.io/klog/v2"
 )
 
+var fatal = func(err error, msg string) {
+	klog.ErrorSDepth(1, err, msg)
+	os.Exit(1)
+}
+
+var mutateNonce = func(nonce *atomic.Uint64) {}
+
 type gcm struct {
 	aead      cipher.AEAD
 	nonceFunc func([]byte) error
@@ -81,6 +88,7 @@ func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) (value.Transformer
 	// even at one million encryptions per second, this counter is enough for half a million years
 	// using this struct avoids alignment bugs: https://pkg.go.dev/sync/atomic#pkg-note-BUG
 	var nonce atomic.Uint64
+	mutateNonce(&nonce)
 	nonceFunc := func(b []byte) error {
 		// we only need 8 bytes to store our 64 bit incrementing nonce
 		// instead of leaving the unused bytes as zeros, set those to random bits
@@ -94,8 +102,7 @@ func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) (value.Transformer
 		incrementingNonce := nonce.Add(1)
 		if incrementingNonce == 0 {
 			// this should never happen, and is unrecoverable if it does
-			klog.ErrorS(errors.New("aes-gcm detected nonce overflow"), "cryptographic wear out occurred")
-			os.Exit(1)
+			fatal(errors.New("aes-gcm detected nonce overflow"), "cryptographic wear out occurred")
 		}
 		binary.LittleEndian.PutUint64(b[randNonceSize:], incrementingNonce)
 		return nil
