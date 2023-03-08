@@ -314,7 +314,7 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 	metrics.RecordKeyIDFromStatus(h.name, statusKeyID)
 
 	// we do not check ValidateEncryptCapability here because it is fine to re-use an old key
-	// that was mark as expired during an unhealthy period.  as long as the key ID matches
+	// that was marked as expired during an unhealthy period.  As long as the key ID matches
 	// what we expect then there is no need to rotate here.
 	state, errState := h.getCurrentState()
 
@@ -513,15 +513,15 @@ func aesPrefixTransformer(config *apiserverconfig.AESConfiguration, fn blockTran
 		keyData := keyData
 		key, err := base64.StdEncoding.DecodeString(keyData.Secret)
 		if err != nil {
-			return result, fmt.Errorf("could not obtain secret for named key %s: %s", keyData.Name, err)
+			return result, fmt.Errorf("could not obtain secret for named key %s: %w", keyData.Name, err)
 		}
 		block, err := aes.NewCipher(key)
 		if err != nil {
-			return result, fmt.Errorf("error while creating cipher for named key %s: %s", keyData.Name, err)
+			return result, fmt.Errorf("error while creating cipher for named key %s: %w", keyData.Name, err)
 		}
 		transformer, err := fn(block)
 		if err != nil {
-			return result, fmt.Errorf("error while creating transformer for named key %s: %s", keyData.Name, err)
+			return result, fmt.Errorf("error while creating transformer for named key %s: %w", keyData.Name, err)
 		}
 
 		// Create a new PrefixTransformer for this key
