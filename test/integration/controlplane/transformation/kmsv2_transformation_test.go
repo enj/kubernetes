@@ -389,7 +389,7 @@ resources:
 		t.Fatalf("Resource version should not have changed again after the initial version updated as a result of the keyID update. old pod: %v, new pod: %v", newPod, updatedPod)
 	}
 
-	// Invalid the DEK by moving the current time forward
+	// Invalidate the DEK by moving the current time forward
 	origNowFunc := kmsv2.ValidateEncryptCapabilityNowFunc
 	t.Cleanup(func() { kmsv2.ValidateEncryptCapabilityNowFunc = origNowFunc })
 	kmsv2.ValidateEncryptCapabilityNowFunc = func() time.Time { return origNowFunc().Add(5 * time.Minute) }

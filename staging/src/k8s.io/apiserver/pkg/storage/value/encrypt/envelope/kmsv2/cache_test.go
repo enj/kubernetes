@@ -144,7 +144,7 @@ func TestCannotEncryptFromCache(t *testing.T) {
 	cache.set([]byte("key-001"), transformer)
 
 	if cache.cache.Len() != 1 {
-		t.Fatalf("expected one items in the cache, got %v", cache.cache.Len())
+		t.Fatalf("expected one item in the cache, got %v", cache.cache.Len())
 	}
 
 	shouldBeDecryptOnly := cache.get([]byte("key-001"))

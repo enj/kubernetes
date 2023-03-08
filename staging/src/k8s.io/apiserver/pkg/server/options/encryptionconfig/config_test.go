@@ -1174,7 +1174,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			}
 
 			if errString(err) != tt.wantErr {
-				t.Errorf("attemptToRotateDEK() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("rotateDEKOnKeyIDChange() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
