@@ -26,8 +26,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"k8s.io/apiserver/pkg/storage/value"
@@ -45,6 +47,88 @@ func TestGCMDataStable(t *testing.T) {
 	// IMPORTANT: If you must fix this test, then all previously encrypted data from previously compiled versions is broken unless you hardcode the nonce size to 12
 	if aead.NonceSize() != 12 {
 		t.Fatalf("The underlying Golang crypto size has changed, old version of AES on disk will not be readable unless the AES implementation is changed to hardcode nonce size.")
+	}
+}
+
+func TestGCMUnsafeNonceOverflow(t *testing.T) {
+	var errFatal error
+	var msgFatal string
+	var count int
+
+	fatalOrig := fatal
+	t.Cleanup(func() { fatal = fatalOrig })
+	fatal = func(err error, msg string) {
+		errFatal = err
+		msgFatal = msg
+		count++
+	}
+
+	var nonceFatal *atomic.Uint64
+
+	mutateNonceOrig := mutateNonce
+	t.Cleanup(func() { mutateNonce = mutateNonceOrig })
+	mutateNonce = func(nonce *atomic.Uint64) { nonceFatal = nonce }
+
+	block, err := aes.NewCipher([]byte("abcdefghijklmnop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transformer := newGCMTransformerWithUniqueKeyUnsafe(t, block)
+
+	assertNonce(t, nonceFatal, 0)
+
+	runEncrypt(t, transformer)
+
+	assertNonce(t, nonceFatal, 1)
+
+	runEncrypt(t, transformer)
+
+	assertNonce(t, nonceFatal, 2)
+
+	nonceFatal.Store(math.MaxUint64 - 1) // pretend lots of encryptions occurred
+
+	runEncrypt(t, transformer)
+
+	assertNonce(t, nonceFatal, math.MaxUint64)
+
+	if count != 0 {
+		t.Errorf("fatal should not have been called yet")
+	}
+
+	runEncrypt(t, transformer)
+
+	assertNonce(t, nonceFatal, 0)
+
+	if count != 1 {
+		t.Errorf("fatal should have been once, got %d", count)
+	}
+
+	if msgFatal != "cryptographic wear out occurred" {
+		t.Errorf("unexpected message: %s", msgFatal)
+	}
+
+	if errFatal == nil || errFatal.Error() != "aes-gcm detected nonce overflow" {
+		t.Errorf("unexpected error: %v", errFatal)
+	}
+}
+
+func assertNonce(t *testing.T, nonce *atomic.Uint64, want uint64) {
+	t.Helper()
+
+	if got := nonce.Load(); want != got {
+		t.Errorf("nonce should equal %d, got %d", want, got)
+	}
+}
+
+func runEncrypt(t *testing.T, transformer value.Transformer) {
+	t.Helper()
+
+	ctx := context.Background()
+	dataCtx := value.DefaultContext("authenticated_data")
+
+	_, err := transformer.TransformToStorage(ctx, []byte("firstvalue"), dataCtx)
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
