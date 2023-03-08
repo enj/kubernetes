@@ -22,6 +22,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -1056,8 +1057,10 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		klog.LogToStderr(true)
-		// TODO reset log level
-		// TODO reset output
+		if err := level.Set("0"); err != nil {
+			t.Fatal(err)
+		}
+		klog.SetOutput(io.Discard)
 	})
 
 	tests := []struct {
@@ -1188,7 +1191,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			err := h.rotateDEKOnKeyIDChange(ctx, tt.statusKeyID, "panda")
 
 			klog.Flush()
-			klog.SetOutput(&bytes.Buffer{}) // prevent further writes into buf
+			klog.SetOutput(io.Discard) // prevent further writes into buf
 
 			if diff := cmp.Diff(tt.wantLogs, logLines(buf.String())); len(diff) > 0 {
 				t.Errorf("log mismatch (-want +got):\n%s", diff)
