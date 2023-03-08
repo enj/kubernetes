@@ -43,6 +43,7 @@ import (
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/component-base/metrics/testutil"
+	"k8s.io/klog/v2"
 	kmsservice "k8s.io/kms/pkg/service"
 )
 
@@ -1048,6 +1049,17 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 	t.Cleanup(func() { kmsv2.ValidateEncryptCapabilityNowFunc = origNowFunc })
 	kmsv2.ValidateEncryptCapabilityNowFunc = func() time.Time { return now }
 
+	klog.LogToStderr(false)
+	var level klog.Level
+	if err := level.Set("6"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		klog.LogToStderr(true)
+		// TODO reset log level
+		// TODO reset output
+	})
+
 	tests := []struct {
 		name             string
 		service          *testKMSv2EnvelopeService
@@ -1056,6 +1068,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 		wantState        envelopekmsv2.State
 		wantEncryptCalls int
 		wantMetrics      string
+		wantLogs         []string
 		wantErr          string
 	}{
 		{
@@ -1069,7 +1082,12 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			},
 			wantEncryptCalls: 1,
 			wantMetrics:      "",
-			wantErr:          "",
+			wantLogs: []string{
+				`"encrypting content using envelope service" uid="panda"`,
+				fmt.Sprintf(`"successfully rotated DEK" uid="panda" newKeyID="1" oldKeyID="" expirationTimestamp="%s"`,
+					now.Add(3*time.Minute).Format(time.RFC3339)),
+			},
+			wantErr: "",
 		},
 		{
 			name:        "happy path, with previous state",
@@ -1082,6 +1100,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			},
 			wantEncryptCalls: 0,
 			wantMetrics:      "",
+			wantLogs:         nil,
 			wantErr:          "",
 		},
 		{
@@ -1095,6 +1114,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			},
 			wantEncryptCalls: 0,
 			wantMetrics:      "",
+			wantLogs:         nil,
 			wantErr:          "",
 		},
 		{
@@ -1108,7 +1128,12 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			},
 			wantEncryptCalls: 1,
 			wantMetrics:      "",
-			wantErr:          "",
+			wantLogs: []string{
+				`"encrypting content using envelope service" uid="panda"`,
+				fmt.Sprintf(`"successfully rotated DEK" uid="panda" newKeyID="4" oldKeyID="3" expirationTimestamp="%s"`,
+					now.Add(3*time.Minute).Format(time.RFC3339)),
+			},
+			wantErr: "",
 		},
 		{
 			name:        "service down but key ID does not match",
@@ -1121,6 +1146,9 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			},
 			wantEncryptCalls: 1,
 			wantMetrics:      "",
+			wantLogs: []string{
+				`"encrypting content using envelope service" uid="panda"`,
+			},
 			wantErr: `failed to rotate DEK uid="panda", ` +
 				`errState=<nil>, errGen=failed to encrypt DEK, error: broken, statusKeyID="5", ` +
 				`encryptKeyID="", stateKeyID="4", expirationTimestamp=` + now.Add(7*time.Minute).Format(time.RFC3339),
@@ -1140,11 +1168,15 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			# TYPE apiserver_envelope_encryption_invalid_key_id_from_status_total counter
 			apiserver_envelope_encryption_invalid_key_id_from_status_total{error="empty",provider_name="panda"} 1
 			`,
-			wantErr: "",
+			wantLogs: nil,
+			wantErr:  "",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			klog.SetOutput(&buf)
+
 			ctx := testContext(t)
 
 			h := &kmsv2PluginProbe{
@@ -1154,6 +1186,13 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			h.state.Store(&tt.state)
 
 			err := h.rotateDEKOnKeyIDChange(ctx, tt.statusKeyID, "panda")
+
+			klog.Flush()
+			klog.SetOutput(&bytes.Buffer{}) // prevent further writes into buf
+
+			if diff := cmp.Diff(tt.wantLogs, logLines(buf.String())); len(diff) > 0 {
+				t.Errorf("log mismatch (-want +got):\n%s", diff)
+			}
 
 			ignoredFields := sets.NewString("Transformer", "EncryptedDEK", "UID")
 
@@ -1187,4 +1226,16 @@ func validState(keyID string, exp time.Time) envelopekmsv2.State {
 		KeyID:               keyID,
 		ExpirationTimestamp: exp,
 	}
+}
+
+func logLines(logs string) []string {
+	if len(logs) == 0 {
+		return nil
+	}
+
+	lines := strings.Split(strings.TrimSpace(logs), "\n")
+	for i, line := range lines {
+		lines[i] = strings.SplitN(line, "] ", 2)[1]
+	}
+	return lines
 }
