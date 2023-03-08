@@ -973,9 +973,12 @@ func getTransformerFromEncryptionConfig(t *testing.T, encryptionConfigPath strin
 }
 
 func TestIsKMSv2ProviderHealthyError(t *testing.T) {
+	probe := &kmsv2PluginProbe{name: "testplugin"}
+
 	testCases := []struct {
 		desc           string
 		expectedErr    string
+		wantMetrics    string
 		statusResponse *kmsservice.StatusResponse
 	}{
 		{
@@ -983,14 +986,24 @@ func TestIsKMSv2ProviderHealthyError(t *testing.T) {
 			statusResponse: &kmsservice.StatusResponse{
 				Healthz: "unhealthy",
 			},
-			expectedErr: "got unexpected healthz status: unhealthy, expected KMSv2 API version v2alpha1, got , expected KMSv2 KeyID to be set, got ",
+			expectedErr: "got unexpected healthz status: unhealthy, expected KMSv2 API version v2alpha1, got , got invalid KMSv2 KeyID ",
+			wantMetrics: `
+			# HELP apiserver_envelope_encryption_invalid_key_id_from_status_total [ALPHA] Number of times an invalid keyID is returned by the Status RPC call split by error.
+			# TYPE apiserver_envelope_encryption_invalid_key_id_from_status_total counter
+			apiserver_envelope_encryption_invalid_key_id_from_status_total{error="empty",provider_name="testplugin"} 1
+			`,
 		},
 		{
 			desc: "version is not v2alpha1",
 			statusResponse: &kmsservice.StatusResponse{
 				Version: "v1beta1",
 			},
-			expectedErr: "got unexpected healthz status: , expected KMSv2 API version v2alpha1, got v1beta1, expected KMSv2 KeyID to be set, got ",
+			expectedErr: "got unexpected healthz status: , expected KMSv2 API version v2alpha1, got v1beta1, got invalid KMSv2 KeyID ",
+			wantMetrics: `
+			# HELP apiserver_envelope_encryption_invalid_key_id_from_status_total [ALPHA] Number of times an invalid keyID is returned by the Status RPC call split by error.
+			# TYPE apiserver_envelope_encryption_invalid_key_id_from_status_total counter
+			apiserver_envelope_encryption_invalid_key_id_from_status_total{error="empty",provider_name="testplugin"} 1
+			`,
 		},
 		{
 			desc: "missing keyID",
@@ -998,7 +1011,12 @@ func TestIsKMSv2ProviderHealthyError(t *testing.T) {
 				Healthz: "ok",
 				Version: "v2alpha1",
 			},
-			expectedErr: "expected KMSv2 KeyID to be set, got ",
+			expectedErr: "got invalid KMSv2 KeyID ",
+			wantMetrics: `
+			# HELP apiserver_envelope_encryption_invalid_key_id_from_status_total [ALPHA] Number of times an invalid keyID is returned by the Status RPC call split by error.
+			# TYPE apiserver_envelope_encryption_invalid_key_id_from_status_total counter
+			apiserver_envelope_encryption_invalid_key_id_from_status_total{error="empty",provider_name="testplugin"} 1
+			`,
 		},
 		{
 			desc: "invalid long keyID",
@@ -1007,15 +1025,26 @@ func TestIsKMSv2ProviderHealthyError(t *testing.T) {
 				Version: "v2alpha1",
 				KeyID:   sampleInvalidKeyID,
 			},
-			expectedErr: "expected KMSv2 KeyID to be set, got ",
+			expectedErr: "got invalid KMSv2 KeyID ",
+			wantMetrics: `
+			# HELP apiserver_envelope_encryption_invalid_key_id_from_status_total [ALPHA] Number of times an invalid keyID is returned by the Status RPC call split by error.
+			# TYPE apiserver_envelope_encryption_invalid_key_id_from_status_total counter
+			apiserver_envelope_encryption_invalid_key_id_from_status_total{error="too_long",provider_name="testplugin"} 1
+			`,
 		},
 	}
 
 	for _, tt := range testCases {
 		t.Run(tt.desc, func(t *testing.T) {
-			err := isKMSv2ProviderHealthy("testplugin", tt.statusResponse)
+			metrics.InvalidKeyIDFromStatusTotal.Reset()
+			err := probe.isKMSv2ProviderHealthyAndMaybeRotateDEK(testContext(t), tt.statusResponse)
 			if !strings.Contains(errString(err), tt.expectedErr) {
 				t.Errorf("expected err %q, got %q", tt.expectedErr, errString(err))
+			}
+			if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(tt.wantMetrics),
+				"apiserver_envelope_encryption_invalid_key_id_from_status_total",
+			); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
@@ -1070,7 +1099,6 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 		statusKeyID      string
 		wantState        envelopekmsv2.State
 		wantEncryptCalls int
-		wantMetrics      string
 		wantLogs         []string
 		wantErr          string
 	}{
@@ -1084,7 +1112,6 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 1,
-			wantMetrics:      "",
 			wantLogs: []string{
 				`"encrypting content using envelope service" uid="panda"`,
 				fmt.Sprintf(`"successfully rotated DEK" uid="panda" newKeyID="1" oldKeyID="" expirationTimestamp="%s"`,
@@ -1102,7 +1129,6 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 0,
-			wantMetrics:      "",
 			wantLogs:         nil,
 			wantErr:          "",
 		},
@@ -1116,7 +1142,6 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 0,
-			wantMetrics:      "",
 			wantLogs:         nil,
 			wantErr:          "",
 		},
@@ -1130,7 +1155,6 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 1,
-			wantMetrics:      "",
 			wantLogs: []string{
 				`"encrypting content using envelope service" uid="panda"`,
 				fmt.Sprintf(`"successfully rotated DEK" uid="panda" newKeyID="4" oldKeyID="3" expirationTimestamp="%s"`,
@@ -1148,31 +1172,12 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 				ExpirationTimestamp: now.Add(7 * time.Minute),
 			},
 			wantEncryptCalls: 1,
-			wantMetrics:      "",
 			wantLogs: []string{
 				`"encrypting content using envelope service" uid="panda"`,
 			},
 			wantErr: `failed to rotate DEK uid="panda", ` +
 				`errState=<nil>, errGen=failed to encrypt DEK, error: broken, statusKeyID="5", ` +
 				`encryptKeyID="", stateKeyID="4", expirationTimestamp=` + now.Add(7*time.Minute).Format(time.RFC3339),
-		},
-		{
-			name:        "invalid status id input",
-			service:     &testKMSv2EnvelopeService{err: fmt.Errorf("broken")}, // not called
-			state:       validState("6", now),
-			statusKeyID: "",
-			wantState: envelopekmsv2.State{
-				KeyID:               "6",
-				ExpirationTimestamp: now,
-			},
-			wantEncryptCalls: 0,
-			wantMetrics: `
-			# HELP apiserver_envelope_encryption_invalid_key_id_from_status_total [ALPHA] Number of times an invalid keyID is returned by the Status RPC call split by error.
-			# TYPE apiserver_envelope_encryption_invalid_key_id_from_status_total counter
-			apiserver_envelope_encryption_invalid_key_id_from_status_total{error="empty",provider_name="panda"} 1
-			`,
-			wantLogs: nil,
-			wantErr:  "",
 		},
 	}
 	for _, tt := range tests {
@@ -1207,12 +1212,6 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 
 			if tt.wantEncryptCalls != tt.service.encryptCalls {
 				t.Errorf("want %d encryptCalls, got %d", tt.wantEncryptCalls, tt.service.encryptCalls)
-			}
-
-			if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(tt.wantMetrics),
-				"apiserver_envelope_encryption_invalid_key_id_from_status_total",
-			); err != nil {
-				t.Fatal(err)
 			}
 
 			if errString(err) != tt.wantErr {

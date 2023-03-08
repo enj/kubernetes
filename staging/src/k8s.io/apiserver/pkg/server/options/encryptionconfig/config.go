@@ -281,13 +281,7 @@ func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 		return fmt.Errorf("failed to perform status section of the healthz check for KMS Provider %s, error: %w", h.name, err)
 	}
 
-	if err := h.rotateDEKOnKeyIDChange(ctx, p.KeyID, string(uuid.NewUUID())); err != nil {
-		h.lastResponse = &kmsPluginHealthzResponse{err: err, received: time.Now()}
-		h.ttl = kmsPluginHealthzNegativeTTL
-		return err
-	}
-
-	if err := isKMSv2ProviderHealthy(h.name, p); err != nil {
+	if err := h.isKMSv2ProviderHealthyAndMaybeRotateDEK(ctx, p); err != nil {
 		h.lastResponse = &kmsPluginHealthzResponse{err: err, received: time.Now()}
 		h.ttl = kmsPluginHealthzNegativeTTL
 		return err
@@ -305,14 +299,6 @@ func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 // If the key ID returned by Status matches the current state, the expiration of the current state is extended
 // and no rotation is performed.
 func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKeyID, uid string) error {
-	errCode, err := envelopekmsv2.ValidateKeyID(statusKeyID)
-	if err != nil {
-		metrics.RecordInvalidKeyIDFromStatus(h.name, string(errCode))
-		return nil // let isKMSv2ProviderHealthy handle this error
-	}
-
-	metrics.RecordKeyIDFromStatus(h.name, statusKeyID)
-
 	// we do not check ValidateEncryptCapability here because it is fine to re-use an old key
 	// that was marked as expired during an unhealthy period.  As long as the key ID matches
 	// what we expect then there is no need to rotate here.
@@ -386,8 +372,7 @@ func (h *kmsv2PluginProbe) getCurrentState() (envelopekmsv2.State, error) {
 	return state, nil
 }
 
-// isKMSv2ProviderHealthy checks if the KMSv2-Plugin is healthy.
-func isKMSv2ProviderHealthy(name string, response *kmsservice.StatusResponse) error {
+func (h *kmsv2PluginProbe) isKMSv2ProviderHealthyAndMaybeRotateDEK(ctx context.Context, response *kmsservice.StatusResponse) error {
 	var errs []error
 	if response.Healthz != "ok" {
 		errs = append(errs, fmt.Errorf("got unexpected healthz status: %s", response.Healthz))
@@ -395,12 +380,17 @@ func isKMSv2ProviderHealthy(name string, response *kmsservice.StatusResponse) er
 	if response.Version != envelopekmsv2.KMSAPIVersion {
 		errs = append(errs, fmt.Errorf("expected KMSv2 API version %s, got %s", envelopekmsv2.KMSAPIVersion, response.Version))
 	}
-	if _, err := envelopekmsv2.ValidateKeyID(response.KeyID); err != nil {
-		errs = append(errs, fmt.Errorf("expected KMSv2 KeyID to be set, got %s", response.KeyID))
+
+	if errCode, err := envelopekmsv2.ValidateKeyID(response.KeyID); err != nil {
+		metrics.RecordInvalidKeyIDFromStatus(h.name, string(errCode))
+		errs = append(errs, fmt.Errorf("got invalid KMSv2 KeyID %q: %w", response.KeyID, err))
+	} else {
+		metrics.RecordKeyIDFromStatus(h.name, response.KeyID)
+		errs = append(errs, h.rotateDEKOnKeyIDChange(ctx, response.KeyID, string(uuid.NewUUID())))
 	}
 
 	if err := utilerrors.Reduce(utilerrors.NewAggregate(errs)); err != nil {
-		return fmt.Errorf("kmsv2 Provider %s is not healthy, error: %w", name, err)
+		return fmt.Errorf("kmsv2 Provider %s is not healthy, error: %w", h.name, err)
 	}
 	return nil
 }
