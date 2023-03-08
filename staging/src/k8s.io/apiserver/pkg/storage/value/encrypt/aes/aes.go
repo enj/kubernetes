@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sync/atomic"
 
 	"k8s.io/apiserver/pkg/storage/value"
@@ -92,7 +93,9 @@ func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) (value.Transformer
 
 		incrementingNonce := nonce.Add(1)
 		if incrementingNonce == 0 {
-			klog.Fatal("aes-gcm detected nonce overflow") // this should never happen, and is unrecoverable if it does
+			// this should never happen, and is unrecoverable if it does
+			klog.ErrorS(errors.New("aes-gcm detected nonce overflow"), "cryptographic wear out occurred")
+			os.Exit(1)
 		}
 		binary.LittleEndian.PutUint64(b[randNonceSize:], incrementingNonce)
 		return nil
@@ -109,7 +112,7 @@ func randomNonce(b []byte) error {
 func (t *gcm) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
 	nonceSize := t.aead.NonceSize()
 	if len(data) < nonceSize {
-		return nil, false, fmt.Errorf("the stored data was shorter than the required size")
+		return nil, false, errors.New("the stored data was shorter than the required size")
 	}
 	result, err := t.aead.Open(nil, data[:nonceSize], data[nonceSize:], dataCtx.AuthenticatedData())
 	return result, false, err
@@ -139,7 +142,7 @@ func NewCBCTransformer(block cipher.Block) value.Transformer {
 }
 
 var (
-	ErrInvalidBlockSize    = fmt.Errorf("the stored data is not a multiple of the block size")
+	errInvalidBlockSize    = errors.New("the stored data is not a multiple of the block size")
 	errInvalidPKCS7Data    = errors.New("invalid PKCS7 data (empty or not padded)")
 	errInvalidPKCS7Padding = errors.New("invalid padding on input")
 )
@@ -147,13 +150,13 @@ var (
 func (t *cbc) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
 	blockSize := aes.BlockSize
 	if len(data) < blockSize {
-		return nil, false, fmt.Errorf("the stored data was shorter than the required size")
+		return nil, false, errors.New("the stored data was shorter than the required size")
 	}
 	iv := data[:blockSize]
 	data = data[blockSize:]
 
 	if len(data)%blockSize != 0 {
-		return nil, false, ErrInvalidBlockSize
+		return nil, false, errInvalidBlockSize
 	}
 
 	result := make([]byte, len(data))
@@ -183,7 +186,7 @@ func (t *cbc) TransformToStorage(ctx context.Context, data []byte, dataCtx value
 	result := make([]byte, blockSize+len(data)+paddingSize)
 	iv := result[:blockSize]
 	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		return nil, fmt.Errorf("unable to read sufficient random bytes")
+		return nil, errors.New("unable to read sufficient random bytes")
 	}
 	copy(result[blockSize:], data)
 
