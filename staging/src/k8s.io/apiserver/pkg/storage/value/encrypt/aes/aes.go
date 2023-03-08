@@ -67,7 +67,10 @@ func NewGCMTransformer(block cipher.Block) (value.Transformer, error) {
 // a monotonically incrementing atomic counter.  This means that the key must be randomly generated
 // on process startup and must never be used for encryption outside the lifetime of the process.
 // Unlike NewGCMTransformer, this function is immune to the birthday attack and thus the key can
-// be used indefinitely without rotation.
+// be used "indefinitely" without rotation.  Specifically, cryptographic wear out of AES-GCM with
+// a sequential nonce occurs after 2^64 encryptions, which is not a concern for our use cases.
+// Even if that occurs, the nonce counter would overflow and crash the process.  We have no concerns
+// around plaintext length because all stored items are small (less than 2 MB).
 func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) (value.Transformer, error) {
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
