@@ -56,18 +56,28 @@ import (
 )
 
 const (
-	aesCBCTransformerPrefixV1          = "k8s:enc:aescbc:v1:"
-	aesGCMTransformerPrefixV1          = "k8s:enc:aesgcm:v1:"
-	secretboxTransformerPrefixV1       = "k8s:enc:secretbox:v1:"
-	kmsTransformerPrefixV1             = "k8s:enc:kms:v1:"
-	kmsTransformerPrefixV2             = "k8s:enc:kms:v2:"
+	aesCBCTransformerPrefixV1    = "k8s:enc:aescbc:v1:"
+	aesGCMTransformerPrefixV1    = "k8s:enc:aesgcm:v1:"
+	secretboxTransformerPrefixV1 = "k8s:enc:secretbox:v1:"
+	kmsTransformerPrefixV1       = "k8s:enc:kms:v1:"
+	kmsTransformerPrefixV2       = "k8s:enc:kms:v2:"
+
+	// these constants relate to how the KMS v2 plugin status poll logic
+	// and the DEK generation logic behave.  In particular, the positive
+	// interval and max age are closely related as the difference between
+	// these values defines the worse case window in which the write DEK
+	// could expire due to the plugin going into an error state.  The
+	// worse case window divided by the negative interval defines the
+	// minimum amount of times the server will attempt to return to a
+	// healthy state before the DEK expires and writes begin to fail.
 	kmsv2PluginHealthzPositiveInterval = 1 * time.Minute
 	kmsv2PluginHealthzNegativeInterval = 10 * time.Second
 	kmsv2PluginWriteDEKMaxAge          = 3 * time.Minute
-	kmsPluginHealthzNegativeTTL        = 3 * time.Second
-	kmsPluginHealthzPositiveTTL        = 20 * time.Second
-	kmsAPIVersionV1                    = "v1"
-	kmsAPIVersionV2                    = "v2"
+
+	kmsPluginHealthzNegativeTTL = 3 * time.Second
+	kmsPluginHealthzPositiveTTL = 20 * time.Second
+	kmsAPIVersionV1             = "v1"
+	kmsAPIVersionV2             = "v2"
 	// this name is used for two different healthz endpoints:
 	// - when one or more KMS v2 plugins are in use and no KMS v1 plugins are in use
 	//   in this case, all v2 plugins are probed via this single endpoint
@@ -306,8 +316,9 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 
 	// allow reads indefinitely in all cases
 	// allow writes indefinitely as long as there is no error
-	// allow writes for only up to kmsPluginDEKReuseInterval from now when there are errors
-	expirationTimestamp := envelopekmsv2.ValidateEncryptCapabilityNowFunc().Add(kmsv2PluginWriteDEKMaxAge) // start the timer before we make the network calls
+	// allow writes for only up to kmsv2PluginWriteDEKMaxAge from now when there are errors
+	// we start the timer before we make the network call because kmsv2PluginWriteDEKMaxAge is meant to be the upper bound
+	expirationTimestamp := envelopekmsv2.ValidateEncryptCapabilityNowFunc().Add(kmsv2PluginWriteDEKMaxAge)
 
 	// state is valid and status keyID is unchanged from when we generated this DEK so there is no need to rotate it
 	// just move the expiration of the current state forward by the reuse interval
