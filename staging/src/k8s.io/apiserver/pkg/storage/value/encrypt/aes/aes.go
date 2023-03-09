@@ -39,8 +39,6 @@ var fatal = func(err error, msg string) {
 	os.Exit(1)
 }
 
-var mutateNonce = func(nonce *atomic.Uint64) {}
-
 type gcm struct {
 	aead      cipher.AEAD
 	nonceFunc func([]byte) error
@@ -93,7 +91,6 @@ func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonce *atomic.Uint
 		return nil, err
 	}
 
-	mutateNonce(nonce) // for testing
 	nonceFunc := func(b []byte) error {
 		// we only need 8 bytes to store our 64 bit incrementing nonce
 		// instead of leaving the unused bytes as zeros, set those to random bits

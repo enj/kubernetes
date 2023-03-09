@@ -63,33 +63,32 @@ func TestGCMUnsafeNonceOverflow(t *testing.T) {
 		count++
 	}
 
-	var nonceFatal *atomic.Uint64
-
-	mutateNonceOrig := mutateNonce
-	t.Cleanup(func() { mutateNonce = mutateNonceOrig })
-	mutateNonce = func(nonce *atomic.Uint64) { nonceFatal = nonce }
+	var nonceFatal atomic.Uint64
 
 	block, err := aes.NewCipher([]byte("abcdefghijklmnop"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	transformer := newGCMTransformerWithUniqueKeyUnsafeTest(t, block)
+	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block, &nonceFatal)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	assertNonce(t, nonceFatal, 0)
+	assertNonce(t, &nonceFatal, 0)
 
 	runEncrypt(t, transformer)
 
-	assertNonce(t, nonceFatal, 1)
+	assertNonce(t, &nonceFatal, 1)
 
 	runEncrypt(t, transformer)
 
-	assertNonce(t, nonceFatal, 2)
+	assertNonce(t, &nonceFatal, 2)
 
 	nonceFatal.Store(math.MaxUint64 - 1) // pretend lots of encryptions occurred
 
 	runEncrypt(t, transformer)
 
-	assertNonce(t, nonceFatal, math.MaxUint64)
+	assertNonce(t, &nonceFatal, math.MaxUint64)
 
 	if count != 0 {
 		t.Errorf("fatal should not have been called yet")
@@ -97,7 +96,7 @@ func TestGCMUnsafeNonceOverflow(t *testing.T) {
 
 	runEncrypt(t, transformer)
 
-	assertNonce(t, nonceFatal, 0)
+	assertNonce(t, &nonceFatal, 0)
 
 	if count != 1 {
 		t.Errorf("fatal should have been once, got %d", count)
