@@ -73,7 +73,7 @@ func TestGCMUnsafeNonceOverflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transformer := newGCMTransformerWithUniqueKeyUnsafe(t, block)
+	transformer := newGCMTransformerWithUniqueKeyUnsafeTest(t, block)
 
 	assertNonce(t, nonceFatal, 0)
 
@@ -137,7 +137,7 @@ func TestGCMUnsafeNonceGen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transformer := newGCMTransformerWithUniqueKeyUnsafe(t, block)
+	transformer := newGCMTransformerWithUniqueKeyUnsafeTest(t, block)
 
 	ctx := context.Background()
 	dataCtx := value.DefaultContext("authenticated_data")
@@ -192,7 +192,7 @@ func TestGCMNonce(t *testing.T) {
 	})
 
 	t.Run("gcm unsafe", func(t *testing.T) {
-		testGCMNonce(t, newGCMTransformerWithUniqueKeyUnsafe, func(i int, nonce []byte) {
+		testGCMNonce(t, newGCMTransformerWithUniqueKeyUnsafeTest, func(i int, nonce []byte) {
 			counter := binary.LittleEndian.Uint64(nonce)
 			if uint64(i+1) != counter { // add one because the counter starts at 1, not 0
 				t.Errorf("counter nonce is invalid: want %d, got %d", i+1, counter)
@@ -238,7 +238,7 @@ func TestGCMKeyRotation(t *testing.T) {
 	})
 
 	t.Run("gcm unsafe", func(t *testing.T) {
-		testGCMKeyRotation(t, newGCMTransformerWithUniqueKeyUnsafe)
+		testGCMKeyRotation(t, newGCMTransformerWithUniqueKeyUnsafeTest)
 	})
 }
 
@@ -585,9 +585,9 @@ func TestRoundTrip(t *testing.T) {
 		{name: "GCM 16 byte key", t: newGCMTransformer(t, aes16block)},
 		{name: "GCM 24 byte key", t: newGCMTransformer(t, aes24block)},
 		{name: "GCM 32 byte key", t: newGCMTransformer(t, aes32block)},
-		{name: "GCM 16 byte unsafe key", t: newGCMTransformerWithUniqueKeyUnsafe(t, aes16block)},
-		{name: "GCM 24 byte unsafe key", t: newGCMTransformerWithUniqueKeyUnsafe(t, aes24block)},
-		{name: "GCM 32 byte unsafe key", t: newGCMTransformerWithUniqueKeyUnsafe(t, aes32block)},
+		{name: "GCM 16 byte unsafe key", t: newGCMTransformerWithUniqueKeyUnsafeTest(t, aes16block)},
+		{name: "GCM 24 byte unsafe key", t: newGCMTransformerWithUniqueKeyUnsafeTest(t, aes24block)},
+		{name: "GCM 32 byte unsafe key", t: newGCMTransformerWithUniqueKeyUnsafeTest(t, aes32block)},
 		{name: "CBC 32 byte key", t: NewCBCTransformer(aes32block)},
 	}
 	for _, tt := range tests {
@@ -648,10 +648,10 @@ func newGCMTransformer(t testingT, block cipher.Block) value.Transformer {
 	return transformer
 }
 
-func newGCMTransformerWithUniqueKeyUnsafe(t testingT, block cipher.Block) value.Transformer {
+func newGCMTransformerWithUniqueKeyUnsafeTest(t testingT, block cipher.Block) value.Transformer {
 	t.Helper()
 
-	transformer, err := NewGCMTransformerWithUniqueKeyUnsafe(block)
+	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block)
 	if err != nil {
 		t.Fatal(err)
 	}

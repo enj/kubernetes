@@ -80,6 +80,10 @@ func NewGCMTransformer(block cipher.Block) (value.Transformer, error) {
 // Even if that occurs, the nonce counter would overflow and crash the process.  We have no concerns
 // around plaintext length because all stored items are small (less than 2 MB).
 func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) (value.Transformer, error) {
+	return newGCMTransformerWithUniqueKeyUnsafe(block)
+}
+
+func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) (value.Transformer, error) {
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
