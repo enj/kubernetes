@@ -133,7 +133,6 @@ func randomNonce(b []byte) error {
 }
 
 func die(err error, msg string) {
-	// TODO compatibility unit tests
 	// TODO start nonce at a billion and detect rollover for anything less than that
 	debug.PrintStack() // TODO print all stacks not just the current one
 	klog.ErrorSDepth(1, err, msg)

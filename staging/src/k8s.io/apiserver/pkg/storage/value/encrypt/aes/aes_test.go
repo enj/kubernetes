@@ -129,6 +129,45 @@ func runEncrypt(t *testing.T, transformer value.Transformer) {
 	}
 }
 
+// TestGCUnsafeCompatibility asserts that encryptions performed via
+// NewGCMTransformerWithUniqueKeyUnsafe can be decrypted via NewGCMTransformer.
+func TestGCUnsafeCompatibility(t *testing.T) {
+	transformerEncrypt, key, err := NewGCMTransformerWithUniqueKeyUnsafe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	transformerDecrypt := newGCMTransformer(t, block)
+
+	ctx := context.Background()
+	dataCtx := value.DefaultContext("authenticated_data")
+
+	plaintext := []byte("firstvalue")
+
+	ciphertext, err := transformerEncrypt.TransformToStorage(ctx, plaintext, dataCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if bytes.Equal(plaintext, ciphertext) {
+		t.Errorf("plaintext %q matches ciphertext %q", string(plaintext), string(ciphertext))
+	}
+
+	plaintextAgain, _, err := transformerDecrypt.TransformFromStorage(ctx, ciphertext, dataCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(plaintext, plaintextAgain) {
+		t.Errorf("expected original plaintext %q, got %q", string(plaintext), string(plaintextAgain))
+	}
+}
+
 func TestGCMUnsafeNonceGen(t *testing.T) {
 	block, err := aes.NewCipher([]byte("abcdefghijklmnop"))
 	if err != nil {
