@@ -70,6 +70,21 @@ const (
 	// worse case window divided by the negative interval defines the
 	// minimum amount of times the server will attempt to return to a
 	// healthy state before the DEK expires and writes begin to fail.
+	//
+	// For now, these values are kept small and hardcoded to support being
+	// able to perform a "passive" storage migration while tolerating some
+	// amount of plugin downtime.
+	//
+	// With the current approach, a user can update the key ID their plugin
+	// is using and then can simply schedule a migration for 10+N minutes
+	// later where N is how long it takes their plugin to pick up new config.
+	// At that point, they are guaranteed to either migrate to the new key
+	// or get errors during the migration.
+	//
+	// If the API server coasted forever on the last DEK, they would need
+	// to actively check if it had observed the new key ID before starting
+	// a migration - otherwise it could keep using the old DEK and their
+	// storage migration would not do what they thought it did.
 	kmsv2PluginHealthzPositiveInterval = 1 * time.Minute
 	kmsv2PluginHealthzNegativeInterval = 10 * time.Second
 	kmsv2PluginWriteDEKMaxAge          = 3 * time.Minute
