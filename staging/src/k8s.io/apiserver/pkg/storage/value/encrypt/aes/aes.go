@@ -64,9 +64,17 @@ func NewGCMTransformer(block cipher.Block) (value.Transformer, error) {
 	return &gcm{aead: aead, nonceFunc: randomNonce}, nil
 }
 
+// we start the global counter at one billion so that we are
+// guaranteed to detect rollover across different go routines.
+const globalNonceCounterStart = 1_000_000_000
+
 // even at one million encryptions per second, this counter is enough for half a million years
 // using this struct avoids alignment bugs: https://pkg.go.dev/sync/atomic#pkg-note-BUG
-var globalNonceCounter atomic.Uint64
+var globalNonceCounter = func() *atomic.Uint64 {
+	var nonce atomic.Uint64
+	nonce.Add(globalNonceCounterStart)
+	return &nonce
+}()
 
 // NewGCMTransformerWithUniqueKeyUnsafe is the same as NewGCMTransformer but is unsafe for general
 // use because it makes assumptions about the key underlying the block cipher.  Specifically,
@@ -92,14 +100,14 @@ func NewGCMTransformerWithUniqueKeyUnsafe() (value.Transformer, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block, &globalNonceCounter, die)
+	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block, globalNonceCounter, globalNonceCounterStart, die)
 	if err != nil {
 		return nil, nil, err
 	}
 	return transformer, key, nil
 }
 
-func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonce *atomic.Uint64, fatal func(err error, msg string)) (value.Transformer, error) {
+func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonce *atomic.Uint64, start uint64, fatal func(err error, msg string)) (value.Transformer, error) {
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
@@ -116,7 +124,7 @@ func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonce *atomic.Uint
 		}
 
 		incrementingNonce := nonce.Add(1)
-		if incrementingNonce == 0 {
+		if incrementingNonce <= start {
 			// this should never happen, and is unrecoverable if it does
 			fatal(errors.New("aes-gcm detected nonce overflow"), "cryptographic wear out occurred")
 		}
@@ -133,7 +141,6 @@ func randomNonce(b []byte) error {
 }
 
 func die(err error, msg string) {
-	// TODO start nonce at a billion and detect rollover for anything less than that
 	debug.PrintStack() // TODO print all stacks not just the current one
 	klog.ErrorSDepth(1, err, msg)
 	_ = os.Stderr.Sync()

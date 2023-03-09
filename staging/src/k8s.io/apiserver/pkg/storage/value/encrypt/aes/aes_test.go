@@ -67,7 +67,7 @@ func TestGCMUnsafeNonceOverflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block, &nonceFatal, fatal)
+	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block, &nonceFatal, 0, fatal)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -688,7 +688,7 @@ func newGCMTransformerWithUniqueKeyUnsafeTest(t testingT, block cipher.Block) va
 	t.Helper()
 
 	var nonce atomic.Uint64
-	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block, &nonce, die)
+	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block, &nonce, 0, die)
 	if err != nil {
 		t.Fatal(err)
 	}
