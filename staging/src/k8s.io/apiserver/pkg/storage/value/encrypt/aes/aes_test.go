@@ -651,7 +651,8 @@ func newGCMTransformer(t testingT, block cipher.Block) value.Transformer {
 func newGCMTransformerWithUniqueKeyUnsafeTest(t testingT, block cipher.Block) value.Transformer {
 	t.Helper()
 
-	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block)
+	var nonce atomic.Uint64
+	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block, &nonce)
 	if err != nil {
 		t.Fatal(err)
 	}

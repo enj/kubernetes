@@ -69,6 +69,10 @@ func NewGCMTransformer(block cipher.Block) (value.Transformer, error) {
 	return &gcm{aead: aead, nonceFunc: randomNonce}, nil
 }
 
+// even at one million encryptions per second, this counter is enough for half a million years
+// using this struct avoids alignment bugs: https://pkg.go.dev/sync/atomic#pkg-note-BUG
+var globalNonceCounter atomic.Uint64
+
 // NewGCMTransformerWithUniqueKeyUnsafe is the same as NewGCMTransformer but is unsafe for general
 // use because it makes assumptions about the key underlying the input block cipher.  Specifically,
 // it uses a 96-bit nonce where the first 32 bits are random data and the remaining 64 bits are
@@ -80,19 +84,16 @@ func NewGCMTransformer(block cipher.Block) (value.Transformer, error) {
 // Even if that occurs, the nonce counter would overflow and crash the process.  We have no concerns
 // around plaintext length because all stored items are small (less than 2 MB).
 func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) (value.Transformer, error) {
-	return newGCMTransformerWithUniqueKeyUnsafe(block)
+	return newGCMTransformerWithUniqueKeyUnsafe(block, &globalNonceCounter)
 }
 
-func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) (value.Transformer, error) {
+func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonce *atomic.Uint64) (value.Transformer, error) {
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
 	}
 
-	// even at one million encryptions per second, this counter is enough for half a million years
-	// using this struct avoids alignment bugs: https://pkg.go.dev/sync/atomic#pkg-note-BUG
-	var nonce atomic.Uint64
-	mutateNonce(&nonce) // for testing
+	mutateNonce(nonce) // for testing
 	nonceFunc := func(b []byte) error {
 		// we only need 8 bytes to store our 64 bit incrementing nonce
 		// instead of leaving the unused bytes as zeros, set those to random bits
