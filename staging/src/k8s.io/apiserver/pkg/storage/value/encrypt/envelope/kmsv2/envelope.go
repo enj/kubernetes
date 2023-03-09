@@ -20,7 +20,6 @@ package kmsv2
 import (
 	"context"
 	"crypto/aes"
-	"crypto/rand"
 	"crypto/subtle"
 	"fmt"
 	"time"
@@ -218,7 +217,13 @@ func (t *envelopeTransformer) TransformToStorage(ctx context.Context, data []byt
 
 // addTransformerForDecryption inserts a new transformer to the Envelope cache of DEKs for future reads.
 func (t *envelopeTransformer) addTransformerForDecryption(encKey []byte, key []byte) (value.Transformer, error) {
-	transformer, err := generateAESTransformer(key)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	// this is compatible with NewGCMTransformerWithUniqueKeyUnsafe for decryption
+	// it would use random nonces for encryption but we never do that
+	transformer, err := aestransformer.NewGCMTransformer(block)
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +255,7 @@ func (t *envelopeTransformer) doDecode(originalData []byte) (*kmstypes.Encrypted
 }
 
 func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsservice.Service) (value.Transformer, *kmsservice.EncryptResponse, error) {
-	newKey, err := generateKey(32)
+	transformer, newKey, err := aestransformer.NewGCMTransformerWithUniqueKeyUnsafe()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -262,33 +267,7 @@ func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsser
 		return nil, nil, fmt.Errorf("failed to encrypt DEK, error: %w", err)
 	}
 
-	transformer, err := generateAESTransformer(newKey)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	return transformer, resp, nil
-}
-
-func generateAESTransformer(key []byte) (value.Transformer, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	return aestransformer.NewGCMTransformerWithUniqueKeyUnsafe(block)
-}
-
-// generateKey generates a random key using system randomness.
-func generateKey(length int) (key []byte, err error) {
-	defer func(start time.Time) {
-		value.RecordDataKeyGeneration(start, err)
-	}(time.Now())
-	key = make([]byte, length)
-	if _, err = rand.Read(key); err != nil {
-		return nil, err
-	}
-
-	return key, nil
 }
 
 func validateEncryptedObject(o *kmstypes.EncryptedObject) error {

@@ -30,6 +30,7 @@ import (
 	"os"
 	"runtime/debug"
 	"sync/atomic"
+	"time"
 
 	"k8s.io/apiserver/pkg/storage/value"
 	"k8s.io/klog/v2"
@@ -68,7 +69,7 @@ func NewGCMTransformer(block cipher.Block) (value.Transformer, error) {
 var globalNonceCounter atomic.Uint64
 
 // NewGCMTransformerWithUniqueKeyUnsafe is the same as NewGCMTransformer but is unsafe for general
-// use because it makes assumptions about the key underlying the input block cipher.  Specifically,
+// use because it makes assumptions about the key underlying the block cipher.  Specifically,
 // it uses a 96-bit nonce where the first 32 bits are random data and the remaining 64 bits are
 // a monotonically incrementing atomic counter.  This means that the key must be randomly generated
 // on process startup and must never be used for encryption outside the lifetime of the process.
@@ -76,9 +77,26 @@ var globalNonceCounter atomic.Uint64
 // be used "indefinitely" without rotation.  Specifically, cryptographic wear out of AES-GCM with
 // a sequential nonce occurs after 2^64 encryptions, which is not a concern for our use cases.
 // Even if that occurs, the nonce counter would overflow and crash the process.  We have no concerns
-// around plaintext length because all stored items are small (less than 2 MB).
-func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) (value.Transformer, error) {
-	return newGCMTransformerWithUniqueKeyUnsafe(block, &globalNonceCounter, die)
+// around plaintext length because all stored items are small (less than 2 MB).  To prevent the
+// chance of the block cipher being accidentally re-used, it is not taken in as input.  Instead,
+// a new random key is generated and returned on every invocation of this function.  This key is
+// used as the input to the block cipher.  Furthermore, even across invocations of this function,
+// the same global nonce counter is used.  Thus even if the block cipher was somehow accidentally
+// re-used, the nonce would still be different on every encryption.
+func NewGCMTransformerWithUniqueKeyUnsafe() (value.Transformer, []byte, error) {
+	key, err := generateKey(32)
+	if err != nil {
+		return nil, nil, err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block, &globalNonceCounter, die)
+	if err != nil {
+		return nil, nil, err
+	}
+	return transformer, key, nil
 }
 
 func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonce *atomic.Uint64, fatal func(err error, msg string)) (value.Transformer, error) {
@@ -115,11 +133,26 @@ func randomNonce(b []byte) error {
 }
 
 func die(err error, msg string) {
-	debug.PrintStack()
+	// TODO compatibility unit tests
+	// TODO start nonce at a billion and detect rollover for anything less than that
+	debug.PrintStack() // TODO print all stacks not just the current one
 	klog.ErrorSDepth(1, err, msg)
 	_ = os.Stderr.Sync()
-	klog.Flush()
+	klog.Flush() // TODO add timeout to flushing
 	os.Exit(1)
+}
+
+// generateKey generates a random key using system randomness.
+func generateKey(length int) (key []byte, err error) {
+	defer func(start time.Time) {
+		value.RecordDataKeyGeneration(start, err)
+	}(time.Now())
+	key = make([]byte, length)
+	if _, err = rand.Read(key); err != nil {
+		return nil, err
+	}
+
+	return key, nil
 }
 
 func (t *gcm) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
