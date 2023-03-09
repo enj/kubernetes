@@ -37,7 +37,6 @@ import (
 	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/storage/value"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope"
-	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2"
 	envelopekmsv2 "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope/metrics"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -794,7 +793,7 @@ func TestKMSv2PluginHealthzTTL(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.desc, func(t *testing.T) {
-			tt.probe.state.Store(&kmsv2.State{})
+			tt.probe.state.Store(&envelopekmsv2.State{})
 			_ = tt.probe.check(ctx)
 			if tt.probe.ttl != tt.wantTTL {
 				t.Fatalf("want ttl %v, got ttl %v", tt.wantTTL, tt.probe.ttl)
@@ -873,7 +872,7 @@ func TestKMSv2InvalidKeyID(t *testing.T) {
 	for _, tt := range testCases {
 		t.Run(tt.desc, func(t *testing.T) {
 			defer metrics.InvalidKeyIDFromStatusTotal.Reset()
-			tt.probe.state.Store(&kmsv2.State{})
+			tt.probe.state.Store(&envelopekmsv2.State{})
 			_ = tt.probe.check(ctx)
 			if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(tt.want), tt.metrics...); err != nil {
 				t.Fatal(err)
@@ -1074,10 +1073,10 @@ func TestComputeEncryptionConfigHash(t *testing.T) {
 }
 
 func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
-	origNowFunc := kmsv2.ValidateEncryptCapabilityNowFunc
+	origNowFunc := envelopekmsv2.ValidateEncryptCapabilityNowFunc
 	now := origNowFunc() // freeze time
-	t.Cleanup(func() { kmsv2.ValidateEncryptCapabilityNowFunc = origNowFunc })
-	kmsv2.ValidateEncryptCapabilityNowFunc = func() time.Time { return now }
+	t.Cleanup(func() { envelopekmsv2.ValidateEncryptCapabilityNowFunc = origNowFunc })
+	envelopekmsv2.ValidateEncryptCapabilityNowFunc = func() time.Time { return now }
 
 	klog.LogToStderr(false)
 	var level klog.Level
