@@ -63,7 +63,7 @@ const (
 	kmsTransformerPrefixV2             = "k8s:enc:kms:v2:"
 	kmsv2PluginHealthzPositiveInterval = 1 * time.Minute
 	kmsv2PluginHealthzNegativeInterval = 10 * time.Second
-	kmsv2PluginDEKReuseInterval        = 3 * time.Minute
+	kmsv2PluginWriteDEKMaxAge          = 3 * time.Minute
 	kmsPluginHealthzNegativeTTL        = 3 * time.Second
 	kmsPluginHealthzPositiveTTL        = 20 * time.Second
 	kmsAPIVersionV1                    = "v1"
@@ -307,7 +307,7 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 	// allow reads indefinitely in all cases
 	// allow writes indefinitely as long as there is no error
 	// allow writes for only up to kmsPluginDEKReuseInterval from now when there are errors
-	expirationTimestamp := envelopekmsv2.ValidateEncryptCapabilityNowFunc().Add(kmsv2PluginDEKReuseInterval) // start the timer before we make the network calls
+	expirationTimestamp := envelopekmsv2.ValidateEncryptCapabilityNowFunc().Add(kmsv2PluginWriteDEKMaxAge) // start the timer before we make the network calls
 
 	// state is valid and status keyID is unchanged from when we generated this DEK so there is no need to rotate it
 	// just move the expiration of the current state forward by the reuse interval
