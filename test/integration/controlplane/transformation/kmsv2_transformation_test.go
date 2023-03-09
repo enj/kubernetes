@@ -293,7 +293,7 @@ resources:
 
 			// with the first key we perform encryption during the following steps:
 			// - create
-			const want = 1
+			const want = 1_000_000_000 + 1 // zero value of counter is one billion
 			if want != counter {
 				t.Errorf("key %s: counter nonce is invalid: want %d, got %d", etcdKey, want, counter)
 			}
@@ -329,8 +329,8 @@ resources:
 		t.Fatalf("Resource version should have changed after keyID update. old pod: %v, new pod: %v", testPod, updatedPod)
 	}
 
-	var wantCount uint64
-	wantCount++ // in place update with RV change
+	var wantCount uint64 = 1_000_000_000 // zero value of counter is one billion
+	wantCount++                          // in place update with RV change
 
 	// with the second key we perform encryption during the following steps:
 	// - in place update with RV change
@@ -480,7 +480,9 @@ resources:
 				t.Errorf("key %s: want key ID %s, got %s", etcdKey, "1", obj.KeyID)
 			}
 
-			if uint64(i+1) != counter { // add one because the counter starts at 1, not 0
+			// zero value of counter is one billion so the first value will be one billion plus one
+			// hence we add that to our zero based index to calculate the expected nonce
+			if uint64(i+1_000_000_000+1) != counter {
 				t.Errorf("key %s: counter nonce is invalid: want %d, got %d", etcdKey, i+1, counter)
 			}
 		},

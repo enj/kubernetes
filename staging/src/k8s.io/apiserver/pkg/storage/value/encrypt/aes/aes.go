@@ -89,21 +89,21 @@ func NewGCMTransformerWithUniqueKeyUnsafe() (value.Transformer, []byte, error) {
 
 	// we start the nonce counter at one billion so that we are
 	// guaranteed to detect rollover across different go routines
-	const start = 1_000_000_000
+	const zero = 1_000_000_000
 
 	// even at one million encryptions per second, this counter is enough for half a million years
 	// using this struct avoids alignment bugs: https://pkg.go.dev/sync/atomic#pkg-note-BUG
 	var nonce atomic.Uint64
-	nonce.Add(start)
+	nonce.Add(zero)
 
-	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block, &nonce, start, die)
+	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block, &nonce, zero, die)
 	if err != nil {
 		return nil, nil, err
 	}
 	return transformer, key, nil
 }
 
-func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonce *atomic.Uint64, start uint64, fatal func(err error, msg string)) (value.Transformer, error) {
+func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonce *atomic.Uint64, zero uint64, fatal func(err error, msg string)) (value.Transformer, error) {
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
@@ -120,7 +120,7 @@ func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonce *atomic.Uint
 		}
 
 		incrementingNonce := nonce.Add(1)
-		if incrementingNonce <= start {
+		if incrementingNonce <= zero {
 			// this should never happen, and is unrecoverable if it does
 			fatal(errors.New("aes-gcm detected nonce overflow"), "cryptographic wear out occurred")
 		}
