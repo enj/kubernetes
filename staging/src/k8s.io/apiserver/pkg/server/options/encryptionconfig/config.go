@@ -358,7 +358,7 @@ func (h *kmsv2PluginProbe) getCurrentState() (envelopekmsv2.State, error) {
 	}
 
 	if len(state.EncryptedDEK) == 0 {
-		return envelopekmsv2.State{}, fmt.Errorf("got unexpected empty EDEK")
+		return envelopekmsv2.State{}, fmt.Errorf("got unexpected empty EncryptedDEK")
 	}
 
 	if len(state.KeyID) == 0 {
