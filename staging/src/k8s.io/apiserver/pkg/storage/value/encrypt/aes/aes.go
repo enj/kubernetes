@@ -27,8 +27,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"runtime/debug"
 	"sync/atomic"
 	"time"
 
@@ -136,24 +134,21 @@ type nonceGenerator struct {
 	// using this struct avoids alignment bugs: https://pkg.go.dev/sync/atomic#pkg-note-BUG
 	nonce atomic.Uint64
 	zero  uint64
-	fatal func(err error, msg string)
+	fatal func(msg string)
 }
 
 func (n *nonceGenerator) next(b []byte) {
 	incrementingNonce := n.nonce.Add(1)
 	if incrementingNonce <= n.zero {
 		// this should never happen, and is unrecoverable if it does
-		n.fatal(errors.New("aes-gcm detected nonce overflow"), "cryptographic wear out occurred")
+		n.fatal("aes-gcm detected nonce overflow - cryptographic wear out has occurred")
 	}
 	binary.LittleEndian.PutUint64(b, incrementingNonce)
 }
 
-func die(err error, msg string) {
-	debug.PrintStack() // TODO print all stacks not just the current one
-	klog.ErrorSDepth(1, err, msg)
-	_ = os.Stderr.Sync()
-	klog.Flush() // TODO add timeout to flushing
-	os.Exit(1)
+func die(msg string) {
+	// nolint:logcheck // we want the stack traces, log flushing, and process exiting logic from FatalDepth
+	klog.FatalDepth(1, msg)
 }
 
 // generateKey generates a random key using system randomness.

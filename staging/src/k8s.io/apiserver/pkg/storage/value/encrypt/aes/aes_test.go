@@ -51,13 +51,11 @@ func TestGCMDataStable(t *testing.T) {
 }
 
 func TestGCMUnsafeNonceOverflow(t *testing.T) {
-	var errFatal error
 	var msgFatal string
 	var count int
 
 	nonceGen := &nonceGenerator{
-		fatal: func(err error, msg string) {
-			errFatal = err
+		fatal: func(msg string) {
 			msgFatal = msg
 			count++
 		},
@@ -100,12 +98,8 @@ func TestGCMUnsafeNonceOverflow(t *testing.T) {
 		t.Errorf("fatal should have been once, got %d", count)
 	}
 
-	if msgFatal != "cryptographic wear out occurred" {
+	if msgFatal != "aes-gcm detected nonce overflow - cryptographic wear out has occurred" {
 		t.Errorf("unexpected message: %s", msgFatal)
-	}
-
-	if errFatal == nil || errFatal.Error() != "aes-gcm detected nonce overflow" {
-		t.Errorf("unexpected error: %v", errFatal)
 	}
 }
 
