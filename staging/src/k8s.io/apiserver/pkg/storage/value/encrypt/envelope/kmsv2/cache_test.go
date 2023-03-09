@@ -19,6 +19,7 @@ package kmsv2
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
 	"sync"
@@ -181,4 +182,12 @@ func (a alwaysWorksTransformer) TransformFromStorage(ctx context.Context, data [
 
 func (a alwaysWorksTransformer) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) (out []byte, err error) {
 	return []byte("snorlax"), nil
+}
+
+func generateKey(length int) (key []byte, err error) {
+	key = make([]byte, length)
+	if _, err = rand.Read(key); err != nil {
+		return nil, err
+	}
+	return key, nil
 }
