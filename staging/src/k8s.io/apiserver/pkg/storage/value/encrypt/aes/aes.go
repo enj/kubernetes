@@ -64,18 +64,6 @@ func NewGCMTransformer(block cipher.Block) (value.Transformer, error) {
 	return &gcm{aead: aead, nonceFunc: randomNonce}, nil
 }
 
-// we start the global counter at one billion so that we are
-// guaranteed to detect rollover across different go routines.
-const globalNonceCounterStart = 1_000_000_000
-
-// even at one million encryptions per second, this counter is enough for half a million years
-// using this struct avoids alignment bugs: https://pkg.go.dev/sync/atomic#pkg-note-BUG
-var globalNonceCounter = func() *atomic.Uint64 {
-	var nonce atomic.Uint64
-	nonce.Add(globalNonceCounterStart)
-	return &nonce
-}()
-
 // NewGCMTransformerWithUniqueKeyUnsafe is the same as NewGCMTransformer but is unsafe for general
 // use because it makes assumptions about the key underlying the block cipher.  Specifically,
 // it uses a 96-bit nonce where the first 32 bits are random data and the remaining 64 bits are
@@ -88,9 +76,7 @@ var globalNonceCounter = func() *atomic.Uint64 {
 // around plaintext length because all stored items are small (less than 2 MB).  To prevent the
 // chance of the block cipher being accidentally re-used, it is not taken in as input.  Instead,
 // a new random key is generated and returned on every invocation of this function.  This key is
-// used as the input to the block cipher.  Furthermore, even across invocations of this function,
-// the same global nonce counter is used.  Thus even if the block cipher was somehow accidentally
-// re-used, the nonce would still be different on every encryption.
+// used as the input to the block cipher.
 func NewGCMTransformerWithUniqueKeyUnsafe() (value.Transformer, []byte, error) {
 	key, err := generateKey(32)
 	if err != nil {
@@ -100,7 +86,17 @@ func NewGCMTransformerWithUniqueKeyUnsafe() (value.Transformer, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block, globalNonceCounter, globalNonceCounterStart, die)
+
+	// we start the nonce counter at one billion so that we are
+	// guaranteed to detect rollover across different go routines
+	const start = 1_000_000_000
+
+	// even at one million encryptions per second, this counter is enough for half a million years
+	// using this struct avoids alignment bugs: https://pkg.go.dev/sync/atomic#pkg-note-BUG
+	var nonce atomic.Uint64
+	nonce.Add(start)
+
+	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block, &nonce, start, die)
 	if err != nil {
 		return nil, nil, err
 	}
