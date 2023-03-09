@@ -28,16 +28,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"sync/atomic"
 
 	"k8s.io/apiserver/pkg/storage/value"
 	"k8s.io/klog/v2"
 )
-
-var fatal = func(err error, msg string) {
-	klog.ErrorSDepth(1, err, msg)
-	os.Exit(1)
-}
 
 type gcm struct {
 	aead      cipher.AEAD
@@ -82,10 +78,10 @@ var globalNonceCounter atomic.Uint64
 // Even if that occurs, the nonce counter would overflow and crash the process.  We have no concerns
 // around plaintext length because all stored items are small (less than 2 MB).
 func NewGCMTransformerWithUniqueKeyUnsafe(block cipher.Block) (value.Transformer, error) {
-	return newGCMTransformerWithUniqueKeyUnsafe(block, &globalNonceCounter)
+	return newGCMTransformerWithUniqueKeyUnsafe(block, &globalNonceCounter, die)
 }
 
-func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonce *atomic.Uint64) (value.Transformer, error) {
+func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonce *atomic.Uint64, fatal func(err error, msg string)) (value.Transformer, error) {
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
@@ -116,6 +112,14 @@ func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonce *atomic.Uint
 func randomNonce(b []byte) error {
 	_, err := rand.Read(b)
 	return err
+}
+
+func die(err error, msg string) {
+	debug.PrintStack()
+	klog.ErrorSDepth(1, err, msg)
+	_ = os.Stderr.Sync()
+	klog.Flush()
+	os.Exit(1)
 }
 
 func (t *gcm) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
