@@ -87,23 +87,22 @@ func NewGCMTransformerWithUniqueKeyUnsafe() (value.Transformer, []byte, error) {
 		return nil, nil, err
 	}
 
-	// we start the nonce counter at one billion so that we are
-	// guaranteed to detect rollover across different go routines
-	const zero = 1_000_000_000
+	nonceGen := &nonceGenerator{
+		// we start the nonce counter at one billion so that we are
+		// guaranteed to detect rollover across different go routines
+		zero:  1_000_000_000,
+		fatal: die,
+	}
+	nonceGen.nonce.Add(nonceGen.zero)
 
-	// even at one million encryptions per second, this counter is enough for half a million years
-	// using this struct avoids alignment bugs: https://pkg.go.dev/sync/atomic#pkg-note-BUG
-	var nonce atomic.Uint64
-	nonce.Add(zero)
-
-	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block, &nonce, zero, die)
+	transformer, err := newGCMTransformerWithUniqueKeyUnsafe(block, nonceGen)
 	if err != nil {
 		return nil, nil, err
 	}
 	return transformer, key, nil
 }
 
-func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonce *atomic.Uint64, zero uint64, fatal func(err error, msg string)) (value.Transformer, error) {
+func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonceGen *nonceGenerator) (value.Transformer, error) {
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
@@ -119,12 +118,8 @@ func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonce *atomic.Uint
 			return err
 		}
 
-		incrementingNonce := nonce.Add(1)
-		if incrementingNonce <= zero {
-			// this should never happen, and is unrecoverable if it does
-			fatal(errors.New("aes-gcm detected nonce overflow"), "cryptographic wear out occurred")
-		}
-		binary.LittleEndian.PutUint64(b[randNonceSize:], incrementingNonce)
+		nonceGen.next(b[randNonceSize:])
+
 		return nil
 	}
 
@@ -134,6 +129,23 @@ func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonce *atomic.Uint
 func randomNonce(b []byte) error {
 	_, err := rand.Read(b)
 	return err
+}
+
+type nonceGenerator struct {
+	// even at one million encryptions per second, this counter is enough for half a million years
+	// using this struct avoids alignment bugs: https://pkg.go.dev/sync/atomic#pkg-note-BUG
+	nonce atomic.Uint64
+	zero  uint64
+	fatal func(err error, msg string)
+}
+
+func (n *nonceGenerator) next(b []byte) {
+	incrementingNonce := n.nonce.Add(1)
+	if incrementingNonce <= n.zero {
+		// this should never happen, and is unrecoverable if it does
+		n.fatal(errors.New("aes-gcm detected nonce overflow"), "cryptographic wear out occurred")
+	}
+	binary.LittleEndian.PutUint64(b, incrementingNonce)
 }
 
 func die(err error, msg string) {
