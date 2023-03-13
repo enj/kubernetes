@@ -20,7 +20,6 @@ package kmsv2
 import (
 	"context"
 	"crypto/sha256"
-	"fmt"
 	"hash"
 	"sync"
 	"time"
@@ -79,7 +78,7 @@ func (c *simpleCache) set(key []byte, transformer decryptTransformer) {
 	if transformer == nil {
 		panic("transformer must not be nil")
 	}
-	c.cache.Set(c.keyFunc(key), &decryptOnlyTransformer{transformer: transformer}, c.ttl)
+	c.cache.Set(c.keyFunc(key), transformer, c.ttl)
 }
 
 // keyFunc generates a string key by hashing the inputs.
@@ -100,18 +99,4 @@ func (c *simpleCache) keyFunc(s []byte) string {
 // toString performs unholy acts to avoid allocations
 func toString(b []byte) string {
 	return *(*string)(unsafe.Pointer(&b))
-}
-
-var _ value.Transformer = &decryptOnlyTransformer{}
-
-type decryptOnlyTransformer struct {
-	transformer decryptTransformer
-}
-
-func (r *decryptOnlyTransformer) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) (out []byte, stale bool, err error) {
-	return r.transformer.TransformFromStorage(ctx, data, dataCtx)
-}
-
-func (r *decryptOnlyTransformer) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) (out []byte, err error) {
-	return nil, fmt.Errorf("transformer does not support encryption")
 }
