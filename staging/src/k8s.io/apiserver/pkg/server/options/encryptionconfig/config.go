@@ -426,6 +426,7 @@ func (h *kmsv2PluginProbe) isKMSv2ProviderHealthyAndMaybeRotateDEK(ctx context.C
 		errs = append(errs, fmt.Errorf("got invalid KMSv2 KeyID %q: %w", response.KeyID, err))
 	} else {
 		metrics.RecordKeyIDFromStatus(h.name, response.KeyID)
+		// unconditionally append as we filter out nil errors below
 		errs = append(errs, h.rotateDEKOnKeyIDChange(ctx, response.KeyID, string(uuid.NewUUID())))
 	}
 
