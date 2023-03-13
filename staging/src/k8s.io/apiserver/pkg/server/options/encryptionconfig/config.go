@@ -712,10 +712,13 @@ func kmsPrefixTransformer(ctx context.Context, config *apiserverconfig.KMSConfig
 			return nil
 		}
 
-		// prime keyID by running the check inline once (this prevents unit tests from flaking)
+		// on the happy path where the plugin is healthy and available on server start,
+		// prime keyID and DEK by running the check inline once (this also prevents unit tests from flaking)
 		// ignore the error here since we want to support the plugin starting up async with the API server
 		_ = runProbeCheckAndLog(ctx)
 		// make sure that the plugin's key ID is reasonably up-to-date
+		// also, make sure that our DEK is up-to-date to with said key ID (if it expires the server will fail all writes)
+		// if this background loop ever stops running, the server will become unfunctional after kmsv2PluginWriteDEKMaxTTL
 		go wait.PollUntilWithContext(
 			ctx,
 			kmsv2PluginHealthzPositiveInterval,
