@@ -199,7 +199,7 @@ func (t *envelopeTransformer) TransformToStorage(ctx context.Context, data []byt
 	t.cache.set(state.EncryptedDEK, state.Transformer)
 
 	requestInfo := getRequestInfoFromContext(ctx)
-	klog.V(6).InfoS("encrypting content using cached DEK", "uid", state.UID, "key", string(dataCtx.AuthenticatedData()),
+	klog.V(6).InfoS("encrypting content using DEK", "uid", state.UID, "key", string(dataCtx.AuthenticatedData()),
 		"group", requestInfo.APIGroup, "version", requestInfo.APIVersion, "resource", requestInfo.Resource, "subresource", requestInfo.Subresource,
 		"verb", requestInfo.Verb, "namespace", requestInfo.Namespace, "name", requestInfo.Name)
 
