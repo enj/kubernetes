@@ -87,7 +87,7 @@ const (
 	// storage migration would not do what they thought it did.
 	kmsv2PluginHealthzPositiveInterval = 1 * time.Minute
 	kmsv2PluginHealthzNegativeInterval = 10 * time.Second
-	kmsv2PluginWriteDEKMaxAge          = 3 * time.Minute
+	kmsv2PluginWriteDEKMaxTTL          = 3 * time.Minute
 
 	kmsPluginHealthzNegativeTTL = 3 * time.Second
 	kmsPluginHealthzPositiveTTL = 20 * time.Second
@@ -346,8 +346,8 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 	// allow reads indefinitely in all cases
 	// allow writes indefinitely as long as there is no error
 	// allow writes for only up to kmsv2PluginWriteDEKMaxAge from now when there are errors
-	// we start the timer before we make the network call because kmsv2PluginWriteDEKMaxAge is meant to be the upper bound
-	expirationTimestamp := envelopekmsv2.NowFunc().Add(kmsv2PluginWriteDEKMaxAge)
+	// we start the timer before we make the network call because kmsv2PluginWriteDEKMaxTTL is meant to be the upper bound
+	expirationTimestamp := envelopekmsv2.NowFunc().Add(kmsv2PluginWriteDEKMaxTTL)
 
 	// state is valid and status keyID is unchanged from when we generated this DEK so there is no need to rotate it
 	// just move the expiration of the current state forward by the reuse interval
