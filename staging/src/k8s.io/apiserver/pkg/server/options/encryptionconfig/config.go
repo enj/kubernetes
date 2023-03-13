@@ -347,7 +347,7 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 	// allow writes indefinitely as long as there is no error
 	// allow writes for only up to kmsv2PluginWriteDEKMaxAge from now when there are errors
 	// we start the timer before we make the network call because kmsv2PluginWriteDEKMaxAge is meant to be the upper bound
-	expirationTimestamp := envelopekmsv2.ValidateEncryptCapabilityNowFunc().Add(kmsv2PluginWriteDEKMaxAge)
+	expirationTimestamp := envelopekmsv2.NowFunc().Add(kmsv2PluginWriteDEKMaxAge)
 
 	// state is valid and status keyID is unchanged from when we generated this DEK so there is no need to rotate it
 	// just move the expiration of the current state forward by the reuse interval

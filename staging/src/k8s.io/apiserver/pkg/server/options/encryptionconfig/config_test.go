@@ -1653,10 +1653,10 @@ func TestComputeEncryptionConfigHash(t *testing.T) {
 }
 
 func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
-	origNowFunc := envelopekmsv2.ValidateEncryptCapabilityNowFunc
+	origNowFunc := envelopekmsv2.NowFunc
 	now := origNowFunc() // freeze time
-	t.Cleanup(func() { envelopekmsv2.ValidateEncryptCapabilityNowFunc = origNowFunc })
-	envelopekmsv2.ValidateEncryptCapabilityNowFunc = func() time.Time { return now }
+	t.Cleanup(func() { envelopekmsv2.NowFunc = origNowFunc })
+	envelopekmsv2.NowFunc = func() time.Time { return now }
 
 	klog.LogToStderr(false)
 	var level klog.Level
