@@ -130,6 +130,13 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 		return nil, false, err
 	}
 
+	// TODO: consider marking state.EncryptedDEK != encryptedObject.EncryptedDEK as a stale read to support DEK defragmentation
+	//  at a minimum we should have a metric that helps the user understand if DEK fragmentation is high
+	state, err := t.stateFunc() // no need to call state.ValidateEncryptCapability on reads
+	if err != nil {
+		return nil, false, err
+	}
+
 	// Look up the decrypted DEK from cache first
 	transformer := t.cache.get(encryptedObject.EncryptedDEK)
 
@@ -160,13 +167,6 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 	metrics.RecordKeyID(metrics.FromStorageLabel, t.providerName, encryptedObject.KeyID)
 
 	out, stale, err := transformer.TransformFromStorage(ctx, encryptedObject.EncryptedData, dataCtx)
-	if err != nil {
-		return nil, false, err
-	}
-
-	// TODO: consider marking state.EncryptedDEK != encryptedObject.EncryptedDEK as a stale read to support DEK defragmentation
-	//  at a minimum we should have a metric that helps the user understand if DEK fragmentation is high
-	state, err := t.stateFunc() // no need to call state.ValidateEncryptCapability on reads
 	if err != nil {
 		return nil, false, err
 	}
