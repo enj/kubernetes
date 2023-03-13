@@ -46,7 +46,23 @@ func TestGCMDataStable(t *testing.T) {
 	}
 	// IMPORTANT: If you must fix this test, then all previously encrypted data from previously compiled versions is broken unless you hardcode the nonce size to 12
 	if aead.NonceSize() != 12 {
-		t.Fatalf("The underlying Golang crypto size has changed, old version of AES on disk will not be readable unless the AES implementation is changed to hardcode nonce size.")
+		t.Errorf("The underlying Golang crypto size has changed, old version of AES on disk will not be readable unless the AES implementation is changed to hardcode nonce size.")
+	}
+
+	transformerCounterNonce, _, err := NewGCMTransformerWithUniqueKeyUnsafe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nonceSize := transformerCounterNonce.(*gcm).aead.NonceSize(); nonceSize != 12 {
+		t.Errorf("counter nonce: backwards incompatible change to nonce size detected: %d", nonceSize)
+	}
+
+	transformerRandomNonce, err := NewGCMTransformer(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nonceSize := transformerRandomNonce.(*gcm).aead.NonceSize(); nonceSize != 12 {
+		t.Errorf("random nonce: backwards incompatible change to nonce size detected: %d", nonceSize)
 	}
 }
 
