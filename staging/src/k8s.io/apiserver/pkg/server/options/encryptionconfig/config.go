@@ -65,7 +65,7 @@ const (
 	// these constants relate to how the KMS v2 plugin status poll logic
 	// and the DEK generation logic behave.  In particular, the positive
 	// interval and max age are closely related as the difference between
-	// these values defines the worse case window in which the write DEK
+	// these values defines the worst case window in which the write DEK
 	// could expire due to the plugin going into an error state.  The
 	// worst case window divided by the negative interval defines the
 	// minimum amount of times the server will attempt to return to a
@@ -76,8 +76,9 @@ const (
 	// amount of plugin downtime.
 	//
 	// With the current approach, a user can update the key ID their plugin
-	// is using and then can simply schedule a migration for 10+N minutes
-	// later where N is how long it takes their plugin to pick up new config.
+	// is using and then can simply schedule a migration for 3 + N + M minutes
+	// later where N is how long it takes their plugin to pick up new config
+	// and M is extra buffer to allow the API server to process the config.
 	// At that point, they are guaranteed to either migrate to the new key
 	// or get errors during the migration.
 	//
