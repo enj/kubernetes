@@ -20,7 +20,6 @@ package kmsv2
 import (
 	"context"
 	"crypto/aes"
-	"crypto/subtle"
 	"fmt"
 	"time"
 
@@ -131,20 +130,8 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 		return nil, false, err
 	}
 
-	state, err := t.stateFunc() // no need to call state.ValidateEncryptCapability on reads
-	if err != nil {
-		return nil, false, err
-	}
-
-	// start with the assumption that the current write transformer is also the read transformer
-	transformer := state.Transformer
-
-	// if the current write transformer is not what was used to encrypt this data, check in the cache
-	// TODO: consider marking this as a stale read to support DEK defragmentation
-	if subtle.ConstantTimeCompare(state.EncryptedDEK, encryptedObject.EncryptedDEK) != 1 {
-		// TODO value.RecordStateMiss() metric
-		transformer = t.cache.get(encryptedObject.EncryptedDEK)
-	}
+	// Look up the decrypted DEK from cache first
+	transformer := t.cache.get(encryptedObject.EncryptedDEK)
 
 	// fallback to the envelope service if we do not have the transformer locally
 	if transformer == nil {
@@ -173,6 +160,13 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 	metrics.RecordKeyID(metrics.FromStorageLabel, t.providerName, encryptedObject.KeyID)
 
 	out, stale, err := transformer.TransformFromStorage(ctx, encryptedObject.EncryptedData, dataCtx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// TODO: consider marking state.EncryptedDEK != encryptedObject.EncryptedDEK as a stale read to support DEK defragmentation
+	//  at a minimum we should have a metric that helps the user understand if DEK fragmentation is high
+	state, err := t.stateFunc() // no need to call state.ValidateEncryptCapability on reads
 	if err != nil {
 		return nil, false, err
 	}
