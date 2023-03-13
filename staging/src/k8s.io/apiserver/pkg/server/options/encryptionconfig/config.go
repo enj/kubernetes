@@ -67,7 +67,7 @@ const (
 	// interval and max age are closely related as the difference between
 	// these values defines the worse case window in which the write DEK
 	// could expire due to the plugin going into an error state.  The
-	// worse case window divided by the negative interval defines the
+	// worst case window divided by the negative interval defines the
 	// minimum amount of times the server will attempt to return to a
 	// healthy state before the DEK expires and writes begin to fail.
 	//

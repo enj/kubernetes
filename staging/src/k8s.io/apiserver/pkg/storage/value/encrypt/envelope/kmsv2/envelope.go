@@ -59,7 +59,13 @@ const (
 	// this is meant as a temporary solution until the cache is re-written to not have a TTL.
 	// there is unlikely to be any meaningful memory impact on the server
 	// because the cache will likely never have more than a few thousand entries
-	// and each entry is roughly ~200 bytes in size.
+	// and each entry is roughly ~200 bytes in size.  with DEK reuse
+	// and no storage migration, the number of entries in this cache
+	// would be approximated by unique key IDs used by the KMS plugin
+	// combined with the number of server restarts.  If storage migration
+	// is performed after key ID changes, and the number of restarts
+	// is limited, this cache size may be as small as the number of API
+	// servers in use (once old entries expire out from the TTL).
 	cacheTTL = 24 * time.Hour
 	// error code
 	errKeyIDOKCode      ErrCodeKeyID = "ok"
