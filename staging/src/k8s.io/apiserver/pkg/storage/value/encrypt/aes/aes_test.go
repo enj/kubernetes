@@ -192,6 +192,8 @@ func TestGCMUnsafeNonceGen(t *testing.T) {
 
 	counters := make([]uint64, count)
 
+	// run a bunch of go routines to make sure we are go routine safe
+	// on both the nonce generation and the actual encryption/decryption
 	var wg sync.WaitGroup
 	for i := 0; i < count; i++ {
 		i := i
@@ -199,7 +201,9 @@ func TestGCMUnsafeNonceGen(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			out, err := transformer.TransformToStorage(ctx, bytes.Repeat([]byte{byte(i % 8)}, count), dataCtx)
+			plaintext := bytes.Repeat([]byte{byte(i % 8)}, count)
+
+			out, err := transformer.TransformToStorage(ctx, plaintext, dataCtx)
 			if err != nil {
 				t.Error(err)
 				return
@@ -214,6 +218,16 @@ func TestGCMUnsafeNonceGen(t *testing.T) {
 
 			counter := nonce[4:]
 			counters[binary.LittleEndian.Uint64(counter)-1]++ // subtract one because the counter starts at 1, not 0
+
+			plaintextAgain, _, err := transformer.TransformFromStorage(ctx, out, dataCtx)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+
+			if !bytes.Equal(plaintext, plaintextAgain) {
+				t.Errorf("expected original plaintext %q, got %q", string(plaintext), string(plaintextAgain))
+			}
 		}()
 	}
 	wg.Wait()
