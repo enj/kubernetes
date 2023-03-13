@@ -808,7 +808,7 @@ func TestEnvelopeLogging(t *testing.T) {
 			ctx:  testContext(t),
 			wantLogs: []string{
 				`"encrypting content using envelope service" uid="UID"`,
-				`"encrypting content using cached DEK" uid="UID" key="0123456789" group="" version="" resource="" subresource="" verb="" namespace="" name=""`,
+				`"encrypting content using DEK" uid="UID" key="0123456789" group="" version="" resource="" subresource="" verb="" namespace="" name=""`,
 				`"decrypting content using envelope service" uid="UID" key="0123456789" group="" version="" resource="" subresource="" verb="" namespace="" name=""`,
 			},
 		},
@@ -825,7 +825,7 @@ func TestEnvelopeLogging(t *testing.T) {
 			}),
 			wantLogs: []string{
 				`"encrypting content using envelope service" uid="UID"`,
-				`"encrypting content using cached DEK" uid="UID" key="0123456789" group="awesome.bears.com" version="v1" resource="pandas" subresource="status" verb="update" namespace="kube-system" name="panda"`,
+				`"encrypting content using DEK" uid="UID" key="0123456789" group="awesome.bears.com" version="v1" resource="pandas" subresource="status" verb="update" namespace="kube-system" name="panda"`,
 				`"decrypting content using envelope service" uid="UID" key="0123456789" group="awesome.bears.com" version="v1" resource="pandas" subresource="status" verb="update" namespace="kube-system" name="panda"`,
 			},
 		},
