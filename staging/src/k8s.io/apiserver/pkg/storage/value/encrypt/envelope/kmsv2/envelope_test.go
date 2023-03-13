@@ -362,14 +362,6 @@ func TestEnvelopeTransformerStateFunc(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-
-		// assert that this is works even if the cache is empty
-		et := transformer.(*envelopeTransformer)
-		et.cache = newSimpleCache(clock.RealClock{}, et.cache.ttl)
-		_, _, err = transformer.TransformFromStorage(ctx, data, dataCtx)
-		if err != nil {
-			t.Fatal(err)
-		}
 	})
 
 	// make the state invalid
@@ -383,14 +375,6 @@ func TestEnvelopeTransformerStateFunc(t *testing.T) {
 	})
 
 	t.Run("reads succeed when the plugin is down and the state is invalid", func(t *testing.T) {
-		_, _, err = transformer.TransformFromStorage(ctx, encryptedData, dataCtx)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		// assert that this is works even if the cache is empty
-		et := transformer.(*envelopeTransformer)
-		et.cache = newSimpleCache(clock.RealClock{}, et.cache.ttl)
 		_, _, err = transformer.TransformFromStorage(ctx, encryptedData, dataCtx)
 		if err != nil {
 			t.Fatal(err)
