@@ -519,7 +519,7 @@ func assertPodDEKs(ctx context.Context, t *testing.T, config storagebackend.Conf
 		randN := nonce[:4]
 		count := nonce[4:]
 
-		if bytes.Equal(randN, bytes.Repeat([]byte{0}, len(randN))) {
+		if bytes.Equal(randN, make([]byte, len(randN))) {
 			t.Errorf("key %s: got all zeros for first four bytes", string(kv.Key))
 		}
 

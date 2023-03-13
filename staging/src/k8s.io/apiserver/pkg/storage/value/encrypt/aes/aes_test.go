@@ -212,7 +212,7 @@ func TestGCMUnsafeNonceGen(t *testing.T) {
 			nonce := out[:12]
 			randomN := nonce[:4]
 
-			if bytes.Equal(randomN, bytes.Repeat([]byte{0}, len(randomN))) {
+			if bytes.Equal(randomN, make([]byte, len(randomN))) {
 				t.Error("got all zeros for random four byte nonce")
 			}
 
@@ -245,7 +245,7 @@ func TestGCMUnsafeNonceGen(t *testing.T) {
 func TestGCMNonce(t *testing.T) {
 	t.Run("gcm", func(t *testing.T) {
 		testGCMNonce(t, newGCMTransformer, func(_ int, nonce []byte) {
-			if bytes.Equal(nonce, bytes.Repeat([]byte{0}, len(nonce))) {
+			if bytes.Equal(nonce, make([]byte, len(nonce))) {
 				t.Error("got all zeros for nonce")
 			}
 		})
@@ -284,7 +284,7 @@ func testGCMNonce(t *testing.T, f func(t testingT, block cipher.Block) value.Tra
 		nonce := out[:12]
 		randomN := nonce[:4]
 
-		if bytes.Equal(randomN, bytes.Repeat([]byte{0}, len(randomN))) {
+		if bytes.Equal(randomN, make([]byte, len(randomN))) {
 			t.Error("got all zeros for first four bytes")
 		}
 
