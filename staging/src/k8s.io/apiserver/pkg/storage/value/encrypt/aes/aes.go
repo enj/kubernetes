@@ -74,7 +74,9 @@ func NewGCMTransformer(block cipher.Block) (value.Transformer, error) {
 // around plaintext length because all stored items are small (less than 2 MB).  To prevent the
 // chance of the block cipher being accidentally re-used, it is not taken in as input.  Instead,
 // a new random key is generated and returned on every invocation of this function.  This key is
-// used as the input to the block cipher.
+// used as the input to the block cipher.  If the key is stored and retrieved at a later point,
+// it can be passed to NewGCMTransformer(aes.NewCipher(key)) to construct a transformer capable
+// of decrypting values encrypted by this transformer (that transformer must not be used for encryption).
 func NewGCMTransformerWithUniqueKeyUnsafe() (value.Transformer, []byte, error) {
 	key, err := generateKey(32)
 	if err != nil {
