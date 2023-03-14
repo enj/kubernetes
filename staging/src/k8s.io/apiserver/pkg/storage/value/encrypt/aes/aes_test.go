@@ -139,9 +139,9 @@ func runEncrypt(t *testing.T, transformer value.Transformer) {
 	}
 }
 
-// TestGCUnsafeCompatibility asserts that encryptions performed via
+// TestGCMUnsafeCompatibility asserts that encryptions performed via
 // NewGCMTransformerWithUniqueKeyUnsafe can be decrypted via NewGCMTransformer.
-func TestGCUnsafeCompatibility(t *testing.T) {
+func TestGCMUnsafeCompatibility(t *testing.T) {
 	transformerEncrypt, key, err := NewGCMTransformerWithUniqueKeyUnsafe()
 	if err != nil {
 		t.Fatal(err)
@@ -169,6 +169,32 @@ func TestGCUnsafeCompatibility(t *testing.T) {
 	}
 
 	plaintextAgain, _, err := transformerDecrypt.TransformFromStorage(ctx, ciphertext, dataCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(plaintext, plaintextAgain) {
+		t.Errorf("expected original plaintext %q, got %q", string(plaintext), string(plaintextAgain))
+	}
+}
+
+func TestGCMLegacyDataCompatibility(t *testing.T) {
+	block, err := aes.NewCipher([]byte("snorlax_awesomes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	transformerDecrypt := newGCMTransformer(t, block)
+
+	// recorded output from NewGCMTransformer at commit XXX
+	const legacyCiphertext = "hello"
+
+	ctx := context.Background()
+	dataCtx := value.DefaultContext("bamboo")
+
+	plaintext := []byte("pandas are the best")
+
+	plaintextAgain, _, err := transformerDecrypt.TransformFromStorage(ctx, []byte(legacyCiphertext), dataCtx)
 	if err != nil {
 		t.Fatal(err)
 	}
