@@ -186,8 +186,8 @@ func TestGCMLegacyDataCompatibility(t *testing.T) {
 
 	transformerDecrypt := newGCMTransformer(t, block)
 
-	// recorded output from NewGCMTransformer at commit XXX
-	const legacyCiphertext = "hello"
+	// recorded output from NewGCMTransformer at commit 3b1fc60d8010dd8b53e97ba80e4710dbb430beee
+	const legacyCiphertext = "\x9f'\xc8\xfc\xea\x8aX\xc4g\xd8\xe47\xdb\xf2\xd8YU\xf9\xb4\xbd\x91/N\xf9g\u05c8\xa0\xcb\ay}\xac\n?\n\bE`\\\xa8Z\xc8V+J\xe1"
 
 	ctx := context.Background()
 	dataCtx := value.DefaultContext("bamboo")
