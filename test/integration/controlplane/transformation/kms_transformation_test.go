@@ -530,7 +530,9 @@ resources:
 	if err != nil {
 		t.Fatalf("failed to start KUBE API Server with encryptionConfig\n %s, error: %v", encryptionConfig, err)
 	}
-	defer test.cleanUp()
+	defer func() {
+		test.cleanUp()
+	}()
 
 	// confirm that reading an old secret still works
 	_, err = test.restClient.CoreV1().Secrets(testNamespace).Get(

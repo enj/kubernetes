@@ -145,7 +145,12 @@ func (e *transformTest) cleanUp() {
 }
 
 func (e *transformTest) shutdownAPIServer(restart bool) {
-	e.kubeAPIServer.TearDownFn(restart)
+	klog.Infof("RITA shutdownAPIServer restart: %v", restart)
+	go func() {
+		e.kubeAPIServer.RestartCh <- restart
+		klog.Infof("RITA shutdownAPIServer channel restart: %v", restart)
+	}()
+	e.kubeAPIServer.TearDownFn()
 }
 
 func (e *transformTest) runResource(l kubeapiservertesting.Logger, unSealSecretFunc unSealSecret, expectedEnvelopePrefix,
