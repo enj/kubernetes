@@ -38,11 +38,11 @@ type recordMetrics func(context.Context, *authenticator.Response, bool, error, a
 // stores any such user found onto the provided context for the request. If authentication fails or returns an error
 // the failed handler is used. On success, "Authorization" header is removed from the request and handler
 // is invoked to serve the request.
-func WithAuthentication(handler http.Handler, auth authenticator.Request, failed http.Handler, apiAuds authenticator.Audiences) http.Handler {
-	return withAuthentication(handler, auth, failed, apiAuds, recordAuthMetrics)
+func WithAuthentication(handler http.Handler, auth authenticator.Request, failed http.Handler, apiAuds authenticator.Audiences, requestHeaderConfig *authenticatorfactory.RequestHeaderConfig) http.Handler {
+ return withAuthentication(handler, auth, failed, apiAuds, requestHeaderConfig, recordAuthMetrics)
 }
 
-func withAuthentication(handler http.Handler, auth authenticator.Request, failed http.Handler, apiAuds authenticator.Audiences, metrics recordMetrics) http.Handler {
+func withAuthentication(handler http.Handler, auth authenticator.Request, failed http.Handler, apiAuds authenticator.Audiences, requestHeaderConfig *authenticatorfactory.RequestHeaderConfig, metrics recordMetrics) http.Handler {
 	if auth == nil {
 		klog.Warning("Authentication is disabled")
 		return handler
@@ -75,6 +75,11 @@ func withAuthentication(handler http.Handler, auth authenticator.Request, failed
 
 		// authorization header is not required anymore in case of a successful authentication.
 		req.Header.Del("Authorization")
+
+   // delete standard headers
+   if requestHeaderConfig != nil {
+     // delete custom headers
+   }
 
 		req = req.WithContext(genericapirequest.WithUser(req.Context(), resp.User))
 		handler.ServeHTTP(w, req)
