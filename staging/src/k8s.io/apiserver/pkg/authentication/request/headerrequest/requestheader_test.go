@@ -156,6 +156,39 @@ func TestRequestHeader(t *testing.T) {
 			expectedOk: true,
 		},
 
+		"extra prefix matches case-insensitive with unrelated headers": {
+			nameHeaders:        []string{"X-Remote-User"},
+			groupHeaders:       []string{"X-Remote-Group-1", "X-Remote-Group-2"},
+			extraPrefixHeaders: []string{"X-Remote-Extra-1-", "X-Remote-Extra-2-"},
+			requestHeaders: http.Header{
+				"X-Group-Remote":        {"snorlax"}, // unrelated header
+				"X-Group-Bear":          {"panda"},   // another unrelated header
+				"X-Remote-User":         {"Bob"},
+				"X-Remote-Group-1":      {"one-a", "one-b"},
+				"X-Remote-Group-2":      {"two-a", "two-b"},
+				"X-Remote-extra-1-key1": {"alfa", "bravo"},
+				"X-Remote-Extra-1-Key2": {"charlie", "delta"},
+				"X-Remote-Extra-1-":     {"india", "juliet"},
+				"X-Remote-extra-2-":     {"kilo", "lima"},
+				"X-Remote-extra-2-Key1": {"echo", "foxtrot"},
+				"X-Remote-Extra-2-key2": {"golf", "hotel"},
+			},
+			finalHeaders: http.Header{
+				"X-Group-Remote": {"snorlax"},
+				"X-Group-Bear":   {"panda"},
+			},
+			expectedUser: &user.DefaultInfo{
+				Name:   "Bob",
+				Groups: []string{"one-a", "one-b", "two-a", "two-b"},
+				Extra: map[string][]string{
+					"key1": {"alfa", "bravo", "echo", "foxtrot"},
+					"key2": {"charlie", "delta", "golf", "hotel"},
+					"":     {"india", "juliet", "kilo", "lima"},
+				},
+			},
+			expectedOk: true,
+		},
+
 		"escaped extra keys": {
 			nameHeaders:        []string{"X-Remote-User"},
 			groupHeaders:       []string{"X-Remote-Group"},
