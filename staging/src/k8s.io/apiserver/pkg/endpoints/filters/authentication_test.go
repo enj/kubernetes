@@ -19,14 +19,16 @@ package filters
 import (
 	"context"
 	"errors"
-	"github.com/stretchr/testify/assert"
-	"k8s.io/apiserver/pkg/authentication/authenticator"
-	"k8s.io/apiserver/pkg/authentication/user"
-	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+
+	"k8s.io/apiserver/pkg/authentication/authenticator"
+	"k8s.io/apiserver/pkg/authentication/user"
+	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 )
 
 func TestAuthenticateRequestWithAud(t *testing.T) {
@@ -93,6 +95,7 @@ func TestAuthenticateRequestWithAud(t *testing.T) {
 					}
 				}),
 				tc.apiAuds,
+				nil,
 			)
 			auth.ServeHTTP(httptest.NewRecorder(), &http.Request{Header: map[string][]string{"Authorization": {"Something"}}})
 			if tc.expectSuccess {
@@ -164,6 +167,7 @@ func TestAuthenticateMetrics(t *testing.T) {
 				http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 				}),
 				tc.apiAuds,
+				nil,
 				func(ctx context.Context, resp *authenticator.Response, ok bool, err error, apiAudiences authenticator.Audiences, authStart time.Time, authFinish time.Time) {
 					called = 1
 					if tc.expectOk != ok {
@@ -214,6 +218,7 @@ func TestAuthenticateRequest(t *testing.T) {
 			t.Errorf("unexpected call to failed")
 		}),
 		nil,
+		nil,
 	)
 
 	auth.ServeHTTP(httptest.NewRecorder(), &http.Request{Header: map[string][]string{"Authorization": {"Something"}}})
@@ -234,6 +239,7 @@ func TestAuthenticateRequestFailed(t *testing.T) {
 			close(failed)
 		}),
 		nil,
+		nil,
 	)
 
 	auth.ServeHTTP(httptest.NewRecorder(), &http.Request{})
@@ -253,6 +259,7 @@ func TestAuthenticateRequestError(t *testing.T) {
 		http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			close(failed)
 		}),
+		nil,
 		nil,
 	)
 

@@ -357,7 +357,7 @@ func (s *DelegatingAuthenticationOptions) ApplyTo(authenticationInfo *server.Aut
 	}
 	if requestHeaderConfig != nil {
 		cfg.RequestHeaderConfig = requestHeaderConfig
-   authenticationInfo.RequestHeaderConfig = requestHeaderConfig
+		authenticationInfo.RequestHeaderConfig = requestHeaderConfig
 		if err = authenticationInfo.ApplyClientCert(cfg.RequestHeaderConfig.CAContentProvider, servingInfo); err != nil {
 			return fmt.Errorf("unable to load request-header-client-ca-file: %v", err)
 		}
