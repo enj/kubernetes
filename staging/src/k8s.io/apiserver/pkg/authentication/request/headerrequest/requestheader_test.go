@@ -21,6 +21,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"k8s.io/apiserver/pkg/authentication/user"
 )
 
@@ -30,6 +32,7 @@ func TestRequestHeader(t *testing.T) {
 		groupHeaders       []string
 		extraPrefixHeaders []string
 		requestHeaders     http.Header
+		finalHeaders       http.Header
 
 		expectedUser user.Info
 		expectedOk   bool
@@ -202,6 +205,14 @@ func TestRequestHeader(t *testing.T) {
 			}
 			if e, a := testcase.expectedUser, resp.User; !reflect.DeepEqual(e, a) {
 				t.Errorf("%v: expected %#v, got %#v", k, e, a)
+			}
+
+			want := testcase.finalHeaders
+			if want == nil && testcase.requestHeaders != nil {
+				want = http.Header{}
+			}
+			if diff := cmp.Diff(want, testcase.requestHeaders); len(diff) > 0 {
+				t.Errorf("unexpected final headers (-want +got):\n%s", diff)
 			}
 		})
 	}

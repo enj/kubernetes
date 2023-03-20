@@ -185,7 +185,7 @@ func ClearAuthenticationHeaders(h http.Header, nameHeaders, groupHeaders, extraH
 		prefix := strings.ToLower(prefix)
 		for k := range h {
 			if strings.HasPrefix(strings.ToLower(k), prefix) {
-				h.Del(k)
+				delete(h, k) // we have the raw key so avoid relying on canonicalization
 			}
 		}
 	}
