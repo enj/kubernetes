@@ -102,7 +102,8 @@ func newTransformTest(l kubeapiservertesting.Logger, transformerConfigYAML strin
 		e.configDir = configDir
 	}
 
-	if e.kubeAPIServer, err = kubeapiservertesting.StartTestServer(l, nil, e.getEncryptionOptions(reload), e.storageConfig, &e.kubeAPIServer); err != nil {
+	if e.kubeAPIServer, err = kubeapiservertesting.StartTestServer(l, nil, e.getEncryptionOptions(reload), e.storageConfig); err != nil {
+		e.cleanUp()
 		return nil, fmt.Errorf("failed to start KubeAPI server: %v", err)
 	}
 	klog.Infof("Started kube-apiserver %v", e.kubeAPIServer.ClientConfig.Host)
@@ -131,11 +132,11 @@ func (e *transformTest) cleanUp() {
 	os.RemoveAll(e.configDir)
 
 	if e.kubeAPIServer.ClientConfig != nil {
-		e.shutdownAPIServer(false)
+		e.shutdownAPIServer()
 	}
 }
 
-func (e *transformTest) shutdownAPIServer(restart bool) {
+func (e *transformTest) shutdownAPIServer() {
 	e.kubeAPIServer.TearDownFn()
 }
 
@@ -148,7 +149,7 @@ func (e *transformTest) restartAPIServer(t kubeapiservertesting.Logger, transfor
 		}
 		e.configDir = configDir
 	}
-	ts, err := e.kubeAPIServer.RestartFn(t, e.kubeAPIServer, e.getEncryptionOptions(true))
+	ts, err := e.kubeAPIServer.RestartFn(e.kubeAPIServer, e.getEncryptionOptions(true))
 	if err != nil {
 		return fmt.Errorf("error while restarting KubeAPIServer: %v", err)
 	}

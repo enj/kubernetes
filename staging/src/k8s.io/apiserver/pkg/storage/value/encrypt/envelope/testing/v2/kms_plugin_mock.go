@@ -25,8 +25,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"runtime"
-	"strings"
 	"sync"
 	"time"
 
@@ -84,8 +82,8 @@ func WaitForBase64PluginToBeUp(plugin *Base64Plugin) error {
 		return gRPCErr == nil && resp.Healthz == "ok", nil
 	})
 
-	if pollErr == wait.ErrWaitTimeout {
-		return fmt.Errorf("failed to start kms-plugin, error: %v", gRPCErr)
+	if pollErr != nil {
+		return fmt.Errorf("failed to start kms-plugin, error: %v - %v", gRPCErr, pollErr)
 	}
 
 	return nil
@@ -135,10 +133,8 @@ func (s *Base64Plugin) Start() error {
 // CleanUp stops gRPC server and the underlying listener.
 func (s *Base64Plugin) CleanUp() {
 	s.grpcServer.Stop()
-	s.listener.Close()
-	if !strings.HasPrefix(s.socketPath, "@") || runtime.GOOS != "linux" {
-		os.Remove(s.socketPath)
-	}
+	_ = s.listener.Close()
+	_ = os.Remove(s.socketPath)
 }
 
 // EnterFailedState places the plugin into failed state.

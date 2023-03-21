@@ -258,11 +258,14 @@ resources:
 		t.Fatalf("failed to create mock of KMSv2 Plugin: %v", err)
 	}
 
-	go pluginMock.Start()
+	if err := pluginMock.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer pluginMock.CleanUp()
+
 	if err := kmsv2mock.WaitForBase64PluginToBeUp(pluginMock); err != nil {
 		t.Fatalf("Failed start plugin, err: %v", err)
 	}
-	defer pluginMock.CleanUp()
 
 	test, err = newTransformTest(t, encryptionConfig, false, "", nil)
 	if err != nil {

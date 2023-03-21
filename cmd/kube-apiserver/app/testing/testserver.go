@@ -43,7 +43,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/util/cert"
-	"k8s.io/klog/v2"
 	"k8s.io/kube-aggregator/pkg/apiserver"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app/options"
@@ -62,7 +61,7 @@ AwEHoUQDQgAEH6cuzP8XuD5wal6wf9M6xDljTOPLX2i8uIp/C/ASqiIGUeeKQtX0
 type TearDownFunc func()
 
 // RestartFunc is to be called to start a test server.
-type RestartFunc func(Logger, TestServer, []string) (TestServer, error)
+type RestartFunc func(TestServer, []string) (TestServer, error)
 
 // TestServerInstanceOptions Instance options the TestServer
 type TestServerInstanceOptions struct {
@@ -82,10 +81,8 @@ type TestServer struct {
 	EtcdStoragePrefix string                    // storage prefix in etcd
 	RestartFn         RestartFunc               // Start function
 	instanceOptions   *TestServerInstanceOptions
-	stopCh            chan struct{}
-	errCh             chan error
-	ctx               context.Context
-	cancelFn          context.CancelFunc
+	// stopCh            chan struct{}
+	// errCh             chan error
 }
 
 // Logger allows t.Testing and b.Testing to be passed to StartTestServer and StartTestServerOrDie
@@ -94,6 +91,7 @@ type Logger interface {
 	Errorf(format string, args ...interface{})
 	Fatalf(format string, args ...interface{})
 	Logf(format string, args ...interface{})
+	Cleanup(func())
 }
 
 // NewDefaultTestServerOptions Default options for TestServer instances
@@ -103,10 +101,7 @@ func NewDefaultTestServerOptions() *TestServerInstanceOptions {
 	}
 }
 
-func start(t Logger, result TestServer, customFlags []string, storageConfig *storagebackend.Config, wg *sync.WaitGroup) (res TestServer, err error) {
-	result.ctx, result.cancelFn = context.WithCancel(context.Background())
-	result.errCh = make(chan error, 1)
-
+func start(ctx context.Context, errCh chan error, t Logger, result TestServer, customFlags []string, storageConfig *storagebackend.Config, wg *sync.WaitGroup) (res TestServer, err error) {
 	s := options.NewServerRunOptions()
 	s.SecureServing.Listener, s.SecureServing.BindPort, err = createLocalhostListenerOnFreePort()
 	if err != nil {
@@ -225,19 +220,26 @@ func start(t Logger, result TestServer, customFlags []string, storageConfig *sto
 	}
 
 	wg.Add(1)
-	go func(stopCh <-chan struct{}) {
+	go func() {
 		defer func() {
 			t.Logf("RITA wg done")
 			wg.Done()
 		}()
-		defer close(result.errCh)
+		t.Logf("START")
 		prepared, err := server.PrepareRun()
 		if err != nil {
-			result.errCh <- err
-		} else if err := prepared.Run(stopCh); err != nil {
-			result.errCh <- err
+			t.Logf("ERR 1 %v", err)
+			errCh <- err
+			t.Logf("ERR DONE 1")
+			return
 		}
-	}(result.stopCh)
+		if err := prepared.Run(ctx.Done()); err != nil {
+			t.Logf("ERR 2 %v", err)
+			errCh <- err
+			t.Logf("ERR DONE 2")
+			return
+		}
+	}()
 
 	t.Logf("Waiting for /healthz to be ok...")
 
@@ -246,10 +248,12 @@ func start(t Logger, result TestServer, customFlags []string, storageConfig *sto
 		return result, fmt.Errorf("failed to create a client: %v", err)
 	}
 	result.ClientConfig = restclient.CopyConfig(server.GenericAPIServer.LoopbackClientConfig)
+	result.ClientConfig.QPS = 1000
+	result.ClientConfig.Burst = 10000
 	// wait until healthz endpoint returns ok
 	err = wait.Poll(100*time.Millisecond, time.Minute, func() (bool, error) {
 		select {
-		case err := <-result.errCh:
+		case err := <-errCh:
 			return false, err
 		default:
 		}
@@ -263,7 +267,9 @@ func start(t Logger, result TestServer, customFlags []string, storageConfig *sto
 			storageVersionCheck := fmt.Sprintf("poststarthook/%s", apiserver.StorageVersionPostStartHookName)
 			req.Param("exclude", storageVersionCheck)
 		}
-		rs := req.Do(result.ctx)
+		healthzCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		rs := req.Do(healthzCtx)
 		status := 0
 		rs.StatusCode(&status)
 		if status == 200 {
@@ -278,7 +284,7 @@ func start(t Logger, result TestServer, customFlags []string, storageConfig *sto
 	// wait until default namespace is created
 	err = wait.Poll(100*time.Millisecond, 30*time.Second, func() (bool, error) {
 		select {
-		case err := <-result.errCh:
+		case err := <-errCh:
 			return false, err
 		default:
 		}
@@ -303,7 +309,7 @@ func start(t Logger, result TestServer, customFlags []string, storageConfig *sto
 // Note: we return a tear-down func instead of a stop channel because the later will leak temporary
 // files that because Golang testing's call to os.Exit will not give a stop channel go routine
 // enough time to remove temporary files.
-func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, customFlags []string, storageConfig *storagebackend.Config, oldTestServer *TestServer) (result TestServer, err error) {
+func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, customFlags []string, storageConfig *storagebackend.Config) (result TestServer, err error) {
 	if instanceOptions == nil {
 		result.instanceOptions = NewDefaultTestServerOptions()
 	}
@@ -313,23 +319,39 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 		return result, fmt.Errorf("failed to create temp dir: %v", err)
 	}
 
-	result.stopCh = make(chan struct{}) /// TODO: replace with context
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	errCh := make(chan error, 1_000)
+
 	var wg sync.WaitGroup
 	tearDown := func() {
+		// TODO fix comment
 		// Closing stopCh is stopping apiserver and cleaning up
 		// after itself, including shutting down its storage layer.
-		close(result.stopCh)
-		result.cancelFn()
+		cancel()
+		t.Logf("END WAIT 1")
 		wg.Wait()
+		t.Logf("END WAIT 2")
+
+		select {
+		case err := <-errCh:
+			t.Errorf("Failed to shutdown test server clearly: %v", err)
+		default:
+			// we do not care if there are no errors
+		}
+
 		// If the apiserver was started, let's wait for it to
 		// shutdown clearly.
-		if result.errCh != nil {
-			err, ok := <-result.errCh
-			if ok && err != nil {
-				klog.Errorf("Failed to shutdown test server clearly: %v", err)
-			}
-		}
+		// if result.errCh != nil {
+		// err, ok := <-errCh
+		// if ok && err != nil {
+		// 	t.Errorf("Failed to shutdown test server clearly: %v", err)
+		// }
+		// // }
 		os.RemoveAll(result.TmpDir)
+		t.Logf("END WAIT 3")
+		close(errCh)
 	}
 	defer func() {
 		if result.TearDownFn == nil {
@@ -360,31 +382,31 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 	}
 	result.EtcdClient = etcdClient
 	result.EtcdStoragePrefix = storageConfig.Prefix
-
-	result, err = start(t, result, customFlags, storageConfig, &wg)
-	if err != nil {
-		return result, err
-	}
 	// from here the caller must call tearDown
 
-	result.ClientConfig.QPS = 1000
-	result.ClientConfig.Burst = 10000
 	result.TearDownFn = func() {
 		tearDown()
-		etcdClient.Close()
-	}
-	result.RestartFn = func(t Logger, result TestServer, flags []string) (TestServer, error) {
-		result.cancelFn()
-		wg.Wait()
-		return start(t, result, flags, storageConfig, &wg)
+		_ = etcdClient.Close()
 	}
 
-	return result, nil
+	ctx2, cancel2 := context.WithCancel(ctx)
+	t.Cleanup(cancel2)
+
+	result.RestartFn = func(result TestServer, flags []string) (TestServer, error) {
+		t.Logf("AFTER BEFORE WAIT")
+		cancel2()
+		wg.Wait()
+		t.Logf("AFTER WAIT")
+		ctx2, cancel2 = context.WithCancel(ctx)
+		return start(ctx2, errCh, t, result, flags, storageConfig, &wg)
+	}
+
+	return start(ctx2, errCh, t, result, customFlags, storageConfig, &wg)
 }
 
 // StartTestServerOrDie calls StartTestServer t.Fatal if it does not succeed.
 func StartTestServerOrDie(t Logger, instanceOptions *TestServerInstanceOptions, flags []string, storageConfig *storagebackend.Config) *TestServer {
-	result, err := StartTestServer(t, instanceOptions, flags, storageConfig, nil)
+	result, err := StartTestServer(t, instanceOptions, flags, storageConfig)
 	if err == nil {
 		return &result
 	}
