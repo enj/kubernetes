@@ -85,18 +85,10 @@ type transformTest struct {
 }
 
 func newTransformTest(l kubeapiservertesting.Logger, transformerConfigYAML string, reload bool, configDir string, oldTest *transformTest) (*transformTest, error) {
-	var e transformTest
-	if oldTest != nil {
-		e = *oldTest
-		if transformerConfigYAML != "" {
-			e.transformerConfig = transformerConfigYAML
-		}
-	} else {
-		e = transformTest{
-			logger:            l,
-			transformerConfig: transformerConfigYAML,
-			storageConfig:     framework.SharedEtcd(),
-		}
+	e := transformTest{
+		logger:            l,
+		transformerConfig: transformerConfigYAML,
+		storageConfig:     framework.SharedEtcd(),
 	}
 
 	var err error
@@ -118,10 +110,9 @@ func newTransformTest(l kubeapiservertesting.Logger, transformerConfigYAML strin
 	if e.restClient, err = kubernetes.NewForConfig(e.kubeAPIServer.ClientConfig); err != nil {
 		return nil, fmt.Errorf("error while creating rest client: %v", err)
 	}
-	if oldTest == nil {
-		if e.ns, err = e.createNamespace(testNamespace); err != nil {
-			return nil, err
-		}
+
+	if e.ns, err = e.createNamespace(testNamespace); err != nil {
+		return nil, err
 	}
 
 	if transformerConfigYAML != "" && reload {
@@ -145,12 +136,28 @@ func (e *transformTest) cleanUp() {
 }
 
 func (e *transformTest) shutdownAPIServer(restart bool) {
-	klog.Infof("RITA shutdownAPIServer restart: %v", restart)
-	go func() {
-		e.kubeAPIServer.RestartCh <- restart
-		klog.Infof("RITA shutdownAPIServer channel restart: %v", restart)
-	}()
 	e.kubeAPIServer.TearDownFn()
+}
+
+func (e *transformTest) restartAPIServer(t kubeapiservertesting.Logger, transformerConfigYAML string) (err error) {
+	if transformerConfigYAML != "" {
+		e.transformerConfig = transformerConfigYAML
+		configDir, err := e.createEncryptionConfig()
+		if err != nil {
+			return fmt.Errorf("error while creating KubeAPIServer encryption config: %v", err)
+		}
+		e.configDir = configDir
+	}
+	ts, err := e.kubeAPIServer.RestartFn(t, e.kubeAPIServer, e.getEncryptionOptions(true))
+	if err != nil {
+		return fmt.Errorf("error while restarting KubeAPIServer: %v", err)
+	}
+	e.kubeAPIServer = ts
+
+	if e.restClient, err = kubernetes.NewForConfig(e.kubeAPIServer.ClientConfig); err != nil {
+		return fmt.Errorf("error while creating rest client: %v", err)
+	}
+	return nil
 }
 
 func (e *transformTest) runResource(l kubeapiservertesting.Logger, unSealSecretFunc unSealSecret, expectedEnvelopePrefix,
@@ -291,6 +298,7 @@ func (e *transformTest) createEncryptionConfig() (
 		os.RemoveAll(tempDir)
 		return tempDir, fmt.Errorf("error while writing encryption config: %v", err)
 	}
+	fmt.Printf("RITA createEncryptionConfig transformerConfig content: %s", e.transformerConfig)
 
 	return tempDir, nil
 }

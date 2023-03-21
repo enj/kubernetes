@@ -25,6 +25,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -60,6 +61,9 @@ AwEHoUQDQgAEH6cuzP8XuD5wal6wf9M6xDljTOPLX2i8uIp/C/ASqiIGUeeKQtX0
 // TearDownFunc is to be called to tear down a test server.
 type TearDownFunc func()
 
+// RestartFunc is to be called to start a test server.
+type RestartFunc func(Logger, TestServer, []string) (TestServer, error)
+
 // TestServerInstanceOptions Instance options the TestServer
 type TestServerInstanceOptions struct {
 	// Enable cert-auth for the kube-apiserver
@@ -76,8 +80,12 @@ type TestServer struct {
 	TmpDir            string                    // Temp Dir used, by the apiserver
 	EtcdClient        *clientv3.Client          // used by tests that need to check data migrated from APIs that are no longer served
 	EtcdStoragePrefix string                    // storage prefix in etcd
-	Restart           bool
-	RestartCh         chan bool
+	RestartFn         RestartFunc               // Start function
+	instanceOptions   *TestServerInstanceOptions
+	stopCh            chan struct{}
+	errCh             chan error
+	ctx               context.Context
+	cancelFn          context.CancelFunc
 }
 
 // Logger allows t.Testing and b.Testing to be passed to StartTestServer and StartTestServerOrDie
@@ -95,73 +103,17 @@ func NewDefaultTestServerOptions() *TestServerInstanceOptions {
 	}
 }
 
-// StartTestServer starts a etcd server and kube-apiserver. A rest client config and a tear-down func,
-// and location of the tmpdir are returned.
-//
-// Note: we return a tear-down func instead of a stop channel because the later will leak temporary
-// files that because Golang testing's call to os.Exit will not give a stop channel go routine
-// enough time to remove temporary files.
-func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, customFlags []string, storageConfig *storagebackend.Config, oldTestServer *TestServer) (result TestServer, err error) {
-	if instanceOptions == nil {
-		instanceOptions = NewDefaultTestServerOptions()
-	}
-
-	if oldTestServer != nil && len((*oldTestServer).TmpDir) > 0 {
-		result.TmpDir = (*oldTestServer).TmpDir
-		result.RestartCh = (*oldTestServer).RestartCh
-		result.Restart = (*oldTestServer).Restart
-	} else {
-		result.TmpDir, err = os.MkdirTemp("", "kubernetes-kube-apiserver")
-		if err != nil {
-			return result, fmt.Errorf("failed to create temp dir: %v", err)
-		}
-		result.RestartCh = make(chan bool)
-	}
-	stopCh := make(chan struct{})
-	var errCh chan error
-	tearDown := func() {
-		// Closing stopCh is stopping apiserver and cleaning up
-		// after itself, including shutting down its storage layer.
-		close(stopCh)
-
-		// If the apiserver was started, let's wait for it to
-		// shutdown clearly.
-		if errCh != nil {
-			err, ok := <-errCh
-			if ok && err != nil {
-				klog.Errorf("Failed to shutdown test server clearly: %v", err)
-			}
-		}
-		if result.RestartCh != nil {
-			result.Restart = <-result.RestartCh
-			klog.Infof("RITA tearDown channel result.Restart: %v", result.Restart)
-		}
-		klog.Infof("RITA tearDown result.Restart: %v", result.Restart)
-		if !result.Restart {
-			os.RemoveAll(result.TmpDir)
-			close(result.RestartCh)
-		}
-	}
-	defer func() {
-		if result.TearDownFn == nil {
-			tearDown()
-		}
-	}()
-
-	fs := pflag.NewFlagSet("test", pflag.PanicOnError)
+func start(t Logger, result TestServer, customFlags []string, storageConfig *storagebackend.Config, wg *sync.WaitGroup) (res TestServer, err error) {
+	result.ctx, result.cancelFn = context.WithCancel(context.Background())
+	result.errCh = make(chan error, 1)
 
 	s := options.NewServerRunOptions()
-	for _, f := range s.Flags().FlagSets {
-		fs.AddFlagSet(f)
-	}
-
 	s.SecureServing.Listener, s.SecureServing.BindPort, err = createLocalhostListenerOnFreePort()
 	if err != nil {
 		return result, fmt.Errorf("failed to create listener: %v", err)
 	}
 	s.SecureServing.ServerCert.CertDirectory = result.TmpDir
-
-	if instanceOptions.EnableCertAuth {
+	if result.instanceOptions.EnableCertAuth {
 		// set up default headers for request header auth
 		reqHeaders := serveroptions.NewDelegatingAuthenticationOptions()
 		s.Authentication.RequestHeader = &reqHeaders.RequestHeader
@@ -232,23 +184,28 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 	s.Etcd.StorageConfig = *storageConfig
 	s.APIEnablement.RuntimeConfig.Set("api/all=true")
 
-	if err := fs.Parse(customFlags); err != nil {
-		return result, err
-	}
-
 	saSigningKeyFile, err := os.CreateTemp("/tmp", "insecure_test_key")
 	if err != nil {
 		t.Fatalf("create temp file failed: %v", err)
 	}
+
+	s.ServiceAccountSigningKeyFile = saSigningKeyFile.Name()
 	defer os.RemoveAll(saSigningKeyFile.Name())
 	if err = os.WriteFile(saSigningKeyFile.Name(), []byte(ecdsaPrivateKey), 0666); err != nil {
 		t.Fatalf("write file %s failed: %v", saSigningKeyFile.Name(), err)
 	}
-	s.ServiceAccountSigningKeyFile = saSigningKeyFile.Name()
 	s.Authentication.ServiceAccounts.Issuers = []string{"https://foo.bar.example.com"}
 	s.Authentication.ServiceAccounts.KeyFiles = []string{saSigningKeyFile.Name()}
+	result.ServerOpts = s
 
-	completedOptions, err := app.Complete(s)
+	fs := pflag.NewFlagSet("test", pflag.PanicOnError)
+	for _, f := range result.ServerOpts.Flags().FlagSets {
+		fs.AddFlagSet(f)
+	}
+	if err := fs.Parse(customFlags); err != nil {
+		return result, err
+	}
+	completedOptions, err := app.Complete(result.ServerOpts)
 	if err != nil {
 		return result, fmt.Errorf("failed to set default ServerRunOptions: %v", err)
 	}
@@ -258,25 +215,29 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 	}
 
 	t.Logf("runtime-config=%v", completedOptions.APIEnablement.RuntimeConfig)
-	t.Logf("Starting kube-apiserver on port %d...", s.SecureServing.BindPort)
+	t.Logf("Starting kube-apiserver on port %d...", result.ServerOpts.SecureServing.BindPort)
 	server, err := app.CreateServerChain(completedOptions)
 	if err != nil {
 		return result, fmt.Errorf("failed to create server chain: %v", err)
 	}
-	if instanceOptions.StorageVersionWrapFunc != nil {
-		server.GenericAPIServer.StorageVersionManager = instanceOptions.StorageVersionWrapFunc(server.GenericAPIServer.StorageVersionManager)
+	if result.instanceOptions.StorageVersionWrapFunc != nil {
+		server.GenericAPIServer.StorageVersionManager = result.instanceOptions.StorageVersionWrapFunc(server.GenericAPIServer.StorageVersionManager)
 	}
 
-	errCh = make(chan error)
+	wg.Add(1)
 	go func(stopCh <-chan struct{}) {
-		defer close(errCh)
+		defer func() {
+			t.Logf("RITA wg done")
+			wg.Done()
+		}()
+		defer close(result.errCh)
 		prepared, err := server.PrepareRun()
 		if err != nil {
-			errCh <- err
+			result.errCh <- err
 		} else if err := prepared.Run(stopCh); err != nil {
-			errCh <- err
+			result.errCh <- err
 		}
-	}(stopCh)
+	}(result.stopCh)
 
 	t.Logf("Waiting for /healthz to be ok...")
 
@@ -284,11 +245,11 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 	if err != nil {
 		return result, fmt.Errorf("failed to create a client: %v", err)
 	}
-
+	result.ClientConfig = restclient.CopyConfig(server.GenericAPIServer.LoopbackClientConfig)
 	// wait until healthz endpoint returns ok
 	err = wait.Poll(100*time.Millisecond, time.Minute, func() (bool, error) {
 		select {
-		case err := <-errCh:
+		case err := <-result.errCh:
 			return false, err
 		default:
 		}
@@ -296,15 +257,15 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 		req := client.CoreV1().RESTClient().Get().AbsPath("/healthz")
 		// The storage version bootstrap test wraps the storage version post-start
 		// hook, so the hook won't become health when the server bootstraps
-		if instanceOptions.StorageVersionWrapFunc != nil {
+		if result.instanceOptions.StorageVersionWrapFunc != nil {
 			// We hardcode the param instead of having a new instanceOptions field
 			// to avoid confusing users with more options.
 			storageVersionCheck := fmt.Sprintf("poststarthook/%s", apiserver.StorageVersionPostStartHookName)
 			req.Param("exclude", storageVersionCheck)
 		}
-		result := req.Do(context.TODO())
+		rs := req.Do(result.ctx)
 		status := 0
-		result.StatusCode(&status)
+		rs.StatusCode(&status)
 		if status == 200 {
 			return true, nil
 		}
@@ -317,7 +278,7 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 	// wait until default namespace is created
 	err = wait.Poll(100*time.Millisecond, 30*time.Second, func() (bool, error) {
 		select {
-		case err := <-errCh:
+		case err := <-result.errCh:
 			return false, err
 		default:
 		}
@@ -333,6 +294,48 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 	if err != nil {
 		return result, fmt.Errorf("failed to wait for default namespace to be created: %v", err)
 	}
+	return result, nil
+}
+
+// StartTestServer starts a etcd server and kube-apiserver. A rest client config and a tear-down func,
+// and location of the tmpdir are returned.
+//
+// Note: we return a tear-down func instead of a stop channel because the later will leak temporary
+// files that because Golang testing's call to os.Exit will not give a stop channel go routine
+// enough time to remove temporary files.
+func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, customFlags []string, storageConfig *storagebackend.Config, oldTestServer *TestServer) (result TestServer, err error) {
+	if instanceOptions == nil {
+		result.instanceOptions = NewDefaultTestServerOptions()
+	}
+
+	result.TmpDir, err = os.MkdirTemp("", "kubernetes-kube-apiserver")
+	if err != nil {
+		return result, fmt.Errorf("failed to create temp dir: %v", err)
+	}
+
+	result.stopCh = make(chan struct{}) /// TODO: replace with context
+	var wg sync.WaitGroup
+	tearDown := func() {
+		// Closing stopCh is stopping apiserver and cleaning up
+		// after itself, including shutting down its storage layer.
+		close(result.stopCh)
+		result.cancelFn()
+		wg.Wait()
+		// If the apiserver was started, let's wait for it to
+		// shutdown clearly.
+		if result.errCh != nil {
+			err, ok := <-result.errCh
+			if ok && err != nil {
+				klog.Errorf("Failed to shutdown test server clearly: %v", err)
+			}
+		}
+		os.RemoveAll(result.TmpDir)
+	}
+	defer func() {
+		if result.TearDownFn == nil {
+			tearDown()
+		}
+	}()
 
 	tlsInfo := transport.TLSInfo{
 		CertFile:      storageConfig.Transport.CertFile,
@@ -355,18 +358,26 @@ func StartTestServer(t Logger, instanceOptions *TestServerInstanceOptions, custo
 	if err != nil {
 		return result, err
 	}
+	result.EtcdClient = etcdClient
+	result.EtcdStoragePrefix = storageConfig.Prefix
 
+	result, err = start(t, result, customFlags, storageConfig, &wg)
+	if err != nil {
+		return result, err
+	}
 	// from here the caller must call tearDown
-	result.ClientConfig = restclient.CopyConfig(server.GenericAPIServer.LoopbackClientConfig)
+
 	result.ClientConfig.QPS = 1000
 	result.ClientConfig.Burst = 10000
-	result.ServerOpts = s
 	result.TearDownFn = func() {
 		tearDown()
 		etcdClient.Close()
 	}
-	result.EtcdClient = etcdClient
-	result.EtcdStoragePrefix = storageConfig.Prefix
+	result.RestartFn = func(t Logger, result TestServer, flags []string) (TestServer, error) {
+		result.cancelFn()
+		wg.Wait()
+		return start(t, result, flags, storageConfig, &wg)
+	}
 
 	return result, nil
 }

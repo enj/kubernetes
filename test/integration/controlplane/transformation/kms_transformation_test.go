@@ -305,6 +305,11 @@ resources:
 // 10. confirm that cluster wide secret read still works
 // 11. confirm that api server can restart with last applied encryption config
 func TestEncryptionConfigHotReload(t *testing.T) {
+
+	// waiting for sleep inside dynamic transformer reload to finish
+	// in this test, worst case we have 3 KMS * 3sec timeout = 9 secs * 2 for KMSCloseGracePeriod = at a min 18 secs
+	defer time.Sleep(30 * time.Second)
+
 	encryptionConfig := `
 kind: EncryptionConfiguration
 apiVersion: apiserver.config.k8s.io/v1
@@ -523,16 +528,11 @@ resources:
 	}
 
 	// restart kube-apiserver with last applied encryption config and assert that server can start
-	previousConfigDir := test.configDir
-	test.shutdownAPIServer(true)
-	restarted = true
-	test, err = newTransformTest(t, "", true, previousConfigDir, test)
-	if err != nil {
-		t.Fatalf("failed to start KUBE API Server with encryptionConfig\n %s, error: %v", encryptionConfig, err)
+	if err = test.restartAPIServer(t, ""); err != nil {
+		t.Fatalf("Failed to restart api server, error: %v", err)
 	}
-	defer func() {
-		test.cleanUp()
-	}()
+	restarted = true
+	defer test.cleanUp()
 
 	// confirm that reading an old secret still works
 	_, err = test.restClient.CoreV1().Secrets(testNamespace).Get(

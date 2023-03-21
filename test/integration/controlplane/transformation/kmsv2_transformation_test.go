@@ -228,6 +228,10 @@ resources:
 // 4. when feature flag is re-enabled, loading a encryptionConfig with the same KMSv2 plugin from 2 should work,
 // decryption of data encrypted with v2 should work
 func TestKMSv2FeatureFlag(t *testing.T) {
+	// waiting for sleep inside dynamic transformer reload to finish
+	// in this test, worst case we have 1 KMS * 3sec timeout = 3 secs * 2 for KMSCloseGracePeriod = at a min 6 secs
+	defer time.Sleep(20 * time.Second)
+
 	encryptionConfig := `
 kind: EncryptionConfiguration
 apiVersion: apiserver.config.k8s.io/v1
@@ -331,9 +335,6 @@ resources:
 	if secretVal != string(s.Data[secretKey]) {
 		t.Fatalf("expected %s from KubeAPI, but got %s", secretVal, string(s.Data[secretKey]))
 	}
-
-	test.shutdownAPIServer(true)
-
 	// When KMSv2 feature flag is disabled, loading a encryptionConfig with a non-v2 provider should work. without performing a storage migration, decryption of existing data encrypted with v2 should fail for Get and List operations.
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2, false)()
 	encryptionConfig1 := `
@@ -348,9 +349,8 @@ resources:
         - name: key1
           secret: c2VjcmV0IGlzIHNlY3VyZQ==
 `
-	test, err = newTransformTest(t, encryptionConfig1, true, "", test)
-	if err != nil {
-		t.Fatalf("failed to start KUBE API Server with encryptionConfig1\n %s, error: %v", encryptionConfig1, err)
+	if err = test.restartAPIServer(t, encryptionConfig1); err != nil {
+		t.Fatalf("Failed to restart api server, error: %v", err)
 	}
 	restarted = 1
 	defer func() {
@@ -378,14 +378,11 @@ resources:
 		t.Fatalf("using a new provider, LIST all Secrets should return err containing: no matching prefix found. Got err: %v", err)
 	}
 
-	test.shutdownAPIServer(true)
-
 	// when feature flag is re-enabled, loading a encryptionConfig with the same KMSv2 plugin before the restart should work, decryption of data encrypted with v2 should work
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2, true)()
 
-	test, err = newTransformTest(t, encryptionConfig, true, "", test)
-	if err != nil {
-		t.Fatalf("failed to start KUBE API Server with encryptionConfig\n %s, error: %v", encryptionConfig, err)
+	if err = test.restartAPIServer(t, encryptionConfig); err != nil {
+		t.Fatalf("Failed to restart api server, error: %v", err)
 	}
 	restarted = 2
 	defer func() {
