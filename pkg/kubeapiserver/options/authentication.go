@@ -237,6 +237,10 @@ func (o *BuiltInAuthenticationOptions) Validate() []error {
 		}
 	}
 
+	if o.RequestHeader != nil {
+		allErrors = append(allErrors, o.RequestHeader.Validate()...)
+	}
+
 	return allErrors
 }
 
