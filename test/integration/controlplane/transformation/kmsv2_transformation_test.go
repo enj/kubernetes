@@ -25,6 +25,7 @@ import (
 	"crypto/aes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -36,11 +37,15 @@ import (
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/features"
+	"k8s.io/apiserver/pkg/registry/generic"
+	"k8s.io/apiserver/pkg/server/options"
 	"k8s.io/apiserver/pkg/server/options/encryptionconfig"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/apiserver/pkg/storage/value"
@@ -52,8 +57,11 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
+	"k8s.io/klog/v2"
 	kmsv2api "k8s.io/kms/apis/v2"
 	kmsv2svc "k8s.io/kms/pkg/service"
+	api "k8s.io/kubernetes/pkg/apis/core"
+	secretstore "k8s.io/kubernetes/pkg/registry/core/secret/storage"
 	"k8s.io/kubernetes/test/integration"
 	"k8s.io/kubernetes/test/integration/etcd"
 )
@@ -378,7 +386,7 @@ resources:
 
 	// 6. when kms-plugin is down, expect creation of new pod and encryption to fail because the DEK is invalid
 	_, err = test.createPod(testNamespace, dynamicClient)
-	if err == nil || !strings.Contains(err.Error(), `EDEK with keyID "2" expired at 2`) {
+	if err == nil || !strings.Contains(err.Error(), `EDEK/ESEED with keyID "2" expired at 2`) {
 		t.Fatalf("Create test pod should have failed due to encryption, ns: %s, got: %v", testNamespace, err)
 	}
 
@@ -640,5 +648,217 @@ resources:
 
 	if kmsv2Calls != 1 {
 		t.Fatalf("expected a single call to KMS v2 service factory: %v", kmsv2Calls)
+	}
+}
+
+var benchSecret *api.Secret
+
+func BenchmarkKMSv2KDF(b *testing.B) {
+	b.StopTimer()
+
+	klog.SetOutput(io.Discard)
+	klog.LogToStderr(false)
+
+	origObserveRESTOptionsGetter := options.ObserveRESTOptionsGetter
+	b.Cleanup(func() { options.ObserveRESTOptionsGetter = origObserveRESTOptionsGetter })
+
+	var restOptionsGetter generic.RESTOptionsGetter
+	options.ObserveRESTOptionsGetter = func(optionsGetter generic.RESTOptionsGetter) {
+		opts, err := optionsGetter.GetRESTOptions(schema.GroupResource{Group: "", Resource: "secrets"})
+		if err != nil {
+			return // this one does not handle secrets
+		}
+
+		if err := runtime.CheckCodec(opts.StorageConfig.Codec, &api.Secret{},
+			schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Secret"}); err != nil {
+			return // this one does not handle secrets
+		}
+
+		if restOptionsGetter != nil {
+			b.Fatal("multiple REST options found for secrets")
+		}
+
+		restOptionsGetter = optionsGetter
+	}
+
+	defer featuregatetesting.SetFeatureGateDuringTest(b, utilfeature.DefaultFeatureGate, features.KMSv2, true)()
+	defer featuregatetesting.SetFeatureGateDuringTest(b, utilfeature.DefaultFeatureGate, features.KMSv2KDF, false)()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	b.Cleanup(cancel)
+
+	ctx = request.WithNamespace(ctx, testNamespace)
+
+	encryptionConfig := `
+kind: EncryptionConfiguration
+apiVersion: apiserver.config.k8s.io/v1
+resources:
+  - resources:
+    - secrets
+    providers:
+    - kms:
+       apiVersion: v2
+       name: kms-provider
+       endpoint: unix:///@kms-provider.sock
+`
+	_ = kmsv2mock.NewBase64Plugin(b, "@kms-provider.sock")
+
+	test, err := newTransformTest(b, encryptionConfig, false, "")
+	if err != nil {
+		b.Fatalf("failed to start KUBE API Server with encryptionConfig\n %s, error: %v", encryptionConfig, err)
+	}
+	b.Cleanup(test.cleanUp)
+
+	client := kubernetes.NewForConfigOrDie(test.kubeAPIServer.ClientConfig)
+
+	if restOptionsGetter == nil {
+		b.Fatal("not REST options found for secrets")
+	}
+
+	secretStorage, err := secretstore.NewREST(restOptionsGetter)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(secretStorage.Destroy)
+
+	const dataLen = 1_000
+
+	secrets := make([]*api.Secret, dataLen)
+
+	for i := 0; i < dataLen; i++ {
+		secrets[i] = &api.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("test-secret-%d", i),
+				Namespace: testNamespace,
+			},
+			Data: map[string][]byte{
+				"lots_of_data": bytes.Repeat([]byte{1, 3, 3, 7}, i*dataLen/4),
+			},
+		}
+	}
+
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := secretStorage.DeleteCollection(ctx, noValidation, &metav1.DeleteOptions{}, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		for i := 0; i < dataLen; i++ {
+			out, err := secretStorage.Create(ctx, secrets[i], noValidation, &metav1.CreateOptions{})
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			benchSecret = out.(*api.Secret)
+
+			out, err = secretStorage.Get(ctx, benchSecret.Name, &metav1.GetOptions{})
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			benchSecret = out.(*api.Secret)
+		}
+	}
+	b.StopTimer()
+
+	secretList, err := client.CoreV1().Secrets(testNamespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	if secretLen := len(secretList.Items); secretLen != dataLen {
+		b.Errorf("unexpected secret len: want %d, got %d", dataLen, secretLen)
+	}
+}
+
+func noValidation(_ context.Context, _ runtime.Object) error { return nil }
+
+var benchRESTSecret *corev1.Secret
+
+func BenchmarkKMSv2REST(b *testing.B) {
+	b.StopTimer()
+
+	klog.SetOutput(io.Discard)
+	klog.LogToStderr(false)
+
+	defer featuregatetesting.SetFeatureGateDuringTest(b, utilfeature.DefaultFeatureGate, features.KMSv2, true)()
+	defer featuregatetesting.SetFeatureGateDuringTest(b, utilfeature.DefaultFeatureGate, features.KMSv2KDF, false)()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	b.Cleanup(cancel)
+
+	encryptionConfig := `
+kind: EncryptionConfiguration
+apiVersion: apiserver.config.k8s.io/v1
+resources:
+  - resources:
+    - secrets
+    providers:
+    - kms:
+       apiVersion: v2
+       name: kms-provider
+       endpoint: unix:///@kms-provider.sock
+`
+	_ = kmsv2mock.NewBase64Plugin(b, "@kms-provider.sock")
+
+	test, err := newTransformTest(b, encryptionConfig, false, "")
+	if err != nil {
+		b.Fatalf("failed to start KUBE API Server with encryptionConfig\n %s, error: %v", encryptionConfig, err)
+	}
+	b.Cleanup(test.cleanUp)
+
+	client := kubernetes.NewForConfigOrDie(test.kubeAPIServer.ClientConfig)
+
+	const dataLen = 1_000
+
+	secretStorage := client.CoreV1().Secrets(testNamespace)
+
+	secrets := make([]*corev1.Secret, dataLen)
+
+	for i := 0; i < dataLen; i++ {
+		secrets[i] = &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("test-secret-%d", i),
+				Namespace: testNamespace,
+			},
+			Data: map[string][]byte{
+				"lots_of_data": bytes.Repeat([]byte{1, 3, 3, 7}, i*dataLen/4),
+			},
+		}
+	}
+
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		err := secretStorage.DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{})
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		for i := 0; i < dataLen; i++ {
+			out, err := secretStorage.Create(ctx, secrets[i], metav1.CreateOptions{})
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			benchRESTSecret = out
+
+			out, err = secretStorage.Get(ctx, benchRESTSecret.Name, metav1.GetOptions{})
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			benchRESTSecret = out
+		}
+	}
+	b.StopTimer()
+
+	secretList, err := client.CoreV1().Secrets(testNamespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	if secretLen := len(secretList.Items); secretLen != dataLen {
+		b.Errorf("unexpected secret len: want %d, got %d", dataLen, secretLen)
 	}
 }

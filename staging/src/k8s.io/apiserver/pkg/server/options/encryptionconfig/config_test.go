@@ -39,6 +39,7 @@ import (
 	"k8s.io/apiserver/pkg/storage/value"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope"
 	envelopekmsv2 "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2"
+	kmstypes "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2/v2"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope/metrics"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
@@ -574,7 +575,7 @@ func TestKMSPluginHealthz(t *testing.T) {
 		ttl:  3 * time.Second,
 	}
 	keyID := "1"
-	kmsv2Probe.state.Store(&envelopekmsv2.State{KeyID: keyID})
+	kmsv2Probe.state.Store(&envelopekmsv2.State{EncryptedObject: kmstypes.EncryptedObject{KeyID: keyID}})
 
 	testCases := []struct {
 		desc    string
@@ -1677,6 +1678,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 		name             string
 		service          *testKMSv2EnvelopeService
 		state            envelopekmsv2.State
+		useSeed          bool
 		statusKeyID      string
 		wantState        envelopekmsv2.State
 		wantEncryptCalls int
@@ -1689,13 +1691,13 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			state:       envelopekmsv2.State{},
 			statusKeyID: "1",
 			wantState: envelopekmsv2.State{
-				KeyID:               "1",
+				EncryptedObject:     kmstypes.EncryptedObject{KeyID: "1"},
 				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 1,
 			wantLogs: []string{
 				`"encrypting content using envelope service" uid="panda"`,
-				fmt.Sprintf(`"successfully rotated DEK" uid="panda" newKeyID="1" oldKeyID="" expirationTimestamp="%s"`,
+				fmt.Sprintf(`"successfully rotated DEK" uid="panda" useSeed=false newKeyID="1" oldKeyID="" expirationTimestamp="%s"`,
 					now.Add(3*time.Minute).Format(time.RFC3339)),
 			},
 			wantErr: "",
@@ -1706,7 +1708,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			state:       validState(t, "2", now),
 			statusKeyID: "2",
 			wantState: envelopekmsv2.State{
-				KeyID:               "2",
+				EncryptedObject:     kmstypes.EncryptedObject{KeyID: "2"},
 				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 0,
@@ -1714,12 +1716,30 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			wantErr:          "",
 		},
 		{
+			name:        "happy path, with previous state, useSeed=true",
+			service:     &testKMSv2EnvelopeService{keyID: "2"},
+			state:       validState("2", now),
+			useSeed:     true,
+			statusKeyID: "2",
+			wantState: envelopekmsv2.State{
+				EncryptedObject:     kmstypes.EncryptedObject{KeyID: "2"},
+				ExpirationTimestamp: now.Add(3 * time.Minute),
+			},
+			wantEncryptCalls: 1,
+			wantLogs: []string{
+				`"encrypting content using envelope service" uid="panda"`,
+				fmt.Sprintf(`"successfully rotated DEK" uid="panda" useSeed=true newKeyID="2" oldKeyID="2" expirationTimestamp="%s"`,
+					now.Add(3*time.Minute).Format(time.RFC3339)),
+			},
+			wantErr: "",
+		},
+		{
 			name:        "previous state expired but key ID matches",
 			service:     &testKMSv2EnvelopeService{err: fmt.Errorf("broken")}, // not called
 			state:       validState(t, "3", now.Add(-time.Hour)),
 			statusKeyID: "3",
 			wantState: envelopekmsv2.State{
-				KeyID:               "3",
+				EncryptedObject:     kmstypes.EncryptedObject{KeyID: "3"},
 				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 0,
@@ -1732,13 +1752,13 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			state:       validState(t, "3", now.Add(-time.Hour)),
 			statusKeyID: "4",
 			wantState: envelopekmsv2.State{
-				KeyID:               "4",
+				EncryptedObject:     kmstypes.EncryptedObject{KeyID: "4"},
 				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 1,
 			wantLogs: []string{
 				`"encrypting content using envelope service" uid="panda"`,
-				fmt.Sprintf(`"successfully rotated DEK" uid="panda" newKeyID="4" oldKeyID="3" expirationTimestamp="%s"`,
+				fmt.Sprintf(`"successfully rotated DEK" uid="panda" useSeed=false newKeyID="4" oldKeyID="3" expirationTimestamp="%s"`,
 					now.Add(3*time.Minute).Format(time.RFC3339)),
 			},
 			wantErr: "",
@@ -1749,14 +1769,14 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			state:       validState(t, "4", now.Add(7*time.Minute)),
 			statusKeyID: "5",
 			wantState: envelopekmsv2.State{
-				KeyID:               "4",
+				EncryptedObject:     kmstypes.EncryptedObject{KeyID: "4"},
 				ExpirationTimestamp: now.Add(7 * time.Minute),
 			},
 			wantEncryptCalls: 1,
 			wantLogs: []string{
 				`"encrypting content using envelope service" uid="panda"`,
 			},
-			wantErr: `failed to rotate DEK uid="panda", ` +
+			wantErr: `failed to rotate DEK uid="panda", useSeed=false, ` +
 				`errState=<nil>, errGen=failed to encrypt DEK, error: broken, statusKeyID="5", ` +
 				`encryptKeyID="", stateKeyID="4", expirationTimestamp=` + now.Add(7*time.Minute).Format(time.RFC3339),
 		},
@@ -1770,7 +1790,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			wantLogs: []string{
 				`"encrypting content using envelope service" uid="panda"`,
 			},
-			wantErr: `failed to rotate DEK uid="panda", ` +
+			wantErr: `failed to rotate DEK uid="panda", useSeed=false, ` +
 				`errState=got unexpected nil transformer, errGen=failed to validate annotations: annotations: Invalid value: "panda": ` +
 				`should be a domain with at least two segments separated by dots, statusKeyID="1", ` +
 				`encryptKeyID="", stateKeyID="", expirationTimestamp=` + (time.Time{}).Format(time.RFC3339),
@@ -1781,14 +1801,14 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			state:       validState(t, "2", now),
 			statusKeyID: "3",
 			wantState: envelopekmsv2.State{
-				KeyID:               "2",
+				EncryptedObject:     kmstypes.EncryptedObject{KeyID: "2"},
 				ExpirationTimestamp: now,
 			},
 			wantEncryptCalls: 1,
 			wantLogs: []string{
 				`"encrypting content using envelope service" uid="panda"`,
 			},
-			wantErr: `failed to rotate DEK uid="panda", ` +
+			wantErr: `failed to rotate DEK uid="panda", useSeed=false, ` +
 				`errState=<nil>, errGen=failed to validate annotations: annotations: Invalid value: "panda": ` +
 				`should be a domain with at least two segments separated by dots, statusKeyID="3", ` +
 				`encryptKeyID="", stateKeyID="2", expirationTimestamp=` + now.Format(time.RFC3339),
@@ -1796,6 +1816,8 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2KDF, tt.useSeed)()
+
 			var buf bytes.Buffer
 			klog.SetOutput(&buf)
 
@@ -1816,12 +1838,27 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 				t.Errorf("log mismatch (-want +got):\n%s", diff)
 			}
 
-			ignoredFields := sets.NewString("Transformer", "EncryptedDEK", "UID", "CacheKey")
+			ignoredFields := sets.NewString("Transformer", "EncryptedObject.EncryptedDEK", "EncryptedObject.EncryptedSeed", "UID", "CacheKey")
 
-			if diff := cmp.Diff(tt.wantState, *h.state.Load(),
+			gotState := *h.state.Load()
+
+			if diff := cmp.Diff(tt.wantState, gotState,
 				cmp.FilterPath(func(path cmp.Path) bool { return ignoredFields.Has(path.String()) }, cmp.Ignore()),
 			); len(diff) > 0 {
 				t.Errorf("state mismatch (-want +got):\n%s", diff)
+			}
+
+			if len(cmp.Diff(tt.wantState, gotState)) > 0 { // we only need to run this check when the state changes
+				var validCiphertext bool
+				if tt.useSeed {
+					validCiphertext = len(gotState.EncryptedObject.EncryptedSeed) > 0 && len(gotState.EncryptedObject.EncryptedDEK) == 0
+				} else {
+					validCiphertext = len(gotState.EncryptedObject.EncryptedDEK) > 0 && len(gotState.EncryptedObject.EncryptedSeed) == 0
+				}
+				if !validCiphertext {
+					t.Errorf("invalid ciphertext with useSeed=%v, seedLen=%d, dekLen=%d", tt.useSeed,
+						len(gotState.EncryptedObject.EncryptedSeed), len(gotState.EncryptedObject.EncryptedDEK))
+				}
 			}
 
 			if tt.wantEncryptCalls != tt.service.encryptCalls {
@@ -1866,15 +1903,15 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 func validState(t *testing.T, keyID string, exp time.Time) envelopekmsv2.State {
 	t.Helper()
 
-	transformer, resp, cacheKey, err := envelopekmsv2.GenerateTransformer(testContext(t), "", &testKMSv2EnvelopeService{keyID: keyID})
+	useSeed := utilfeature.DefaultFeatureGate.Enabled(features.KMSv2KDF) // match the current default behavior
+
+	transformer, encObject, cacheKey, err := envelopekmsv2.GenerateTransformer(testContext(t), "", &testKMSv2EnvelopeService{keyID: keyID}, useSeed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return envelopekmsv2.State{
 		Transformer:         transformer,
-		EncryptedDEK:        resp.Ciphertext,
-		KeyID:               resp.KeyID,
-		Annotations:         resp.Annotations,
+		EncryptedObject:     *encObject,
 		ExpirationTimestamp: exp,
 		CacheKey:            cacheKey,
 	}
