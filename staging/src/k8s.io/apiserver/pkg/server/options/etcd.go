@@ -221,6 +221,9 @@ func (s *EtcdOptions) ApplyTo(c *server.Config) error {
 	return s.ApplyWithStorageFactoryTo(&SimpleStorageFactory{StorageConfig: storageConfigCopy}, c)
 }
 
+// ObserveRESTOptionsGetter can be set in tests to capture the RESTOptionsGetter for low level introspection.
+var ObserveRESTOptionsGetter func(generic.RESTOptionsGetter)
+
 // ApplyWithStorageFactoryTo mutates the provided server.Config.  It must never mutate the receiver (EtcdOptions).
 func (s *EtcdOptions) ApplyWithStorageFactoryTo(factory serverstorage.StorageFactory, c *server.Config) error {
 	if s == nil {
@@ -239,6 +242,11 @@ func (s *EtcdOptions) ApplyWithStorageFactoryTo(factory serverstorage.StorageFac
 	}
 
 	c.RESTOptionsGetter = s.CreateRESTOptionsGetter(factory, c.ResourceTransformers)
+
+	if ObserveRESTOptionsGetter != nil {
+		ObserveRESTOptionsGetter(c.RESTOptionsGetter)
+	}
+
 	return nil
 }
 
