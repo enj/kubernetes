@@ -35,6 +35,7 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apiserver/pkg/audit"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
+	x509request "k8s.io/apiserver/pkg/authentication/request/x509"
 	apiserverserviceaccount "k8s.io/apiserver/pkg/authentication/serviceaccount"
 )
 
@@ -234,14 +235,24 @@ func JWTTokenAuthenticator(issuers []string, keys []interface{}, implicitAuds au
 		keys:         keys,
 		implicitAuds: implicitAuds,
 		validator:    validator,
+		// TODO wire:
+		verifyOptionsFn: func() (x509.VerifyOptions, bool) {
+			return x509.VerifyOptions{
+				DNSName:       "maybe.something.kuberentes.io",                // TODO should this be set at all?
+				Intermediates: nil,                                            // explicitly nil to allow JWT to provide them
+				Roots:         nil,                                            // TODO from input
+				KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, // TODO should this be set?
+			}, true
+		},
 	}
 }
 
 type jwtTokenAuthenticator struct {
-	issuers      map[string]bool
-	keys         []interface{}
-	validator    Validator
-	implicitAuds authenticator.Audiences
+	issuers         map[string]bool
+	keys            []interface{}
+	validator       Validator
+	implicitAuds    authenticator.Audiences
+	verifyOptionsFn x509request.VerifyOptionFunc
 }
 
 // Validator is called by the JWT token authenticator to apply domain specific
@@ -284,6 +295,34 @@ func (j *jwtTokenAuthenticator) AuthenticateToken(ctx context.Context, tokenData
 		}
 		found = true
 		break
+	}
+
+	// TODO revocation
+	// TODO this is wrong, we need the Protected headers not all headers
+	// TODO only do this when x5c is set
+	if !found && len(tok.Headers) == 1 { // only support a single signature just like JSONWebSignature.Verify
+		sig, err := jose.ParseSigned(tokenData) // TODO double parsing is bad
+		if err != nil {
+			return nil, false, err
+		}
+		if opts, ok := j.verifyOptionsFn(); ok && len(sig.Signatures) == 1 {
+			chains, err := sig.Signatures[0].Protected.Certificates(opts)
+			if err != nil {
+				errlist = append(errlist, err)
+			} else if len(chains) >= 1 && len(chains[0]) >= 1 {
+				leaf := chains[0][0]
+
+				if leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+					return nil, errs.Unauthorized("x5c.authorizeToken; certificate used to sign x5c token cannot be used for digital signature")
+				}
+
+				if err := tok.Claims(leaf.PublicKey, public, private); err != nil {
+					errlist = append(errlist, err)
+				} else {
+					found = true
+				}
+			}
+		}
 	}
 
 	if !found {
