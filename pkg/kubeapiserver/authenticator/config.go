@@ -283,7 +283,7 @@ func newLegacyServiceAccountAuthenticator(keyfiles []string, lookup bool, apiAud
 		return nil, fmt.Errorf("while creating legacy validator, err: %w", err)
 	}
 
-	tokenAuthenticator := serviceaccount.JWTTokenAuthenticator([]string{serviceaccount.LegacyIssuer}, allPublicKeys, apiAudiences, validator)
+	tokenAuthenticator := serviceaccount.JWTTokenAuthenticator([]string{serviceaccount.LegacyIssuer}, allPublicKeys, apiAudiences, validator, nil)
 	return tokenAuthenticator, nil
 }
 
@@ -298,7 +298,7 @@ func newServiceAccountAuthenticator(issuers []string, keyfiles []string, apiAudi
 		allPublicKeys = append(allPublicKeys, publicKeys...)
 	}
 
-	tokenAuthenticator := serviceaccount.JWTTokenAuthenticator(issuers, allPublicKeys, apiAudiences, serviceaccount.NewValidator(serviceAccountGetter))
+	tokenAuthenticator := serviceaccount.JWTTokenAuthenticator(issuers, allPublicKeys, apiAudiences, serviceaccount.NewValidator(serviceAccountGetter), TODO)
 	return tokenAuthenticator, nil
 }
 

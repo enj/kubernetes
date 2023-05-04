@@ -225,7 +225,7 @@ func (j *jwtTokenGenerator) GenerateToken(claims *jwt.Claims, privateClaims inte
 // JWTTokenAuthenticator authenticates tokens as JWT tokens produced by JWTTokenGenerator
 // Token signatures are verified using each of the given public keys until one works (allowing key rotation)
 // If lookup is true, the service account and secret referenced as claims inside the token are retrieved and verified with the provided ServiceAccountTokenGetter
-func JWTTokenAuthenticator(issuers []string, keys []interface{}, implicitAuds authenticator.Audiences, validator Validator) authenticator.Token {
+func JWTTokenAuthenticator(issuers []string, keys []interface{}, implicitAuds authenticator.Audiences, validator Validator, verifyOptionsFn x509request.VerifyOptionFunc) authenticator.Token {
 	issuersMap := make(map[string]bool)
 	for _, issuer := range issuers {
 		issuersMap[issuer] = true
@@ -235,14 +235,26 @@ func JWTTokenAuthenticator(issuers []string, keys []interface{}, implicitAuds au
 		keys:         keys,
 		implicitAuds: implicitAuds,
 		validator:    validator,
-		// TODO wire:
 		verifyOptionsFn: func() (x509.VerifyOptions, bool) {
-			return x509.VerifyOptions{
-				DNSName:       "maybe.something.kuberentes.io",                // TODO should this be set at all?
-				Intermediates: nil,                                            // explicitly nil to allow JWT to provide them
-				Roots:         nil,                                            // TODO from input
-				KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, // TODO should this be set?
-			}, true
+			if verifyOptionsFn == nil {
+				return x509.VerifyOptions{}, false
+			}
+
+			opts, ok := verifyOptionsFn()
+			if !ok {
+				return x509.VerifyOptions{}, false
+			}
+
+			// intermediates must be nil to allow the token to provide them
+			opts.Intermediates = nil
+
+			// TODO should this be configurable?
+			opts.DNSName = "certsign.serviceaccount.authentication.k8s.io"
+
+			// TODO should other usages be considered valid?
+			opts.KeyUsages = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+
+			return opts, true
 		},
 	}
 }
@@ -297,30 +309,12 @@ func (j *jwtTokenAuthenticator) AuthenticateToken(ctx context.Context, tokenData
 		break
 	}
 
-	// TODO revocation
-	// TODO this is wrong, we need the Protected headers not all headers
-	// TODO only do this when x5c is set
-	if !found && len(tok.Headers) == 1 { // only support a single signature just like JSONWebSignature.Verify
-		sig, err := jose.ParseSigned(tokenData) // TODO double parsing is bad
-		if err != nil {
-			return nil, false, err
-		}
-		if opts, ok := j.verifyOptionsFn(); ok && len(sig.Signatures) == 1 {
-			chains, err := sig.Signatures[0].Protected.Certificates(opts)
-			if err != nil {
+	if !found {
+		if opts, ok := j.verifyOptionsFn(); ok && hasCertificateBasedSingleSignature(tok) {
+			if err := validateTokenViaCertificateSigning(tokenData, opts, tok, public, private); err != nil {
 				errlist = append(errlist, err)
-			} else if len(chains) >= 1 && len(chains[0]) >= 1 {
-				leaf := chains[0][0]
-
-				if leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
-					return nil, errs.Unauthorized("x5c.authorizeToken; certificate used to sign x5c token cannot be used for digital signature")
-				}
-
-				if err := tok.Claims(leaf.PublicKey, public, private); err != nil {
-					errlist = append(errlist, err)
-				} else {
-					found = true
-				}
+			} else {
+				found = true
 			}
 		}
 	}
@@ -384,4 +378,49 @@ func (j *jwtTokenAuthenticator) hasCorrectIssuer(tokenData string) bool {
 		return false
 	}
 	return j.issuers[claims.Issuer]
+}
+
+func validateTokenViaCertificateSigning(tokenData string, opts x509.VerifyOptions, tok *jwt.JSONWebToken, public *jwt.Claims, private interface{}) error {
+	// we end up double parsing the token data because the JWT struct does not expose the Protected header of the JWS struct
+	sig, err := jose.ParseSigned(tokenData)
+	if err != nil {
+		return err
+	}
+
+	// this should never happen because we validate the header length in hasCertificateBasedSingleSignature
+	if sigs := len(sig.Signatures); sigs != 1 {
+		return fmt.Errorf("only a single signature is supported for certificate based signing, got %d", sigs)
+	}
+
+	chains, err := sig.Signatures[0].Protected.Certificates(opts)
+	if err != nil {
+		return err
+	}
+
+	// TODO confirm that at least one chain in still valid based on revocation CRL URL from roots
+
+	leaf := chains[0][0] // all chains have the same first element (the leaf that chains up to some cert in opts.Roots)
+
+	// TODO not sure if we need this check
+	if leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+		return fmt.Errorf("leaf certificate used to sign token must include digital signature key usage")
+	}
+
+	return tok.Claims(leaf.PublicKey, public, private)
+}
+
+func hasCertificateBasedSingleSignature(tok *jwt.JSONWebToken) bool {
+	if len(tok.Headers) != 1 {
+		return false // only support a single signature just like JSONWebSignature.Verify
+	}
+
+	claims := struct {
+		// WARNING: this JWT is not verified. Do not trust these claims.
+		X5c []string `json:"x5c,omitempty"`
+	}{}
+	if err := tok.UnsafeClaimsWithoutVerification(&claims); err != nil {
+		return false
+	}
+
+	return len(claims.X5c) > 0
 }

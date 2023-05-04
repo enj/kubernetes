@@ -351,7 +351,7 @@ func TestTokenGenerateAndValidate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("While creating legacy validator, err: %v", err)
 		}
-		authn := serviceaccount.JWTTokenAuthenticator([]string{serviceaccount.LegacyIssuer, "bar"}, tc.Keys, auds, validator)
+		authn := serviceaccount.JWTTokenAuthenticator([]string{serviceaccount.LegacyIssuer, "bar"}, tc.Keys, auds, validator, nil)
 
 		// An invalid, non-JWT token should always fail
 		ctx := authenticator.WithAudiences(context.Background(), auds)
