@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
 	"k8s.io/client-go/dynamic"
 
 	oteltrace "go.opentelemetry.io/otel/trace"
@@ -323,6 +324,7 @@ func CreateKubeAPIServerConfig(s completedServerRunOptions) (
 	}
 
 	// Load the public keys.
+	// TODO also wire x5c here
 	var pubKeys []interface{}
 	for _, f := range s.Authentication.ServiceAccounts.KeyFiles {
 		keys, err := keyutil.PublicKeysFromFile(f)

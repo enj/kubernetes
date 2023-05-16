@@ -248,8 +248,8 @@ func JWTTokenAuthenticator(issuers []string, keys []interface{}, implicitAuds au
 			// intermediates must be nil to allow the token to provide them
 			opts.Intermediates = nil
 
-			// TODO should this be configurable?
-			opts.DNSName = "certsign.serviceaccount.authentication.k8s.io"
+			// TODO update logic to check all issuers and explicitly ignore wildcard DNS names
+			opts.DNSName = "no-wildcard.<base32/64 sha256 hash of issuers[0]>.certsign.serviceaccount.authentication.k8s.io"
 
 			// TODO should other usages be considered valid?
 			opts.KeyUsages = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
@@ -419,7 +419,7 @@ func hasCertificateBasedSingleSignature(tok *jwt.JSONWebToken) bool {
 		X5c []string `json:"x5c,omitempty"`
 	}{}
 	if err := tok.UnsafeClaimsWithoutVerification(&claims); err != nil {
-		return false
+		return false // TODO does this get claims from the header or just the payload?
 	}
 
 	return len(claims.X5c) > 0
