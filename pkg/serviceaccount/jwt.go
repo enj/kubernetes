@@ -249,6 +249,7 @@ func JWTTokenAuthenticator(issuers []string, keys []interface{}, implicitAuds au
 			opts.Intermediates = nil
 
 			// TODO update logic to check all issuers and explicitly ignore wildcard DNS names
+			//   actually *ONLY* the iss claim should be valid - fine to rely on it after hasCorrectIssuer
 			opts.DNSName = "no-wildcard.<base32/64 sha256 hash of issuers[0]>.certsign.serviceaccount.authentication.k8s.io"
 
 			// TODO should other usages be considered valid?
