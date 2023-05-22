@@ -412,11 +412,6 @@ func validateTokenViaCertificateSigning(tokenData string, opts x509.VerifyOption
 
 	leaf := chains[0][0] // all chains have the same first element (the leaf that chains up to some cert in opts.Roots)
 
-	// TODO not sure if we need this check
-	if leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
-		return fmt.Errorf("leaf certificate used to sign token must include digital signature key usage")
-	}
-
 	return tok.Claims(leaf.PublicKey, public, private)
 }
 
