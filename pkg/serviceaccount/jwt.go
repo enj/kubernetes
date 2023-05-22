@@ -58,22 +58,32 @@ type TokenGenerator interface {
 
 // JWTTokenGenerator returns a TokenGenerator that generates signed JWT tokens, using the given privateKey.
 // privateKey is a PEM-encoded byte array of a private RSA key.
-func JWTTokenGenerator(iss string, privateKey interface{}) (TokenGenerator, error) {
+func JWTTokenGenerator(iss string, privateKey interface{}, certs []*x509.Certificate) (TokenGenerator, error) {
 	var signer jose.Signer
+	var opts *jose.SignerOptions
 	var err error
+
+	if len(certs) > 0 {
+		x5c := make([]string, 0, len(certs))
+		for _, cert := range certs {
+			x5c = append(x5c, base64.StdEncoding.EncodeToString(cert.Raw))
+		}
+		opts = (&jose.SignerOptions{}).WithHeader("x5c", x5c)
+	}
+
 	switch pk := privateKey.(type) {
 	case *rsa.PrivateKey:
-		signer, err = signerFromRSAPrivateKey(pk)
+		signer, err = signerFromRSAPrivateKey(pk, opts)
 		if err != nil {
 			return nil, fmt.Errorf("could not generate signer for RSA keypair: %v", err)
 		}
 	case *ecdsa.PrivateKey:
-		signer, err = signerFromECDSAPrivateKey(pk)
+		signer, err = signerFromECDSAPrivateKey(pk, opts)
 		if err != nil {
 			return nil, fmt.Errorf("could not generate signer for ECDSA keypair: %v", err)
 		}
 	case jose.OpaqueSigner:
-		signer, err = signerFromOpaqueSigner(pk)
+		signer, err = signerFromOpaqueSigner(pk, opts)
 		if err != nil {
 			return nil, fmt.Errorf("could not generate signer for OpaqueSigner: %v", err)
 		}
@@ -111,7 +121,7 @@ func keyIDFromPublicKey(publicKey interface{}) (string, error) {
 	return keyID, nil
 }
 
-func signerFromRSAPrivateKey(keyPair *rsa.PrivateKey) (jose.Signer, error) {
+func signerFromRSAPrivateKey(keyPair *rsa.PrivateKey, opts *jose.SignerOptions) (jose.Signer, error) {
 	keyID, err := keyIDFromPublicKey(&keyPair.PublicKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to derive keyID: %v", err)
@@ -134,7 +144,7 @@ func signerFromRSAPrivateKey(keyPair *rsa.PrivateKey) (jose.Signer, error) {
 			Algorithm: jose.RS256,
 			Key:       privateJWK,
 		},
-		nil,
+		opts,
 	)
 
 	if err != nil {
@@ -144,7 +154,7 @@ func signerFromRSAPrivateKey(keyPair *rsa.PrivateKey) (jose.Signer, error) {
 	return signer, nil
 }
 
-func signerFromECDSAPrivateKey(keyPair *ecdsa.PrivateKey) (jose.Signer, error) {
+func signerFromECDSAPrivateKey(keyPair *ecdsa.PrivateKey, opts *jose.SignerOptions) (jose.Signer, error) {
 	var alg jose.SignatureAlgorithm
 	switch keyPair.Curve {
 	case elliptic.P256():
@@ -175,7 +185,7 @@ func signerFromECDSAPrivateKey(keyPair *ecdsa.PrivateKey) (jose.Signer, error) {
 			Algorithm: alg,
 			Key:       privateJWK,
 		},
-		nil,
+		opts,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create signer: %v", err)
@@ -184,7 +194,7 @@ func signerFromECDSAPrivateKey(keyPair *ecdsa.PrivateKey) (jose.Signer, error) {
 	return signer, nil
 }
 
-func signerFromOpaqueSigner(opaqueSigner jose.OpaqueSigner) (jose.Signer, error) {
+func signerFromOpaqueSigner(opaqueSigner jose.OpaqueSigner, opts *jose.SignerOptions) (jose.Signer, error) {
 	alg := jose.SignatureAlgorithm(opaqueSigner.Public().Algorithm)
 
 	signer, err := jose.NewSigner(
@@ -197,7 +207,7 @@ func signerFromOpaqueSigner(opaqueSigner jose.OpaqueSigner) (jose.Signer, error)
 				Use:       "sig",
 			},
 		},
-		nil,
+		opts,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create signer: %v", err)
