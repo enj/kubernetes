@@ -415,13 +415,8 @@ func hasCertificateBasedSingleSignature(tok *jwt.JSONWebToken) bool {
 		return false // only support a single signature just like JSONWebSignature.Verify
 	}
 
-	claims := struct {
-		// WARNING: this JWT is not verified. Do not trust these claims.
-		X5c []string `json:"x5c,omitempty"`
-	}{}
-	if err := tok.UnsafeClaimsWithoutVerification(&claims); err != nil {
-		return false // TODO does this get claims from the header or just the payload?
-	}
-
-	return len(claims.X5c) > 0
+	// TODO: this is a hack to get around the x5c header not being easily observable,
+	//  but it could be expensive so we need to have a more direct way
+	_, err := tok.Headers[0].Certificates(x509.VerifyOptions{})
+	return err == nil || err.Error() != "square/go-jose: no x5c header present in message"
 }
