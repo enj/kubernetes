@@ -21,6 +21,7 @@ package app
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
@@ -30,9 +31,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-
-	"k8s.io/client-go/dynamic"
-
 	oteltrace "go.opentelemetry.io/otel/trace"
 
 	extensionsapiserver "k8s.io/apiextensions-apiserver/pkg/apiserver"
@@ -57,10 +55,12 @@ import (
 	"k8s.io/apiserver/pkg/util/notfoundhandler"
 	"k8s.io/apiserver/pkg/util/openapi"
 	"k8s.io/apiserver/pkg/util/webhook"
+	"k8s.io/client-go/dynamic"
 	clientgoinformers "k8s.io/client-go/informers"
 	clientgoclientset "k8s.io/client-go/kubernetes"
 	k8sscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	certutil "k8s.io/client-go/util/cert"
 	"k8s.io/client-go/util/keyutil"
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/cli/globalflag"
@@ -73,8 +73,6 @@ import (
 	"k8s.io/klog/v2"
 	aggregatorapiserver "k8s.io/kube-aggregator/pkg/apiserver"
 	aggregatorscheme "k8s.io/kube-aggregator/pkg/apiserver/scheme"
-	netutils "k8s.io/utils/net"
-
 	"k8s.io/kubernetes/cmd/kube-apiserver/app/options"
 	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	"k8s.io/kubernetes/pkg/capabilities"
@@ -87,6 +85,7 @@ import (
 	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
 	rbacrest "k8s.io/kubernetes/pkg/registry/rbac/rest"
 	"k8s.io/kubernetes/pkg/serviceaccount"
+	netutils "k8s.io/utils/net"
 )
 
 func init() {
@@ -601,7 +600,16 @@ func Complete(s *options.ServerRunOptions) (completedServerRunOptions, error) {
 			}
 		}
 
-		s.ServiceAccountIssuer, err = serviceaccount.JWTTokenGenerator(s.Authentication.ServiceAccounts.Issuers[0], sk, TODO)
+		var certs []*x509.Certificate
+		if len(s.ServiceAccountSigningKeyCertChainFile) > 0 {
+			var err error
+			certs, err = certutil.CertsFromFile(s.ServiceAccountSigningKeyCertChainFile)
+			if err != nil {
+				return options, fmt.Errorf("failed to parse service-account-signing-key-cert-chain-file: %v", err)
+			}
+		}
+
+		s.ServiceAccountIssuer, err = serviceaccount.JWTTokenGenerator(s.Authentication.ServiceAccounts.Issuers[0], sk, certs)
 		if err != nil {
 			return options, fmt.Errorf("failed to build token generator: %v", err)
 		}
