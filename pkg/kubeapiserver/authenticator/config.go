@@ -65,6 +65,7 @@ type Config struct {
 	OIDCSigningAlgs             []string
 	OIDCRequiredClaims          map[string]string
 	ServiceAccountKeyFiles      []string
+	ServiceAccountCertFile      string
 	ServiceAccountLookup        bool
 	ServiceAccountIssuers       []string
 	APIAudiences                authenticator.Audiences
@@ -136,7 +137,7 @@ func (config Config) New() (authenticator.Request, *spec.SecurityDefinitions, er
 		tokenAuthenticators = append(tokenAuthenticators, serviceAccountAuth)
 	}
 	if len(config.ServiceAccountIssuers) > 0 {
-		serviceAccountAuth, err := newServiceAccountAuthenticator(config.ServiceAccountIssuers, config.ServiceAccountKeyFiles, config.APIAudiences, config.ServiceAccountTokenGetter)
+		serviceAccountAuth, err := newServiceAccountAuthenticator(config.ServiceAccountIssuers, config.ServiceAccountKeyFiles, config.ServiceAccountCertFile, config.APIAudiences, config.ServiceAccountTokenGetter)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -288,7 +289,7 @@ func newLegacyServiceAccountAuthenticator(keyfiles []string, lookup bool, apiAud
 }
 
 // newServiceAccountAuthenticator returns an authenticator.Token or an error
-func newServiceAccountAuthenticator(issuers []string, keyfiles []string, apiAudiences authenticator.Audiences, serviceAccountGetter serviceaccount.ServiceAccountTokenGetter) (authenticator.Token, error) {
+func newServiceAccountAuthenticator(issuers []string, keyfiles []string, certfile string, apiAudiences authenticator.Audiences, serviceAccountGetter serviceaccount.ServiceAccountTokenGetter) (authenticator.Token, error) {
 	allPublicKeys := []interface{}{}
 	for _, keyfile := range keyfiles {
 		publicKeys, err := keyutil.PublicKeysFromFile(keyfile)
@@ -298,7 +299,17 @@ func newServiceAccountAuthenticator(issuers []string, keyfiles []string, apiAudi
 		allPublicKeys = append(allPublicKeys, publicKeys...)
 	}
 
-	tokenAuthenticator := serviceaccount.JWTTokenAuthenticator(issuers, allPublicKeys, apiAudiences, serviceaccount.NewValidator(serviceAccountGetter), TODO)
+	var verifyOptionsFn x509.VerifyOptionFunc
+	if len(certfile) > 0 {
+		// TODO wire caBundleProvider.Run so that cert rotation works without restart
+		caBundleProvider, err := dynamiccertificates.NewDynamicCAContentFromFile("cert-sign", certfile)
+		if err != nil {
+			return nil, err
+		}
+		verifyOptionsFn = caBundleProvider.VerifyOptions
+	}
+
+	tokenAuthenticator := serviceaccount.JWTTokenAuthenticator(issuers, allPublicKeys, apiAudiences, serviceaccount.NewValidator(serviceAccountGetter), verifyOptionsFn)
 	return tokenAuthenticator, nil
 }
 
