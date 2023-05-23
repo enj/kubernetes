@@ -429,7 +429,7 @@ function set_service_accounts {
     if [[ ! -f "${SERVICE_ACCOUNT_CA_KEY}" ]]; then
       mkdir -p "$(dirname "${SERVICE_ACCOUNT_CA_KEY}")"
 
-      kube::util::create_signing_certkey "${CONTROLPLANE_SUDO}" "$(dirname "${SERVICE_ACCOUNT_CA_KEY}")" kube-serviceaccount-ca '"client auth"'
+      kube::util::create_signing_certkey "${CONTROLPLANE_SUDO}" "$(dirname "${SERVICE_ACCOUNT_CA_KEY}")" kube-serviceaccount '"client auth"'
       kube::util::create_serving_certkey "${CONTROLPLANE_SUDO}" "$(dirname "${SERVICE_ACCOUNT_CA_KEY}")" kube-serviceaccount-ca kube-serviceaccount-cert cert-sign 'no-wildcard.2s8csugd9nu0rd4gmqr78ti4vutodo0793epaomknrk3bo3nm21g.certsign.serviceaccount.authentication.k8s.io'
     fi
 }
