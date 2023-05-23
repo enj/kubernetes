@@ -21,7 +21,6 @@ package app
 
 import (
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
@@ -61,7 +60,6 @@ import (
 	clientgoclientset "k8s.io/client-go/kubernetes"
 	k8sscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	certutil "k8s.io/client-go/util/cert"
 	"k8s.io/client-go/util/keyutil"
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/cli/globalflag"
@@ -335,7 +333,7 @@ func CreateKubeAPIServerConfig(s completedServerRunOptions) (
 	if len(s.Authentication.ServiceAccounts.CAFile) > 0 {
 		// TODO wire caBundleProvider.Run so that cert rotation works without restart
 		// TODO de-duplicate this call with the newServiceAccountAuthenticator
-		caBundleProvider, err := dynamiccertificates.NewDynamicCAContentFromFile("cert-sign", s.Authentication.ServiceAccounts.CAFile)
+		caBundleProvider, err := dynamiccertificates.NewDynamicCAContentFromFile("cert-sign-ca", s.Authentication.ServiceAccounts.CAFile)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -609,16 +607,17 @@ func Complete(s *options.ServerRunOptions) (completedServerRunOptions, error) {
 			}
 		}
 
-		var certs []*x509.Certificate
+		var caBundleProvider dynamiccertificates.CAContentProvider
 		if len(s.ServiceAccountSigningKeyCertChainFile) > 0 {
 			var err error
-			certs, err = certutil.CertsFromFile(s.ServiceAccountSigningKeyCertChainFile)
+			// TODO wire caBundleProvider.Run maybe to post start hook
+			caBundleProvider, err = dynamiccertificates.NewDynamicCAContentFromFile("cert-sign-chain", s.ServiceAccountSigningKeyCertChainFile)
 			if err != nil {
 				return options, fmt.Errorf("failed to parse service-account-signing-key-cert-chain-file: %v", err)
 			}
 		}
 
-		s.ServiceAccountIssuer, err = serviceaccount.JWTTokenGenerator(s.Authentication.ServiceAccounts.Issuers[0], sk, certs)
+		s.ServiceAccountIssuer, err = serviceaccount.JWTTokenGenerator(s.Authentication.ServiceAccounts.Issuers[0], sk, caBundleProvider)
 		if err != nil {
 			return options, fmt.Errorf("failed to build token generator: %v", err)
 		}

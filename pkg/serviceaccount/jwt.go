@@ -39,7 +39,9 @@ import (
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	x509request "k8s.io/apiserver/pkg/authentication/request/x509"
 	apiserverserviceaccount "k8s.io/apiserver/pkg/authentication/serviceaccount"
+	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	"k8s.io/apiserver/pkg/warning"
+	certutil "k8s.io/client-go/util/cert"
 )
 
 // ServiceAccountTokenGetter defines functions to retrieve a named service account and secret
@@ -61,12 +63,17 @@ type TokenGenerator interface {
 
 // JWTTokenGenerator returns a TokenGenerator that generates signed JWT tokens, using the given privateKey.
 // privateKey is a PEM-encoded byte array of a private RSA key.
-func JWTTokenGenerator(iss string, privateKey interface{}, certs []*x509.Certificate) (TokenGenerator, error) {
+func JWTTokenGenerator(iss string, privateKey interface{}, caBundleProvider dynamiccertificates.CAContentProvider) (TokenGenerator, error) {
 	var signer jose.Signer
 	var opts *jose.SignerOptions
 	var err error
 
-	if len(certs) > 0 {
+	// TODO make opts dynamically update when CA bundle changes
+	if caBundleProvider != nil {
+		certs, err := certutil.ParseCertsPEM(caBundleProvider.CurrentCABundleContent())
+		if err != nil {
+			return nil, err // should be impossible because the input content is already validated
+		}
 		x5c := make([]string, 0, len(certs))
 		for _, cert := range certs {
 			x5c = append(x5c, base64.StdEncoding.EncodeToString(cert.Raw))

@@ -302,7 +302,7 @@ func newServiceAccountAuthenticator(issuers []string, keyfiles []string, caFile 
 	var verifyOptionsFn x509.VerifyOptionFunc
 	if len(caFile) > 0 {
 		// TODO wire caBundleProvider.Run so that cert rotation works without restart
-		caBundleProvider, err := dynamiccertificates.NewDynamicCAContentFromFile("cert-sign", caFile)
+		caBundleProvider, err := dynamiccertificates.NewDynamicCAContentFromFile("cert-sign-ca", caFile)
 		if err != nil {
 			return nil, err
 		}
