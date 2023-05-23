@@ -22,6 +22,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -260,7 +261,9 @@ func JWTTokenAuthenticator(issuers []string, keys []interface{}, implicitAuds au
 
 			// TODO update logic to check all issuers and explicitly ignore wildcard DNS names
 			//   actually *ONLY* the iss claim should be valid - fine to rely on it after hasCorrectIssuer
-			opts.DNSName = "no-wildcard.<base32/64 sha256 hash of issuers[0]>.certsign.serviceaccount.authentication.k8s.io"
+			hash := sha256.Sum256([]byte(issuers[0]))
+			domain := base64.RawURLEncoding.EncodeToString(hash[:])
+			opts.DNSName = "no-wildcard." + domain + ".certsign.serviceaccount.authentication.k8s.io"
 
 			// TODO should other usages be considered valid?
 			opts.KeyUsages = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
