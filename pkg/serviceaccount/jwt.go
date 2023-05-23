@@ -39,6 +39,7 @@ import (
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	x509request "k8s.io/apiserver/pkg/authentication/request/x509"
 	apiserverserviceaccount "k8s.io/apiserver/pkg/authentication/serviceaccount"
+	"k8s.io/apiserver/pkg/warning"
 )
 
 // ServiceAccountTokenGetter defines functions to retrieve a named service account and secret
@@ -331,6 +332,7 @@ func (j *jwtTokenAuthenticator) AuthenticateToken(ctx context.Context, tokenData
 			if err := validateTokenViaCertificateSigning(tokenData, opts, tok, public, private); err != nil {
 				errlist = append(errlist, err)
 			} else {
+				warning.AddWarning(ctx, "", "SA cert based signing used for "+public.Subject)
 				found = true
 			}
 		}
