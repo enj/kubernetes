@@ -419,6 +419,19 @@ function set_service_accounts {
       mkdir -p "$(dirname "${SERVICE_ACCOUNT_KEY}")"
       openssl genrsa -out "${SERVICE_ACCOUNT_KEY}" 2048 2>/dev/null
     fi
+
+    SERVICE_ACCOUNT_CA_KEY=${SERVICE_ACCOUNT_CA:-${TMP_DIR}/kube-serviceaccount-ca.key}
+    SERVICE_ACCOUNT_CA=${SERVICE_ACCOUNT_CA:-${TMP_DIR}/kube-serviceaccount-ca.crt}
+    SERVICE_ACCOUNT_KEY_CERT=${SERVICE_ACCOUNT_KEY_CERT:-${TMP_DIR}/client-kube-serviceaccount-cert.key}
+    SERVICE_ACCOUNT_KEY_CERT_CHAIN=${SERVICE_ACCOUNT_KEY_CERT_CHAIN:-${TMP_DIR}/client-kube-serviceaccount-cert.crt}
+
+    # Generate ServiceAccount cert key if needed
+    if [[ ! -f "${SERVICE_ACCOUNT_CA_KEY}" ]]; then
+      mkdir -p "$(dirname "${SERVICE_ACCOUNT_CA_KEY}")"
+
+      kube::util::create_signing_certkey "${CONTROLPLANE_SUDO}" "$(dirname "${SERVICE_ACCOUNT_CA_KEY}")" kube-serviceaccount-ca '"client auth"'
+      kube::util::create_serving_certkey "${CONTROLPLANE_SUDO}" "$(dirname "${SERVICE_ACCOUNT_CA_KEY}")" kube-serviceaccount-ca kube-serviceaccount-cert cert-sign 'no-wildcard.2s8csugd9nu0rd4gmqr78ti4vutodo0793epaomknrk3bo3nm21g.certsign.serviceaccount.authentication.k8s.io'
+    fi
 }
 
 function generate_certs {
@@ -565,10 +578,12 @@ EOF
       --kubelet-client-certificate="${CERT_DIR}/client-kube-apiserver.crt" \
       --kubelet-client-key="${CERT_DIR}/client-kube-apiserver.key" \
       --service-account-key-file="${SERVICE_ACCOUNT_KEY}" \
+      --service-account-ca-file="${SERVICE_ACCOUNT_CA}" \
       --service-account-lookup="${SERVICE_ACCOUNT_LOOKUP}" \
       --service-account-issuer="https://kubernetes.default.svc" \
       --service-account-jwks-uri="https://kubernetes.default.svc/openid/v1/jwks" \
-      --service-account-signing-key-file="${SERVICE_ACCOUNT_KEY}" \
+      --service-account-signing-key-file="${SERVICE_ACCOUNT_KEY_CERT}" \
+      --service-account-signing-key-cert-chain-file="${SERVICE_ACCOUNT_KEY_CERT_CHAIN}" \
       --enable-admission-plugins="${ENABLE_ADMISSION_PLUGINS}" \
       --disable-admission-plugins="${DISABLE_ADMISSION_PLUGINS}" \
       --admission-control-config-file="${ADMISSION_CONTROL_CONFIG_FILE}" \

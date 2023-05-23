@@ -24,6 +24,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -233,6 +234,8 @@ func (j *jwtTokenGenerator) GenerateToken(claims *jwt.Claims, privateClaims inte
 		CompactSerialize()
 }
 
+var b32 = base32.NewEncoding("0123456789abcdefghijklmnopqrstuv").WithPadding(base32.NoPadding)
+
 // JWTTokenAuthenticator authenticates tokens as JWT tokens produced by JWTTokenGenerator
 // Token signatures are verified using each of the given public keys until one works (allowing key rotation)
 // If lookup is true, the service account and secret referenced as claims inside the token are retrieved and verified with the provided ServiceAccountTokenGetter
@@ -262,7 +265,7 @@ func JWTTokenAuthenticator(issuers []string, keys []interface{}, implicitAuds au
 			// TODO update logic to check all issuers and explicitly ignore wildcard DNS names
 			//   actually *ONLY* the iss claim should be valid - fine to rely on it after hasCorrectIssuer
 			hash := sha256.Sum256([]byte(issuers[0]))
-			domain := base64.RawURLEncoding.EncodeToString(hash[:])
+			domain := b32.EncodeToString(hash[:])
 			opts.DNSName = "no-wildcard." + domain + ".certsign.serviceaccount.authentication.k8s.io"
 
 			// TODO should other usages be considered valid?
