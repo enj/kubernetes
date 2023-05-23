@@ -422,8 +422,8 @@ function set_service_accounts {
 
     SERVICE_ACCOUNT_CA_KEY=${SERVICE_ACCOUNT_CA:-${TMP_DIR}/kube-serviceaccount-ca.key}
     SERVICE_ACCOUNT_CA=${SERVICE_ACCOUNT_CA:-${TMP_DIR}/kube-serviceaccount-ca.crt}
-    SERVICE_ACCOUNT_KEY_CERT=${SERVICE_ACCOUNT_KEY_CERT:-${TMP_DIR}/client-kube-serviceaccount-cert.key}
-    SERVICE_ACCOUNT_KEY_CERT_CHAIN=${SERVICE_ACCOUNT_KEY_CERT_CHAIN:-${TMP_DIR}/client-kube-serviceaccount-cert.crt}
+    SERVICE_ACCOUNT_KEY_CERT=${SERVICE_ACCOUNT_KEY_CERT:-${TMP_DIR}/serving-kube-serviceaccount-cert.key}
+    SERVICE_ACCOUNT_KEY_CERT_CHAIN=${SERVICE_ACCOUNT_KEY_CERT_CHAIN:-${TMP_DIR}/serving-kube-serviceaccount-cert.crt}
 
     # Generate ServiceAccount cert key if needed
     if [[ ! -f "${SERVICE_ACCOUNT_CA_KEY}" ]]; then
