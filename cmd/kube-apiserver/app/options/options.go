@@ -242,7 +242,7 @@ func (s *ServerRunOptions) Flags() (fss cliflag.NamedFlagSets) {
 	fs.StringVar(&s.ServiceAccountSigningKeyFile, "service-account-signing-key-file", s.ServiceAccountSigningKeyFile, ""+
 		"Path to the file that contains the current private key of the service account token issuer. The issuer will sign issued ID tokens with this private key.")
 
-	fs.StringVar(&s.ServiceAccountSigningKeyCertChainFile, "service-account-signing-key-cert-chain-file", s.ServiceAccountSigningKeyFile, "TODO")
+	fs.StringVar(&s.ServiceAccountSigningKeyCertChainFile, "service-account-signing-key-cert-chain-file", s.ServiceAccountSigningKeyCertChainFile, "TODO")
 
 	return fss
 }

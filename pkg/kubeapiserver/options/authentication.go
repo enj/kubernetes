@@ -85,7 +85,7 @@ type OIDCAuthenticationOptions struct {
 // ServiceAccountAuthenticationOptions contains service account authentication options for API Server
 type ServiceAccountAuthenticationOptions struct {
 	KeyFiles         []string
-	CertFile         string
+	CAFile           string
 	Lookup           bool
 	Issuers          []string
 	JWKSURI          string
@@ -324,7 +324,7 @@ func (o *BuiltInAuthenticationOptions) AddFlags(fs *pflag.FlagSet) {
 			"--tls-private-key-file is used. Must be specified when "+
 			"--service-account-signing-key-file is provided")
 
-		fs.StringVar(&o.ServiceAccounts.CertFile, "service-account-cert-file", o.ServiceAccounts.CertFile, "TODO")
+		fs.StringVar(&o.ServiceAccounts.CAFile, "service-account-ca-file", o.ServiceAccounts.CAFile, "TODO")
 
 		fs.BoolVar(&o.ServiceAccounts.Lookup, "service-account-lookup", o.ServiceAccounts.Lookup,
 			"If true, validate ServiceAccount tokens exist in etcd as part of authentication.")
@@ -426,7 +426,7 @@ func (o *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticat
 			ret.APIAudiences = authenticator.Audiences(o.ServiceAccounts.Issuers)
 		}
 		ret.ServiceAccountKeyFiles = o.ServiceAccounts.KeyFiles
-		ret.ServiceAccountCertFile = o.ServiceAccounts.CertFile
+		ret.ServiceAccountCAFile = o.ServiceAccounts.CAFile
 		ret.ServiceAccountIssuers = o.ServiceAccounts.Issuers
 		ret.ServiceAccountLookup = o.ServiceAccounts.Lookup
 	}

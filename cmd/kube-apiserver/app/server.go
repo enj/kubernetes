@@ -332,10 +332,10 @@ func CreateKubeAPIServerConfig(s completedServerRunOptions) (
 		}
 		pubKeys = append(pubKeys, keys...)
 	}
-	if len(s.Authentication.ServiceAccounts.CertFile) > 0 {
+	if len(s.Authentication.ServiceAccounts.CAFile) > 0 {
 		// TODO wire caBundleProvider.Run so that cert rotation works without restart
 		// TODO de-duplicate this call with the newServiceAccountAuthenticator
-		caBundleProvider, err := dynamiccertificates.NewDynamicCAContentFromFile("cert-sign", s.Authentication.ServiceAccounts.CertFile)
+		caBundleProvider, err := dynamiccertificates.NewDynamicCAContentFromFile("cert-sign", s.Authentication.ServiceAccounts.CAFile)
 		if err != nil {
 			return nil, nil, nil, err
 		}
