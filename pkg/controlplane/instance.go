@@ -210,6 +210,7 @@ type ExtraConfig struct {
 	ServiceAccountIssuerURL  string
 	ServiceAccountJWKSURI    string
 	ServiceAccountPublicKeys []interface{}
+	ServiceAccountCertKeys   dynamiccertificates.CAContentProvider
 
 	VersionedInformers informers.SharedInformerFactory
 
@@ -370,6 +371,7 @@ func (c completedConfig) New(delegationTarget genericapiserver.DelegationTarget)
 		c.ExtraConfig.ServiceAccountJWKSURI,
 		c.GenericConfig.ExternalAddress,
 		c.ExtraConfig.ServiceAccountPublicKeys,
+		c.ExtraConfig.ServiceAccountCertKeys,
 	)
 	if err != nil {
 		// If there was an error, skip installing the endpoints and log the

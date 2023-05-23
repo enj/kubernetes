@@ -21,6 +21,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -29,6 +30,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apiserver/pkg/server/dynamiccertificates"
+	certutil "k8s.io/client-go/util/cert"
 )
 
 const (
@@ -55,7 +58,7 @@ type OpenIDMetadata struct {
 // that this function may perform additional validation on inputs that is not
 // backwards-compatible with all command-line validation. The recommendation is
 // to log the error and skip installing the OIDC discovery endpoints.
-func NewOpenIDMetadata(issuerURL, jwksURI, defaultExternalAddress string, pubKeys []interface{}) (*OpenIDMetadata, error) {
+func NewOpenIDMetadata(issuerURL, jwksURI, defaultExternalAddress string, pubKeys []interface{}, caBundleProvider dynamiccertificates.CAContentProvider) (*OpenIDMetadata, error) {
 	if issuerURL == "" {
 		return nil, fmt.Errorf("empty issuer URL")
 	}
@@ -126,16 +129,26 @@ func NewOpenIDMetadata(issuerURL, jwksURI, defaultExternalAddress string, pubKey
 		}
 	}
 
-	configJSON, err := openIDConfigJSON(issuerURL, jwksURI, pubKeys)
+	var certs []*x509.Certificate
+	if caBundleProvider != nil {
+		var err error
+		certs, err = certutil.ParseCertsPEM(caBundleProvider.CurrentCABundleContent())
+		if err != nil {
+			return nil, err // should be impossible because the input content is already validated
+		}
+	}
+
+	configJSON, err := openIDConfigJSON(issuerURL, jwksURI, pubKeys, certs)
 	if err != nil {
 		return nil, fmt.Errorf("could not marshal issuer discovery JSON, error: %v", err)
 	}
 
-	keysetJSON, err := openIDKeysetJSON(pubKeys)
+	keysetJSON, err := openIDKeysetJSON(pubKeys, certs)
 	if err != nil {
 		return nil, fmt.Errorf("could not marshal issuer keys JSON, error: %v", err)
 	}
 
+	// TODO this logic needs to be made dynamic so that cert rotation works correctly
 	return &OpenIDMetadata{
 		ConfigJSON:       configJSON,
 		PublicKeysetJSON: keysetJSON,
@@ -159,18 +172,23 @@ type openIDMetadata struct {
 
 // openIDConfigJSON returns the JSON OIDC Discovery Doc for the service
 // account issuer.
-func openIDConfigJSON(iss, jwksURI string, keys []interface{}) ([]byte, error) {
+func openIDConfigJSON(iss, jwksURI string, keys []interface{}, certs []*x509.Certificate) ([]byte, error) {
 	keyset, errs := publicJWKSFromKeys(keys)
 	if errs != nil {
 		return nil, errs
 	}
 
+	certKeyset, err := publicJWKSFromCerts(certs)
+	if err != nil {
+		return nil, err
+	}
+
 	metadata := openIDMetadata{
 		Issuer:        iss,
 		JWKSURI:       jwksURI,
-		ResponseTypes: []string{"id_token"}, // Kubernetes only produces ID tokens
-		SubjectTypes:  []string{"public"},   // https://openid.net/specs/openid-connect-core-1_0.html#SubjectIDTypes
-		SigningAlgs:   getAlgs(keyset),      // REQUIRED by OIDC
+		ResponseTypes: []string{"id_token"},        // Kubernetes only produces ID tokens
+		SubjectTypes:  []string{"public"},          // https://openid.net/specs/openid-connect-core-1_0.html#SubjectIDTypes
+		SigningAlgs:   getAlgs(keyset, certKeyset), // REQUIRED by OIDC
 	}
 
 	metadataJSON, err := json.Marshal(metadata)
@@ -183,11 +201,20 @@ func openIDConfigJSON(iss, jwksURI string, keys []interface{}) ([]byte, error) {
 
 // openIDKeysetJSON returns the JSON Web Key Set for the service account
 // issuer's keys.
-func openIDKeysetJSON(keys []interface{}) ([]byte, error) {
-	keyset, errs := publicJWKSFromKeys(keys)
+func openIDKeysetJSON(keys []interface{}, certs []*x509.Certificate) ([]byte, error) {
+	pubKeyset, errs := publicJWKSFromKeys(keys)
 	if errs != nil {
 		return nil, errs
 	}
+
+	certKeyset, err := publicJWKSFromCerts(certs)
+	if err != nil {
+		return nil, err
+	}
+
+	keyset := &jose.JSONWebKeySet{Keys: make([]jose.JSONWebKey, 0, len(pubKeyset.Keys)+len(certKeyset.Keys))}
+	keyset.Keys = append(keyset.Keys, pubKeyset.Keys...)
+	keyset.Keys = append(keyset.Keys, certKeyset.Keys...)
 
 	keysetJSON, err := json.Marshal(keyset)
 	if err != nil {
@@ -197,10 +224,12 @@ func openIDKeysetJSON(keys []interface{}) ([]byte, error) {
 	return keysetJSON, nil
 }
 
-func getAlgs(keys *jose.JSONWebKeySet) []string {
+func getAlgs(keysets ...*jose.JSONWebKeySet) []string {
 	algs := sets.NewString()
-	for _, k := range keys.Keys {
-		algs.Insert(k.Algorithm)
+	for _, keys := range keysets {
+		for _, k := range keys.Keys {
+			algs.Insert(k.Algorithm)
+		}
 	}
 	// Note: List returns a sorted slice.
 	return algs.List()
@@ -223,9 +252,9 @@ func publicJWKSFromKeys(in []interface{}) (*jose.JSONWebKeySet, errors.Aggregate
 		switch k := key.(type) {
 		case publicKeyGetter:
 			// This is a private key. Get its public key
-			pubkey, err = jwkFromPublicKey(k.Public())
+			pubkey, err = jwkFromPublicKey(k.Public(), nil)
 		default:
-			pubkey, err = jwkFromPublicKey(k)
+			pubkey, err = jwkFromPublicKey(k, nil)
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("error constructing JWK for key #%d: %v", i, err))
@@ -244,7 +273,29 @@ func publicJWKSFromKeys(in []interface{}) (*jose.JSONWebKeySet, errors.Aggregate
 	return &keys, nil
 }
 
-func jwkFromPublicKey(publicKey crypto.PublicKey) (*jose.JSONWebKey, error) {
+func publicJWKSFromCerts(in []*x509.Certificate) (*jose.JSONWebKeySet, error) {
+	var keys jose.JSONWebKeySet
+	var errs []error
+	for i, key := range in {
+		pubkey, err := jwkFromPublicKey(key.PublicKey, key)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("error constructing JWK for key #%d: %v", i, err))
+			continue
+		}
+
+		if !pubkey.Valid() {
+			errs = append(errs, fmt.Errorf("key #%d not valid", i))
+			continue
+		}
+		keys.Keys = append(keys.Keys, *pubkey)
+	}
+	if len(errs) != 0 {
+		return nil, errors.NewAggregate(errs)
+	}
+	return &keys, nil
+}
+
+func jwkFromPublicKey(publicKey crypto.PublicKey, cert *x509.Certificate) (*jose.JSONWebKey, error) {
 	alg, err := algorithmFromPublicKey(publicKey)
 	if err != nil {
 		return nil, err
@@ -260,6 +311,11 @@ func jwkFromPublicKey(publicKey crypto.PublicKey) (*jose.JSONWebKey, error) {
 		Key:       publicKey,
 		KeyID:     keyID,
 		Use:       "sig",
+	}
+
+	// TODO do we want to support this list having more than one item?  what would the public key be then?
+	if cert != nil {
+		jwk.Certificates = []*x509.Certificate{cert}
 	}
 
 	if !jwk.IsPublic() {

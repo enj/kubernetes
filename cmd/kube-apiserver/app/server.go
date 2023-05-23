@@ -46,6 +46,7 @@ import (
 	openapinamer "k8s.io/apiserver/pkg/endpoints/openapi"
 	genericfeatures "k8s.io/apiserver/pkg/features"
 	genericapiserver "k8s.io/apiserver/pkg/server"
+	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	"k8s.io/apiserver/pkg/server/egressselector"
 	"k8s.io/apiserver/pkg/server/filters"
 	serveroptions "k8s.io/apiserver/pkg/server/options"
@@ -323,7 +324,6 @@ func CreateKubeAPIServerConfig(s completedServerRunOptions) (
 	}
 
 	// Load the public keys.
-	// TODO also wire x5c here
 	var pubKeys []interface{}
 	for _, f := range s.Authentication.ServiceAccounts.KeyFiles {
 		keys, err := keyutil.PublicKeysFromFile(f)
@@ -331,6 +331,15 @@ func CreateKubeAPIServerConfig(s completedServerRunOptions) (
 			return nil, nil, nil, fmt.Errorf("failed to parse key file %q: %v", f, err)
 		}
 		pubKeys = append(pubKeys, keys...)
+	}
+	if len(s.Authentication.ServiceAccounts.CertFile) > 0 {
+		// TODO wire caBundleProvider.Run so that cert rotation works without restart
+		// TODO de-duplicate this call with the newServiceAccountAuthenticator
+		caBundleProvider, err := dynamiccertificates.NewDynamicCAContentFromFile("cert-sign", s.Authentication.ServiceAccounts.CertFile)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		config.ExtraConfig.ServiceAccountCertKeys = caBundleProvider
 	}
 	// Plumb the required metadata through ExtraConfig.
 	config.ExtraConfig.ServiceAccountIssuerURL = s.Authentication.ServiceAccounts.Issuers[0]
