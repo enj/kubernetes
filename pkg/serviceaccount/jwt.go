@@ -337,9 +337,10 @@ func (j *jwtTokenAuthenticator) AuthenticateToken(ctx context.Context, tokenData
 	if !found {
 		if opts, ok := j.verifyOptionsFn(); ok && hasCertificateBasedSingleSignature(tok) {
 			if err := validateTokenViaCertificateSigning(tokenData, opts, tok, public, private); err != nil {
+				warning.AddWarning(ctx, "", "SA cert based signing FAILED: "+err.Error())
 				errlist = append(errlist, err)
 			} else {
-				warning.AddWarning(ctx, "", "SA cert based signing used for "+public.Subject)
+				warning.AddWarning(ctx, "", "SA cert based signing SUCCEEDED for "+public.Subject)
 				found = true
 			}
 		}
