@@ -198,28 +198,37 @@ func generateKey(length int) (key []byte, err error) {
 	return key, nil
 }
 
-// TODO comment
-func NewReadOnlyKDFExtendedNonceGCMTransformerFromUniqueKeyUnsafe(key []byte) value.Read {
+// NewKDFExtendedNonceGCMTransformerFromSeed is the same as NewGCMTransformer but BETTER TODO fix comment.
+// Unlike NewGCMTransformer, this function is immune to the birthday attack and thus the key can
+// be used for 2^64-1 writes without rotation.  Furthermore, cryptographic wear out of AES-GCM with
+// a sequential nonce occurs after 2^64 encryptions, which is not a concern for our use cases.
+// Even if that occurs, the nonce counter would overflow and crash the process.  We have no concerns
+// around plaintext length because all stored items are small (less than 2 MB).  To prevent the
+// chance of the block cipher being accidentally re-used, it is not taken in as input.  Instead,
+// a new random key is generated and returned on every invocation of this function.  This key is
+// used as the input to the block cipher.  If the key is stored and retrieved at a later point,
+// it can be passed to NewGCMTransformer(aes.NewCipher(key)) to construct a transformer capable
+// of decrypting values encrypted by this transformer (that transformer must not be used for encryption).
+func NewKDFExtendedNonceGCMTransformerFromSeed(seed []byte) value.Transformer {
 	return &extendedNonceGCM{
-		key:   key,
+		seed:  seed,
 		cache: newSimpleCache(clock.RealClock{}, cacheTTL),
 	}
 }
 
-// TODO comment
-func NewKDFExtendedNonceGCMTransformerWithUniqueKeyUnsafe() (value.Transformer, []byte, error) {
-	key, err := generateKey(commonSize)
+// NewKDFExtendedNonceGCMTransformerWithUniqueSeed is the same as NewKDFExtendedNonceGCMTransformerFromSeed
+// but it handles the seed generation for the caller.  Whenever a new seed is needed (for example,
+// during key rotation), this function should be used over the caller generating a new seed.
+func NewKDFExtendedNonceGCMTransformerWithUniqueSeed() (value.Transformer, []byte, error) {
+	seed, err := generateKey(commonSize)
 	if err != nil {
 		return nil, nil, err
 	}
-	return &extendedNonceGCM{
-		key:   key,
-		cache: newSimpleCache(clock.RealClock{}, cacheTTL),
-	}, key, nil
+	return NewKDFExtendedNonceGCMTransformerFromSeed(seed), seed, nil
 }
 
 type extendedNonceGCM struct {
-	key   []byte
+	seed  []byte
 	cache *simpleCache
 }
 
@@ -283,7 +292,7 @@ func (e *extendedNonceGCM) derivedKeyTransformer(info []byte, dataCtx value.Cont
 }
 
 func (e *extendedNonceGCM) sha256KDFExpandOnly(info []byte) ([]byte, error) {
-	kdf := hkdf.Expand(sha256.New, e.key, info)
+	kdf := hkdf.Expand(sha256.New, e.seed, info)
 
 	derivedKey := make([]byte, commonSize)
 	if _, err := io.ReadFull(kdf, derivedKey); err != nil {

@@ -246,7 +246,8 @@ func (t *envelopeTransformer) TransformToStorage(ctx context.Context, data []byt
 func (t *envelopeTransformer) addTransformerForDecryption(cacheKey []byte, key []byte, useSeed bool) (value.Read, error) {
 	var transformer value.Read
 	if useSeed {
-		transformer = aestransformer.NewReadOnlyKDFExtendedNonceGCMTransformerFromUniqueKeyUnsafe(key)
+		// this is compatible with NewKDFExtendedNonceGCMTransformerWithUniqueSeed for decryption
+		transformer = aestransformer.NewKDFExtendedNonceGCMTransformerFromSeed(key)
 	} else {
 		block, err := aes.NewCipher(key)
 		if err != nil {
@@ -288,7 +289,7 @@ func (t *envelopeTransformer) doDecode(originalData []byte) (*kmstypes.Encrypted
 // GenerateTransformer generates a new transformer and encrypts the DEK using the envelope service.
 // It returns the transformer, the encrypted DEK, cache key and error.
 func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsservice.Service, useSeed bool) (value.Transformer, *kmsservice.EncryptResponse, []byte, error) {
-	newTransformerFunc := aestransformer.NewKDFExtendedNonceGCMTransformerWithUniqueKeyUnsafe
+	newTransformerFunc := aestransformer.NewKDFExtendedNonceGCMTransformerWithUniqueSeed
 	if !useSeed {
 		newTransformerFunc = aestransformer.NewGCMTransformerWithUniqueKeyUnsafe
 	}
