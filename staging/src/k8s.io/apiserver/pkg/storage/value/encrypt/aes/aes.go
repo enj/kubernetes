@@ -198,7 +198,12 @@ func generateKey(length int) (key []byte, err error) {
 	return key, nil
 }
 
-// NewKDFExtendedNonceGCMTransformerFromSeed is the same as NewGCMTransformer but BETTER TODO fix comment.
+// NewKDFExtendedNonceGCMTransformerFromSeedUnsafe is the same as NewGCMTransformer but trades storage,
+// memory and CPU to work around the limitations of AES-GCM's 12 byte nonce size.  It is marked
+// as unsafe because it assumes that the input seed is a cryptographically strong key that is at least
+// 32 bytes in length.  Callers that do need to supply a specific seed must use
+// NewKDFExtendedNonceGCMTransformerWithUniqueSeed instead to guarantee that
+// TODO finish comment
 // Unlike NewGCMTransformer, this function is immune to the birthday attack and thus the key can
 // be used for 2^64-1 writes without rotation.  Furthermore, cryptographic wear out of AES-GCM with
 // a sequential nonce occurs after 2^64 encryptions, which is not a concern for our use cases.
@@ -209,14 +214,18 @@ func generateKey(length int) (key []byte, err error) {
 // used as the input to the block cipher.  If the key is stored and retrieved at a later point,
 // it can be passed to NewGCMTransformer(aes.NewCipher(key)) to construct a transformer capable
 // of decrypting values encrypted by this transformer (that transformer must not be used for encryption).
-func NewKDFExtendedNonceGCMTransformerFromSeed(seed []byte) value.Transformer {
+func NewKDFExtendedNonceGCMTransformerFromSeedUnsafe(seed []byte) (value.Transformer, error) {
+	if seedLen := len(seed); seedLen < commonSize {
+		return nil, fmt.Errorf("invalid seed length %d used for key generation", seedLen)
+	}
 	return &extendedNonceGCM{
 		seed:  seed,
 		cache: newSimpleCache(clock.RealClock{}, cacheTTL),
-	}
+	}, nil
 }
 
-// NewKDFExtendedNonceGCMTransformerWithUniqueSeed is the same as NewKDFExtendedNonceGCMTransformerFromSeed
+// TODO comment why this is "safe"
+// NewKDFExtendedNonceGCMTransformerWithUniqueSeed is the same as NewKDFExtendedNonceGCMTransformerFromSeedUnsafe
 // but it handles the seed generation for the caller.  Whenever a new seed is needed (for example,
 // during key rotation), this function should be used over the caller generating a new seed.
 func NewKDFExtendedNonceGCMTransformerWithUniqueSeed() (value.Transformer, []byte, error) {
@@ -224,7 +233,7 @@ func NewKDFExtendedNonceGCMTransformerWithUniqueSeed() (value.Transformer, []byt
 	if err != nil {
 		return nil, nil, err
 	}
-	return NewKDFExtendedNonceGCMTransformerFromSeed(seed), seed, nil
+	return NewKDFExtendedNonceGCMTransformerFromSeedUnsafe(seed), seed, nil
 }
 
 type extendedNonceGCM struct {

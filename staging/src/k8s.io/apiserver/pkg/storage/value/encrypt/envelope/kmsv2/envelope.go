@@ -20,6 +20,7 @@ package kmsv2
 import (
 	"context"
 	"crypto/aes"
+	"crypto/cipher"
 	"fmt"
 	"sort"
 	"time"
@@ -245,20 +246,23 @@ func (t *envelopeTransformer) TransformToStorage(ctx context.Context, data []byt
 // addTransformerForDecryption inserts a new transformer to the Envelope cache of DEKs for future reads.
 func (t *envelopeTransformer) addTransformerForDecryption(cacheKey []byte, key []byte, useSeed bool) (value.Read, error) {
 	var transformer value.Read
+	var err error
 	if useSeed {
 		// this is compatible with NewKDFExtendedNonceGCMTransformerWithUniqueSeed for decryption
-		transformer = aestransformer.NewKDFExtendedNonceGCMTransformerFromSeed(key)
+		// TODO comment about using unsafe function
+		transformer, err = aestransformer.NewKDFExtendedNonceGCMTransformerFromSeedUnsafe(key)
 	} else {
-		block, err := aes.NewCipher(key)
+		var block cipher.Block
+		block, err = aes.NewCipher(key)
 		if err != nil {
 			return nil, err
 		}
 		// this is compatible with NewGCMTransformerWithUniqueKeyUnsafe for decryption
 		// it would use random nonces for encryption but we never do that
 		transformer, err = aestransformer.NewGCMTransformer(block)
-		if err != nil {
-			return nil, err
-		}
+	}
+	if err != nil {
+		return nil, err
 	}
 	// TODO(aramase): Add metrics for cache fill percentage with custom cache implementation.
 	t.cache.set(cacheKey, transformer)
