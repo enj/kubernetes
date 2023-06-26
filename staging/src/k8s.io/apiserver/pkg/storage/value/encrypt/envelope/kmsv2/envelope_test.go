@@ -230,7 +230,7 @@ func TestEnvelopeCaching(t *testing.T) {
 
 func testStateFunc(ctx context.Context, envelopeService kmsservice.Service, clock clock.Clock) func() (State, error) {
 	return func() (State, error) {
-		transformer, resp, cacheKey, errGen := GenerateTransformer(ctx, string(uuid.NewUUID()), envelopeService)
+		transformer, resp, cacheKey, errGen := GenerateTransformer(ctx, string(uuid.NewUUID()), envelopeService, false) // TODO fix
 		if errGen != nil {
 			return State{}, errGen
 		}
@@ -401,7 +401,7 @@ func TestEnvelopeTransformerStateFunc(t *testing.T) {
 
 	t.Run("writes fail when the plugin is down and the state is invalid", func(t *testing.T) {
 		_, err := transformer.TransformToStorage(ctx, originalText, dataCtx)
-		if !strings.Contains(errString(err), `EDEK with keyID "1" expired at`) {
+		if !strings.Contains(errString(err), `EDEK/ESEED with keyID "1" expired at`) {
 			t.Fatalf("expected expiration error, got: %v", err)
 		}
 	})
@@ -712,12 +712,12 @@ func TestValidateEncryptedDEK(t *testing.T) {
 		{
 			name:          "encrypted DEK is nil",
 			encryptedDEK:  nil,
-			expectedError: "encrypted DEK is empty",
+			expectedError: "encrypted DEK and seed are both empty",
 		},
 		{
 			name:          "encrypted DEK is empty",
 			encryptedDEK:  []byte{},
-			expectedError: "encrypted DEK is empty",
+			expectedError: "encrypted DEK and seed are both empty",
 		},
 		{
 			name:          "encrypted DEK size is greater than 1 kB",
@@ -735,7 +735,7 @@ func TestValidateEncryptedDEK(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := validateEncryptedDEK(tt.encryptedDEK)
+			err := validateEncryptedDEKorSeed(tt.encryptedDEK, nil) // TODO fix
 			if tt.expectedError != "" {
 				if err == nil {
 					t.Fatalf("expected error %q, got nil", tt.expectedError)
@@ -983,8 +983,8 @@ func TestGenerateCacheKey(t *testing.T) {
 		for _, tc2 := range testCases {
 			tc2 := tc2
 			t.Run(fmt.Sprintf("%+v-%+v", tc, tc2), func(t *testing.T) {
-				key1, err1 := generateCacheKey(tc.encryptedDEK, tc.keyID, tc.annotations)
-				key2, err2 := generateCacheKey(tc2.encryptedDEK, tc2.keyID, tc2.annotations)
+				key1, err1 := generateCacheKey(tc.encryptedDEK, nil, tc.keyID, tc.annotations)    // TODO fix
+				key2, err2 := generateCacheKey(tc2.encryptedDEK, nil, tc2.keyID, tc2.annotations) // TODO fix
 				if err1 != nil || err2 != nil {
 					t.Errorf("generateCacheKey() want err=nil, got err1=%q, err2=%q", errString(err1), errString(err2))
 				}
@@ -1028,7 +1028,7 @@ func TestGenerateTransformer(t *testing.T) {
 				envelopeService.SetCiphertext([]byte{})
 				return envelopeService
 			},
-			expectedErr: "failed to validate encrypted DEK: encrypted DEK is empty",
+			expectedErr: "failed to validate encrypted DEK: encrypted DEK and seed are both empty",
 		},
 		{
 			name: "invalid annotations",
@@ -1053,7 +1053,7 @@ func TestGenerateTransformer(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			transformer, encryptResp, cacheKey, err := GenerateTransformer(testContext(t), "panda", tc.envelopeService())
+			transformer, encryptResp, cacheKey, err := GenerateTransformer(testContext(t), "panda", tc.envelopeService(), false) // TODO fix
 			if tc.expectedErr == "" {
 				if err != nil {
 					t.Errorf("expected no error, got %q", errString(err))

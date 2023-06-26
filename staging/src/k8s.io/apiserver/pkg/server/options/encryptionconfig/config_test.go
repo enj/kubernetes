@@ -1816,7 +1816,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 				t.Errorf("log mismatch (-want +got):\n%s", diff)
 			}
 
-			ignoredFields := sets.NewString("Transformer", "EncryptedDEK", "UID", "CacheKey")
+			ignoredFields := sets.NewString("Transformer", "EncryptedDEKorSeed", "UID", "CacheKey")
 
 			if diff := cmp.Diff(tt.wantState, *h.state.Load(),
 				cmp.FilterPath(func(path cmp.Path) bool { return ignoredFields.Has(path.String()) }, cmp.Ignore()),
