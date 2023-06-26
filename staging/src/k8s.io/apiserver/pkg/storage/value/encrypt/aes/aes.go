@@ -202,18 +202,14 @@ func generateKey(length int) (key []byte, err error) {
 // memory and CPU to work around the limitations of AES-GCM's 12 byte nonce size.  It is marked
 // as unsafe because it assumes that the input seed is a cryptographically strong key that is at least
 // 32 bytes in length.  Callers that do need to supply a specific seed must use
-// NewKDFExtendedNonceGCMTransformerWithUniqueSeed instead to guarantee that
-// TODO finish comment
-// Unlike NewGCMTransformer, this function is immune to the birthday attack and thus the key can
-// be used for 2^64-1 writes without rotation.  Furthermore, cryptographic wear out of AES-GCM with
-// a sequential nonce occurs after 2^64 encryptions, which is not a concern for our use cases.
-// Even if that occurs, the nonce counter would overflow and crash the process.  We have no concerns
-// around plaintext length because all stored items are small (less than 2 MB).  To prevent the
-// chance of the block cipher being accidentally re-used, it is not taken in as input.  Instead,
-// a new random key is generated and returned on every invocation of this function.  This key is
-// used as the input to the block cipher.  If the key is stored and retrieved at a later point,
-// it can be passed to NewGCMTransformer(aes.NewCipher(key)) to construct a transformer capable
-// of decrypting values encrypted by this transformer (that transformer must not be used for encryption).
+// NewKDFExtendedNonceGCMTransformerWithUniqueSeed instead to guarantee that a secure seed is used.
+// Unlike NewGCMTransformer, this function is immune to the birthday attack because a new key is generated
+// per encryption via a key derivation function: KDF(seed, random_bytes) -> key.  The derived key is
+// only used once as an AES-GCM key with a random 12 byte nonce.  This avoids any concerns around
+// cryptographic wear out (by either number of encryptions or the amount of data being encrypted).
+// No specific rotation schedule is required for the seed.  NewKDFExtendedNonceGCMTransformerWithUniqueSeed
+// and this function encrypt and decrypt data in a compatible way (so the output of one can be used
+// as the input to the other, and vice versa).
 func NewKDFExtendedNonceGCMTransformerFromSeedUnsafe(seed []byte) (value.Transformer, error) {
 	if seedLen := len(seed); seedLen < commonSize {
 		return nil, fmt.Errorf("invalid seed length %d used for key generation", seedLen)
@@ -224,16 +220,25 @@ func NewKDFExtendedNonceGCMTransformerFromSeedUnsafe(seed []byte) (value.Transfo
 	}, nil
 }
 
-// TODO comment why this is "safe"
 // NewKDFExtendedNonceGCMTransformerWithUniqueSeed is the same as NewKDFExtendedNonceGCMTransformerFromSeedUnsafe
 // but it handles the seed generation for the caller.  Whenever a new seed is needed (for example,
-// during key rotation), this function should be used over the caller generating a new seed.
+// during key rotation), this function should be used over the caller generating a new seed.  This
+// function is considered safe because there is no input that a caller could make a mistake with,
+// and the output transformer has the properties of AES-GCM without the nonce size limitations.
+// A new random seed is generated and returned on every invocation of this function.  If the seed is
+// stored and retrieved at a later point, it can be passed to NewKDFExtendedNonceGCMTransformerFromSeedUnsafe
+// to construct a transformer capable of decrypting values encrypted by this transformer;
+// reusing the seed returned from this function is safe to do over time and across process restarts.
 func NewKDFExtendedNonceGCMTransformerWithUniqueSeed() (value.Transformer, []byte, error) {
 	seed, err := generateKey(commonSize)
 	if err != nil {
 		return nil, nil, err
 	}
-	return NewKDFExtendedNonceGCMTransformerFromSeedUnsafe(seed), seed, nil
+	transformer, err := NewKDFExtendedNonceGCMTransformerFromSeedUnsafe(seed)
+	if err != nil {
+		return nil, nil, err
+	}
+	return transformer, seed, nil
 }
 
 type extendedNonceGCM struct {
