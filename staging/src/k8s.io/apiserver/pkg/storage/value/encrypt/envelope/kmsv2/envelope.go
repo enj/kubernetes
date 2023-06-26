@@ -249,7 +249,7 @@ func (t *envelopeTransformer) addTransformerForDecryption(cacheKey []byte, key [
 	var err error
 	if useSeed {
 		// this is compatible with NewKDFExtendedNonceGCMTransformerWithUniqueSeed for decryption
-		// TODO comment about using unsafe function
+		// the input key is considered safe to use here because it is coming from the KMS plugin / etcd
 		transformer, err = aestransformer.NewKDFExtendedNonceGCMTransformerFromSeedUnsafe(key)
 	} else {
 		var block cipher.Block
