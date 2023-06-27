@@ -63,13 +63,13 @@ const (
 	kmsTransformerPrefixV2       = "k8s:enc:kms:v2:"
 
 	// these constants relate to how the KMS v2 plugin status poll logic
-	// and the DEK generation logic behave.  In particular, the positive
+	// and the DEK/seed generation logic behave.  In particular, the positive
 	// interval and max TTL are closely related as the difference between
-	// these values defines the worst case window in which the write DEK
+	// these values defines the worst case window in which the write DEK/seed
 	// could expire due to the plugin going into an error state.  The
 	// worst case window divided by the negative interval defines the
 	// minimum amount of times the server will attempt to return to a
-	// healthy state before the DEK expires and writes begin to fail.
+	// healthy state before the DEK/seed expires and writes begin to fail.
 	//
 	// For now, these values are kept small and hardcoded to support being
 	// able to perform a "passive" storage migration while tolerating some
@@ -82,13 +82,13 @@ const (
 	// At that point, they are guaranteed to either migrate to the new key
 	// or get errors during the migration.
 	//
-	// If the API server coasted forever on the last DEK, they would need
+	// If the API server coasted forever on the last DEK/seed, they would need
 	// to actively check if it had observed the new key ID before starting
-	// a migration - otherwise it could keep using the old DEK and their
+	// a migration - otherwise it could keep using the old DEK/seed and their
 	// storage migration would not do what they thought it did.
 	kmsv2PluginHealthzPositiveInterval = 1 * time.Minute
 	kmsv2PluginHealthzNegativeInterval = 10 * time.Second
-	kmsv2PluginWriteDEKMaxTTL          = 3 * time.Minute
+	kmsv2PluginWriteDEKorSeedMaxTTL    = 3 * time.Minute
 
 	kmsPluginHealthzNegativeTTL = 3 * time.Second
 	kmsPluginHealthzPositiveTTL = 20 * time.Second
@@ -333,7 +333,7 @@ func (h *kmsv2PluginProbe) check(ctx context.Context) error {
 }
 
 // rotateDEKOnKeyIDChange tries to rotate to a new DEK/seed if the key ID returned by Status does not match the
-// current state.  If a successful rotation is performed, the new DEK and keyID overwrite the existing state.
+// current state.  If a successful rotation is performed, the new DEK/seed and keyID overwrite the existing state.
 // On any failure during rotation (including mismatch between status and encrypt calls), the current state is
 // preserved and will remain valid to use for encryption until its expiration (the system attempts to coast).
 // If the key ID returned by Status matches the current state, the expiration of the current state is extended
@@ -346,9 +346,9 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 
 	// allow reads indefinitely in all cases
 	// allow writes indefinitely as long as there is no error
-	// allow writes for only up to kmsv2PluginWriteDEKMaxTTL from now when there are errors
-	// we start the timer before we make the network call because kmsv2PluginWriteDEKMaxTTL is meant to be the upper bound
-	expirationTimestamp := envelopekmsv2.NowFunc().Add(kmsv2PluginWriteDEKMaxTTL)
+	// allow writes for only up to kmsv2PluginWriteDEKorSeedMaxTTL from now when there are errors
+	// we start the timer before we make the network call because kmsv2PluginWriteDEKorSeedMaxTTL is meant to be the upper bound
+	expirationTimestamp := envelopekmsv2.NowFunc().Add(kmsv2PluginWriteDEKorSeedMaxTTL)
 
 	// dynamically check if we want to use KDF seed to derive DEKs or just a single DEK
 	// this gate can only change during tests, but the check is cheap enough to always make
@@ -731,7 +731,7 @@ func kmsPrefixTransformer(ctx context.Context, config *apiserverconfig.KMSConfig
 		_ = runProbeCheckAndLog(ctx)
 		// make sure that the plugin's key ID is reasonably up-to-date
 		// also, make sure that our DEK is up-to-date to with said key ID (if it expires the server will fail all writes)
-		// if this background loop ever stops running, the server will become unfunctional after kmsv2PluginWriteDEKMaxTTL
+		// if this background loop ever stops running, the server will become unfunctional after kmsv2PluginWriteDEKorSeedMaxTTL
 		go wait.PollUntilWithContext(
 			ctx,
 			kmsv2PluginHealthzPositiveInterval,
