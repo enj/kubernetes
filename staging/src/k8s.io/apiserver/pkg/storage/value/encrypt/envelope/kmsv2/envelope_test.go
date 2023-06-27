@@ -27,11 +27,13 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gogo/protobuf/proto"
 
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/storage/value"
@@ -167,7 +169,9 @@ func TestEnvelopeCaching(t *testing.T) {
 			envelopeService := newTestEnvelopeService()
 			fakeClock := testingclock.NewFakeClock(time.Now())
 
-			state, err := testStateFunc(ctx, envelopeService, fakeClock)()
+			useSeed := randomBool()
+
+			state, err := testStateFunc(ctx, envelopeService, fakeClock, useSeed)()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -196,7 +200,7 @@ func TestEnvelopeCaching(t *testing.T) {
 			// force GC to run by performing a write
 			transformer.(*envelopeTransformer).cache.set([]byte("some-other-unrelated-key"), &envelopeTransformer{})
 
-			state, err = testStateFunc(ctx, envelopeService, fakeClock)()
+			state, err = testStateFunc(ctx, envelopeService, fakeClock, useSeed)()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -228,14 +232,15 @@ func TestEnvelopeCaching(t *testing.T) {
 	}
 }
 
-func testStateFunc(ctx context.Context, envelopeService kmsservice.Service, clock clock.Clock) func() (State, error) {
+func testStateFunc(ctx context.Context, envelopeService kmsservice.Service, clock clock.Clock, useSeed bool) func() (State, error) {
 	return func() (State, error) {
-		transformer, resp, cacheKey, errGen := GenerateTransformer(ctx, string(uuid.NewUUID()), envelopeService, false) // TODO fix
+		transformer, resp, cacheKey, errGen := GenerateTransformer(ctx, string(uuid.NewUUID()), envelopeService, useSeed)
 		if errGen != nil {
 			return State{}, errGen
 		}
 		return State{
 			Transformer:         transformer,
+			UseSeed:             useSeed,
 			EncryptedDEKorSeed:  resp.Ciphertext,
 			KeyID:               resp.KeyID,
 			Annotations:         resp.Annotations,
@@ -254,6 +259,8 @@ func TestEnvelopeTransformerStaleness(t *testing.T) {
 		expectedStale bool
 		testErr       error
 		testKeyID     string
+		useSeedWrite  bool
+		useSeedRead   bool
 	}{
 		{
 			desc:          "stateFunc returns err",
@@ -262,10 +269,34 @@ func TestEnvelopeTransformerStaleness(t *testing.T) {
 			testKeyID:     "",
 		},
 		{
-			desc:          "stateFunc returns same keyID",
+			desc:          "stateFunc returns same keyID, not using seed",
 			expectedStale: false,
 			testErr:       nil,
 			testKeyID:     testKeyVersion,
+		},
+		{
+			desc:          "stateFunc returns same keyID, using seed",
+			expectedStale: false,
+			testErr:       nil,
+			testKeyID:     testKeyVersion,
+			useSeedWrite:  true,
+			useSeedRead:   true,
+		},
+		{
+			desc:          "stateFunc returns same keyID, migrating away from seed",
+			expectedStale: true,
+			testErr:       nil,
+			testKeyID:     testKeyVersion,
+			useSeedWrite:  true,
+			useSeedRead:   false,
+		},
+		{
+			desc:          "stateFunc returns same keyID, migrating to seed",
+			expectedStale: true,
+			testErr:       nil,
+			testKeyID:     testKeyVersion,
+			useSeedWrite:  false,
+			useSeedRead:   true,
 		},
 		{
 			desc:          "stateFunc returns different keyID",
@@ -283,7 +314,7 @@ func TestEnvelopeTransformerStaleness(t *testing.T) {
 			ctx := testContext(t)
 
 			envelopeService := newTestEnvelopeService()
-			state, err := testStateFunc(ctx, envelopeService, clock.RealClock{})()
+			state, err := testStateFunc(ctx, envelopeService, clock.RealClock{}, tt.useSeedWrite)()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -303,6 +334,7 @@ func TestEnvelopeTransformerStaleness(t *testing.T) {
 
 			// inject test data before performing a read
 			state.KeyID = tt.testKeyID
+			state.UseSeed = tt.useSeedRead
 			stateErr = tt.testErr
 
 			_, stale, err := transformer.TransformFromStorage(ctx, transformedData, dataCtx)
@@ -330,8 +362,10 @@ func TestEnvelopeTransformerStateFunc(t *testing.T) {
 
 	ctx := testContext(t)
 
+	useSeed := randomBool()
+
 	envelopeService := newTestEnvelopeService()
-	state, err := testStateFunc(ctx, envelopeService, clock.RealClock{})()
+	state, err := testStateFunc(ctx, envelopeService, clock.RealClock{}, useSeed)()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,12 +385,17 @@ func TestEnvelopeTransformerStateFunc(t *testing.T) {
 		if err != stateErr {
 			t.Fatalf("expected state error, got: %v", err)
 		}
-		data, err := proto.Marshal(&kmstypes.EncryptedObject{
+		o := &kmstypes.EncryptedObject{
 			EncryptedData: []byte{1},
 			KeyID:         "2",
-			EncryptedDEK:  []byte{3},
 			Annotations:   nil,
-		})
+		}
+		if useSeed {
+			o.EncryptedSeed = []byte{3}
+		} else {
+			o.EncryptedDEK = []byte{3}
+		}
+		data, err := proto.Marshal(o)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -418,7 +457,14 @@ func TestEnvelopeTransformerStateFunc(t *testing.T) {
 		if err := proto.Unmarshal(encryptedData, obj); err != nil {
 			t.Fatal(err)
 		}
-		obj.EncryptedDEK = append(obj.EncryptedDEK, 1) // skip StateFunc transformer
+
+		// skip StateFunc transformer
+		if useSeed {
+			obj.EncryptedSeed = append(obj.EncryptedSeed, 1)
+		} else {
+			obj.EncryptedDEK = append(obj.EncryptedDEK, 1)
+		}
+
 		data, err := proto.Marshal(obj)
 		if err != nil {
 			t.Fatal(err)
@@ -468,7 +514,7 @@ func TestTransformToStorageError(t *testing.T) {
 			envelopeService := newTestEnvelopeService()
 			envelopeService.SetAnnotations(tt.annotations)
 			transformer := NewEnvelopeTransformer(envelopeService, testProviderName,
-				testStateFunc(ctx, envelopeService, clock.RealClock{}),
+				testStateFunc(ctx, envelopeService, clock.RealClock{}, randomBool()),
 			)
 			dataCtx := value.DefaultContext(testContextText)
 
@@ -755,7 +801,7 @@ func TestValidateEncryptedDEK(t *testing.T) {
 func TestEnvelopeMetrics(t *testing.T) {
 	envelopeService := newTestEnvelopeService()
 	transformer := NewEnvelopeTransformer(envelopeService, testProviderName,
-		testStateFunc(testContext(t), envelopeService, clock.RealClock{}),
+		testStateFunc(testContext(t), envelopeService, clock.RealClock{}, randomBool()),
 	)
 
 	dataCtx := value.DefaultContext(testContextText)
@@ -809,8 +855,12 @@ func TestEnvelopeMetrics(t *testing.T) {
 	}
 }
 
+var flagOnce sync.Once // support running `go test -count X`
+
 func TestEnvelopeLogging(t *testing.T) {
-	klog.InitFlags(nil)
+	flagOnce.Do(func() {
+		klog.InitFlags(nil)
+	})
 	flag.Set("v", "6")
 	flag.Parse()
 
@@ -858,7 +908,7 @@ func TestEnvelopeLogging(t *testing.T) {
 			envelopeService := newTestEnvelopeService()
 			fakeClock := testingclock.NewFakeClock(time.Now())
 			transformer := newEnvelopeTransformerWithClock(envelopeService, testProviderName,
-				testStateFunc(tc.ctx, envelopeService, clock.RealClock{}),
+				testStateFunc(tc.ctx, envelopeService, clock.RealClock{}, randomBool()),
 				1*time.Second, fakeClock)
 
 			dataCtx := value.DefaultContext([]byte(testContextText))
@@ -905,7 +955,7 @@ func TestCacheNotCorrupted(t *testing.T) {
 
 	fakeClock := testingclock.NewFakeClock(time.Now())
 
-	state, err := testStateFunc(ctx, envelopeService, fakeClock)()
+	state, err := testStateFunc(ctx, envelopeService, fakeClock, randomBool())()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -931,7 +981,7 @@ func TestCacheNotCorrupted(t *testing.T) {
 		"encrypted-dek.kms.kubernetes.io": []byte("encrypted-dek-1"),
 	})
 
-	state, err = testStateFunc(ctx, envelopeService, fakeClock)()
+	state, err = testStateFunc(ctx, envelopeService, fakeClock, randomBool())()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1053,7 +1103,7 @@ func TestGenerateTransformer(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			transformer, encryptResp, cacheKey, err := GenerateTransformer(testContext(t), "panda", tc.envelopeService(), false) // TODO fix
+			transformer, encryptResp, cacheKey, err := GenerateTransformer(testContext(t), "panda", tc.envelopeService(), randomBool())
 			if tc.expectedErr == "" {
 				if err != nil {
 					t.Errorf("expected no error, got %q", errString(err))
@@ -1083,3 +1133,5 @@ func errString(err error) string {
 
 	return err.Error()
 }
+
+func randomBool() bool { return utilrand.Int()%2 == 1 }
