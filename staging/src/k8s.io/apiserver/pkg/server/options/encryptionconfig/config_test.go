@@ -1677,6 +1677,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 		name             string
 		service          *testKMSv2EnvelopeService
 		state            envelopekmsv2.State
+		useSeed          bool
 		statusKeyID      string
 		wantState        envelopekmsv2.State
 		wantEncryptCalls int
@@ -1695,7 +1696,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			wantEncryptCalls: 1,
 			wantLogs: []string{
 				`"encrypting content using envelope service" uid="panda"`,
-				fmt.Sprintf(`"successfully rotated DEK" uid="panda" newKeyID="1" oldKeyID="" expirationTimestamp="%s"`,
+				fmt.Sprintf(`"successfully rotated DEK" uid="panda" useSeed=false newKeyID="1" oldKeyID="" expirationTimestamp="%s"`,
 					now.Add(3*time.Minute).Format(time.RFC3339)),
 			},
 			wantErr: "",
@@ -1712,6 +1713,25 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			wantEncryptCalls: 0,
 			wantLogs:         nil,
 			wantErr:          "",
+		},
+		{
+			name:        "happy path, with previous state, useSeed=true",
+			service:     &testKMSv2EnvelopeService{keyID: "2"},
+			state:       validState("2", now),
+			useSeed:     true,
+			statusKeyID: "2",
+			wantState: envelopekmsv2.State{
+				UseSeed:             true,
+				KeyID:               "2",
+				ExpirationTimestamp: now.Add(3 * time.Minute),
+			},
+			wantEncryptCalls: 1,
+			wantLogs: []string{
+				`"encrypting content using envelope service" uid="panda"`,
+				fmt.Sprintf(`"successfully rotated DEK" uid="panda" useSeed=true newKeyID="2" oldKeyID="2" expirationTimestamp="%s"`,
+					now.Add(3*time.Minute).Format(time.RFC3339)),
+			},
+			wantErr: "",
 		},
 		{
 			name:        "previous state expired but key ID matches",
@@ -1738,7 +1758,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			wantEncryptCalls: 1,
 			wantLogs: []string{
 				`"encrypting content using envelope service" uid="panda"`,
-				fmt.Sprintf(`"successfully rotated DEK" uid="panda" newKeyID="4" oldKeyID="3" expirationTimestamp="%s"`,
+				fmt.Sprintf(`"successfully rotated DEK" uid="panda" useSeed=false newKeyID="4" oldKeyID="3" expirationTimestamp="%s"`,
 					now.Add(3*time.Minute).Format(time.RFC3339)),
 			},
 			wantErr: "",
@@ -1756,7 +1776,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			wantLogs: []string{
 				`"encrypting content using envelope service" uid="panda"`,
 			},
-			wantErr: `failed to rotate DEK uid="panda", ` +
+			wantErr: `failed to rotate DEK uid="panda", useSeed=false, ` +
 				`errState=<nil>, errGen=failed to encrypt DEK, error: broken, statusKeyID="5", ` +
 				`encryptKeyID="", stateKeyID="4", expirationTimestamp=` + now.Add(7*time.Minute).Format(time.RFC3339),
 		},
@@ -1770,7 +1790,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			wantLogs: []string{
 				`"encrypting content using envelope service" uid="panda"`,
 			},
-			wantErr: `failed to rotate DEK uid="panda", ` +
+			wantErr: `failed to rotate DEK uid="panda", useSeed=false, ` +
 				`errState=got unexpected nil transformer, errGen=failed to validate annotations: annotations: Invalid value: "panda": ` +
 				`should be a domain with at least two segments separated by dots, statusKeyID="1", ` +
 				`encryptKeyID="", stateKeyID="", expirationTimestamp=` + (time.Time{}).Format(time.RFC3339),
@@ -1788,7 +1808,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			wantLogs: []string{
 				`"encrypting content using envelope service" uid="panda"`,
 			},
-			wantErr: `failed to rotate DEK uid="panda", ` +
+			wantErr: `failed to rotate DEK uid="panda", useSeed=false, ` +
 				`errState=<nil>, errGen=failed to validate annotations: annotations: Invalid value: "panda": ` +
 				`should be a domain with at least two segments separated by dots, statusKeyID="3", ` +
 				`encryptKeyID="", stateKeyID="2", expirationTimestamp=` + now.Format(time.RFC3339),
@@ -1796,6 +1816,8 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2KDF, tt.useSeed)()
+
 			var buf bytes.Buffer
 			klog.SetOutput(&buf)
 
@@ -1838,6 +1860,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 func validState(keyID string, exp time.Time) envelopekmsv2.State {
 	return envelopekmsv2.State{
 		Transformer:         &resourceTransformer{},
+		UseSeed:             false, // this should match the default behavior
 		EncryptedDEKorSeed:  []byte{1},
 		KeyID:               keyID,
 		ExpirationTimestamp: exp,

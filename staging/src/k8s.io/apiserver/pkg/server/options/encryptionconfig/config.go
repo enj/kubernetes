@@ -353,6 +353,7 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 	// dynamically check if we want to use KDF seed to derive DEKs or just a single DEK
 	// this gate can only change during tests, but the check is cheap enough to always make
 	// this allows us to easily exercise both modes without restarting the API server
+	// TODO integration test
 	useSeed := utilfeature.DefaultFeatureGate.Enabled(features.KMSv2KDF)
 
 	// state is valid and status keyID is unchanged from when we generated this DEK/seed so there is no need to rotate it
@@ -385,6 +386,7 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 		})
 		klog.V(6).InfoS("successfully rotated DEK",
 			"uid", uid,
+			"useSeed", useSeed,
 			"newKeyID", resp.KeyID,
 			"oldKeyID", state.KeyID,
 			"expirationTimestamp", expirationTimestamp.Format(time.RFC3339),
@@ -392,8 +394,8 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 		return nil
 	}
 
-	return fmt.Errorf("failed to rotate DEK uid=%q, errState=%v, errGen=%v, statusKeyID=%q, encryptKeyID=%q, stateKeyID=%q, expirationTimestamp=%s",
-		uid, errState, errGen, statusKeyID, resp.KeyID, state.KeyID, state.ExpirationTimestamp.Format(time.RFC3339))
+	return fmt.Errorf("failed to rotate DEK uid=%q, useSeed=%v, errState=%v, errGen=%v, statusKeyID=%q, encryptKeyID=%q, stateKeyID=%q, expirationTimestamp=%s",
+		uid, useSeed, errState, errGen, statusKeyID, resp.KeyID, state.KeyID, state.ExpirationTimestamp.Format(time.RFC3339))
 }
 
 // getCurrentState returns the latest state from the last status and encrypt calls.
