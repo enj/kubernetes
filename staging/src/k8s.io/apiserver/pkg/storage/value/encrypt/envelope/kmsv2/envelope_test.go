@@ -1004,42 +1004,72 @@ func TestCacheNotCorrupted(t *testing.T) {
 }
 
 func TestGenerateCacheKey(t *testing.T) {
-	encryptedDEK1 := []byte{1, 2, 3}
+	encryptedDEKorSeed1 := []byte{1, 2, 3}
 	keyID1 := "id1"
 	annotations1 := map[string][]byte{"a": {4, 5}, "b": {6, 7}}
 
-	encryptedDEK2 := []byte{4, 5, 6}
+	encryptedDEKorSeed2 := []byte{4, 5, 6}
 	keyID2 := "id2"
 	annotations2 := map[string][]byte{"x": {9, 10}, "y": {11, 12}}
 
 	// generate all possible combinations of the above
 	testCases := []struct {
-		encryptedDEK []byte
-		keyID        string
-		annotations  map[string][]byte
+		encryptedDEKorSeed []byte
+		keyID              string
+		annotations        map[string][]byte
 	}{
-		{encryptedDEK1, keyID1, annotations1},
-		{encryptedDEK1, keyID1, annotations2},
-		{encryptedDEK1, keyID2, annotations1},
-		{encryptedDEK1, keyID2, annotations2},
-		{encryptedDEK2, keyID1, annotations1},
-		{encryptedDEK2, keyID1, annotations2},
-		{encryptedDEK2, keyID2, annotations1},
-		{encryptedDEK2, keyID2, annotations2},
+		{encryptedDEKorSeed1, keyID1, annotations1},
+		{encryptedDEKorSeed1, keyID1, annotations2},
+		{encryptedDEKorSeed1, keyID2, annotations1},
+		{encryptedDEKorSeed1, keyID2, annotations2},
+		{encryptedDEKorSeed2, keyID1, annotations1},
+		{encryptedDEKorSeed2, keyID1, annotations2},
+		{encryptedDEKorSeed2, keyID2, annotations1},
+		{encryptedDEKorSeed2, keyID2, annotations2},
 	}
 
 	for _, tc := range testCases {
 		tc := tc
 		for _, tc2 := range testCases {
 			tc2 := tc2
-			t.Run(fmt.Sprintf("%+v-%+v", tc, tc2), func(t *testing.T) {
-				key1, err1 := generateCacheKey(tc.encryptedDEK, nil, tc.keyID, tc.annotations)    // TODO fix
-				key2, err2 := generateCacheKey(tc2.encryptedDEK, nil, tc2.keyID, tc2.annotations) // TODO fix
+			t.Run(fmt.Sprintf("%+v-%+v-dek", tc, tc2), func(t *testing.T) {
+				key1, err1 := generateCacheKey(tc.encryptedDEKorSeed, nil, tc.keyID, tc.annotations)
+				key2, err2 := generateCacheKey(tc2.encryptedDEKorSeed, nil, tc2.keyID, tc2.annotations)
 				if err1 != nil || err2 != nil {
 					t.Errorf("generateCacheKey() want err=nil, got err1=%q, err2=%q", errString(err1), errString(err2))
 				}
 				if bytes.Equal(key1, key2) != reflect.DeepEqual(tc, tc2) {
 					t.Errorf("expected %v, got %v", reflect.DeepEqual(tc, tc2), bytes.Equal(key1, key2))
+				}
+			})
+			t.Run(fmt.Sprintf("%+v-%+v-seed", tc, tc2), func(t *testing.T) {
+				key1, err1 := generateCacheKey(nil, tc.encryptedDEKorSeed, tc.keyID, tc.annotations)
+				key2, err2 := generateCacheKey(nil, tc2.encryptedDEKorSeed, tc2.keyID, tc2.annotations)
+				if err1 != nil || err2 != nil {
+					t.Errorf("generateCacheKey() want err=nil, got err1=%q, err2=%q", errString(err1), errString(err2))
+				}
+				if bytes.Equal(key1, key2) != reflect.DeepEqual(tc, tc2) {
+					t.Errorf("expected %v, got %v", reflect.DeepEqual(tc, tc2), bytes.Equal(key1, key2))
+				}
+			})
+			t.Run(fmt.Sprintf("%+v-%+v-both", tc, tc2), func(t *testing.T) { // this should never happen in real code
+				key1, err1 := generateCacheKey(tc.encryptedDEKorSeed, tc.encryptedDEKorSeed, tc.keyID, tc.annotations)
+				key2, err2 := generateCacheKey(tc2.encryptedDEKorSeed, tc2.encryptedDEKorSeed, tc2.keyID, tc2.annotations)
+				if err1 != nil || err2 != nil {
+					t.Errorf("generateCacheKey() want err=nil, got err1=%q, err2=%q", errString(err1), errString(err2))
+				}
+				if bytes.Equal(key1, key2) != reflect.DeepEqual(tc, tc2) {
+					t.Errorf("expected %v, got %v", reflect.DeepEqual(tc, tc2), bytes.Equal(key1, key2))
+				}
+			})
+			t.Run(fmt.Sprintf("%+v-%+v-compare", tc, tc2), func(t *testing.T) {
+				key1, err1 := generateCacheKey(tc.encryptedDEKorSeed, nil, tc.keyID, tc.annotations)
+				key2, err2 := generateCacheKey(nil, tc2.encryptedDEKorSeed, tc2.keyID, tc2.annotations)
+				if err1 != nil || err2 != nil {
+					t.Errorf("generateCacheKey() want err=nil, got err1=%q, err2=%q", errString(err1), errString(err2))
+				}
+				if bytes.Equal(key1, key2) {
+					t.Errorf("expected seed and dek based cache keys to never match")
 				}
 			})
 		}
