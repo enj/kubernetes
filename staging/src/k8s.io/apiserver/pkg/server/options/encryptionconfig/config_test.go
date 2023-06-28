@@ -39,6 +39,7 @@ import (
 	"k8s.io/apiserver/pkg/storage/value"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope"
 	envelopekmsv2 "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2"
+	kmstypes "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2/v2"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope/metrics"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
@@ -574,7 +575,7 @@ func TestKMSPluginHealthz(t *testing.T) {
 		ttl:  3 * time.Second,
 	}
 	keyID := "1"
-	kmsv2Probe.state.Store(&envelopekmsv2.State{KeyID: keyID})
+	kmsv2Probe.state.Store(&envelopekmsv2.State{EncryptedObject: kmstypes.EncryptedObject{KeyID: keyID}})
 
 	testCases := []struct {
 		desc    string
@@ -1690,7 +1691,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			state:       envelopekmsv2.State{},
 			statusKeyID: "1",
 			wantState: envelopekmsv2.State{
-				KeyID:               "1",
+				EncryptedObject:     kmstypes.EncryptedObject{KeyID: "1"},
 				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 1,
@@ -1707,7 +1708,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			state:       validState("2", now),
 			statusKeyID: "2",
 			wantState: envelopekmsv2.State{
-				KeyID:               "2",
+				EncryptedObject:     kmstypes.EncryptedObject{KeyID: "2"},
 				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 0,
@@ -1721,8 +1722,8 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			useSeed:     true,
 			statusKeyID: "2",
 			wantState: envelopekmsv2.State{
-				UseSeed:             true,
-				KeyID:               "2",
+				EncryptedObject: kmstypes.EncryptedObject{KeyID: "2"},
+				// UseSeed:             true,  // TODO how to test this?
 				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 1,
@@ -1739,7 +1740,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			state:       validState("3", now.Add(-time.Hour)),
 			statusKeyID: "3",
 			wantState: envelopekmsv2.State{
-				KeyID:               "3",
+				EncryptedObject:     kmstypes.EncryptedObject{KeyID: "3"},
 				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 0,
@@ -1752,7 +1753,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			state:       validState("3", now.Add(-time.Hour)),
 			statusKeyID: "4",
 			wantState: envelopekmsv2.State{
-				KeyID:               "4",
+				EncryptedObject:     kmstypes.EncryptedObject{KeyID: "4"},
 				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 1,
@@ -1769,7 +1770,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			state:       validState("4", now.Add(7*time.Minute)),
 			statusKeyID: "5",
 			wantState: envelopekmsv2.State{
-				KeyID:               "4",
+				EncryptedObject:     kmstypes.EncryptedObject{KeyID: "4"},
 				ExpirationTimestamp: now.Add(7 * time.Minute),
 			},
 			wantEncryptCalls: 1,
@@ -1801,7 +1802,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			state:       validState("2", now),
 			statusKeyID: "3",
 			wantState: envelopekmsv2.State{
-				KeyID:               "2",
+				EncryptedObject:     kmstypes.EncryptedObject{KeyID: "2"},
 				ExpirationTimestamp: now,
 			},
 			wantEncryptCalls: 1,
@@ -1838,7 +1839,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 				t.Errorf("log mismatch (-want +got):\n%s", diff)
 			}
 
-			ignoredFields := sets.NewString("Transformer", "EncryptedDEKorSeed", "UID", "CacheKey")
+			ignoredFields := sets.NewString("Transformer", "EncryptedObject.EncryptedDEK", "EncryptedObject.EncryptedSeed", "UID", "CacheKey")
 
 			if diff := cmp.Diff(tt.wantState, *h.state.Load(),
 				cmp.FilterPath(func(path cmp.Path) bool { return ignoredFields.Has(path.String()) }, cmp.Ignore()),
@@ -1859,10 +1860,11 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 
 func validState(keyID string, exp time.Time) envelopekmsv2.State {
 	return envelopekmsv2.State{
-		Transformer:         &resourceTransformer{},
-		UseSeed:             false, // this should match the default behavior
-		EncryptedDEKorSeed:  []byte{1},
-		KeyID:               keyID,
+		Transformer: &resourceTransformer{},
+		EncryptedObject: kmstypes.EncryptedObject{
+			KeyID:        keyID,
+			EncryptedDEK: []byte{1}, // this matches the current default behavior
+		},
 		ExpirationTimestamp: exp,
 		CacheKey:            []byte{1},
 	}

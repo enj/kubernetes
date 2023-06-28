@@ -234,16 +234,13 @@ func TestEnvelopeCaching(t *testing.T) {
 
 func testStateFunc(ctx context.Context, envelopeService kmsservice.Service, clock clock.Clock, useSeed bool) func() (State, error) {
 	return func() (State, error) {
-		transformer, resp, cacheKey, errGen := GenerateTransformer(ctx, string(uuid.NewUUID()), envelopeService, useSeed)
+		transformer, encObject, cacheKey, errGen := GenerateTransformer(ctx, string(uuid.NewUUID()), envelopeService, useSeed)
 		if errGen != nil {
 			return State{}, errGen
 		}
 		return State{
 			Transformer:         transformer,
-			UseSeed:             useSeed,
-			EncryptedDEKorSeed:  resp.Ciphertext,
-			KeyID:               resp.KeyID,
-			Annotations:         resp.Annotations,
+			EncryptedObject:     *encObject,
 			UID:                 "panda",
 			ExpirationTimestamp: clock.Now().Add(time.Hour),
 			CacheKey:            cacheKey,
@@ -333,8 +330,14 @@ func TestEnvelopeTransformerStaleness(t *testing.T) {
 			}
 
 			// inject test data before performing a read
-			state.KeyID = tt.testKeyID
-			state.UseSeed = tt.useSeedRead
+			state.EncryptedObject.KeyID = tt.testKeyID
+			if tt.useSeedRead {
+				state.EncryptedObject.EncryptedSeed = []byte{1}
+				state.EncryptedObject.EncryptedDEK = nil
+			} else {
+				state.EncryptedObject.EncryptedDEK = []byte{2}
+				state.EncryptedObject.EncryptedSeed = nil
+			}
 			stateErr = tt.testErr
 
 			_, stale, err := transformer.TransformFromStorage(ctx, transformedData, dataCtx)
@@ -982,7 +985,9 @@ func TestCacheNotCorrupted(t *testing.T) {
 
 	fakeClock := testingclock.NewFakeClock(time.Now())
 
-	state, err := testStateFunc(ctx, envelopeService, fakeClock, randomBool())()
+	useSeed := randomBool()
+
+	state, err := testStateFunc(ctx, envelopeService, fakeClock, useSeed)()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1000,8 +1005,12 @@ func TestCacheNotCorrupted(t *testing.T) {
 	}
 
 	// this is to mimic a plugin that sets a static response for ciphertext
-	// but uses the annotation field to send the actual encrypted DEK.
-	envelopeService.SetCiphertext(state.EncryptedDEKorSeed)
+	// but uses the annotation field to send the actual encrypted DEK/seed.
+	if useSeed {
+		envelopeService.SetCiphertext(state.EncryptedObject.EncryptedSeed)
+	} else {
+		envelopeService.SetCiphertext(state.EncryptedObject.EncryptedDEK)
+	}
 	// for this plugin, it indicates a change in the remote key ID as the returned
 	// encrypted DEK is different.
 	envelopeService.SetAnnotations(map[string][]byte{
@@ -1160,7 +1169,7 @@ func TestGenerateTransformer(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			transformer, encryptResp, cacheKey, err := GenerateTransformer(testContext(t), "panda", tc.envelopeService(), randomBool())
+			transformer, encObject, cacheKey, err := GenerateTransformer(testContext(t), "panda", tc.envelopeService(), randomBool())
 			if tc.expectedErr == "" {
 				if err != nil {
 					t.Errorf("expected no error, got %q", errString(err))
@@ -1168,7 +1177,7 @@ func TestGenerateTransformer(t *testing.T) {
 				if transformer == nil {
 					t.Error("expected transformer, got nil")
 				}
-				if encryptResp == nil {
+				if encObject == nil {
 					t.Error("expected encrypt response, got nil")
 				}
 				if cacheKey == nil {
