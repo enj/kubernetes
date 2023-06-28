@@ -1722,8 +1722,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			useSeed:     true,
 			statusKeyID: "2",
 			wantState: envelopekmsv2.State{
-				EncryptedObject: kmstypes.EncryptedObject{KeyID: "2"},
-				// UseSeed:             true,  // TODO how to test this?
+				EncryptedObject:     kmstypes.EncryptedObject{KeyID: "2"},
 				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 1,
@@ -1841,10 +1840,23 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 
 			ignoredFields := sets.NewString("Transformer", "EncryptedObject.EncryptedDEK", "EncryptedObject.EncryptedSeed", "UID", "CacheKey")
 
-			if diff := cmp.Diff(tt.wantState, *h.state.Load(),
+			gotState := *h.state.Load()
+
+			if diff := cmp.Diff(tt.wantState, gotState,
 				cmp.FilterPath(func(path cmp.Path) bool { return ignoredFields.Has(path.String()) }, cmp.Ignore()),
 			); len(diff) > 0 {
 				t.Errorf("state mismatch (-want +got):\n%s", diff)
+			}
+
+			var validCiphertext bool
+			if tt.useSeed {
+				validCiphertext = len(gotState.EncryptedObject.EncryptedSeed) > 0 && len(gotState.EncryptedObject.EncryptedDEK) == 0
+			} else {
+				validCiphertext = len(gotState.EncryptedObject.EncryptedDEK) > 0 && len(gotState.EncryptedObject.EncryptedSeed) == 0
+			}
+			if !validCiphertext {
+				t.Errorf("invalid ciphertext with useSeed=%v, seedLen=%d, dekLen=%d", tt.useSeed,
+					len(gotState.EncryptedObject.EncryptedSeed), len(gotState.EncryptedObject.EncryptedDEK))
 			}
 
 			if tt.wantEncryptCalls != tt.service.encryptCalls {
