@@ -87,24 +87,20 @@ type ErrCodeKeyID string
 type State struct {
 	Transformer value.Transformer
 
-	UseSeed            bool
-	EncryptedDEKorSeed []byte
-
-	KeyID       string
-	Annotations map[string][]byte
+	EncryptedObject kmstypes.EncryptedObject
 
 	UID string
 
 	ExpirationTimestamp time.Time
 
-	// CacheKey is the key used to cache the DEK in transformer.cache.
+	// CacheKey is the key used to cache the DEK/seed in envelopeTransformer.cache.
 	CacheKey []byte
 }
 
 func (s *State) ValidateEncryptCapability() error {
 	if now := NowFunc(); now.After(s.ExpirationTimestamp) {
 		return fmt.Errorf("EDEK/ESEED with keyID %q expired at %s (current time is %s)",
-			s.KeyID, s.ExpirationTimestamp.Format(time.RFC3339), now.Format(time.RFC3339))
+			s.EncryptedObject.KeyID, s.ExpirationTimestamp.Format(time.RFC3339), now.Format(time.RFC3339))
 	}
 	return nil
 }
@@ -150,6 +146,7 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 	if err != nil {
 		return nil, false, err
 	}
+	stateUseSeed := len(state.EncryptedObject.EncryptedSeed) > 0
 
 	encryptedObjectCacheKey, err := generateCacheKey(encryptedObject.EncryptedDEK, encryptedObject.EncryptedSeed, encryptedObject.KeyID, encryptedObject.Annotations)
 	if err != nil {
@@ -197,7 +194,7 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 	}
 
 	// data is considered stale if the key ID does not match our current write transformer
-	return out, stale || encryptedObject.KeyID != state.KeyID || useSeed != state.UseSeed, nil
+	return out, stale || encryptedObject.KeyID != state.EncryptedObject.KeyID || useSeed != stateUseSeed, nil
 
 }
 
@@ -227,22 +224,13 @@ func (t *envelopeTransformer) TransformToStorage(ctx context.Context, data []byt
 		return nil, err
 	}
 
-	metrics.RecordKeyID(metrics.ToStorageLabel, t.providerName, state.KeyID)
+	metrics.RecordKeyID(metrics.ToStorageLabel, t.providerName, state.EncryptedObject.KeyID)
 
-	encObject := &kmstypes.EncryptedObject{
-		KeyID:         state.KeyID,
-		EncryptedData: result,
-		Annotations:   state.Annotations,
-	}
-
-	if state.UseSeed {
-		encObject.EncryptedSeed = state.EncryptedDEKorSeed
-	} else {
-		encObject.EncryptedDEK = state.EncryptedDEKorSeed
-	}
+	encObjectCopy := state.EncryptedObject
+	encObjectCopy.EncryptedData = result
 
 	// Serialize the EncryptedObject to a byte array.
-	return t.doEncode(encObject)
+	return t.doEncode(&encObjectCopy)
 }
 
 // addTransformerForDecryption inserts a new transformer to the Envelope cache of DEKs for future reads.
@@ -294,7 +282,7 @@ func (t *envelopeTransformer) doDecode(originalData []byte) (*kmstypes.Encrypted
 
 // GenerateTransformer generates a new transformer and encrypts the DEK using the envelope service.
 // It returns the transformer, the encrypted DEK, cache key and error.
-func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsservice.Service, useSeed bool) (value.Transformer, *kmsservice.EncryptResponse, []byte, error) {
+func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsservice.Service, useSeed bool) (value.Transformer, *kmstypes.EncryptedObject, []byte, error) {
 	newTransformerFunc := aestransformer.NewKDFExtendedNonceGCMTransformerWithUniqueSeed
 	if !useSeed {
 		newTransformerFunc = aestransformer.NewGCMTransformerWithUniqueKeyUnsafe
@@ -332,7 +320,9 @@ func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsser
 		return nil, nil, nil, err
 	}
 
-	return transformer, resp, cacheKey, nil
+	o.EncryptedData = nil // make sure that later code that uses this encrypted object sets this field
+
+	return transformer, o, cacheKey, nil
 }
 
 func validateEncryptedObject(o *kmstypes.EncryptedObject) error {

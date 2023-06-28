@@ -47,6 +47,7 @@ import (
 	aestransformer "k8s.io/apiserver/pkg/storage/value/encrypt/aes"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope"
 	envelopekmsv2 "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2"
+	kmstypes "k8s.io/apiserver/pkg/storage/value/encrypt/envelope/kmsv2/v2"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/envelope/metrics"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/identity"
 	"k8s.io/apiserver/pkg/storage/value/encrypt/secretbox"
@@ -355,31 +356,29 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 	// this allows us to easily exercise both modes without restarting the API server
 	// TODO integration test
 	useSeed := utilfeature.DefaultFeatureGate.Enabled(features.KMSv2KDF)
+	stateUseSeed := len(state.EncryptedObject.EncryptedSeed) > 0
 
 	// state is valid and status keyID is unchanged from when we generated this DEK/seed so there is no need to rotate it
 	// just move the expiration of the current state forward by the reuse interval
 	// useSeed can only change at runtime during tests, so we check it here to allow us to easily exercise both modes
-	if errState == nil && state.KeyID == statusKeyID && state.UseSeed == useSeed {
+	if errState == nil && state.EncryptedObject.KeyID == statusKeyID && stateUseSeed == useSeed {
 		state.ExpirationTimestamp = expirationTimestamp
 		h.state.Store(&state)
 		return nil
 	}
 
-	transformer, resp, cacheKey, errGen := envelopekmsv2.GenerateTransformer(ctx, uid, h.service, useSeed)
+	transformer, encObject, cacheKey, errGen := envelopekmsv2.GenerateTransformer(ctx, uid, h.service, useSeed)
 
-	if resp == nil {
-		resp = &kmsservice.EncryptResponse{} // avoid nil panics
+	if encObject == nil {
+		encObject = &kmstypes.EncryptedObject{} // avoid nil panics
 	}
 
 	// happy path, should be the common case
 	// TODO maybe add success metrics?
-	if errGen == nil && resp.KeyID == statusKeyID {
+	if errGen == nil && encObject.KeyID == statusKeyID {
 		h.state.Store(&envelopekmsv2.State{
 			Transformer:         transformer,
-			UseSeed:             useSeed,
-			EncryptedDEKorSeed:  resp.Ciphertext,
-			KeyID:               resp.KeyID,
-			Annotations:         resp.Annotations,
+			EncryptedObject:     *encObject,
 			UID:                 uid,
 			ExpirationTimestamp: expirationTimestamp,
 			CacheKey:            cacheKey,
@@ -387,15 +386,15 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 		klog.V(6).InfoS("successfully rotated DEK",
 			"uid", uid,
 			"useSeed", useSeed,
-			"newKeyID", resp.KeyID,
-			"oldKeyID", state.KeyID,
+			"newKeyID", encObject.KeyID,
+			"oldKeyID", state.EncryptedObject.KeyID,
 			"expirationTimestamp", expirationTimestamp.Format(time.RFC3339),
 		)
 		return nil
 	}
 
 	return fmt.Errorf("failed to rotate DEK uid=%q, useSeed=%v, errState=%v, errGen=%v, statusKeyID=%q, encryptKeyID=%q, stateKeyID=%q, expirationTimestamp=%s",
-		uid, useSeed, errState, errGen, statusKeyID, resp.KeyID, state.KeyID, state.ExpirationTimestamp.Format(time.RFC3339))
+		uid, useSeed, errState, errGen, statusKeyID, encObject.KeyID, state.EncryptedObject.KeyID, state.ExpirationTimestamp.Format(time.RFC3339))
 }
 
 // getCurrentState returns the latest state from the last status and encrypt calls.
@@ -408,11 +407,11 @@ func (h *kmsv2PluginProbe) getCurrentState() (envelopekmsv2.State, error) {
 		return envelopekmsv2.State{}, fmt.Errorf("got unexpected nil transformer")
 	}
 
-	if len(state.EncryptedDEKorSeed) == 0 {
-		return envelopekmsv2.State{}, fmt.Errorf("got unexpected empty EncryptedDEKorSeed")
+	if len(state.EncryptedObject.EncryptedDEK) == 0 && len(state.EncryptedObject.EncryptedSeed) == 0 {
+		return envelopekmsv2.State{}, fmt.Errorf("got unexpected empty EncryptedDEK and EncryptedSeed")
 	}
 
-	if len(state.KeyID) == 0 {
+	if len(state.EncryptedObject.KeyID) == 0 {
 		return envelopekmsv2.State{}, fmt.Errorf("got unexpected empty keyID")
 	}
 
