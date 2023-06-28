@@ -753,6 +753,7 @@ func TestValidateEncryptedDEK(t *testing.T) {
 	testCases := []struct {
 		name          string
 		encryptedDEK  []byte
+		encryptedSeed []byte
 		expectedError string
 	}{
 		{
@@ -775,13 +776,39 @@ func TestValidateEncryptedDEK(t *testing.T) {
 			encryptedDEK:  []byte{0x01, 0x02, 0x03},
 			expectedError: "",
 		},
+		{
+			name:          "encrypted seed is nil",
+			encryptedSeed: nil,
+			expectedError: "encrypted DEK and seed are both empty",
+		},
+		{
+			name:          "encrypted seed is empty",
+			encryptedSeed: []byte{},
+			expectedError: "encrypted DEK and seed are both empty",
+		},
+		{
+			name:          "encrypted seed size is greater than 1 kB",
+			encryptedSeed: bytes.Repeat([]byte("a"), 1024+1),
+			expectedError: "which exceeds the max size of",
+		},
+		{
+			name:          "valid encrypted seed",
+			encryptedSeed: []byte{0x01, 0x02, 0x03},
+			expectedError: "",
+		},
+		{
+			name:          "both encrypted DEK and seed set",
+			encryptedDEK:  []byte{0x01, 0x02, 0x03},
+			encryptedSeed: []byte{0x01, 0x02, 0x03},
+			expectedError: "encrypted DEK and seed are both set",
+		},
 	}
 
 	for _, tt := range testCases {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := validateEncryptedDEKorSeed(tt.encryptedDEK, nil) // TODO fix
+			err := validateEncryptedDEKorSeed(tt.encryptedDEK, tt.encryptedSeed)
 			if tt.expectedError != "" {
 				if err == nil {
 					t.Fatalf("expected error %q, got nil", tt.expectedError)
