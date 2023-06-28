@@ -1848,15 +1848,17 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 				t.Errorf("state mismatch (-want +got):\n%s", diff)
 			}
 
-			var validCiphertext bool
-			if tt.useSeed {
-				validCiphertext = len(gotState.EncryptedObject.EncryptedSeed) > 0 && len(gotState.EncryptedObject.EncryptedDEK) == 0
-			} else {
-				validCiphertext = len(gotState.EncryptedObject.EncryptedDEK) > 0 && len(gotState.EncryptedObject.EncryptedSeed) == 0
-			}
-			if !validCiphertext {
-				t.Errorf("invalid ciphertext with useSeed=%v, seedLen=%d, dekLen=%d", tt.useSeed,
-					len(gotState.EncryptedObject.EncryptedSeed), len(gotState.EncryptedObject.EncryptedDEK))
+			if len(cmp.Diff(tt.wantState, gotState)) > 0 { // we only need to run this check when the state changes
+				var validCiphertext bool
+				if tt.useSeed {
+					validCiphertext = len(gotState.EncryptedObject.EncryptedSeed) > 0 && len(gotState.EncryptedObject.EncryptedDEK) == 0
+				} else {
+					validCiphertext = len(gotState.EncryptedObject.EncryptedDEK) > 0 && len(gotState.EncryptedObject.EncryptedSeed) == 0
+				}
+				if !validCiphertext {
+					t.Errorf("invalid ciphertext with useSeed=%v, seedLen=%d, dekLen=%d", tt.useSeed,
+						len(gotState.EncryptedObject.EncryptedSeed), len(gotState.EncryptedObject.EncryptedDEK))
+				}
 			}
 
 			if tt.wantEncryptCalls != tt.service.encryptCalls {
