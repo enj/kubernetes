@@ -43,6 +43,8 @@ import (
 	"k8s.io/utils/clock"
 )
 
+// TODO integration test with old AES GCM data recorded and new KDF data recorded
+
 func init() {
 	value.RegisterMetrics()
 	metrics.RegisterMetrics()
@@ -212,7 +214,7 @@ func (t *envelopeTransformer) TransformToStorage(ctx context.Context, data []byt
 	// this prevents a cache miss every time the DEK rotates
 	// this has the side benefit of causing the cache to perform a GC
 	// TODO see if we can do this inside the stateFunc control loop
-	// TODO(aramase): Add metrics for cache fill percentage with custom cache implementation.
+	// TODO(aramase): Add metrics for cache size.
 	t.cache.set(state.CacheKey, state.Transformer)
 
 	requestInfo := getRequestInfoFromContext(ctx)
@@ -264,7 +266,7 @@ func (t *envelopeTransformer) addTransformerForDecryption(cacheKey []byte, key [
 	if err != nil {
 		return nil, err
 	}
-	// TODO(aramase): Add metrics for cache fill percentage with custom cache implementation.
+	// TODO(aramase): Add metrics for cache size.
 	t.cache.set(cacheKey, transformer)
 	return transformer, nil
 }
