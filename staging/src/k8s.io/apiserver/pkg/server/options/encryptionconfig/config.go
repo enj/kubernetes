@@ -390,7 +390,7 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 			klog.V(6).InfoS("successfully rotated DEK",
 				"uid", uid,
 				"useSeed", useSeed,
-			"newKeyID", encObject.KeyID,
+				"newKeyID", encObject.KeyID,
 				"oldKeyID", state.EncryptedObject.KeyID,
 				"expirationTimestamp", expirationTimestamp.Format(time.RFC3339),
 			)
