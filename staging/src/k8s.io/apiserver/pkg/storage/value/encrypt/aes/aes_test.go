@@ -326,6 +326,7 @@ func TestGCMUnsafeNonceGen(t *testing.T) {
 	}
 }
 
+// TODO handle extended nonce here
 func TestGCMNonce(t *testing.T) {
 	t.Run("gcm", func(t *testing.T) {
 		testGCMNonce(t, newGCMTransformer, func(_ int, nonce []byte) {
@@ -384,15 +385,22 @@ func TestGCMKeyRotation(t *testing.T) {
 	t.Run("gcm unsafe", func(t *testing.T) {
 		testGCMKeyRotation(t, newGCMTransformerWithUniqueKeyUnsafeTest)
 	})
+
+	t.Run("gcm extended", func(t *testing.T) {
+		testGCMKeyRotation(t, newKDFExtendedNonceGCMTransformerFromSeedUnsafeTest)
+	})
 }
 
 func testGCMKeyRotation(t *testing.T, f transformerFunc) {
+	key1 := []byte("abcdefghijklmnopabcdefghijklmnop")
+	key2 := []byte("0123456789abcdef0123456789abcdef")
+
 	testErr := fmt.Errorf("test error")
-	block1, err := aes.NewCipher([]byte("abcdefghijklmnop"))
+	block1, err := aes.NewCipher(key1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	block2, err := aes.NewCipher([]byte("0123456789abcdef"))
+	block2, err := aes.NewCipher(key2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,8 +409,8 @@ func testGCMKeyRotation(t *testing.T, f transformerFunc) {
 	dataCtx := value.DefaultContext("authenticated_data")
 
 	p := value.NewPrefixTransformers(testErr,
-		value.PrefixTransformer{Prefix: []byte("first:"), Transformer: f(t, block1, nil)},
-		value.PrefixTransformer{Prefix: []byte("second:"), Transformer: f(t, block2, nil)},
+		value.PrefixTransformer{Prefix: []byte("first:"), Transformer: f(t, block1, key1)},
+		value.PrefixTransformer{Prefix: []byte("second:"), Transformer: f(t, block2, key2)},
 	)
 	out, err := p.TransformToStorage(ctx, []byte("firstvalue"), dataCtx)
 	if err != nil {
@@ -427,8 +435,8 @@ func testGCMKeyRotation(t *testing.T, f transformerFunc) {
 
 	// reverse the order, use the second key
 	p = value.NewPrefixTransformers(testErr,
-		value.PrefixTransformer{Prefix: []byte("second:"), Transformer: f(t, block2, nil)},
-		value.PrefixTransformer{Prefix: []byte("first:"), Transformer: f(t, block1, nil)},
+		value.PrefixTransformer{Prefix: []byte("second:"), Transformer: f(t, block2, key2)},
+		value.PrefixTransformer{Prefix: []byte("first:"), Transformer: f(t, block1, key1)},
 	)
 	from, stale, err = p.TransformFromStorage(ctx, out, dataCtx)
 	if err != nil {
@@ -745,16 +753,16 @@ func TestRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	aes32block, err := aes.NewCipher(bytes.Repeat([]byte("c"), 32))
+	key32 := bytes.Repeat([]byte("c"), 32)
+	aes32block, err := aes.NewCipher(key32)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	ctx := context.Background()
 	tests := []struct {
-		name    string
-		dataCtx value.Context
-		t       value.Transformer
+		name string
+		t    value.Transformer
 	}{
 		{name: "GCM 16 byte key", t: newGCMTransformer(t, aes16block, nil)},
 		{name: "GCM 24 byte key", t: newGCMTransformer(t, aes24block, nil)},
@@ -762,14 +770,12 @@ func TestRoundTrip(t *testing.T) {
 		{name: "GCM 16 byte unsafe key", t: newGCMTransformerWithUniqueKeyUnsafeTest(t, aes16block, nil)},
 		{name: "GCM 24 byte unsafe key", t: newGCMTransformerWithUniqueKeyUnsafeTest(t, aes24block, nil)},
 		{name: "GCM 32 byte unsafe key", t: newGCMTransformerWithUniqueKeyUnsafeTest(t, aes32block, nil)},
+		{name: "GCM 32 byte unsafe seed", t: newKDFExtendedNonceGCMTransformerFromSeedUnsafeTest(t, nil, key32)},
 		{name: "CBC 32 byte key", t: NewCBCTransformer(aes32block)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dataCtx := tt.dataCtx
-			if dataCtx == nil {
-				dataCtx = value.DefaultContext("")
-			}
+			dataCtx := value.DefaultContext("/foo/bar")
 			for _, l := range lengths {
 				data := make([]byte, l)
 				if _, err := io.ReadFull(rand.Reader, data); err != nil {
