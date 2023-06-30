@@ -269,8 +269,19 @@ resources:
 // 6. When kms-plugin is down, expect creation of new pod and encryption to fail once the DEK/seed is invalid
 // 7. when kms-plugin is down, no-op update for a pod should succeed and not result in RV change even once the DEK/seed is valid
 func TestKMSv2ProviderKeyIDStaleness(t *testing.T) {
+	t.Run("regular gcm", func(t *testing.T) {
+		defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2KDF, false)()
+		testKMSv2ProviderKeyIDStaleness(t)
+	})
+
+	t.Run("extended nonce gcm", func(t *testing.T) {
+		defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2KDF, true)()
+		testKMSv2ProviderKeyIDStaleness(t)
+	})
+}
+
+func testKMSv2ProviderKeyIDStaleness(t *testing.T) {
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2, true)()
-	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2KDF, randomBool())()
 
 	encryptionConfig := `
 kind: EncryptionConfiguration
@@ -313,12 +324,21 @@ resources:
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	t.Cleanup(cancel)
 
-	var firstEncryptedDEK []byte
-	assertPodDEKorSeeds(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
-		1, 1,
-		"k8s:enc:kms:v2:kms-provider:",
-		func(_ int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject) {
-			firstEncryptedDEK = obj.EncryptedDEK
+	useSeed := utilfeature.DefaultFeatureGate.Enabled(features.KMSv2KDF)
+
+	var firstEncryptedDEKorSeed []byte
+	var f checkFunc
+	if useSeed {
+		f = func(_ int, _ uint64, etcdKey string, obj kmstypes.EncryptedObject) {
+			firstEncryptedDEKorSeed = obj.EncryptedSeed
+
+			if obj.KeyID != "1" {
+				t.Errorf("key %s: want key ID %s, got %s", etcdKey, "1", obj.KeyID)
+			}
+		}
+	} else {
+		f = func(_ int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject) {
+			firstEncryptedDEKorSeed = obj.EncryptedDEK
 
 			if obj.KeyID != "1" {
 				t.Errorf("key %s: want key ID %s, got %s", etcdKey, "1", obj.KeyID)
@@ -330,8 +350,14 @@ resources:
 			if want != counter {
 				t.Errorf("key %s: counter nonce is invalid: want %d, got %d", etcdKey, want, counter)
 			}
-		},
+		}
+	}
+	assertPodDEKorSeeds(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
+		1, 1, "k8s:enc:kms:v2:kms-provider:", f,
 	)
+	if len(firstEncryptedDEKorSeed) == 0 {
+		t.Fatal("unexpected empty DEK or seed")
+	}
 
 	// 2. no-op update for the test pod with keyID update should result in RV change
 	pluginMock.UpdateKeyID()
@@ -369,17 +395,38 @@ resources:
 	// - in place update with RV change
 	// - delete (which does an update to set deletion timestamp)
 	// - create
-	checkDEK := func(_ int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject) {
-		if bytes.Equal(obj.EncryptedDEK, firstEncryptedDEK) {
-			t.Errorf("key %s: incorrectly has the same EDEK", etcdKey)
-		}
+	var checkDEK checkFunc
+	if useSeed {
+		checkDEK = func(_ int, _ uint64, etcdKey string, obj kmstypes.EncryptedObject) {
+			if len(obj.EncryptedSeed) == 0 {
+				t.Error("unexpected empty seed")
+			}
 
-		if obj.KeyID != "2" {
-			t.Errorf("key %s: want key ID %s, got %s", etcdKey, "2", obj.KeyID)
-		}
+			if bytes.Equal(obj.EncryptedSeed, firstEncryptedDEKorSeed) {
+				t.Errorf("key %s: incorrectly has the same ESEED", etcdKey)
+			}
 
-		if wantCount != counter {
-			t.Errorf("key %s: counter nonce is invalid: want %d, got %d", etcdKey, wantCount, counter)
+			if obj.KeyID != "2" {
+				t.Errorf("key %s: want key ID %s, got %s", etcdKey, "2", obj.KeyID)
+			}
+		}
+	} else {
+		checkDEK = func(_ int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject) {
+			if len(obj.EncryptedDEK) == 0 {
+				t.Error("unexpected empty DEK")
+			}
+
+			if bytes.Equal(obj.EncryptedDEK, firstEncryptedDEKorSeed) {
+				t.Errorf("key %s: incorrectly has the same EDEK", etcdKey)
+			}
+
+			if obj.KeyID != "2" {
+				t.Errorf("key %s: want key ID %s, got %s", etcdKey, "2", obj.KeyID)
+			}
+
+			if wantCount != counter {
+				t.Errorf("key %s: counter nonce is invalid: want %d, got %d", etcdKey, wantCount, counter)
+			}
 		}
 	}
 
