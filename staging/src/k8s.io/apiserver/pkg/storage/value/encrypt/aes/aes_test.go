@@ -178,6 +178,40 @@ func TestGCMUnsafeCompatibility(t *testing.T) {
 	}
 }
 
+// TestGCMExtendedNonceUnsafeCompatibility asserts that encryptions performed via
+// NewKDFExtendedNonceGCMTransformerWithUniqueSeed can be decrypted via NewKDFExtendedNonceGCMTransformerFromSeedUnsafe.
+func TestGCMExtendedNonceUnsafeCompatibility(t *testing.T) {
+	transformerEncrypt, key, err := NewKDFExtendedNonceGCMTransformerWithUniqueSeed()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	transformerDecrypt := newKDFExtendedNonceGCMTransformerFromSeedUnsafeTest(t, nil, key)
+
+	ctx := context.Background()
+	dataCtx := value.DefaultContext("authenticated_data")
+
+	plaintext := []byte("firstvalue")
+
+	ciphertext, err := transformerEncrypt.TransformToStorage(ctx, plaintext, dataCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if bytes.Equal(plaintext, ciphertext) {
+		t.Errorf("plaintext %q matches ciphertext %q", string(plaintext), string(ciphertext))
+	}
+
+	plaintextAgain, _, err := transformerDecrypt.TransformFromStorage(ctx, ciphertext, dataCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(plaintext, plaintextAgain) {
+		t.Errorf("expected original plaintext %q, got %q", string(plaintext), string(plaintextAgain))
+	}
+}
+
 func TestGCMLegacyDataCompatibility(t *testing.T) {
 	block, err := aes.NewCipher([]byte("snorlax_awesomes"))
 	if err != nil {
