@@ -39,6 +39,7 @@ import (
 )
 
 // commonSize is the length of various security sensitive byte slices such as encryption keys.
+// Do not change this value.  It would be a backward incompatible change.
 const commonSize = 32
 
 // cacheTTL is the TTL of KDF cache entries.  We assume that the value.Context.AuthenticatedData

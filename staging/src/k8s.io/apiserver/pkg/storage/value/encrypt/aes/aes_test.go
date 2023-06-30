@@ -326,10 +326,9 @@ func TestGCMUnsafeNonceGen(t *testing.T) {
 	}
 }
 
-// TODO handle extended nonce here
 func TestGCMNonce(t *testing.T) {
 	t.Run("gcm", func(t *testing.T) {
-		testGCMNonce(t, newGCMTransformer, func(_ int, nonce []byte) {
+		testGCMNonce(t, newGCMTransformer, 0, func(_ int, nonce []byte) {
 			if bytes.Equal(nonce, make([]byte, len(nonce))) {
 				t.Error("got all zeros for nonce")
 			}
@@ -337,21 +336,30 @@ func TestGCMNonce(t *testing.T) {
 	})
 
 	t.Run("gcm unsafe", func(t *testing.T) {
-		testGCMNonce(t, newGCMTransformerWithUniqueKeyUnsafeTest, func(i int, nonce []byte) {
+		testGCMNonce(t, newGCMTransformerWithUniqueKeyUnsafeTest, 0, func(i int, nonce []byte) {
 			counter := binary.LittleEndian.Uint64(nonce)
 			if uint64(i+1) != counter { // add one because the counter starts at 1, not 0
 				t.Errorf("counter nonce is invalid: want %d, got %d", i+1, counter)
 			}
 		})
 	})
+
+	t.Run("gcm extended nonce", func(t *testing.T) {
+		testGCMNonce(t, newKDFExtendedNonceGCMTransformerFromSeedUnsafeTest, commonSize, func(_ int, nonce []byte) {
+			if bytes.Equal(nonce, make([]byte, len(nonce))) {
+				t.Error("got all zeros for nonce")
+			}
+		})
+	})
 }
 
-func testGCMNonce(t *testing.T, f transformerFunc, check func(int, []byte)) {
-	block, err := aes.NewCipher([]byte("abcdefghijklmnop"))
+func testGCMNonce(t *testing.T, f transformerFunc, infoLen int, check func(int, []byte)) {
+	key := []byte("abcdefghijklmnopabcdefghijklmnop")
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	transformer := f(t, block, nil)
+	transformer := f(t, block, key)
 
 	ctx := context.Background()
 	dataCtx := value.DefaultContext("authenticated_data")
@@ -366,11 +374,18 @@ func testGCMNonce(t *testing.T, f transformerFunc, check func(int, []byte)) {
 			t.Fatal(err)
 		}
 
-		nonce := out[:12]
+		info := out[:infoLen]
+		nonce := out[infoLen : 12+infoLen]
 		randomN := nonce[:4]
 
 		if bytes.Equal(randomN, make([]byte, len(randomN))) {
 			t.Error("got all zeros for first four bytes")
+		}
+
+		if infoLen != 0 {
+			if bytes.Equal(info, make([]byte, infoLen)) {
+				t.Error("got all zeros for info")
+			}
 		}
 
 		check(i, nonce[4:])
