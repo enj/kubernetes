@@ -1718,7 +1718,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 		{
 			name:        "happy path, with previous state, useSeed=true",
 			service:     &testKMSv2EnvelopeService{keyID: "2"},
-			state:       validState("2", now),
+			state:       validState(t, "2", now),
 			useSeed:     true,
 			statusKeyID: "2",
 			wantState: envelopekmsv2.State{
