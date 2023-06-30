@@ -193,7 +193,6 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 		return nil, false, err
 	}
 
-	// TODO integration test staleness via useSeed != stateUseSeed
 	// data is considered stale if the key ID does not match our current write transformer
 	return out, stale || encryptedObject.KeyID != state.EncryptedObject.KeyID || useSeed != stateUseSeed, nil
 

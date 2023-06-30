@@ -289,6 +289,7 @@ apiVersion: apiserver.config.k8s.io/v1
 resources:
   - resources:
     - pods
+    - deployments.apps
     providers:
     - kms:
        apiVersion: v2
@@ -493,6 +494,53 @@ resources:
 	assertPodDEKorSeeds(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
 		1, 1, "k8s:enc:kms:v2:kms-provider:", checkDEK,
 	)
+
+	// fix plugin and wait for new writes to start working again
+	pluginMock.ExitFailedState()
+	err = wait.Poll(time.Second, 3*time.Minute,
+		func() (bool, error) {
+			t.Log("polling for plugin to be functional")
+			_, err = test.createDeployment("panda", testNamespace)
+			if err != nil {
+				t.Logf("failed to create deployment, plugin is likely still unhealthy: %v", err)
+			}
+			return err == nil, nil
+		})
+	if err != nil {
+		t.Fatalf("failed to restore plugin health, err: %v, ns: %s", err, testNamespace)
+	}
+
+	// 8. confirm that no-op update for a pod succeeds and still does not result in RV change
+	updatedNewPod2, err := test.inplaceUpdatePod(testNamespace, updatedNewPod, dynamicClient)
+	if err != nil {
+		t.Fatalf("Failed to perform no-op update on pod when kms-plugin is up, error: %v, ns: %s", err, testNamespace)
+	}
+	version8 := updatedNewPod2.GetResourceVersion()
+	if version7 != version8 {
+		t.Fatalf("Resource version should not have changed after plugin health is restored. old pod: %v, new pod: %v", updatedNewPod, updatedNewPod2)
+	}
+
+	// flip the current config, ignore the restore func because the outer tests handles the clean up already
+	_ = featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2KDF, !useSeed)
+
+	// 9. confirm that no-op update for a pod results in RV change due to KDF config change
+	var version9 string
+	err = wait.Poll(time.Second, 3*time.Minute,
+		func() (bool, error) {
+			t.Log("polling for in-place update rv change due to KDF config change")
+			updatedNewPod2, err = test.inplaceUpdatePod(testNamespace, updatedNewPod2, dynamicClient)
+			if err != nil {
+				return false, err
+			}
+			version9 = updatedNewPod2.GetResourceVersion()
+			if version8 != version9 {
+				return true, nil
+			}
+			return false, nil
+		})
+	if err != nil {
+		t.Fatalf("Failed to detect one resource version update within the allotted time after KDF config change and pod has been inplace updated, err: %v, ns: %s", err, testNamespace)
+	}
 }
 
 func TestKMSv2ProviderDEKorSeedReuse(t *testing.T) {
