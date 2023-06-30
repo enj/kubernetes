@@ -40,6 +40,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -607,6 +608,7 @@ func assertPodDEKorSeeds(ctx context.Context, t *testing.T, config storagebacken
 
 func TestKMSv2Healthz(t *testing.T) {
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2, true)()
+	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2KDF, randomBool())()
 
 	encryptionConfig := `
 kind: EncryptionConfiguration
@@ -672,6 +674,7 @@ resources:
 
 func TestKMSv2SingleService(t *testing.T) {
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2, true)()
+	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2KDF, randomBool())()
 
 	var kmsv2Calls int
 	origEnvelopeKMSv2ServiceFactory := encryptionconfig.EnvelopeKMSv2ServiceFactory
@@ -949,3 +952,5 @@ resources:
 		b.Errorf("unexpected secret len: want %d, got %d", dataLen, secretLen)
 	}
 }
+
+func randomBool() bool { return utilrand.Int()%2 == 1 }
