@@ -261,7 +261,7 @@ func (t *envelopeTransformer) addTransformerForDecryption(cacheKey []byte, key [
 
 // doEncode encodes the EncryptedObject to a byte array.
 func (t *envelopeTransformer) doEncode(request *kmstypes.EncryptedObject) ([]byte, error) {
-	if err := validateEncryptedObject(request); err != nil {
+	if err := ValidateEncryptedObject(request); err != nil {
 		return nil, err
 	}
 	return proto.Marshal(request)
@@ -273,7 +273,7 @@ func (t *envelopeTransformer) doDecode(originalData []byte) (*kmstypes.Encrypted
 	if err := proto.Unmarshal(originalData, o); err != nil {
 		return nil, err
 	}
-	if err := validateEncryptedObject(o); err != nil {
+	if err := ValidateEncryptedObject(o); err != nil {
 		return nil, err
 	}
 
@@ -311,7 +311,7 @@ func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsser
 		o.EncryptedDEK = resp.Ciphertext
 	}
 
-	if err := validateEncryptedObject(o); err != nil {
+	if err := ValidateEncryptedObject(o); err != nil {
 		return nil, nil, nil, err
 	}
 
@@ -325,7 +325,7 @@ func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsser
 	return transformer, o, cacheKey, nil
 }
 
-func validateEncryptedObject(o *kmstypes.EncryptedObject) error {
+func ValidateEncryptedObject(o *kmstypes.EncryptedObject) error {
 	if o == nil {
 		return fmt.Errorf("encrypted object is nil")
 	}

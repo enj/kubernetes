@@ -588,7 +588,7 @@ func TestValidateEncryptedObject(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.desc, func(t *testing.T) {
-			err := validateEncryptedObject(tt.originalData)
+			err := ValidateEncryptedObject(tt.originalData)
 			if err == nil {
 				t.Fatalf("envelopeTransformer: expected error while decoding data, got nil")
 			}
