@@ -312,7 +312,7 @@ resources:
 	t.Cleanup(cancel)
 
 	var firstEncryptedDEK []byte
-	assertPodDEKs(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
+	assertPodDEKorSeeds(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
 		1, 1,
 		"k8s:enc:kms:v2:kms-provider:",
 		func(_ int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject) {
@@ -441,12 +441,42 @@ resources:
 		t.Fatalf("Resource version should not have changed again after the initial version updated as a result of the keyID update. old pod: %v, new pod: %v", newPod, updatedNewPod)
 	}
 
-	assertPodDEKs(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
+	assertPodDEKorSeeds(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
 		1, 1, "k8s:enc:kms:v2:kms-provider:", checkDEK,
 	)
 }
 
-func TestKMSv2ProviderDEKReuse(t *testing.T) {
+func TestKMSv2ProviderDEKorSeedReuse(t *testing.T) {
+	t.Run("regular gcm", func(t *testing.T) {
+		defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2KDF, false)()
+		testKMSv2ProviderDEKorSeedReuse(t,
+			func(i int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject) {
+				if obj.KeyID != "1" {
+					t.Errorf("key %s: want key ID %s, got %s", etcdKey, "1", obj.KeyID)
+				}
+
+				// zero value of counter is one billion so the first value will be one billion plus one
+				// hence we add that to our zero based index to calculate the expected nonce
+				if uint64(i+1_000_000_000+1) != counter {
+					t.Errorf("key %s: counter nonce is invalid: want %d, got %d", etcdKey, i+1, counter)
+				}
+			},
+		)
+	})
+
+	t.Run("extended nonce gcm", func(t *testing.T) {
+		defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2KDF, true)()
+		testKMSv2ProviderDEKorSeedReuse(t,
+			func(_ int, _ uint64, etcdKey string, obj kmstypes.EncryptedObject) {
+				if obj.KeyID != "1" {
+					t.Errorf("key %s: want key ID %s, got %s", etcdKey, "1", obj.KeyID)
+				}
+			},
+		)
+	})
+}
+
+func testKMSv2ProviderDEKorSeedReuse(t *testing.T, f checkFunc) {
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2, true)()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -494,25 +524,15 @@ resources:
 		}
 	}
 
-	assertPodDEKs(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
+	assertPodDEKorSeeds(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
 		podCount, 1, // key ID does not change during the test so we should only have a single DEK
-		"k8s:enc:kms:v2:kms-provider:",
-		func(i int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject) {
-			if obj.KeyID != "1" {
-				t.Errorf("key %s: want key ID %s, got %s", etcdKey, "1", obj.KeyID)
-			}
-
-			// zero value of counter is one billion so the first value will be one billion plus one
-			// hence we add that to our zero based index to calculate the expected nonce
-			if uint64(i+1_000_000_000+1) != counter {
-				t.Errorf("key %s: counter nonce is invalid: want %d, got %d", etcdKey, i+1, counter)
-			}
-		},
+		"k8s:enc:kms:v2:kms-provider:", f,
 	)
 }
 
-func assertPodDEKs(ctx context.Context, t *testing.T, config storagebackend.Config, podCount, dekCount int, kmsPrefix string,
-	f func(i int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject)) {
+type checkFunc func(i int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject)
+
+func assertPodDEKorSeeds(ctx context.Context, t *testing.T, config storagebackend.Config, podCount, dekOrSeedCount int, kmsPrefix string, f checkFunc) {
 	t.Helper()
 
 	rawClient, etcdClient, err := integration.GetEtcdClients(config.Transport)
@@ -530,6 +550,8 @@ func assertPodDEKs(ctx context.Context, t *testing.T, config storagebackend.Conf
 		t.Fatalf("expected %d KVs, but got %d", podCount, len(response.Kvs))
 	}
 
+	useSeed := utilfeature.DefaultFeatureGate.Enabled(features.KMSv2KDF)
+
 	out := make([]kmstypes.EncryptedObject, len(response.Kvs))
 	for i, kv := range response.Kvs {
 		v := bytes.TrimPrefix(kv.Value, []byte(kmsPrefix))
@@ -537,7 +559,17 @@ func assertPodDEKs(ctx context.Context, t *testing.T, config storagebackend.Conf
 			t.Fatal(err)
 		}
 
-		nonce := out[i].EncryptedData[:12]
+		if err := kmsv2.ValidateEncryptedObject(&out[i]); err != nil {
+			t.Fatal(err)
+		}
+
+		var infoLen int
+		if useSeed {
+			infoLen = 32
+		}
+
+		info := out[i].EncryptedData[:infoLen]
+		nonce := out[i].EncryptedData[infoLen : 12+infoLen]
 		randN := nonce[:4]
 		count := nonce[4:]
 
@@ -545,17 +577,31 @@ func assertPodDEKs(ctx context.Context, t *testing.T, config storagebackend.Conf
 			t.Errorf("key %s: got all zeros for first four bytes", string(kv.Key))
 		}
 
+		if useSeed {
+			if bytes.Equal(info, make([]byte, infoLen)) {
+				t.Errorf("key %s: got all zeros for info", string(kv.Key))
+			}
+		}
+
 		counter := binary.LittleEndian.Uint64(count)
 		f(i, counter, string(kv.Key), out[i])
 	}
 
-	uniqueDEKs := sets.NewString()
+	uniqueDEKorSeeds := sets.NewString()
 	for _, object := range out {
-		uniqueDEKs.Insert(string(object.EncryptedDEK))
+		if useSeed {
+			uniqueDEKorSeeds.Insert(string(object.EncryptedSeed))
+		} else {
+			uniqueDEKorSeeds.Insert(string(object.EncryptedDEK))
+		}
 	}
 
-	if uniqueDEKs.Len() != dekCount {
-		t.Errorf("expected %d DEKs, got: %d", dekCount, uniqueDEKs.Len())
+	if uniqueDEKorSeeds.Has("") {
+		t.Error("unexpected empty DEK/seed seen")
+	}
+
+	if uniqueDEKorSeeds.Len() != dekOrSeedCount {
+		t.Errorf("expected %d DEKs or seeds, got: %d", dekOrSeedCount, uniqueDEKorSeeds.Len())
 	}
 }
 
