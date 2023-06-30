@@ -28,14 +28,11 @@ import (
 	"io"
 	"math"
 	"reflect"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"k8s.io/apiserver/pkg/storage/value"
-	"k8s.io/utils/clock"
 )
 
 func TestGCMDataStable(t *testing.T) {
@@ -440,22 +437,7 @@ func TestCBCKeyRotation(t *testing.T) {
 var benchmarks = []namedTransformerFunc{
 	{name: "gcm-random-nonce", f: newGCMTransformer},
 	{name: "gcm-counter-nonce", f: newGCMTransformerWithUniqueKeyUnsafeTest},
-
-	newExtendedNonceGCMTransformerWithUniqueKeyUnsafeTest("sha256KDF", sha256KDF, randomNonce, commonSize, nil),
-	newExtendedNonceGCMTransformerWithUniqueKeyUnsafeTest("sha256KDF-no-salt", sha256KDF, noSalt, 0, nil),
-	newExtendedNonceGCMTransformerWithUniqueKeyUnsafeTest("sha256KDF-time", sha256KDF, timeSalt, 8, nil),
-	newExtendedNonceGCMTransformerWithUniqueKeyUnsafeTest("sha256KDFExpandOnly", sha256KDFExpandOnly, noSalt, 0, nil),
-	newExtendedNonceGCMTransformerWithUniqueKeyUnsafeTest("sha256HMACNoInfo", sha256HMACNoInfo, randomNonce, commonSize, nil),
-	newExtendedNonceGCMTransformerWithUniqueKeyUnsafeTest("sha256HMAC", sha256HMAC, randomNonce, commonSize, nil),
-	newExtendedNonceGCMTransformerWithUniqueKeyUnsafeTest("hchacha20NoInfo", hchacha20NoInfo, randomNonce, commonSize, nil),
-
-	newExtendedNonceGCMTransformerWithUniqueKeyUnsafeTest("sha256KDF-cache", sha256KDF, randomNonce, commonSize, newSimpleCache(clock.RealClock{}, time.Hour)),
-	newExtendedNonceGCMTransformerWithUniqueKeyUnsafeTest("sha256KDF-no-salt-cache", sha256KDF, noSalt, 0, newSimpleCache(clock.RealClock{}, time.Hour)),
-	newExtendedNonceGCMTransformerWithUniqueKeyUnsafeTest("sha256KDF-time-cache", sha256KDF, timeSalt, 8, newSimpleCache(clock.RealClock{}, time.Hour)),
-	newExtendedNonceGCMTransformerWithUniqueKeyUnsafeTest("sha256KDFExpandOnly-cache", sha256KDFExpandOnly, noSalt, 0, newSimpleCache(clock.RealClock{}, time.Hour)),
-	newExtendedNonceGCMTransformerWithUniqueKeyUnsafeTest("sha256HMACNoInfo-cache", sha256HMACNoInfo, randomNonce, commonSize, newSimpleCache(clock.RealClock{}, time.Hour)),
-	newExtendedNonceGCMTransformerWithUniqueKeyUnsafeTest("sha256HMAC-cache", sha256HMAC, randomNonce, commonSize, newSimpleCache(clock.RealClock{}, time.Hour)),
-	newExtendedNonceGCMTransformerWithUniqueKeyUnsafeTest("hchacha20NoInfo-cache", hchacha20NoInfo, randomNonce, commonSize, newSimpleCache(clock.RealClock{}, time.Hour)),
+	{name: "gcm-extended-nonce", f: newKDFExtendedNonceGCMTransformerFromSeedUnsafeTest},
 }
 
 func BenchmarkGCMRead(b *testing.B) {
@@ -474,8 +456,8 @@ func BenchmarkGCMRead(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			for _, n := range benchmarks {
 				n := n
-				if t.keyLength == 16 && strings.Contains(n.name, "hchacha20") {
-					continue // HChaCha20 requires 32 byte keys
+				if t.keyLength == 16 && n.name == "gcm-extended-nonce" {
+					continue // gcm-extended-nonce requires 32 byte keys
 				}
 				b.Run(n.name, func(b *testing.B) {
 					b.ReportAllocs()
@@ -500,8 +482,8 @@ func BenchmarkGCMWrite(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			for _, n := range benchmarks {
 				n := n
-				if t.keyLength == 16 && strings.Contains(n.name, "hchacha20") {
-					continue // HChaCha20 requires 32 byte keys
+				if t.keyLength == 16 && n.name == "gcm-extended-nonce" {
+					continue // gcm-extended-nonce requires 32 byte keys
 				}
 				b.Run(n.name, func(b *testing.B) {
 					b.ReportAllocs()
@@ -766,19 +748,14 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
-type testingT interface {
-	Helper()
-	Fatal(...any)
-}
-
 type namedTransformerFunc struct {
 	name string
 	f    transformerFunc
 }
 
-type transformerFunc func(t testingT, block cipher.Block, key []byte) value.Transformer
+type transformerFunc func(t testing.TB, block cipher.Block, key []byte) value.Transformer
 
-func newGCMTransformer(t testingT, block cipher.Block, _ []byte) value.Transformer {
+func newGCMTransformer(t testing.TB, block cipher.Block, _ []byte) value.Transformer {
 	t.Helper()
 
 	transformer, err := NewGCMTransformer(block)
@@ -789,7 +766,7 @@ func newGCMTransformer(t testingT, block cipher.Block, _ []byte) value.Transform
 	return transformer
 }
 
-func newGCMTransformerWithUniqueKeyUnsafeTest(t testingT, block cipher.Block, _ []byte) value.Transformer {
+func newGCMTransformerWithUniqueKeyUnsafeTest(t testing.TB, block cipher.Block, _ []byte) value.Transformer {
 	t.Helper()
 
 	nonceGen := &nonceGenerator{fatal: die}
@@ -801,13 +778,13 @@ func newGCMTransformerWithUniqueKeyUnsafeTest(t testingT, block cipher.Block, _ 
 	return transformer
 }
 
-func newExtendedNonceGCMTransformerWithUniqueKeyUnsafeTest(name string, prf pseudoRandomFunction, salt func([]byte) error, saltLen int, cache *simpleCache) namedTransformerFunc {
-	return namedTransformerFunc{
-		name: name,
-		f: func(t testingT, _ cipher.Block, key []byte) value.Transformer {
-			t.Helper()
+func newKDFExtendedNonceGCMTransformerFromSeedUnsafeTest(t testing.TB, _ cipher.Block, key []byte) value.Transformer {
+	t.Helper()
 
-			return newExtendedNonceGCMTransformerWithUniqueKeyUnsafe(key, prf, salt, saltLen, cache)
-		},
+	transformer, err := NewKDFExtendedNonceGCMTransformerFromSeedUnsafe(key)
+	if err != nil {
+		t.Fatal(err)
 	}
+
+	return transformer
 }
