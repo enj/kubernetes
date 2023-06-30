@@ -264,12 +264,13 @@ resources:
 // 1. When the key ID is unchanged, the resource version must not change
 // 2. When the key ID changes, the resource version changes (but only once)
 // 3. For all subsequent updates, the resource version must not change
-// 4. When kms-plugin is down, expect creation of new pod and encryption to succeed while the DEK is valid
-// 5. when kms-plugin is down, no-op update for a pod should succeed and not result in RV change while the DEK is valid
-// 6. When kms-plugin is down, expect creation of new pod and encryption to fail once the DEK is invalid
-// 7. when kms-plugin is down, no-op update for a pod should succeed and not result in RV change even once the DEK is valid
+// 4. When kms-plugin is down, expect creation of new pod and encryption to succeed while the DEK/seed is valid
+// 5. when kms-plugin is down, no-op update for a pod should succeed and not result in RV change while the DEK/seed is valid
+// 6. When kms-plugin is down, expect creation of new pod and encryption to fail once the DEK/seed is invalid
+// 7. when kms-plugin is down, no-op update for a pod should succeed and not result in RV change even once the DEK/seed is valid
 func TestKMSv2ProviderKeyIDStaleness(t *testing.T) {
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2, true)()
+	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2, randomBool())()
 
 	encryptionConfig := `
 kind: EncryptionConfiguration
