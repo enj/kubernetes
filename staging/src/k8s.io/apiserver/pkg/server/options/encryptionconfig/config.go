@@ -354,7 +354,7 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 	// dynamically check if we want to use KDF seed to derive DEKs or just a single DEK
 	// this gate can only change during tests, but the check is cheap enough to always make
 	// this allows us to easily exercise both modes without restarting the API server
-	// TODO integration test
+	// TODO integration test that this dynamically takes effect
 	useSeed := utilfeature.DefaultFeatureGate.Enabled(features.KMSv2KDF)
 	stateUseSeed := len(state.EncryptedObject.EncryptedSeed) > 0
 
