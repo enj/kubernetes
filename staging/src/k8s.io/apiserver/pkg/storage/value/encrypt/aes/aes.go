@@ -283,7 +283,7 @@ func (e *extendedNonceGCM) derivedKeyTransformer(info []byte, dataCtx value.Cont
 		}
 
 		// on read, this is a subslice of a much larger slice and we do not want to hold onto that larger slice
-		info = deepCopySlice(info)
+		info = bytes.Clone(info)
 	}
 
 	key, err := e.sha256KDFExpandOnly(info)
@@ -315,12 +315,6 @@ func (e *extendedNonceGCM) sha256KDFExpandOnly(info []byte) ([]byte, error) {
 	}
 
 	return derivedKey, nil
-}
-
-func deepCopySlice(in []byte) []byte {
-	out := make([]byte, len(in))
-	copy(out, in)
-	return out
 }
 
 func (t *gcm) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
