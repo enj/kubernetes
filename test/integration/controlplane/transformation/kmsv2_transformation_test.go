@@ -879,7 +879,7 @@ resources:
 
 	client := kubernetes.NewForConfigOrDie(test.kubeAPIServer.ClientConfig)
 
-	restOptionsGetter := getRESTOptionsGetter(b, test)
+	restOptionsGetter := getRESTOptionsGetterForSecrets(b, test)
 
 	secretStorage, err := secretstore.NewREST(restOptionsGetter)
 	if err != nil {
@@ -938,7 +938,7 @@ resources:
 	}
 }
 
-func getRESTOptionsGetter(t testing.TB, test *transformTest) generic.RESTOptionsGetter {
+func getRESTOptionsGetterForSecrets(t testing.TB, test *transformTest) generic.RESTOptionsGetter {
 	t.Helper()
 
 	s := test.kubeAPIServer.ServerOpts
@@ -964,6 +964,16 @@ func getRESTOptionsGetter(t testing.TB, test *transformTest) generic.RESTOptions
 
 	if genericConfig.RESTOptionsGetter == nil {
 		t.Fatal("not REST options found")
+	}
+
+	opts, err := genericConfig.RESTOptionsGetter.GetRESTOptions(schema.GroupResource{Group: "", Resource: "secrets"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := runtime.CheckCodec(opts.StorageConfig.Codec, &api.Secret{},
+		schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Secret"}); err != nil {
+		t.Fatal(err)
 	}
 
 	return genericConfig.RESTOptionsGetter
