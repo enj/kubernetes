@@ -47,7 +47,7 @@ import (
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/registry/generic"
-	"k8s.io/apiserver/pkg/server/options"
+	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/server/options/encryptionconfig"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/apiserver/pkg/storage/value"
@@ -62,7 +62,10 @@ import (
 	"k8s.io/klog/v2"
 	kmsv2api "k8s.io/kms/apis/v2"
 	kmsv2svc "k8s.io/kms/pkg/service"
+	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	api "k8s.io/kubernetes/pkg/apis/core"
+	"k8s.io/kubernetes/pkg/controlplane"
+	"k8s.io/kubernetes/pkg/kubeapiserver"
 	secretstore "k8s.io/kubernetes/pkg/registry/core/secret/storage"
 	"k8s.io/kubernetes/test/integration"
 	"k8s.io/kubernetes/test/integration/etcd"
@@ -846,28 +849,6 @@ func BenchmarkKMSv2KDF(b *testing.B) {
 	klog.SetOutput(io.Discard)
 	klog.LogToStderr(false)
 
-	origObserveRESTOptionsGetter := options.ObserveRESTOptionsGetter
-	b.Cleanup(func() { options.ObserveRESTOptionsGetter = origObserveRESTOptionsGetter })
-
-	var restOptionsGetter generic.RESTOptionsGetter
-	options.ObserveRESTOptionsGetter = func(optionsGetter generic.RESTOptionsGetter) {
-		opts, err := optionsGetter.GetRESTOptions(schema.GroupResource{Group: "", Resource: "secrets"})
-		if err != nil {
-			return // this one does not handle secrets
-		}
-
-		if err := runtime.CheckCodec(opts.StorageConfig.Codec, &api.Secret{},
-			schema.GroupVersionKind{Group: "", Version: "v1", Kind: "Secret"}); err != nil {
-			return // this one does not handle secrets
-		}
-
-		if restOptionsGetter != nil {
-			b.Fatal("multiple REST options found for secrets")
-		}
-
-		restOptionsGetter = optionsGetter
-	}
-
 	defer featuregatetesting.SetFeatureGateDuringTest(b, utilfeature.DefaultFeatureGate, features.KMSv2, true)()
 	defer featuregatetesting.SetFeatureGateDuringTest(b, utilfeature.DefaultFeatureGate, features.KMSv2KDF, false)()
 
@@ -898,9 +879,7 @@ resources:
 
 	client := kubernetes.NewForConfigOrDie(test.kubeAPIServer.ClientConfig)
 
-	if restOptionsGetter == nil {
-		b.Fatal("not REST options found for secrets")
-	}
+	restOptionsGetter := getRESTOptionsGetter(b, test)
 
 	secretStorage, err := secretstore.NewREST(restOptionsGetter)
 	if err != nil {
@@ -957,6 +936,37 @@ resources:
 	if secretLen := len(secretList.Items); secretLen != dataLen {
 		b.Errorf("unexpected secret len: want %d, got %d", dataLen, secretLen)
 	}
+}
+
+func getRESTOptionsGetter(t testing.TB, test *transformTest) generic.RESTOptionsGetter {
+	t.Helper()
+
+	s := test.kubeAPIServer.ServerOpts
+
+	// copied from BuildGenericConfig
+
+	genericConfig := genericapiserver.NewConfig(legacyscheme.Codecs)
+	genericConfig.MergedResourceConfig = controlplane.DefaultAPIResourceConfigSource()
+
+	if err := s.APIEnablement.ApplyTo(genericConfig, controlplane.DefaultAPIResourceConfigSource(), legacyscheme.Scheme); err != nil {
+		t.Fatal(err)
+	}
+
+	storageFactoryConfig := kubeapiserver.NewStorageFactoryConfig()
+	storageFactoryConfig.APIResourceConfig = genericConfig.MergedResourceConfig
+	storageFactory, err := storageFactoryConfig.Complete(s.Etcd).New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Etcd.ApplyWithStorageFactoryTo(storageFactory, genericConfig); err != nil {
+		t.Fatal(err)
+	}
+
+	if genericConfig.RESTOptionsGetter == nil {
+		t.Fatal("not REST options found")
+	}
+
+	return genericConfig.RESTOptionsGetter
 }
 
 func noValidation(_ context.Context, _ runtime.Object) error { return nil }
