@@ -943,9 +943,14 @@ func getRESTOptionsGetterForSecrets(t testing.TB, test *transformTest) generic.R
 
 	s := test.kubeAPIServer.ServerOpts
 
-	// copied from BuildGenericConfig
+	etcdConfigCopy := *s.Etcd
+	etcdConfigCopy.SkipHealthEndpoints = true                     // avoid running health check go routines
+	etcdConfigCopy.EncryptionProviderConfigAutomaticReload = true // hack to use DynamicTransformers in t.Cleanup below
+
+	// mostly copied from BuildGenericConfig
 
 	genericConfig := genericapiserver.NewConfig(legacyscheme.Codecs)
+
 	genericConfig.MergedResourceConfig = controlplane.DefaultAPIResourceConfigSource()
 
 	if err := s.APIEnablement.ApplyTo(genericConfig, controlplane.DefaultAPIResourceConfigSource(), legacyscheme.Scheme); err != nil {
@@ -954,13 +959,24 @@ func getRESTOptionsGetterForSecrets(t testing.TB, test *transformTest) generic.R
 
 	storageFactoryConfig := kubeapiserver.NewStorageFactoryConfig()
 	storageFactoryConfig.APIResourceConfig = genericConfig.MergedResourceConfig
-	storageFactory, err := storageFactoryConfig.Complete(s.Etcd).New()
+	storageFactory, err := storageFactoryConfig.Complete(&etcdConfigCopy).New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Etcd.ApplyWithStorageFactoryTo(storageFactory, genericConfig); err != nil {
+	if err := etcdConfigCopy.ApplyWithStorageFactoryTo(storageFactory, genericConfig); err != nil {
 		t.Fatal(err)
 	}
+
+	transformers, ok := genericConfig.ResourceTransformers.(*encryptionconfig.DynamicTransformers)
+	if !ok {
+		t.Fatalf("incorrect type for ResourceTransformers: %T", genericConfig.ResourceTransformers)
+	}
+
+	t.Cleanup(func() {
+		// this is a hack to cause the existing transformers to shutdown
+		transformers.Set(nil, nil, nil, 0)
+		time.Sleep(10 * time.Second) // block this cleanup for longer than kmsCloseGracePeriod
+	})
 
 	if genericConfig.RESTOptionsGetter == nil {
 		t.Fatal("not REST options found")
