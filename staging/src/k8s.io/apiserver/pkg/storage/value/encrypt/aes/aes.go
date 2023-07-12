@@ -54,7 +54,32 @@ const cacheTTL = 10 * time.Minute
 type gcm struct {
 	aead      cipher.AEAD
 	nonceFunc func([]byte) error
-	info      []byte
+}
+
+type gcmWithInfo struct {
+	gcm  *gcm
+	info []byte
+}
+
+func (g *gcmWithInfo) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
+	if !bytes.HasPrefix(data, g.info) {
+		return nil, false, errors.New("the stored data is missing the required info prefix")
+	}
+
+	return g.gcm.TransformFromStorage(ctx, data[len(g.info):], dataCtx)
+}
+
+func (g *gcmWithInfo) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, error) {
+	out, err := g.gcm.TransformToStorage(ctx, data, dataCtx)
+	if err != nil {
+		return nil, err
+	}
+
+	outWithInfo := make([]byte, 0, len(out)+len(g.info))
+	outWithInfo = append(outWithInfo, g.info...)
+	outWithInfo = append(outWithInfo, out...)
+
+	return outWithInfo, nil
 }
 
 // NewGCMTransformer takes the given block cipher and performs encryption and decryption on the given data.
@@ -72,16 +97,25 @@ type gcm struct {
 // rotation. Future work should include investigation of AES-GCM-SIV as an alternative to
 // random nonces.
 func NewGCMTransformer(block cipher.Block) (value.Transformer, error) {
-	return newGCMTransformerWithInfo(block, nil)
+	return newGCMTransformerWithRandomNonce(block)
 }
 
-func newGCMTransformerWithInfo(block cipher.Block, info []byte) (*gcm, error) {
+func newGCMTransformerWithRandomNonce(block cipher.Block) (*gcm, error) {
 	aead, err := newGCM(block)
 	if err != nil {
 		return nil, err
 	}
 
-	return &gcm{aead: aead, nonceFunc: randomNonce, info: info}, nil
+	return &gcm{aead: aead, nonceFunc: randomNonce}, nil
+}
+
+func newGCMTransformerWithInfo(block cipher.Block, info []byte) (*gcmWithInfo, error) {
+	transformer, err := newGCMTransformerWithRandomNonce(block)
+	if err != nil {
+		return nil, err
+	}
+
+	return &gcmWithInfo{gcm: transformer, info: info}, nil
 }
 
 // NewGCMTransformerWithUniqueKeyUnsafe is the same as NewGCMTransformer but is unsafe for general
@@ -319,27 +353,23 @@ func (e *extendedNonceGCM) sha256KDFExpandOnly(info []byte) ([]byte, error) {
 
 func (t *gcm) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
 	nonceSize := t.aead.NonceSize()
-	infoLen := len(t.info)
-	if len(data) < infoLen+nonceSize {
+	if len(data) < nonceSize {
 		return nil, false, errors.New("the stored data was shorter than the required size")
 	}
-	result, err := t.aead.Open(nil, data[infoLen:infoLen+nonceSize], data[infoLen+nonceSize:], dataCtx.AuthenticatedData())
+	result, err := t.aead.Open(nil, data[:nonceSize], data[nonceSize:], dataCtx.AuthenticatedData())
 	return result, false, err
 }
 
 func (t *gcm) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, error) {
 	nonceSize := t.aead.NonceSize()
-	infoLen := len(t.info)
-	result := make([]byte, infoLen+nonceSize+t.aead.Overhead()+len(data))
+	result := make([]byte, nonceSize+t.aead.Overhead()+len(data))
 
-	copy(result, t.info)
-
-	if err := t.nonceFunc(result[infoLen : infoLen+nonceSize]); err != nil {
+	if err := t.nonceFunc(result[:nonceSize]); err != nil {
 		return nil, fmt.Errorf("failed to write nonce for AES-GCM: %w", err)
 	}
 
-	cipherText := t.aead.Seal(result[infoLen+nonceSize:infoLen+nonceSize], result[infoLen:infoLen+nonceSize], data, dataCtx.AuthenticatedData())
-	return result[:infoLen+nonceSize+len(cipherText)], nil
+	cipherText := t.aead.Seal(result[nonceSize:nonceSize], result[:nonceSize], data, dataCtx.AuthenticatedData())
+	return result[:nonceSize+len(cipherText)], nil
 }
 
 // cbc implements encryption at rest of the provided values given a cipher.Block algorithm.
