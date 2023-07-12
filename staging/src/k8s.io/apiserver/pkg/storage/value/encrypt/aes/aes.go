@@ -51,37 +51,6 @@ const commonSize = 32
 // it can consume.
 const cacheTTL = 10 * time.Minute
 
-type gcm struct {
-	aead      cipher.AEAD
-	nonceFunc func([]byte) error
-}
-
-type gcmWithInfo struct {
-	gcm  *gcm
-	info []byte
-}
-
-func (g *gcmWithInfo) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
-	if !bytes.HasPrefix(data, g.info) {
-		return nil, false, errors.New("the stored data is missing the required info prefix")
-	}
-
-	return g.gcm.TransformFromStorage(ctx, data[len(g.info):], dataCtx)
-}
-
-func (g *gcmWithInfo) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, error) {
-	out, err := g.gcm.TransformToStorage(ctx, data, dataCtx)
-	if err != nil {
-		return nil, err
-	}
-
-	outWithInfo := make([]byte, 0, len(out)+len(g.info))
-	outWithInfo = append(outWithInfo, g.info...)
-	outWithInfo = append(outWithInfo, out...)
-
-	return outWithInfo, nil
-}
-
 // NewGCMTransformer takes the given block cipher and performs encryption and decryption on the given data.
 // It implements AEAD encryption of the provided values given a cipher.Block algorithm.
 // The authenticated data provided as part of the value.Context method must match when the same
@@ -97,25 +66,12 @@ func (g *gcmWithInfo) TransformToStorage(ctx context.Context, data []byte, dataC
 // rotation. Future work should include investigation of AES-GCM-SIV as an alternative to
 // random nonces.
 func NewGCMTransformer(block cipher.Block) (value.Transformer, error) {
-	return newGCMTransformerWithRandomNonce(block)
-}
-
-func newGCMTransformerWithRandomNonce(block cipher.Block) (*gcm, error) {
 	aead, err := newGCM(block)
 	if err != nil {
 		return nil, err
 	}
 
 	return &gcm{aead: aead, nonceFunc: randomNonce}, nil
-}
-
-func newGCMTransformerWithInfo(block cipher.Block, info []byte) (*gcmWithInfo, error) {
-	transformer, err := newGCMTransformerWithRandomNonce(block)
-	if err != nil {
-		return nil, err
-	}
-
-	return &gcmWithInfo{gcm: transformer, info: info}, nil
 }
 
 // NewGCMTransformerWithUniqueKeyUnsafe is the same as NewGCMTransformer but is unsafe for general
@@ -158,7 +114,7 @@ func NewGCMTransformerWithUniqueKeyUnsafe() (value.Transformer, []byte, error) {
 	return transformer, key, nil
 }
 
-func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonceGen *nonceGenerator) (*gcm, error) {
+func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonceGen *nonceGenerator) (value.Transformer, error) {
 	aead, err := newGCM(block)
 	if err != nil {
 		return nil, err
@@ -325,12 +281,7 @@ func (e *extendedNonceGCM) derivedKeyTransformer(info []byte, dataCtx value.Cont
 		return nil, fmt.Errorf("failed to KDF expand seed with info: %w", err)
 	}
 
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build cipher with KDF derived key: %w", err)
-	}
-
-	transformer, err := newGCMTransformerWithInfo(block, info)
+	transformer, err := newGCMTransformerWithInfo(key, info)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build transformer with KDF derived key: %w", err)
 	}
@@ -349,6 +300,51 @@ func (e *extendedNonceGCM) sha256KDFExpandOnly(info []byte) ([]byte, error) {
 	}
 
 	return derivedKey, nil
+}
+
+func newGCMTransformerWithInfo(key, info []byte) (*transformerWithInfo, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	transformer, err := NewGCMTransformer(block)
+	if err != nil {
+		return nil, err
+	}
+
+	return &transformerWithInfo{transformer: transformer, info: info}, nil
+}
+
+type transformerWithInfo struct {
+	transformer value.Transformer
+	info        []byte
+}
+
+func (t *transformerWithInfo) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
+	if !bytes.HasPrefix(data, t.info) {
+		return nil, false, errors.New("the stored data is missing the required info prefix")
+	}
+
+	return t.transformer.TransformFromStorage(ctx, data[len(t.info):], dataCtx)
+}
+
+func (t *transformerWithInfo) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, error) {
+	out, err := t.transformer.TransformToStorage(ctx, data, dataCtx)
+	if err != nil {
+		return nil, err
+	}
+
+	outWithInfo := make([]byte, 0, len(out)+len(t.info))
+	outWithInfo = append(outWithInfo, t.info...)
+	outWithInfo = append(outWithInfo, out...)
+
+	return outWithInfo, nil
+}
+
+type gcm struct {
+	aead      cipher.AEAD
+	nonceFunc func([]byte) error
 }
 
 func (t *gcm) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
