@@ -345,7 +345,7 @@ func TestGCMNonce(t *testing.T) {
 	})
 
 	t.Run("gcm extended nonce", func(t *testing.T) {
-		testGCMNonce(t, newKDFExtendedNonceGCMTransformerFromSeedUnsafeTest, commonSize, func(_ int, nonce []byte) {
+		testGCMNonce(t, newKDFExtendedNonceGCMTransformerFromSeedUnsafeTest, infoSizeExtendedNonceGCM, func(_ int, nonce []byte) {
 			if bytes.Equal(nonce, make([]byte, len(nonce))) {
 				t.Error("got all zeros for nonce")
 			}

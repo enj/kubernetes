@@ -32,14 +32,20 @@ import (
 	"k8s.io/utils/clock"
 )
 
-// cacheTTL is the TTL of KDF cache entries.  We assume that the value.Context.AuthenticatedData
-// for every call is the etcd storage path of the associated resource, and use that as the primary
-// cache key (with a secondary check that confirms that the gcm.info matches).  Thus if a client
-// is constantly creating resources with new names (and thus new paths), they will keep adding new
-// entries to the cache for up to this TTL before the GC logic starts deleting old entries.  Each
-// entry is ~300 bytes in size, so even a malicious client will be bounded in the overall memory
-// it can consume.
-const cacheTTL = 10 * time.Minute
+const (
+	// cacheTTL is the TTL of KDF cache entries.  We assume that the value.Context.AuthenticatedData
+	// for every call is the etcd storage path of the associated resource, and use that as the primary
+	// cache key (with a secondary check that confirms that the gcm.info matches).  Thus if a client
+	// is constantly creating resources with new names (and thus new paths), they will keep adding new
+	// entries to the cache for up to this TTL before the GC logic starts deleting old entries.  Each
+	// entry is ~300 bytes in size, so even a malicious client will be bounded in the overall memory
+	// it can consume.
+	cacheTTL = 10 * time.Minute
+
+	derivedKeySizeExtendedNonceGCM = commonSize
+	infoSizeExtendedNonceGCM
+	minSeedSizeExtendedNonceGCM
+)
 
 // NewKDFExtendedNonceGCMTransformerFromSeedUnsafe is the same as NewGCMTransformer but trades storage,
 // memory and CPU to work around the limitations of AES-GCM's 12 byte nonce size.  It is marked
@@ -54,7 +60,7 @@ const cacheTTL = 10 * time.Minute
 // and this function encrypt and decrypt data in a compatible way (so the output of one can be used
 // as the input to the other, and vice versa).
 func NewKDFExtendedNonceGCMTransformerFromSeedUnsafe(seed []byte) (value.Transformer, error) {
-	if seedLen := len(seed); seedLen < commonSize {
+	if seedLen := len(seed); seedLen < minSeedSizeExtendedNonceGCM {
 		return nil, fmt.Errorf("invalid seed length %d used for key generation", seedLen)
 	}
 	return &extendedNonceGCM{
@@ -73,7 +79,7 @@ func NewKDFExtendedNonceGCMTransformerFromSeedUnsafe(seed []byte) (value.Transfo
 // to construct a transformer capable of decrypting values encrypted by this transformer;
 // reusing the seed returned from this function is safe to do over time and across process restarts.
 func NewKDFExtendedNonceGCMTransformerWithUniqueSeed() (value.Transformer, []byte, error) {
-	seed, err := generateKey(commonSize)
+	seed, err := generateKey(minSeedSizeExtendedNonceGCM)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -90,11 +96,11 @@ type extendedNonceGCM struct {
 }
 
 func (e *extendedNonceGCM) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
-	if len(data) < commonSize {
+	if len(data) < infoSizeExtendedNonceGCM {
 		return nil, false, errors.New("the stored data was shorter than the required size")
 	}
 
-	info := data[:commonSize]
+	info := data[:infoSizeExtendedNonceGCM]
 
 	transformer, err := e.derivedKeyTransformer(info, dataCtx, false)
 	if err != nil {
@@ -105,7 +111,7 @@ func (e *extendedNonceGCM) TransformFromStorage(ctx context.Context, data []byte
 }
 
 func (e *extendedNonceGCM) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, error) {
-	info := make([]byte, commonSize)
+	info := make([]byte, infoSizeExtendedNonceGCM)
 	if err := randomNonce(info); err != nil {
 		return nil, fmt.Errorf("failed to generate info for KDF: %w", err)
 	}
@@ -146,7 +152,7 @@ func (e *extendedNonceGCM) derivedKeyTransformer(info []byte, dataCtx value.Cont
 func (e *extendedNonceGCM) sha256KDFExpandOnly(info []byte) ([]byte, error) {
 	kdf := hkdf.Expand(sha256.New, e.seed, info)
 
-	derivedKey := make([]byte, commonSize)
+	derivedKey := make([]byte, derivedKeySizeExtendedNonceGCM)
 	if _, err := io.ReadFull(kdf, derivedKey); err != nil {
 		return nil, fmt.Errorf("failed to read a derived key from KDF: %w", err)
 	}

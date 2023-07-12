@@ -38,6 +38,8 @@ import (
 // Do not change this value.  It would be a backward incompatible change.
 const commonSize = 32
 
+const keySizeCounterNonceGCM = commonSize
+
 // NewGCMTransformerWithUniqueKeyUnsafe is the same as NewGCMTransformer but is unsafe for general
 // use because it makes assumptions about the key underlying the block cipher.  Specifically,
 // it uses a 96-bit nonce where the first 32 bits are random data and the remaining 64 bits are
@@ -54,7 +56,7 @@ const commonSize = 32
 // it can be passed to NewGCMTransformer(aes.NewCipher(key)) to construct a transformer capable
 // of decrypting values encrypted by this transformer (that transformer must not be used for encryption).
 func NewGCMTransformerWithUniqueKeyUnsafe() (value.Transformer, []byte, error) {
-	key, err := generateKey(commonSize)
+	key, err := generateKey(keySizeCounterNonceGCM)
 	if err != nil {
 		return nil, nil, err
 	}
