@@ -51,29 +51,6 @@ const commonSize = 32
 // it can consume.
 const cacheTTL = 10 * time.Minute
 
-// NewGCMTransformer takes the given block cipher and performs encryption and decryption on the given data.
-// It implements AEAD encryption of the provided values given a cipher.Block algorithm.
-// The authenticated data provided as part of the value.Context method must match when the same
-// value is set to and loaded from storage. In order to ensure that values cannot be copied by
-// an attacker from a location under their control, use characteristics of the storage location
-// (such as the etcd key) as part of the authenticated data.
-//
-// Because this mode requires a generated IV and IV reuse is a known weakness of AES-GCM, keys
-// must be rotated before a birthday attack becomes feasible. NIST SP 800-38D
-// (http://csrc.nist.gov/publications/nistpubs/800-38D/SP-800-38D.pdf) recommends using the same
-// key with random 96-bit nonces (the default nonce length) no more than 2^32 times, and
-// therefore transformers using this implementation *must* ensure they allow for frequent key
-// rotation. Future work should include investigation of AES-GCM-SIV as an alternative to
-// random nonces.
-func NewGCMTransformer(block cipher.Block) (value.Transformer, error) {
-	aead, err := newGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	return &gcm{aead: aead, nonceFunc: randomNonce}, nil
-}
-
 // NewGCMTransformerWithUniqueKeyUnsafe is the same as NewGCMTransformer but is unsafe for general
 // use because it makes assumptions about the key underlying the block cipher.  Specifically,
 // it uses a 96-bit nonce where the first 32 bits are random data and the remaining 64 bits are
@@ -136,17 +113,6 @@ func newGCMTransformerWithUniqueKeyUnsafe(block cipher.Block, nonceGen *nonceGen
 	}
 
 	return &gcm{aead: aead, nonceFunc: nonceFunc}, nil
-}
-
-func newGCM(block cipher.Block) (cipher.AEAD, error) {
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	if nonceSize := aead.NonceSize(); nonceSize != 12 { // all data in etcd will be broken if this ever changes
-		return nil, fmt.Errorf("crypto/cipher.NewGCM returned unexpected nonce size: %d", nonceSize)
-	}
-	return aead, nil
 }
 
 func randomNonce(b []byte) error {
@@ -340,6 +306,40 @@ func (t *transformerWithInfo) TransformToStorage(ctx context.Context, data []byt
 	outWithInfo = append(outWithInfo, out...)
 
 	return outWithInfo, nil
+}
+
+// NewGCMTransformer takes the given block cipher and performs encryption and decryption on the given data.
+// It implements AEAD encryption of the provided values given a cipher.Block algorithm.
+// The authenticated data provided as part of the value.Context method must match when the same
+// value is set to and loaded from storage. In order to ensure that values cannot be copied by
+// an attacker from a location under their control, use characteristics of the storage location
+// (such as the etcd key) as part of the authenticated data.
+//
+// Because this mode requires a generated IV and IV reuse is a known weakness of AES-GCM, keys
+// must be rotated before a birthday attack becomes feasible. NIST SP 800-38D
+// (http://csrc.nist.gov/publications/nistpubs/800-38D/SP-800-38D.pdf) recommends using the same
+// key with random 96-bit nonces (the default nonce length) no more than 2^32 times, and
+// therefore transformers using this implementation *must* ensure they allow for frequent key
+// rotation. Future work should include investigation of AES-GCM-SIV as an alternative to
+// random nonces.
+func NewGCMTransformer(block cipher.Block) (value.Transformer, error) {
+	aead, err := newGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	return &gcm{aead: aead, nonceFunc: randomNonce}, nil
+}
+
+func newGCM(block cipher.Block) (cipher.AEAD, error) {
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	if nonceSize := aead.NonceSize(); nonceSize != 12 { // all data in etcd will be broken if this ever changes
+		return nil, fmt.Errorf("crypto/cipher.NewGCM returned unexpected nonce size: %d", nonceSize)
+	}
+	return aead, nil
 }
 
 type gcm struct {
