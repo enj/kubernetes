@@ -161,6 +161,10 @@ func generateKey(length int) (key []byte, err error) {
 // rotation. Future work should include investigation of AES-GCM-SIV as an alternative to
 // random nonces.
 func NewGCMTransformer(block cipher.Block) (value.Transformer, error) {
+	return newGCMTransformerWithRandomNonce(block)
+}
+
+func newGCMTransformerWithRandomNonce(block cipher.Block) (*gcm, error) {
 	aead, err := newGCM(block)
 	if err != nil {
 		return nil, err

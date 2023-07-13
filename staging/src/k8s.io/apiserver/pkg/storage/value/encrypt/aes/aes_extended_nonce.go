@@ -167,15 +167,15 @@ func newGCMTransformerWithInfo(key, info []byte) (*gcm, error) {
 		return nil, err
 	}
 
-	transformer, err := NewGCMTransformer(block)
+	transformer, err := newGCMTransformerWithRandomNonce(block)
 	if err != nil {
 		return nil, err
 	}
 
-	aead := transformer.(*gcm).aead
-	transformer.(*gcm).aead = &aeadWithInfo{aead: aead, info: info}
+	aead := transformer.aead
+	transformer.aead = &aeadWithInfo{aead: aead, info: info}
 
-	return transformer.(*gcm), nil
+	return transformer, nil
 }
 
 var _ cipher.AEAD = &aeadWithInfo{}
