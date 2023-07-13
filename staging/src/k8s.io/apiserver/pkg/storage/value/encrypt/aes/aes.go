@@ -40,6 +40,8 @@ const commonSize = 32
 
 const keySizeCounterNonceGCM = commonSize
 
+const gcmNonceSize = 12
+
 // NewGCMTransformerWithUniqueKeyUnsafe is the same as NewGCMTransformer but is unsafe for general
 // use because it makes assumptions about the key underlying the block cipher.  Specifically,
 // it uses a 96-bit nonce where the first 32 bits are random data and the remaining 64 bits are
@@ -172,7 +174,7 @@ func newGCM(block cipher.Block) (cipher.AEAD, error) {
 	if err != nil {
 		return nil, err
 	}
-	if nonceSize := aead.NonceSize(); nonceSize != 12 { // all data in etcd will be broken if this ever changes
+	if nonceSize := aead.NonceSize(); nonceSize != gcmNonceSize { // all data in etcd will be broken if this ever changes
 		return nil, fmt.Errorf("crypto/cipher.NewGCM returned unexpected nonce size: %d", nonceSize)
 	}
 	return aead, nil

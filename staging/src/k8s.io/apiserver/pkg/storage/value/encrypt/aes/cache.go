@@ -46,15 +46,15 @@ func newSimpleCache(clock clock.Clock, ttl time.Duration) *simpleCache {
 }
 
 // given a key, return the transformer, or nil if it does not exist in the cache
-func (c *simpleCache) get(info []byte, dataCtx value.Context) *transformerWithInfo {
+func (c *simpleCache) get(info []byte, dataCtx value.Context) *gcm {
 	val, ok := c.cache.Get(keyFunc(dataCtx))
 	if !ok {
 		return nil
 	}
 
-	transformer := val.(*transformerWithInfo)
+	transformer := val.(*gcm)
 
-	if !bytes.Equal(transformer.info, info) {
+	if !bytes.Equal(transformer.aead.(*aeadWithInfo).info, info) {
 		return nil
 	}
 
@@ -62,14 +62,14 @@ func (c *simpleCache) get(info []byte, dataCtx value.Context) *transformerWithIn
 }
 
 // set caches the record for the key
-func (c *simpleCache) set(dataCtx value.Context, transformer *transformerWithInfo) {
+func (c *simpleCache) set(dataCtx value.Context, transformer *gcm) {
 	if dataCtx == nil || len(dataCtx.AuthenticatedData()) == 0 {
 		panic("authenticated data must not be empty")
 	}
 	if transformer == nil {
 		panic("transformer must not be nil")
 	}
-	if len(transformer.info) == 0 {
+	if len(transformer.aead.(*aeadWithInfo).info) == 0 {
 		panic("info must not be empty")
 	}
 	c.cache.Set(keyFunc(dataCtx), transformer, c.ttl)

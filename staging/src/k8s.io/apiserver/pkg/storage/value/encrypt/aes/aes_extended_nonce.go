@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/aes"
+	"crypto/cipher"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -96,11 +97,11 @@ type extendedNonceGCM struct {
 }
 
 func (e *extendedNonceGCM) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
-	if len(data) < infoSizeExtendedNonceGCM {
+	if len(data) < gcmNonceSize+infoSizeExtendedNonceGCM {
 		return nil, false, errors.New("the stored data was shorter than the required size")
 	}
 
-	info := data[:infoSizeExtendedNonceGCM]
+	info := data[gcmNonceSize : gcmNonceSize+infoSizeExtendedNonceGCM]
 
 	transformer, err := e.derivedKeyTransformer(info, dataCtx, false)
 	if err != nil {
@@ -160,7 +161,7 @@ func (e *extendedNonceGCM) sha256KDFExpandOnly(info []byte) ([]byte, error) {
 	return derivedKey, nil
 }
 
-func newGCMTransformerWithInfo(key, info []byte) (*transformerWithInfo, error) {
+func newGCMTransformerWithInfo(key, info []byte) (*gcm, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -171,31 +172,45 @@ func newGCMTransformerWithInfo(key, info []byte) (*transformerWithInfo, error) {
 		return nil, err
 	}
 
-	return &transformerWithInfo{transformer: transformer, info: info}, nil
+	aead := transformer.(*gcm).aead
+	transformer.(*gcm).aead = &aeadWithInfo{aead: aead, info: info}
+
+	return transformer.(*gcm), nil
 }
 
-type transformerWithInfo struct {
-	transformer value.Transformer
-	info        []byte
+var _ cipher.AEAD = &aeadWithInfo{}
+
+type aeadWithInfo struct {
+	aead cipher.AEAD
+	info []byte
 }
 
-func (t *transformerWithInfo) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
-	if !bytes.HasPrefix(data, t.info) {
-		return nil, false, errors.New("the stored data is missing the required info prefix")
+func (a *aeadWithInfo) NonceSize() int {
+	return a.aead.NonceSize()
+}
+
+func (a *aeadWithInfo) Overhead() int {
+	return a.aead.Overhead() + len(a.info)
+}
+
+func (a *aeadWithInfo) Seal(dst, nonce, plaintext, additionalData []byte) []byte {
+	if cap(dst) != a.Overhead()+len(plaintext) {
+		panic("aes-gcm detected invalid destination buffer capacity")
 	}
 
-	return t.transformer.TransformFromStorage(ctx, data[len(t.info):], dataCtx)
+	infoSize := len(a.info)
+
+	dst = append(dst, a.info...)
+
+	cipherText := a.aead.Seal(dst[infoSize:infoSize], nonce, plaintext, additionalData)
+
+	return dst[:infoSize+len(cipherText)]
 }
 
-func (t *transformerWithInfo) TransformToStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, error) {
-	out, err := t.transformer.TransformToStorage(ctx, data, dataCtx)
-	if err != nil {
-		return nil, err
+func (a *aeadWithInfo) Open(dst, nonce, ciphertext, additionalData []byte) ([]byte, error) {
+	if !bytes.HasPrefix(ciphertext, a.info) {
+		return nil, errors.New("the stored data is missing the required info prefix")
 	}
 
-	outWithInfo := make([]byte, 0, len(out)+len(t.info))
-	outWithInfo = append(outWithInfo, t.info...)
-	outWithInfo = append(outWithInfo, out...)
-
-	return outWithInfo, nil
+	return a.aead.Open(dst, nonce, ciphertext[len(a.info):], additionalData)
 }

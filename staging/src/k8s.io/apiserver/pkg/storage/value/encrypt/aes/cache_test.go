@@ -32,8 +32,8 @@ func Test_simpleCache(t *testing.T) {
 	info2 := []byte{2}
 	key1 := dataString("1")
 	key2 := dataString("2")
-	twi1 := &transformerWithInfo{info: info1}
-	twi2 := &transformerWithInfo{info: info2}
+	twi1 := &gcm{aead: &aeadWithInfo{info: info1}}
+	twi2 := &gcm{aead: &aeadWithInfo{info: info2}}
 
 	tests := []struct {
 		name string
@@ -120,7 +120,7 @@ func Test_simpleCache(t *testing.T) {
 	}
 }
 
-func twiPtrEquals(t *testing.T, want, got *transformerWithInfo) {
+func twiPtrEquals(t *testing.T, want, got *gcm) {
 	t.Helper()
 
 	if want != got {
