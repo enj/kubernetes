@@ -32,8 +32,8 @@ func Test_simpleCache(t *testing.T) {
 	info2 := []byte{2}
 	key1 := dataString("1")
 	key2 := dataString("2")
-	twi1 := &gcm{aead: &aeadWithInfo{info: info1}}
-	twi2 := &gcm{aead: &aeadWithInfo{info: info2}}
+	awi1 := &gcm{aead: &aeadWithInfo{info: info1}}
+	awi2 := &gcm{aead: &aeadWithInfo{info: info2}}
 
 	tests := []struct {
 		name string
@@ -43,69 +43,69 @@ func Test_simpleCache(t *testing.T) {
 			name: "get from empty",
 			test: func(t *testing.T, cache *simpleCache, clock *clocktesting.FakeClock) {
 				got := cache.get(info1, key1)
-				twiPtrEquals(t, nil, got)
+				gcmPtrEquals(t, nil, got)
 				cacheLenEquals(t, cache, 0)
 			},
 		},
 		{
 			name: "get after set",
 			test: func(t *testing.T, cache *simpleCache, clock *clocktesting.FakeClock) {
-				cache.set(key1, twi1)
+				cache.set(key1, awi1)
 				got := cache.get(info1, key1)
-				twiPtrEquals(t, twi1, got)
+				gcmPtrEquals(t, awi1, got)
 				cacheLenEquals(t, cache, 1)
 			},
 		},
 		{
 			name: "get after set but with different info",
 			test: func(t *testing.T, cache *simpleCache, clock *clocktesting.FakeClock) {
-				cache.set(key1, twi1)
+				cache.set(key1, awi1)
 				got := cache.get(info2, key1)
-				twiPtrEquals(t, nil, got)
+				gcmPtrEquals(t, nil, got)
 				cacheLenEquals(t, cache, 1)
 			},
 		},
 		{
 			name: "expired get after set",
 			test: func(t *testing.T, cache *simpleCache, clock *clocktesting.FakeClock) {
-				cache.set(key1, twi1)
+				cache.set(key1, awi1)
 				clock.Step(time.Hour)
 				got := cache.get(info1, key1)
-				twiPtrEquals(t, twi1, got)
+				gcmPtrEquals(t, awi1, got)
 				cacheLenEquals(t, cache, 1)
 			},
 		},
 		{
 			name: "expired get after GC",
 			test: func(t *testing.T, cache *simpleCache, clock *clocktesting.FakeClock) {
-				cache.set(key1, twi1)
+				cache.set(key1, awi1)
 				clock.Step(time.Hour)
 				cacheLenEquals(t, cache, 1)
-				cache.set(key2, twi2) // unrelated set to make GC run
+				cache.set(key2, awi2) // unrelated set to make GC run
 				got := cache.get(info1, key1)
-				twiPtrEquals(t, nil, got)
+				gcmPtrEquals(t, nil, got)
 				cacheLenEquals(t, cache, 1)
 			},
 		},
 		{
 			name: "multiple sets for same key",
 			test: func(t *testing.T, cache *simpleCache, clock *clocktesting.FakeClock) {
-				cache.set(key1, twi1)
+				cache.set(key1, awi1)
 				cacheLenEquals(t, cache, 1)
-				cache.set(key1, twi2)
+				cache.set(key1, awi2)
 				cacheLenEquals(t, cache, 1)
 
 				got11 := cache.get(info1, key1)
-				twiPtrEquals(t, nil, got11)
+				gcmPtrEquals(t, nil, got11)
 
 				got21 := cache.get(info2, key1)
-				twiPtrEquals(t, twi2, got21)
+				gcmPtrEquals(t, awi2, got21)
 
 				got12 := cache.get(info1, key2)
-				twiPtrEquals(t, nil, got12)
+				gcmPtrEquals(t, nil, got12)
 
 				got22 := cache.get(info2, key2)
-				twiPtrEquals(t, nil, got22)
+				gcmPtrEquals(t, nil, got22)
 			},
 		},
 	}
@@ -120,11 +120,11 @@ func Test_simpleCache(t *testing.T) {
 	}
 }
 
-func twiPtrEquals(t *testing.T, want, got *gcm) {
+func gcmPtrEquals(t *testing.T, want, got *gcm) {
 	t.Helper()
 
 	if want != got {
-		t.Errorf("transformerWithInfo structs are not pointer equivalent")
+		t.Errorf("gcm structs are not pointer equivalent")
 	}
 }
 
