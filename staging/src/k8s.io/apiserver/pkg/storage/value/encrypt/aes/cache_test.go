@@ -32,8 +32,8 @@ func Test_simpleCache(t *testing.T) {
 	info2 := []byte{2}
 	key1 := dataString("1")
 	key2 := dataString("2")
-	awi1 := &gcm{aead: &aeadWithInfo{info: info1}}
-	awi2 := &gcm{aead: &aeadWithInfo{info: info2}}
+	awi1 := &gcm{aead: &aeadWithInfoAndRandomNonce{info: info1}}
+	awi2 := &gcm{aead: &aeadWithInfoAndRandomNonce{info: info2}}
 
 	tests := []struct {
 		name string

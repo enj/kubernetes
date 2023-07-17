@@ -54,7 +54,7 @@ func (c *simpleCache) get(info []byte, dataCtx value.Context) *gcm {
 
 	transformer := val.(*gcm)
 
-	if !bytes.Equal(transformer.aead.(*aeadWithInfo).info, info) {
+	if !bytes.Equal(transformer.aead.(*aeadWithInfoAndRandomNonce).info, info) {
 		return nil
 	}
 
@@ -69,7 +69,7 @@ func (c *simpleCache) set(dataCtx value.Context, transformer *gcm) {
 	if transformer == nil {
 		panic("transformer must not be nil")
 	}
-	if len(transformer.aead.(*aeadWithInfo).info) == 0 {
+	if len(transformer.aead.(*aeadWithInfoAndRandomNonce).info) == 0 {
 		panic("info must not be empty")
 	}
 	c.cache.Set(keyFunc(dataCtx), transformer, c.ttl)

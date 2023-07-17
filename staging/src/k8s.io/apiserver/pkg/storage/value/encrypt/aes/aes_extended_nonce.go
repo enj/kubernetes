@@ -97,11 +97,11 @@ type extendedNonceGCM struct {
 }
 
 func (e *extendedNonceGCM) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
-	if len(data) < gcmNonceSize+infoSizeExtendedNonceGCM {
+	if len(data) < infoSizeExtendedNonceGCM {
 		return nil, false, errors.New("the stored data was shorter than the required size")
 	}
 
-	info := data[gcmNonceSize : gcmNonceSize+infoSizeExtendedNonceGCM]
+	info := data[:infoSizeExtendedNonceGCM]
 
 	transformer, err := e.derivedKeyTransformer(info, dataCtx, false)
 	if err != nil {
@@ -173,44 +173,56 @@ func newGCMTransformerWithInfo(key, info []byte) (*gcm, error) {
 	}
 
 	aead := transformer.aead
-	transformer.aead = &aeadWithInfo{aead: aead, info: info}
+	transformer.aead = &aeadWithInfoAndRandomNonce{aead: aead, info: info}
 
 	return transformer, nil
 }
 
-var _ cipher.AEAD = &aeadWithInfo{}
+var _ cipher.AEAD = &aeadWithInfoAndRandomNonce{}
 
-type aeadWithInfo struct {
+type aeadWithInfoAndRandomNonce struct {
 	aead cipher.AEAD
 	info []byte
 }
 
-func (a *aeadWithInfo) NonceSize() int {
-	return a.aead.NonceSize()
+func (a *aeadWithInfoAndRandomNonce) NonceSize() int {
+	return 0 // nonce generation is internal to this AEAD wrapper, the caller does not control it
 }
 
-func (a *aeadWithInfo) Overhead() int {
-	return a.aead.Overhead() + len(a.info)
+func (a *aeadWithInfoAndRandomNonce) Overhead() int {
+	return a.aead.Overhead() + len(a.info) + a.aead.NonceSize()
 }
 
-func (a *aeadWithInfo) Seal(dst, nonce, plaintext, additionalData []byte) []byte {
+func (a *aeadWithInfoAndRandomNonce) Seal(dst, _, plaintext, additionalData []byte) []byte {
 	if cap(dst) != a.Overhead()+len(plaintext) {
 		panic("aes-gcm detected invalid destination buffer capacity")
 	}
 
 	infoSize := len(a.info)
+	nonceEnd := infoSize + a.aead.NonceSize()
 
 	dst = append(dst, a.info...)
 
-	cipherText := a.aead.Seal(dst[infoSize:infoSize], nonce, plaintext, additionalData)
+	if err := randomNonce(dst[infoSize:nonceEnd]); err != nil {
+		panic(fmt.Errorf("failed to generate random nonce: %w", err))
+	}
 
-	return dst[:infoSize+len(cipherText)]
+	cipherText := a.aead.Seal(dst[nonceEnd:nonceEnd], dst[infoSize:nonceEnd], plaintext, additionalData)
+
+	return dst[:nonceEnd+len(cipherText)]
 }
 
-func (a *aeadWithInfo) Open(dst, nonce, ciphertext, additionalData []byte) ([]byte, error) {
+func (a *aeadWithInfoAndRandomNonce) Open(dst, _, ciphertext, additionalData []byte) ([]byte, error) {
+	if len(ciphertext) < a.Overhead() {
+		return nil, errors.New("the stored data is too short")
+	}
+
 	if !bytes.HasPrefix(ciphertext, a.info) {
 		return nil, errors.New("the stored data is missing the required info prefix")
 	}
 
-	return a.aead.Open(dst, nonce, ciphertext[len(a.info):], additionalData)
+	infoSize := len(a.info)
+	nonceEnd := infoSize + a.aead.NonceSize()
+
+	return a.aead.Open(dst, ciphertext[infoSize:nonceEnd], ciphertext[nonceEnd:], additionalData)
 }
