@@ -178,40 +178,6 @@ func TestGCMUnsafeCompatibility(t *testing.T) {
 	}
 }
 
-// TestGCMExtendedNonceUnsafeCompatibility asserts that encryptions performed via
-// NewKDFExtendedNonceGCMTransformerWithUniqueSeed can be decrypted via NewKDFExtendedNonceGCMTransformerFromSeedUnsafe.
-func TestGCMExtendedNonceUnsafeCompatibility(t *testing.T) {
-	transformerEncrypt, key, err := NewKDFExtendedNonceGCMTransformerWithUniqueSeed()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	transformerDecrypt := newKDFExtendedNonceGCMTransformerFromSeedUnsafeTest(t, nil, key)
-
-	ctx := context.Background()
-	dataCtx := value.DefaultContext("authenticated_data")
-
-	plaintext := []byte("firstvalue")
-
-	ciphertext, err := transformerEncrypt.TransformToStorage(ctx, plaintext, dataCtx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if bytes.Equal(plaintext, ciphertext) {
-		t.Errorf("plaintext %q matches ciphertext %q", string(plaintext), string(ciphertext))
-	}
-
-	plaintextAgain, _, err := transformerDecrypt.TransformFromStorage(ctx, ciphertext, dataCtx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !bytes.Equal(plaintext, plaintextAgain) {
-		t.Errorf("expected original plaintext %q, got %q", string(plaintext), string(plaintextAgain))
-	}
-}
-
 func TestGCMLegacyDataCompatibility(t *testing.T) {
 	block, err := aes.NewCipher([]byte("snorlax_awesomes"))
 	if err != nil {
@@ -245,7 +211,7 @@ func TestExtendedNonceGCMLegacyDataCompatibility(t *testing.T) {
 		legacyCiphertext = "$Bu\x9e3\x94_\xba\xd7\t\xdbWz\x0f\x03\x7fا\t\xfcv\x97\x9b\x89B \x9d\xeb\xce˝W\xef\xe3\xd6\xffj\x1e\xf6\xee\x9aP\x03\xb9\x83;0C\xce\xc1\xe4{5\x17[\x15\x11\a\xa8\xd2Ak\x0e)k\xbff\xb5\xd1\x02\xfc\xefߚx\xf2\x93\xd2q"
 	)
 
-	transformerDecrypt := newKDFExtendedNonceGCMTransformerFromSeedUnsafeTest(t, nil, []byte(legacyKey))
+	transformerDecrypt := newKDFExtendedNonceGCMTransformerFromSeedTest(t, nil, []byte(legacyKey))
 
 	ctx := context.Background()
 	dataCtx := value.DefaultContext("bamboo")
@@ -345,7 +311,7 @@ func TestGCMNonce(t *testing.T) {
 	})
 
 	t.Run("gcm extended nonce", func(t *testing.T) {
-		testGCMNonce(t, newKDFExtendedNonceGCMTransformerFromSeedUnsafeTest, infoSizeExtendedNonceGCM, func(_ int, nonce []byte) {
+		testGCMNonce(t, newKDFExtendedNonceGCMTransformerFromSeedTest, infoSizeExtendedNonceGCM, func(_ int, nonce []byte) {
 			if bytes.Equal(nonce, make([]byte, len(nonce))) {
 				t.Error("got all zeros for nonce")
 			}
@@ -402,7 +368,7 @@ func TestGCMKeyRotation(t *testing.T) {
 	})
 
 	t.Run("gcm extended", func(t *testing.T) {
-		testGCMKeyRotation(t, newKDFExtendedNonceGCMTransformerFromSeedUnsafeTest)
+		testGCMKeyRotation(t, newKDFExtendedNonceGCMTransformerFromSeedTest)
 	})
 }
 
@@ -518,7 +484,7 @@ func TestCBCKeyRotation(t *testing.T) {
 var gcmBenchmarks = []namedTransformerFunc{
 	{name: "gcm-random-nonce", f: newGCMTransformer},
 	{name: "gcm-counter-nonce", f: newGCMTransformerWithUniqueKeyUnsafeTest},
-	{name: "gcm-extended-nonce", f: newKDFExtendedNonceGCMTransformerFromSeedUnsafeTest},
+	{name: "gcm-extended-nonce", f: newKDFExtendedNonceGCMTransformerFromSeedTest},
 }
 
 func BenchmarkGCMRead(b *testing.B) {
@@ -785,7 +751,7 @@ func TestRoundTrip(t *testing.T) {
 		{name: "GCM 16 byte unsafe key", t: newGCMTransformerWithUniqueKeyUnsafeTest(t, aes16block, nil)},
 		{name: "GCM 24 byte unsafe key", t: newGCMTransformerWithUniqueKeyUnsafeTest(t, aes24block, nil)},
 		{name: "GCM 32 byte unsafe key", t: newGCMTransformerWithUniqueKeyUnsafeTest(t, aes32block, nil)},
-		{name: "GCM 32 byte unsafe seed", t: newKDFExtendedNonceGCMTransformerFromSeedUnsafeTest(t, nil, key32)},
+		{name: "GCM 32 byte seed", t: newKDFExtendedNonceGCMTransformerFromSeedTest(t, nil, key32)},
 		{name: "CBC 32 byte key", t: NewCBCTransformer(aes32block)},
 	}
 	for _, tt := range tests {
@@ -857,10 +823,10 @@ func newGCMTransformerWithUniqueKeyUnsafeTest(t testing.TB, block cipher.Block, 
 	return transformer
 }
 
-func newKDFExtendedNonceGCMTransformerFromSeedUnsafeTest(t testing.TB, _ cipher.Block, key []byte) value.Transformer {
+func newKDFExtendedNonceGCMTransformerFromSeedTest(t testing.TB, _ cipher.Block, key []byte) value.Transformer {
 	t.Helper()
 
-	transformer, err := NewKDFExtendedNonceGCMTransformerFromSeedUnsafe(key)
+	transformer, err := NewKDFExtendedNonceGCMTransformerFromSeed(key)
 	if err != nil {
 		t.Fatal(err)
 	}

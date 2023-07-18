@@ -238,9 +238,8 @@ func (t *envelopeTransformer) addTransformerForDecryption(cacheKey []byte, key [
 	var transformer value.Read
 	var err error
 	if useSeed {
-		// this is compatible with NewKDFExtendedNonceGCMTransformerWithUniqueSeed for decryption
 		// the input key is considered safe to use here because it is coming from the KMS plugin / etcd
-		transformer, err = aestransformer.NewKDFExtendedNonceGCMTransformerFromSeedUnsafe(key)
+		transformer, err = aestransformer.NewKDFExtendedNonceGCMTransformerFromSeed(key)
 	} else {
 		var block cipher.Block
 		block, err = aes.NewCipher(key)
@@ -280,10 +279,20 @@ func (t *envelopeTransformer) doDecode(originalData []byte) (*kmstypes.Encrypted
 	return o, nil
 }
 
-// GenerateTransformer generates a new transformer and encrypts the DEK using the envelope service.
-// It returns the transformer, the encrypted DEK, cache key and error.
+// GenerateTransformer generates a new transformer and encrypts the DEK/seed using the envelope service.
+// It returns the transformer, the encrypted DEK/seed, cache key and error.
 func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsservice.Service, useSeed bool) (value.Transformer, *kmstypes.EncryptedObject, []byte, error) {
-	newTransformerFunc := aestransformer.NewKDFExtendedNonceGCMTransformerWithUniqueSeed
+	newTransformerFunc := func() (value.Transformer, []byte, error) {
+		seed, err := aestransformer.GenerateKey(aestransformer.MinSeedSizeExtendedNonceGCM)
+		if err != nil {
+			return nil, nil, err
+		}
+		transformer, err := aestransformer.NewKDFExtendedNonceGCMTransformerFromSeed(seed)
+		if err != nil {
+			return nil, nil, err
+		}
+		return transformer, seed, nil
+	}
 	if !useSeed {
 		newTransformerFunc = aestransformer.NewGCMTransformerWithUniqueKeyUnsafe
 	}

@@ -56,7 +56,7 @@ const keySizeCounterNonceGCM = commonSize
 // it can be passed to NewGCMTransformer(aes.NewCipher(key)) to construct a transformer capable
 // of decrypting values encrypted by this transformer (that transformer must not be used for encryption).
 func NewGCMTransformerWithUniqueKeyUnsafe() (value.Transformer, []byte, error) {
-	key, err := generateKey(keySizeCounterNonceGCM)
+	key, err := GenerateKey(keySizeCounterNonceGCM)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -131,8 +131,8 @@ func die(msg string) {
 	klog.FatalDepth(1, msg)
 }
 
-// generateKey generates a random key using system randomness.
-func generateKey(length int) (key []byte, err error) {
+// GenerateKey generates a random key using system randomness.
+func GenerateKey(length int) (key []byte, err error) {
 	defer func(start time.Time) {
 		value.RecordDataKeyGeneration(start, err)
 	}(time.Now())

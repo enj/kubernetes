@@ -128,7 +128,7 @@ func (r envelopekmsv2) plainTextPayload(secretETCDPath string) ([]byte, error) {
 	var transformer value.Read
 	var err error
 	if r.useSeed {
-		transformer, err = aestransformer.NewKDFExtendedNonceGCMTransformerFromSeedUnsafe(r.plainTextDEKorSeed)
+		transformer, err = aestransformer.NewKDFExtendedNonceGCMTransformerFromSeed(r.plainTextDEKorSeed)
 	} else {
 		var block cipher.Block
 		block, err = aes.NewCipher(r.plainTextDEKorSeed)
