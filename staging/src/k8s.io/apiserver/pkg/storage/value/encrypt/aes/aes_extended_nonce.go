@@ -35,7 +35,7 @@ import (
 const (
 	// cacheTTL is the TTL of KDF cache entries.  We assume that the value.Context.AuthenticatedData
 	// for every call is the etcd storage path of the associated resource, and use that as the primary
-	// cache key (with a secondary check that confirms that the gcm.info matches).  Thus if a client
+	// cache key (with a secondary check that confirms that the info matches).  Thus if a client
 	// is constantly creating resources with new names (and thus new paths), they will keep adding new
 	// entries to the cache for up to this TTL before the GC logic starts deleting old entries.  Each
 	// entry is ~300 bytes in size, so even a malicious client will be bounded in the overall memory
@@ -48,28 +48,20 @@ const (
 )
 
 // NewKDFExtendedNonceGCMTransformerFromSeed is the same as NewGCMTransformer but trades storage,
-// memory and CPU to work around the limitations of AES-GCM's 12 byte nonce size.  It is marked
-// as unsafe because it assumes that the input seed is a cryptographically strong key that is at least
-// 32 bytes in length.  Callers that do need to supply a specific seed must use
-// NewKDFExtendedNonceGCMTransformerWithUniqueSeed instead to guarantee that a secure seed is used.
+// memory and CPU to work around the limitations of AES-GCM's 12 byte nonce size.  The input seed
+// is assumed to be a cryptographically strong slice of MinSeedSizeExtendedNonceGCM+ random bytes.
 // Unlike NewGCMTransformer, this function is immune to the birthday attack because a new key is generated
 // per encryption via a key derivation function: KDF(seed, random_bytes) -> key.  The derived key is
 // only used once as an AES-GCM key with a random 12 byte nonce.  This avoids any concerns around
 // cryptographic wear out (by either number of encryptions or the amount of data being encrypted).
-// No specific rotation schedule is required for the seed.  NewKDFExtendedNonceGCMTransformerWithUniqueSeed
-// and this function encrypt and decrypt data in a compatible way (so the output of one can be used
-// as the input to the other, and vice versa).
-//
-// NewKDFExtendedNonceGCMTransformerWithUniqueSeed is the same as NewKDFExtendedNonceGCMTransformerFromSeed
-// but it handles the seed generation for the caller.  Whenever a new seed is needed (for example,
-// during key rotation), this function should be used over the caller generating a new seed.  This
-// function is considered safe because there is no input that a caller could make a mistake with,
-// and the output transformer has the properties of AES-GCM without the nonce size limitations.
-// A new random seed is generated and returned on every invocation of this function.  If the seed is
-// stored and retrieved at a later point, it can be passed to NewKDFExtendedNonceGCMTransformerFromSeed
-// to construct a transformer capable of decrypting values encrypted by this transformer;
-// reusing the seed returned from this function is safe to do over time and across process restarts.
-// TODO fix above
+// Speaking on the cryptographic safety, the limit on the number of operations that can be preformed
+// with a single seed with derived keys and randomly generated nonces is not practically reachable.
+// Thus, the scheme does not impose any specific requirements on the seed rotation schedule.
+// Reusing the same seed is safe to do over time and across process restarts.  Whenever a new
+// seed is needed, the caller should generate it via GenerateKey(MinSeedSizeExtendedNonceGCM).
+// In regard to KMSv2, organization standards or compliance policies around rotation may require
+// that the seed be rotated at some interval.  This can be implemented externally by rotating
+// the key encryption key via a key ID change.
 func NewKDFExtendedNonceGCMTransformerFromSeed(seed []byte) (value.Transformer, error) {
 	if seedLen := len(seed); seedLen < MinSeedSizeExtendedNonceGCM {
 		return nil, fmt.Errorf("invalid seed length %d used for key generation", seedLen)
@@ -166,7 +158,10 @@ func newGCMTransformerWithInfo(key, info []byte) (*transformerWithInfo, error) {
 
 type transformerWithInfo struct {
 	transformer value.Transformer
-	info        []byte
+	// info are extra opaque bytes prepended to the writes from transformer and stripped from reads.
+	// currently info is used to generate a key via KDF(seed, info) -> key
+	// and transformer is the output of NewGCMTransformer(aes.NewCipher(key))
+	info []byte
 }
 
 func (t *transformerWithInfo) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) ([]byte, bool, error) {
