@@ -316,7 +316,7 @@ func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsser
 		return nil, nil, nil, err
 	}
 
-	cacheKey, err := generateCacheKey(o.EncryptedDEKSource, resp.KeyID, resp.Annotations)
+	cacheKey, err := generateCacheKey(resp.Ciphertext, resp.KeyID, resp.Annotations)
 	if err != nil {
 		return nil, nil, nil, err
 	}
