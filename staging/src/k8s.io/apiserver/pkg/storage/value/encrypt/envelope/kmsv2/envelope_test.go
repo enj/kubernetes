@@ -332,11 +332,9 @@ func TestEnvelopeTransformerStaleness(t *testing.T) {
 			// inject test data before performing a read
 			state.EncryptedObject.KeyID = tt.testKeyID
 			if tt.useSeedRead {
-				state.EncryptedObject.EncryptedSeed = []byte{1}
-				state.EncryptedObject.EncryptedDEK = nil
+				state.EncryptedObject.EncryptedDEKSourceType = kmstypes.EncryptedDEKSourceType_HKDF_SHA256_XNONCE_AES_GCM_SEED
 			} else {
-				state.EncryptedObject.EncryptedDEK = []byte{2}
-				state.EncryptedObject.EncryptedSeed = nil
+				state.EncryptedObject.EncryptedDEKSourceType = kmstypes.EncryptedDEKSourceType_AES_GCM_KEY
 			}
 			stateErr = tt.testErr
 
@@ -389,14 +387,15 @@ func TestEnvelopeTransformerStateFunc(t *testing.T) {
 			t.Fatalf("expected state error, got: %v", err)
 		}
 		o := &kmstypes.EncryptedObject{
-			EncryptedData: []byte{1},
-			KeyID:         "2",
-			Annotations:   nil,
+			EncryptedData:      []byte{1},
+			KeyID:              "2",
+			EncryptedDEKSource: []byte{3},
+			Annotations:        nil,
 		}
 		if useSeed {
-			o.EncryptedSeed = []byte{3}
+			o.EncryptedDEKSourceType = kmstypes.EncryptedDEKSourceType_HKDF_SHA256_XNONCE_AES_GCM_SEED
 		} else {
-			o.EncryptedDEK = []byte{3}
+			o.EncryptedDEKSourceType = kmstypes.EncryptedDEKSourceType_AES_GCM_KEY
 		}
 		data, err := proto.Marshal(o)
 		if err != nil {
@@ -443,7 +442,7 @@ func TestEnvelopeTransformerStateFunc(t *testing.T) {
 
 	t.Run("writes fail when the plugin is down and the state is invalid", func(t *testing.T) {
 		_, err := transformer.TransformToStorage(ctx, originalText, dataCtx)
-		if !strings.Contains(errString(err), `EDEK/ESEED with keyID hash "sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b" expired at`) {
+		if !strings.Contains(errString(err), `encryptedDEKSource with keyID hash "sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b" expired at`) {
 			t.Fatalf("expected expiration error, got: %v", err)
 		}
 	})
@@ -461,12 +460,7 @@ func TestEnvelopeTransformerStateFunc(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// skip StateFunc transformer
-		if useSeed {
-			obj.EncryptedSeed = append(obj.EncryptedSeed, 1)
-		} else {
-			obj.EncryptedDEK = append(obj.EncryptedDEK, 1)
-		}
+		obj.EncryptedDEKSource = append(obj.EncryptedDEKSource, 1) // skip StateFunc transformer
 
 		data, err := proto.Marshal(obj)
 		if err != nil {
@@ -536,9 +530,9 @@ func TestEncodeDecode(t *testing.T) {
 	transformer := &envelopeTransformer{}
 
 	obj := &kmstypes.EncryptedObject{
-		EncryptedData: []byte{0x01, 0x02, 0x03},
-		KeyID:         "1",
-		EncryptedDEK:  []byte{0x04, 0x05, 0x06},
+		EncryptedData:      []byte{0x01, 0x02, 0x03},
+		KeyID:              "1",
+		EncryptedDEKSource: []byte{0x04, 0x05, 0x06},
 	}
 
 	data, err := transformer.doEncode(obj)
@@ -571,16 +565,16 @@ func TestValidateEncryptedObject(t *testing.T) {
 		{
 			desc: "encrypted data is nil",
 			originalData: &kmstypes.EncryptedObject{
-				KeyID:        "1",
-				EncryptedDEK: []byte{0x01, 0x02, 0x03},
+				KeyID:              "1",
+				EncryptedDEKSource: []byte{0x01, 0x02, 0x03},
 			},
 			expectedError: fmt.Errorf("encrypted data is empty"),
 		},
 		{
 			desc: "encrypted data is []byte{}",
 			originalData: &kmstypes.EncryptedObject{
-				EncryptedDEK:  []byte{0x01, 0x02, 0x03},
-				EncryptedData: []byte{},
+				EncryptedDEKSource: []byte{0x01, 0x02, 0x03},
+				EncryptedData:      []byte{},
 			},
 			expectedError: fmt.Errorf("encrypted data is empty"),
 		},
@@ -751,59 +745,32 @@ func TestValidateKeyID(t *testing.T) {
 	}
 }
 
-func TestValidateEncryptedDEK(t *testing.T) {
+func TestValidateEncryptedDEKSource(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {
-		name          string
-		encryptedDEK  []byte
-		encryptedSeed []byte
-		expectedError string
+		name               string
+		encryptedDEKSource []byte
+		expectedError      string
 	}{
 		{
-			name:          "encrypted DEK is nil",
-			encryptedDEK:  nil,
-			expectedError: "encrypted DEK and seed are both empty",
+			name:               "encrypted DEK source is nil",
+			encryptedDEKSource: nil,
+			expectedError:      "encrypted DEK source is empty",
 		},
 		{
-			name:          "encrypted DEK is empty",
-			encryptedDEK:  []byte{},
-			expectedError: "encrypted DEK and seed are both empty",
+			name:               "encrypted DEK source is empty",
+			encryptedDEKSource: []byte{},
+			expectedError:      "encrypted DEK source is empty",
 		},
 		{
-			name:          "encrypted DEK size is greater than 1 kB",
-			encryptedDEK:  bytes.Repeat([]byte("a"), 1024+1),
-			expectedError: "which exceeds the max size of",
+			name:               "encrypted DEK source size is greater than 1 kB",
+			encryptedDEKSource: bytes.Repeat([]byte("a"), 1024+1),
+			expectedError:      "which exceeds the max size of",
 		},
 		{
-			name:          "valid encrypted DEK",
-			encryptedDEK:  []byte{0x01, 0x02, 0x03},
-			expectedError: "",
-		},
-		{
-			name:          "encrypted seed is nil",
-			encryptedSeed: nil,
-			expectedError: "encrypted DEK and seed are both empty",
-		},
-		{
-			name:          "encrypted seed is empty",
-			encryptedSeed: []byte{},
-			expectedError: "encrypted DEK and seed are both empty",
-		},
-		{
-			name:          "encrypted seed size is greater than 1 kB",
-			encryptedSeed: bytes.Repeat([]byte("a"), 1024+1),
-			expectedError: "which exceeds the max size of",
-		},
-		{
-			name:          "valid encrypted seed",
-			encryptedSeed: []byte{0x01, 0x02, 0x03},
-			expectedError: "",
-		},
-		{
-			name:          "both encrypted DEK and seed set",
-			encryptedDEK:  []byte{0x01, 0x02, 0x03},
-			encryptedSeed: []byte{0x01, 0x02, 0x03},
-			expectedError: "encrypted DEK and seed are both set",
+			name:               "valid encrypted DEK source",
+			encryptedDEKSource: []byte{0x01, 0x02, 0x03},
+			expectedError:      "",
 		},
 	}
 
@@ -811,7 +778,7 @@ func TestValidateEncryptedDEK(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := validateEncryptedDEKorSeed(tt.encryptedDEK, tt.encryptedSeed)
+			err := validateEncryptedDEKSource(tt.encryptedDEKSource)
 			if tt.expectedError != "" {
 				if err == nil {
 					t.Fatalf("expected error %q, got nil", tt.expectedError)
@@ -1005,12 +972,8 @@ func TestCacheNotCorrupted(t *testing.T) {
 	}
 
 	// this is to mimic a plugin that sets a static response for ciphertext
-	// but uses the annotation field to send the actual encrypted DEK/seed.
-	if useSeed {
-		envelopeService.SetCiphertext(state.EncryptedObject.EncryptedSeed)
-	} else {
-		envelopeService.SetCiphertext(state.EncryptedObject.EncryptedDEK)
-	}
+	// but uses the annotation field to send the actual encrypted DEK source.
+	envelopeService.SetCiphertext(state.EncryptedObject.EncryptedDEKSource)
 	// for this plugin, it indicates a change in the remote key ID as the returned
 	// encrypted DEK is different.
 	envelopeService.SetAnnotations(map[string][]byte{
@@ -1040,72 +1003,42 @@ func TestCacheNotCorrupted(t *testing.T) {
 }
 
 func TestGenerateCacheKey(t *testing.T) {
-	encryptedDEKorSeed1 := []byte{1, 2, 3}
+	encryptedDEKSource1 := []byte{1, 2, 3}
 	keyID1 := "id1"
 	annotations1 := map[string][]byte{"a": {4, 5}, "b": {6, 7}}
 
-	encryptedDEKorSeed2 := []byte{4, 5, 6}
+	encryptedDEKSource2 := []byte{4, 5, 6}
 	keyID2 := "id2"
 	annotations2 := map[string][]byte{"x": {9, 10}, "y": {11, 12}}
 
 	// generate all possible combinations of the above
 	testCases := []struct {
-		encryptedDEKorSeed []byte
+		encryptedDEKSource []byte
 		keyID              string
 		annotations        map[string][]byte
 	}{
-		{encryptedDEKorSeed1, keyID1, annotations1},
-		{encryptedDEKorSeed1, keyID1, annotations2},
-		{encryptedDEKorSeed1, keyID2, annotations1},
-		{encryptedDEKorSeed1, keyID2, annotations2},
-		{encryptedDEKorSeed2, keyID1, annotations1},
-		{encryptedDEKorSeed2, keyID1, annotations2},
-		{encryptedDEKorSeed2, keyID2, annotations1},
-		{encryptedDEKorSeed2, keyID2, annotations2},
+		{encryptedDEKSource1, keyID1, annotations1},
+		{encryptedDEKSource1, keyID1, annotations2},
+		{encryptedDEKSource1, keyID2, annotations1},
+		{encryptedDEKSource1, keyID2, annotations2},
+		{encryptedDEKSource2, keyID1, annotations1},
+		{encryptedDEKSource2, keyID1, annotations2},
+		{encryptedDEKSource2, keyID2, annotations1},
+		{encryptedDEKSource2, keyID2, annotations2},
 	}
 
 	for _, tc := range testCases {
 		tc := tc
 		for _, tc2 := range testCases {
 			tc2 := tc2
-			t.Run(fmt.Sprintf("%+v-%+v-dek", tc, tc2), func(t *testing.T) {
-				key1, err1 := generateCacheKey(tc.encryptedDEKorSeed, nil, tc.keyID, tc.annotations)
-				key2, err2 := generateCacheKey(tc2.encryptedDEKorSeed, nil, tc2.keyID, tc2.annotations)
+			t.Run(fmt.Sprintf("%+v-%+v", tc, tc2), func(t *testing.T) {
+				key1, err1 := generateCacheKey(tc.encryptedDEKSource, tc.keyID, tc.annotations)
+				key2, err2 := generateCacheKey(tc2.encryptedDEKSource, tc2.keyID, tc2.annotations)
 				if err1 != nil || err2 != nil {
 					t.Errorf("generateCacheKey() want err=nil, got err1=%q, err2=%q", errString(err1), errString(err2))
 				}
 				if bytes.Equal(key1, key2) != reflect.DeepEqual(tc, tc2) {
 					t.Errorf("expected %v, got %v", reflect.DeepEqual(tc, tc2), bytes.Equal(key1, key2))
-				}
-			})
-			t.Run(fmt.Sprintf("%+v-%+v-seed", tc, tc2), func(t *testing.T) {
-				key1, err1 := generateCacheKey(nil, tc.encryptedDEKorSeed, tc.keyID, tc.annotations)
-				key2, err2 := generateCacheKey(nil, tc2.encryptedDEKorSeed, tc2.keyID, tc2.annotations)
-				if err1 != nil || err2 != nil {
-					t.Errorf("generateCacheKey() want err=nil, got err1=%q, err2=%q", errString(err1), errString(err2))
-				}
-				if bytes.Equal(key1, key2) != reflect.DeepEqual(tc, tc2) {
-					t.Errorf("expected %v, got %v", reflect.DeepEqual(tc, tc2), bytes.Equal(key1, key2))
-				}
-			})
-			t.Run(fmt.Sprintf("%+v-%+v-both", tc, tc2), func(t *testing.T) { // this should never happen in real code
-				key1, err1 := generateCacheKey(tc.encryptedDEKorSeed, tc.encryptedDEKorSeed, tc.keyID, tc.annotations)
-				key2, err2 := generateCacheKey(tc2.encryptedDEKorSeed, tc2.encryptedDEKorSeed, tc2.keyID, tc2.annotations)
-				if err1 != nil || err2 != nil {
-					t.Errorf("generateCacheKey() want err=nil, got err1=%q, err2=%q", errString(err1), errString(err2))
-				}
-				if bytes.Equal(key1, key2) != reflect.DeepEqual(tc, tc2) {
-					t.Errorf("expected %v, got %v", reflect.DeepEqual(tc, tc2), bytes.Equal(key1, key2))
-				}
-			})
-			t.Run(fmt.Sprintf("%+v-%+v-compare", tc, tc2), func(t *testing.T) {
-				key1, err1 := generateCacheKey(tc.encryptedDEKorSeed, nil, tc.keyID, tc.annotations)
-				key2, err2 := generateCacheKey(nil, tc2.encryptedDEKorSeed, tc2.keyID, tc2.annotations)
-				if err1 != nil || err2 != nil {
-					t.Errorf("generateCacheKey() want err=nil, got err1=%q, err2=%q", errString(err1), errString(err2))
-				}
-				if bytes.Equal(key1, key2) {
-					t.Errorf("expected seed and dek based cache keys to never match")
 				}
 			})
 		}
@@ -1144,7 +1077,7 @@ func TestGenerateTransformer(t *testing.T) {
 				envelopeService.SetCiphertext([]byte{})
 				return envelopeService
 			},
-			expectedErr: "failed to validate encrypted DEK: encrypted DEK and seed are both empty",
+			expectedErr: "failed to validate encrypted DEK source: encrypted DEK source is empty",
 		},
 		{
 			name: "invalid annotations",

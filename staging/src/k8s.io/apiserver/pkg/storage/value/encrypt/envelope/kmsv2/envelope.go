@@ -340,7 +340,7 @@ func ValidateEncryptedObject(o *kmstypes.EncryptedObject) error {
 		return fmt.Errorf("encrypted data is empty")
 	}
 	if err := validateEncryptedDEKSource(o.EncryptedDEKSource); err != nil {
-		return fmt.Errorf("failed to validate encrypted DEK: %w", err)
+		return fmt.Errorf("failed to validate encrypted DEK source: %w", err)
 	}
 	if _, err := ValidateKeyID(o.KeyID); err != nil {
 		return fmt.Errorf("failed to validate key id: %w", err)
@@ -356,7 +356,7 @@ func ValidateEncryptedObject(o *kmstypes.EncryptedObject) error {
 // 2. The size of encrypted DEK source is less than 1 kB.
 func validateEncryptedDEKSource(encryptedDEKSource []byte) error {
 	if len(encryptedDEKSource) == 0 {
-		return fmt.Errorf("encrypted DEK is empty")
+		return fmt.Errorf("encrypted DEK source is empty")
 	}
 	if len(encryptedDEKSource) > encryptedDEKSourceMaxSize {
 		return fmt.Errorf("encrypted DEK source is %d bytes, which exceeds the max size of %d", len(encryptedDEKSource), encryptedDEKSourceMaxSize)
