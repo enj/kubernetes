@@ -149,7 +149,7 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 	}
 	stateUseSeed := len(state.EncryptedObject.EncryptedSeed) > 0
 
-	encryptedObjectCacheKey, err := generateCacheKey(encryptedObject.EncryptedDEK, encryptedObject.EncryptedSeed, encryptedObject.KeyID, encryptedObject.Annotations)
+	encryptedObjectCacheKey, err := generateCacheKey(encryptedObject.EncryptedDEK, encryptedObject.KeyID, encryptedObject.Annotations)
 	if err != nil {
 		return nil, false, err
 	}
@@ -167,17 +167,11 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 			"group", requestInfo.APIGroup, "version", requestInfo.APIVersion, "resource", requestInfo.Resource, "subresource", requestInfo.Subresource,
 			"verb", requestInfo.Verb, "namespace", requestInfo.Namespace, "name", requestInfo.Name)
 
-		req := &kmsservice.DecryptRequest{
+		key, err := t.envelopeService.Decrypt(ctx, uid, &kmsservice.DecryptRequest{
+			Ciphertext:  encryptedObject.EncryptedDEK,
 			KeyID:       encryptedObject.KeyID,
 			Annotations: encryptedObject.Annotations,
-		}
-		if useSeed {
-			req.Ciphertext = encryptedObject.EncryptedSeed
-		} else {
-			req.Ciphertext = encryptedObject.EncryptedDEK
-		}
-
-		key, err := t.envelopeService.Decrypt(ctx, uid, req)
+		})
 		if err != nil {
 			return nil, false, fmt.Errorf("failed to decrypt DEK, error: %w", err)
 		}
@@ -311,6 +305,7 @@ func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsser
 
 	o := &kmstypes.EncryptedObject{
 		KeyID:         resp.KeyID,
+		EncryptedDEK:  resp.Ciphertext,
 		EncryptedData: []byte{0}, // any non-empty value to pass validation
 		Annotations:   resp.Annotations,
 	}
@@ -342,7 +337,7 @@ func ValidateEncryptedObject(o *kmstypes.EncryptedObject) error {
 	if len(o.EncryptedData) == 0 {
 		return fmt.Errorf("encrypted data is empty")
 	}
-	if err := validateEncryptedDEKorSeed(o.EncryptedDEK, o.EncryptedSeed); err != nil {
+	if err := validateEncryptedDEK(o.EncryptedDEK); err != nil {
 		return fmt.Errorf("failed to validate encrypted DEK: %w", err)
 	}
 	if _, err := ValidateKeyID(o.KeyID); err != nil {
@@ -354,19 +349,15 @@ func ValidateEncryptedObject(o *kmstypes.EncryptedObject) error {
 	return nil
 }
 
-// validateEncryptedDEKorSeed tests the following:
-// 1. The encrypted DEK or seed is not empty.
-// 2. The size of encrypted DEK or seed is less than 1 kB.
-// 3. Only one of DEK or seed is set.
-func validateEncryptedDEKorSeed(encryptedDEK, encryptedSeed []byte) error {
-	if len(encryptedDEK) == 0 && len(encryptedSeed) == 0 {
-		return fmt.Errorf("encrypted DEK and seed are both empty")
+// validateEncryptedDEK tests the following:
+// 1. The encrypted DEK is not empty.
+// 2. The size of encrypted DEK is less than 1 kB.
+func validateEncryptedDEK(encryptedDEK []byte) error {
+	if len(encryptedDEK) == 0 {
+		return fmt.Errorf("encrypted DEK is empty")
 	}
-	if len(encryptedDEK) > 0 && len(encryptedSeed) > 0 {
-		return fmt.Errorf("encrypted DEK and seed are both set")
-	}
-	if len(encryptedDEK) > encryptedDEKorSeedMaxSize || len(encryptedSeed) > encryptedDEKorSeedMaxSize {
-		return fmt.Errorf("encrypted DEK/seed is %d/%d bytes, which exceeds the max size of %d", len(encryptedDEK), len(encryptedSeed), encryptedDEKorSeedMaxSize)
+	if len(encryptedDEK) > encryptedDEKMaxSize {
+		return fmt.Errorf("encrypted DEK is %d bytes, which exceeds the max size of %d", len(encryptedDEK), encryptedDEKMaxSize)
 	}
 	return nil
 }
@@ -411,19 +402,15 @@ func getRequestInfoFromContext(ctx context.Context) *genericapirequest.RequestIn
 
 // generateCacheKey returns a key for the cache.
 // The key is a concatenation of:
-//  0. encryptedSeed
 //  1. encryptedDEK
 //  2. keyID
 //  3. length of annotations
 //  4. annotations (sorted by key) - each annotation is a concatenation of:
 //     a. annotation key
 //     b. annotation value
-func generateCacheKey(encryptedDEK, encryptedSeed []byte, keyID string, annotations map[string][]byte) ([]byte, error) {
+func generateCacheKey(encryptedDEK []byte, keyID string, annotations map[string][]byte) ([]byte, error) {
 	// TODO(aramase): use sync pool buffer to avoid allocations
 	b := cryptobyte.NewBuilder(nil)
-	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-		b.AddBytes(encryptedSeed)
-	})
 	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
 		b.AddBytes(encryptedDEK)
 	})
