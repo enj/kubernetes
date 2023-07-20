@@ -952,9 +952,7 @@ func TestCacheNotCorrupted(t *testing.T) {
 
 	fakeClock := testingclock.NewFakeClock(time.Now())
 
-	useSeed := randomBool()
-
-	state, err := testStateFunc(ctx, envelopeService, fakeClock, useSeed)()
+	state, err := testStateFunc(ctx, envelopeService, fakeClock, randomBool())()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -975,7 +973,7 @@ func TestCacheNotCorrupted(t *testing.T) {
 	// but uses the annotation field to send the actual encrypted DEK source.
 	envelopeService.SetCiphertext(state.EncryptedObject.EncryptedDEKSource)
 	// for this plugin, it indicates a change in the remote key ID as the returned
-	// encrypted DEK is different.
+	// encrypted DEK source is different.
 	envelopeService.SetAnnotations(map[string][]byte{
 		"encrypted-dek.kms.kubernetes.io": []byte("encrypted-dek-1"),
 	})

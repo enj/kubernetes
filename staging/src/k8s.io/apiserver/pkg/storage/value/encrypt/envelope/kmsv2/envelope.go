@@ -148,7 +148,7 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 		return nil, false, err
 	}
 
-	encryptedObjectCacheKey, err := generateCacheKey(encryptedObject.EncryptedDEKSource, encryptedObject.KeyID, encryptedObject.Annotations)
+	encryptedObjectCacheKey, err := generateCacheKey(encryptedObject.EncryptedDEKSourceType, encryptedObject.EncryptedDEKSource, encryptedObject.KeyID, encryptedObject.Annotations)
 	if err != nil {
 		return nil, false, err
 	}
@@ -312,11 +312,17 @@ func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsser
 		Annotations:        resp.Annotations,
 	}
 
+	if useSeed {
+		o.EncryptedDEKSourceType = kmstypes.EncryptedDEKSourceType_HKDF_SHA256_XNONCE_AES_GCM_SEED
+	} else {
+		o.EncryptedDEKSourceType = kmstypes.EncryptedDEKSourceType_AES_GCM_KEY
+	}
+
 	if err := ValidateEncryptedObject(o); err != nil {
 		return nil, nil, nil, err
 	}
 
-	cacheKey, err := generateCacheKey(resp.Ciphertext, resp.KeyID, resp.Annotations)
+	cacheKey, err := generateCacheKey(o.EncryptedDEKSourceType, resp.Ciphertext, resp.KeyID, resp.Annotations)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -404,15 +410,17 @@ func getRequestInfoFromContext(ctx context.Context) *genericapirequest.RequestIn
 
 // generateCacheKey returns a key for the cache.
 // The key is a concatenation of:
+//  0. encryptedDEKSourceType
 //  1. encryptedDEKSource
 //  2. keyID
 //  3. length of annotations
 //  4. annotations (sorted by key) - each annotation is a concatenation of:
 //     a. annotation key
 //     b. annotation value
-func generateCacheKey(encryptedDEKSource []byte, keyID string, annotations map[string][]byte) ([]byte, error) {
+func generateCacheKey(encryptedDEKSourceType kmstypes.EncryptedDEKSourceType, encryptedDEKSource []byte, keyID string, annotations map[string][]byte) ([]byte, error) {
 	// TODO(aramase): use sync pool buffer to avoid allocations
 	b := cryptobyte.NewBuilder(nil)
+	b.AddUint32(uint32(encryptedDEKSourceType))
 	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
 		b.AddBytes(encryptedDEKSource)
 	})
