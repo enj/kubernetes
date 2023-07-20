@@ -58,8 +58,8 @@ const (
 	annotationsMaxSize = 32 * 1024 // 32 kB
 	// KeyIDMaxSize is the maximum size of the keyID.
 	KeyIDMaxSize = 1 * 1024 // 1 kB
-	// encryptedDEKorSeedMaxSize is the maximum size of the encrypted DEK or seed.
-	encryptedDEKorSeedMaxSize = 1 * 1024 // 1 kB
+	// encryptedDEKSourceMaxSize is the maximum size of the encrypted DEK source.
+	encryptedDEKSourceMaxSize = 1 * 1024 // 1 kB
 	// cacheTTL is the default time-to-live for the cache entry.
 	// this allows the cache to grow to an infinite size for up to a day.
 	// there is unlikely to be any meaningful memory impact on the server
@@ -100,7 +100,7 @@ type State struct {
 
 func (s *State) ValidateEncryptCapability() error {
 	if now := NowFunc(); now.After(s.ExpirationTimestamp) {
-		return fmt.Errorf("EDEK/ESEED with keyID hash %q expired at %s (current time is %s)",
+		return fmt.Errorf("encryptedDEKSource with keyID hash %q expired at %s (current time is %s)",
 			GetHashIfNotEmpty(s.EncryptedObject.KeyID), s.ExpirationTimestamp.Format(time.RFC3339), now.Format(time.RFC3339))
 	}
 	return nil
@@ -139,7 +139,7 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 		return nil, false, err
 	}
 
-	useSeed := len(encryptedObject.EncryptedSeed) > 0
+	useSeed := encryptedObject.EncryptedDEKSourceType == kmstypes.EncryptedDEKSourceType_HKDF_SHA256_XNONCE_AES_GCM_SEED
 
 	// TODO: consider marking state.EncryptedDEK != encryptedObject.EncryptedDEK as a stale read to support DEK defragmentation
 	//  at a minimum we should have a metric that helps the user understand if DEK fragmentation is high
@@ -147,9 +147,8 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 	if err != nil {
 		return nil, false, err
 	}
-	stateUseSeed := len(state.EncryptedObject.EncryptedSeed) > 0
 
-	encryptedObjectCacheKey, err := generateCacheKey(encryptedObject.EncryptedDEK, encryptedObject.KeyID, encryptedObject.Annotations)
+	encryptedObjectCacheKey, err := generateCacheKey(encryptedObject.EncryptedDEKSource, encryptedObject.KeyID, encryptedObject.Annotations)
 	if err != nil {
 		return nil, false, err
 	}
@@ -168,7 +167,7 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 			"verb", requestInfo.Verb, "namespace", requestInfo.Namespace, "name", requestInfo.Name)
 
 		key, err := t.envelopeService.Decrypt(ctx, uid, &kmsservice.DecryptRequest{
-			Ciphertext:  encryptedObject.EncryptedDEK,
+			Ciphertext:  encryptedObject.EncryptedDEKSource,
 			KeyID:       encryptedObject.KeyID,
 			Annotations: encryptedObject.Annotations,
 		})
@@ -189,8 +188,11 @@ func (t *envelopeTransformer) TransformFromStorage(ctx context.Context, data []b
 	}
 
 	// data is considered stale if the key ID does not match our current write transformer
-	return out, stale || encryptedObject.KeyID != state.EncryptedObject.KeyID || useSeed != stateUseSeed, nil
-
+	return out,
+		stale ||
+			encryptedObject.KeyID != state.EncryptedObject.KeyID ||
+			encryptedObject.EncryptedDEKSourceType != state.EncryptedObject.EncryptedDEKSourceType,
+		nil
 }
 
 // TransformToStorage encrypts data to be written to disk using envelope encryption.
@@ -304,23 +306,17 @@ func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsser
 	}
 
 	o := &kmstypes.EncryptedObject{
-		KeyID:         resp.KeyID,
-		EncryptedDEK:  resp.Ciphertext,
-		EncryptedData: []byte{0}, // any non-empty value to pass validation
-		Annotations:   resp.Annotations,
-	}
-
-	if useSeed {
-		o.EncryptedSeed = resp.Ciphertext
-	} else {
-		o.EncryptedDEK = resp.Ciphertext
+		KeyID:              resp.KeyID,
+		EncryptedDEKSource: resp.Ciphertext,
+		EncryptedData:      []byte{0}, // any non-empty value to pass validation
+		Annotations:        resp.Annotations,
 	}
 
 	if err := ValidateEncryptedObject(o); err != nil {
 		return nil, nil, nil, err
 	}
 
-	cacheKey, err := generateCacheKey(o.EncryptedDEK, o.EncryptedSeed, resp.KeyID, resp.Annotations)
+	cacheKey, err := generateCacheKey(o.EncryptedDEKSource, resp.KeyID, resp.Annotations)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -334,10 +330,16 @@ func ValidateEncryptedObject(o *kmstypes.EncryptedObject) error {
 	if o == nil {
 		return fmt.Errorf("encrypted object is nil")
 	}
+	switch t := o.EncryptedDEKSourceType; t {
+	case kmstypes.EncryptedDEKSourceType_AES_GCM_KEY:
+	case kmstypes.EncryptedDEKSourceType_HKDF_SHA256_XNONCE_AES_GCM_SEED:
+	default:
+		return fmt.Errorf("unknown encryptedDEKSourceType: %d", t)
+	}
 	if len(o.EncryptedData) == 0 {
 		return fmt.Errorf("encrypted data is empty")
 	}
-	if err := validateEncryptedDEK(o.EncryptedDEK); err != nil {
+	if err := validateEncryptedDEKSource(o.EncryptedDEKSource); err != nil {
 		return fmt.Errorf("failed to validate encrypted DEK: %w", err)
 	}
 	if _, err := ValidateKeyID(o.KeyID); err != nil {
@@ -349,15 +351,15 @@ func ValidateEncryptedObject(o *kmstypes.EncryptedObject) error {
 	return nil
 }
 
-// validateEncryptedDEK tests the following:
-// 1. The encrypted DEK is not empty.
-// 2. The size of encrypted DEK is less than 1 kB.
-func validateEncryptedDEK(encryptedDEK []byte) error {
-	if len(encryptedDEK) == 0 {
+// validateEncryptedDEKSource tests the following:
+// 1. The encrypted DEK source is not empty.
+// 2. The size of encrypted DEK source is less than 1 kB.
+func validateEncryptedDEKSource(encryptedDEKSource []byte) error {
+	if len(encryptedDEKSource) == 0 {
 		return fmt.Errorf("encrypted DEK is empty")
 	}
-	if len(encryptedDEK) > encryptedDEKMaxSize {
-		return fmt.Errorf("encrypted DEK is %d bytes, which exceeds the max size of %d", len(encryptedDEK), encryptedDEKMaxSize)
+	if len(encryptedDEKSource) > encryptedDEKSourceMaxSize {
+		return fmt.Errorf("encrypted DEK source is %d bytes, which exceeds the max size of %d", len(encryptedDEKSource), encryptedDEKSourceMaxSize)
 	}
 	return nil
 }
@@ -402,17 +404,17 @@ func getRequestInfoFromContext(ctx context.Context) *genericapirequest.RequestIn
 
 // generateCacheKey returns a key for the cache.
 // The key is a concatenation of:
-//  1. encryptedDEK
+//  1. encryptedDEKSource
 //  2. keyID
 //  3. length of annotations
 //  4. annotations (sorted by key) - each annotation is a concatenation of:
 //     a. annotation key
 //     b. annotation value
-func generateCacheKey(encryptedDEK []byte, keyID string, annotations map[string][]byte) ([]byte, error) {
+func generateCacheKey(encryptedDEKSource []byte, keyID string, annotations map[string][]byte) ([]byte, error) {
 	// TODO(aramase): use sync pool buffer to avoid allocations
 	b := cryptobyte.NewBuilder(nil)
 	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-		b.AddBytes(encryptedDEK)
+		b.AddBytes(encryptedDEKSource)
 	})
 	b.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
 		b.AddBytes(toBytes(keyID))
