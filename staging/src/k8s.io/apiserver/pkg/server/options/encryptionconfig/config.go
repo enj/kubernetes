@@ -89,7 +89,7 @@ const (
 	// storage migration would not do what they thought it did.
 	kmsv2PluginHealthzPositiveInterval = 1 * time.Minute
 	kmsv2PluginHealthzNegativeInterval = 10 * time.Second
-	kmsv2PluginWriteDEKorSeedMaxTTL    = 3 * time.Minute
+	kmsv2PluginWriteDEKSourceMaxTTL    = 3 * time.Minute
 
 	kmsPluginHealthzNegativeTTL = 3 * time.Second
 	kmsPluginHealthzPositiveTTL = 20 * time.Second
@@ -347,9 +347,9 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 
 	// allow reads indefinitely in all cases
 	// allow writes indefinitely as long as there is no error
-	// allow writes for only up to kmsv2PluginWriteDEKorSeedMaxTTL from now when there are errors
-	// we start the timer before we make the network call because kmsv2PluginWriteDEKorSeedMaxTTL is meant to be the upper bound
-	expirationTimestamp := envelopekmsv2.NowFunc().Add(kmsv2PluginWriteDEKorSeedMaxTTL)
+	// allow writes for only up to kmsv2PluginWriteDEKSourceMaxTTL from now when there are errors
+	// we start the timer before we make the network call because kmsv2PluginWriteDEKSourceMaxTTL is meant to be the upper bound
+	expirationTimestamp := envelopekmsv2.NowFunc().Add(kmsv2PluginWriteDEKSourceMaxTTL)
 
 	// dynamically check if we want to use KDF seed to derive DEKs or just a single DEK
 	// this gate can only change during tests, but the check is cheap enough to always make
@@ -781,7 +781,7 @@ func primeAndProbeKMSv2(ctx context.Context, probe *kmsv2PluginProbe, kmsName st
 
 	// make sure that the plugin's key ID is reasonably up-to-date
 	// also, make sure that our DEK is up-to-date to with said key ID (if it expires the server will fail all writes)
-	// if this background loop ever stops running, the server will become unfunctional after kmsv2PluginWriteDEKorSeedMaxTTL
+	// if this background loop ever stops running, the server will become unfunctional after kmsv2PluginWriteDEKSourceMaxTTL
 	go wait.PollUntilWithContext(
 		ctx,
 		kmsv2PluginHealthzPositiveInterval,
