@@ -236,7 +236,7 @@ func (t *envelopeTransformer) addTransformerForDecryption(cacheKey []byte, key [
 	var err error
 	if useSeed {
 		// the input key is considered safe to use here because it is coming from the KMS plugin / etcd
-		transformer, err = aestransformer.NewKDFExtendedNonceGCMTransformerFromSeed(key)
+		transformer, err = aestransformer.NewHKDFExtendedNonceGCMTransformer(key)
 	} else {
 		var block cipher.Block
 		block, err = aes.NewCipher(key)
@@ -284,7 +284,7 @@ func GenerateTransformer(ctx context.Context, uid string, envelopeService kmsser
 		if err != nil {
 			return nil, nil, err
 		}
-		transformer, err := aestransformer.NewKDFExtendedNonceGCMTransformerFromSeed(seed)
+		transformer, err := aestransformer.NewHKDFExtendedNonceGCMTransformer(seed)
 		if err != nil {
 			return nil, nil, err
 		}

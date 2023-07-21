@@ -47,7 +47,7 @@ const (
 	MinSeedSizeExtendedNonceGCM
 )
 
-// NewKDFExtendedNonceGCMTransformerFromSeed is the same as NewGCMTransformer but trades storage,
+// NewHKDFExtendedNonceGCMTransformer is the same as NewGCMTransformer but trades storage,
 // memory and CPU to work around the limitations of AES-GCM's 12 byte nonce size.  The input seed
 // is assumed to be a cryptographically strong slice of MinSeedSizeExtendedNonceGCM+ random bytes.
 // Unlike NewGCMTransformer, this function is immune to the birthday attack because a new key is generated
@@ -62,7 +62,7 @@ const (
 // In regard to KMSv2, organization standards or compliance policies around rotation may require
 // that the seed be rotated at some interval.  This can be implemented externally by rotating
 // the key encryption key via a key ID change.
-func NewKDFExtendedNonceGCMTransformerFromSeed(seed []byte) (value.Transformer, error) {
+func NewHKDFExtendedNonceGCMTransformer(seed []byte) (value.Transformer, error) {
 	if seedLen := len(seed); seedLen < MinSeedSizeExtendedNonceGCM {
 		return nil, fmt.Errorf("invalid seed length %d used for key generation", seedLen)
 	}
