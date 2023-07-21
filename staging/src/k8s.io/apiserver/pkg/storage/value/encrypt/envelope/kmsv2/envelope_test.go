@@ -1004,25 +1004,37 @@ func TestGenerateCacheKey(t *testing.T) {
 	encryptedDEKSource1 := []byte{1, 2, 3}
 	keyID1 := "id1"
 	annotations1 := map[string][]byte{"a": {4, 5}, "b": {6, 7}}
+	encryptedDEKSourceType1 := kmstypes.EncryptedDEKSourceType_AES_GCM_KEY
 
 	encryptedDEKSource2 := []byte{4, 5, 6}
 	keyID2 := "id2"
 	annotations2 := map[string][]byte{"x": {9, 10}, "y": {11, 12}}
+	encryptedDEKSourceType2 := kmstypes.EncryptedDEKSourceType_HKDF_SHA256_XNONCE_AES_GCM_SEED
 
 	// generate all possible combinations of the above
 	testCases := []struct {
-		encryptedDEKSource []byte
-		keyID              string
-		annotations        map[string][]byte
+		encryptedDEKSourceType kmstypes.EncryptedDEKSourceType
+		encryptedDEKSource     []byte
+		keyID                  string
+		annotations            map[string][]byte
 	}{
-		{encryptedDEKSource1, keyID1, annotations1},
-		{encryptedDEKSource1, keyID1, annotations2},
-		{encryptedDEKSource1, keyID2, annotations1},
-		{encryptedDEKSource1, keyID2, annotations2},
-		{encryptedDEKSource2, keyID1, annotations1},
-		{encryptedDEKSource2, keyID1, annotations2},
-		{encryptedDEKSource2, keyID2, annotations1},
-		{encryptedDEKSource2, keyID2, annotations2},
+		{encryptedDEKSourceType1, encryptedDEKSource1, keyID1, annotations1},
+		{encryptedDEKSourceType1, encryptedDEKSource1, keyID1, annotations2},
+		{encryptedDEKSourceType1, encryptedDEKSource1, keyID2, annotations1},
+		{encryptedDEKSourceType1, encryptedDEKSource1, keyID2, annotations2},
+		{encryptedDEKSourceType1, encryptedDEKSource2, keyID1, annotations1},
+		{encryptedDEKSourceType1, encryptedDEKSource2, keyID1, annotations2},
+		{encryptedDEKSourceType1, encryptedDEKSource2, keyID2, annotations1},
+		{encryptedDEKSourceType1, encryptedDEKSource2, keyID2, annotations2},
+
+		{encryptedDEKSourceType2, encryptedDEKSource1, keyID1, annotations1},
+		{encryptedDEKSourceType2, encryptedDEKSource1, keyID1, annotations2},
+		{encryptedDEKSourceType2, encryptedDEKSource1, keyID2, annotations1},
+		{encryptedDEKSourceType2, encryptedDEKSource1, keyID2, annotations2},
+		{encryptedDEKSourceType2, encryptedDEKSource2, keyID1, annotations1},
+		{encryptedDEKSourceType2, encryptedDEKSource2, keyID1, annotations2},
+		{encryptedDEKSourceType2, encryptedDEKSource2, keyID2, annotations1},
+		{encryptedDEKSourceType2, encryptedDEKSource2, keyID2, annotations2},
 	}
 
 	for _, tc := range testCases {
@@ -1030,8 +1042,8 @@ func TestGenerateCacheKey(t *testing.T) {
 		for _, tc2 := range testCases {
 			tc2 := tc2
 			t.Run(fmt.Sprintf("%+v-%+v", tc, tc2), func(t *testing.T) {
-				key1, err1 := generateCacheKey(tc.encryptedDEKSource, tc.keyID, tc.annotations)
-				key2, err2 := generateCacheKey(tc2.encryptedDEKSource, tc2.keyID, tc2.annotations)
+				key1, err1 := generateCacheKey(tc.encryptedDEKSourceType, tc.encryptedDEKSource, tc.keyID, tc.annotations)
+				key2, err2 := generateCacheKey(tc2.encryptedDEKSourceType, tc2.encryptedDEKSource, tc2.keyID, tc2.annotations)
 				if err1 != nil || err2 != nil {
 					t.Errorf("generateCacheKey() want err=nil, got err1=%q, err2=%q", errString(err1), errString(err2))
 				}
