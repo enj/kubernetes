@@ -356,7 +356,7 @@ func (h *kmsv2PluginProbe) rotateDEKOnKeyIDChange(ctx context.Context, statusKey
 	// this allows us to easily exercise both modes without restarting the API server
 	// TODO integration test that this dynamically takes effect
 	useSeed := utilfeature.DefaultFeatureGate.Enabled(features.KMSv2KDF)
-	stateUseSeed := len(state.EncryptedObject.EncryptedSeed) > 0
+	stateUseSeed := state.EncryptedObject.EncryptedDEKSourceType == kmstypes.EncryptedDEKSourceType_HKDF_SHA256_XNONCE_AES_GCM_SEED
 
 	// state is valid and status keyID is unchanged from when we generated this DEK/seed so there is no need to rotate it
 	// just move the expiration of the current state forward by the reuse interval
@@ -415,7 +415,7 @@ func (h *kmsv2PluginProbe) getCurrentState() (envelopekmsv2.State, error) {
 		return envelopekmsv2.State{}, fmt.Errorf("got unexpected nil transformer")
 	}
 
-	if len(state.EncryptedObject.EncryptedDEK) == 0 && len(state.EncryptedObject.EncryptedSeed) == 0 {
+	if len(state.EncryptedObject.EncryptedDEKSource) == 0 {
 		return envelopekmsv2.State{}, fmt.Errorf("got unexpected empty EncryptedDEK and EncryptedSeed")
 	}
 

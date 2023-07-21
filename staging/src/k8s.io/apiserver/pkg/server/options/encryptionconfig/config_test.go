@@ -1756,7 +1756,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			useSeed:     true,
 			statusKeyID: "2",
 			wantState: envelopekmsv2.State{
-				EncryptedObject:     kmstypes.EncryptedObject{KeyID: "2"},
+				EncryptedObject:     kmstypes.EncryptedObject{KeyID: "2", EncryptedDEKSourceType: kmstypes.EncryptedDEKSourceType_HKDF_SHA256_XNONCE_AES_GCM_SEED},
 				ExpirationTimestamp: now.Add(3 * time.Minute),
 			},
 			wantEncryptCalls: 1,
@@ -1872,7 +1872,7 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 				t.Errorf("log mismatch (-want +got):\n%s", diff)
 			}
 
-			ignoredFields := sets.NewString("Transformer", "EncryptedObject.EncryptedDEK", "EncryptedObject.EncryptedSeed", "UID", "CacheKey")
+			ignoredFields := sets.NewString("Transformer", "EncryptedObject.EncryptedDEKSource", "UID", "CacheKey")
 
 			gotState := *h.state.Load()
 
@@ -1883,15 +1883,15 @@ func Test_kmsv2PluginProbe_rotateDEKOnKeyIDChange(t *testing.T) {
 			}
 
 			if len(cmp.Diff(tt.wantState, gotState)) > 0 { // we only need to run this check when the state changes
-				var validCiphertext bool
+				validCiphertext := len(gotState.EncryptedObject.EncryptedDEKSource) > 0
 				if tt.useSeed {
-					validCiphertext = len(gotState.EncryptedObject.EncryptedSeed) > 0 && len(gotState.EncryptedObject.EncryptedDEK) == 0
+					validCiphertext = validCiphertext && gotState.EncryptedObject.EncryptedDEKSourceType == kmstypes.EncryptedDEKSourceType_HKDF_SHA256_XNONCE_AES_GCM_SEED
 				} else {
-					validCiphertext = len(gotState.EncryptedObject.EncryptedDEK) > 0 && len(gotState.EncryptedObject.EncryptedSeed) == 0
+					validCiphertext = validCiphertext && gotState.EncryptedObject.EncryptedDEKSourceType == kmstypes.EncryptedDEKSourceType_AES_GCM_KEY
 				}
 				if !validCiphertext {
-					t.Errorf("invalid ciphertext with useSeed=%v, seedLen=%d, dekLen=%d", tt.useSeed,
-						len(gotState.EncryptedObject.EncryptedSeed), len(gotState.EncryptedObject.EncryptedDEK))
+					t.Errorf("invalid ciphertext with useSeed=%v, encryptedDEKSourceLen=%d, encryptedDEKSourceType=%d", tt.useSeed,
+						len(gotState.EncryptedObject.EncryptedDEKSource), gotState.EncryptedObject.EncryptedDEKSourceType)
 				}
 			}
 
