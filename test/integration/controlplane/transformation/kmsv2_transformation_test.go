@@ -74,7 +74,7 @@ import (
 type envelopekmsv2 struct {
 	providerName       string
 	rawEnvelope        []byte
-	plainTextDEKorSeed []byte
+	plainTextDEKSource []byte
 	useSeed            bool
 }
 
@@ -86,7 +86,7 @@ func (r envelopekmsv2) prefixLen() int {
 	return len(r.prefix())
 }
 
-func (r envelopekmsv2) cipherTextDEKorSeed() ([]byte, error) {
+func (r envelopekmsv2) cipherTextDEKSource() ([]byte, error) {
 	o := &kmstypes.EncryptedObject{}
 	if err := proto.Unmarshal(r.rawEnvelope[r.startOfPayload(r.providerName):], o); err != nil {
 		return nil, err
@@ -96,15 +96,15 @@ func (r envelopekmsv2) cipherTextDEKorSeed() ([]byte, error) {
 		return nil, err
 	}
 
-	if r.useSeed && len(o.EncryptedSeed) == 0 {
-		return nil, fmt.Errorf("seed is missing")
+	if r.useSeed && o.EncryptedDEKSourceType != kmstypes.EncryptedDEKSourceType_HKDF_SHA256_XNONCE_AES_GCM_SEED {
+		return nil, fmt.Errorf("wrong type used with useSeed=true")
 	}
 
-	if r.useSeed {
-		return o.EncryptedSeed, nil
+	if !r.useSeed && o.EncryptedDEKSourceType != kmstypes.EncryptedDEKSourceType_AES_GCM_KEY {
+		return nil, fmt.Errorf("wrong type used with useSeed=false")
 	}
 
-	return o.EncryptedDEK, nil
+	return o.EncryptedDEKSource, nil
 }
 
 func (r envelopekmsv2) startOfPayload(_ string) int {
@@ -128,10 +128,10 @@ func (r envelopekmsv2) plainTextPayload(secretETCDPath string) ([]byte, error) {
 	var transformer value.Read
 	var err error
 	if r.useSeed {
-		transformer, err = aestransformer.NewKDFExtendedNonceGCMTransformerFromSeed(r.plainTextDEKorSeed)
+		transformer, err = aestransformer.NewKDFExtendedNonceGCMTransformerFromSeed(r.plainTextDEKSource)
 	} else {
 		var block cipher.Block
-		block, err = aes.NewCipher(r.plainTextDEKorSeed)
+		block, err = aes.NewCipher(r.plainTextDEKSource)
 		if err != nil {
 			return nil, err
 		}
@@ -205,7 +205,7 @@ resources:
 		t.Fatalf("Failed to create test secret, error: %v", err)
 	}
 
-	plainTextDEKorSeed := pluginMock.LastEncryptRequest()
+	plainTextDEKSource := pluginMock.LastEncryptRequest()
 
 	secretETCDPath := test.getETCDPathForResource(test.storageConfig.Prefix, "", "secrets", test.secret.Name, test.secret.Namespace)
 	rawEnvelope, err := test.getRawSecretFromETCD()
@@ -216,7 +216,7 @@ resources:
 	envelopeData := envelopekmsv2{
 		providerName:       providerName,
 		rawEnvelope:        rawEnvelope,
-		plainTextDEKorSeed: plainTextDEKorSeed,
+		plainTextDEKSource: plainTextDEKSource,
 		useSeed:            utilfeature.DefaultFeatureGate.Enabled(features.KMSv2KDF),
 	}
 
@@ -227,7 +227,7 @@ resources:
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	ciphertext, err := envelopeData.cipherTextDEKorSeed()
+	ciphertext, err := envelopeData.cipherTextDEKSource()
 	if err != nil {
 		t.Fatalf("failed to get ciphertext DEK/seed from KMSv2 Plugin: %v", err)
 	}
@@ -235,11 +235,11 @@ resources:
 	if err != nil {
 		t.Fatalf("failed to decrypt DEK, %v", err)
 	}
-	dekOrSeedPlainAsWouldBeSeenByETCD := decryptResponse.Plaintext
+	dekSourcePlainAsWouldBeSeenByETCD := decryptResponse.Plaintext
 
-	if !bytes.Equal(plainTextDEKorSeed, dekOrSeedPlainAsWouldBeSeenByETCD) {
-		t.Fatalf("expected plainTextDEKorSeed %v to be passed to KMS Plugin, but got %s",
-			plainTextDEKorSeed, dekOrSeedPlainAsWouldBeSeenByETCD)
+	if !bytes.Equal(plainTextDEKSource, dekSourcePlainAsWouldBeSeenByETCD) {
+		t.Fatalf("expected plainTextDEKSource %v to be passed to KMS Plugin, but got %s",
+			plainTextDEKSource, dekSourcePlainAsWouldBeSeenByETCD)
 	}
 
 	plainSecret, err := envelopeData.plainTextPayload(secretETCDPath)
@@ -330,11 +330,11 @@ resources:
 
 	useSeed := utilfeature.DefaultFeatureGate.Enabled(features.KMSv2KDF)
 
-	var firstEncryptedDEKorSeed []byte
+	var firstEncryptedDEKSource []byte
 	var f checkFunc
 	if useSeed {
 		f = func(_ int, _ uint64, etcdKey string, obj kmstypes.EncryptedObject) {
-			firstEncryptedDEKorSeed = obj.EncryptedSeed
+			firstEncryptedDEKSource = obj.EncryptedDEKSource
 
 			if obj.KeyID != "1" {
 				t.Errorf("key %s: want key ID %s, got %s", etcdKey, "1", obj.KeyID)
@@ -342,7 +342,7 @@ resources:
 		}
 	} else {
 		f = func(_ int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject) {
-			firstEncryptedDEKorSeed = obj.EncryptedDEK
+			firstEncryptedDEKSource = obj.EncryptedDEKSource
 
 			if obj.KeyID != "1" {
 				t.Errorf("key %s: want key ID %s, got %s", etcdKey, "1", obj.KeyID)
@@ -356,10 +356,10 @@ resources:
 			}
 		}
 	}
-	assertPodDEKorSeeds(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
+	assertPodDEKSources(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
 		1, 1, "k8s:enc:kms:v2:kms-provider:", f,
 	)
-	if len(firstEncryptedDEKorSeed) == 0 {
+	if len(firstEncryptedDEKSource) == 0 {
 		t.Fatal("unexpected empty DEK or seed")
 	}
 
@@ -402,11 +402,11 @@ resources:
 	var checkDEK checkFunc
 	if useSeed {
 		checkDEK = func(_ int, _ uint64, etcdKey string, obj kmstypes.EncryptedObject) {
-			if len(obj.EncryptedSeed) == 0 {
-				t.Error("unexpected empty seed")
+			if len(obj.EncryptedDEKSource) == 0 {
+				t.Error("unexpected empty DEK source")
 			}
 
-			if bytes.Equal(obj.EncryptedSeed, firstEncryptedDEKorSeed) {
+			if bytes.Equal(obj.EncryptedDEKSource, firstEncryptedDEKSource) {
 				t.Errorf("key %s: incorrectly has the same ESEED", etcdKey)
 			}
 
@@ -416,11 +416,11 @@ resources:
 		}
 	} else {
 		checkDEK = func(_ int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject) {
-			if len(obj.EncryptedDEK) == 0 {
-				t.Error("unexpected empty DEK")
+			if len(obj.EncryptedDEKSource) == 0 {
+				t.Error("unexpected empty DEK source")
 			}
 
-			if bytes.Equal(obj.EncryptedDEK, firstEncryptedDEKorSeed) {
+			if bytes.Equal(obj.EncryptedDEKSource, firstEncryptedDEKSource) {
 				t.Errorf("key %s: incorrectly has the same EDEK", etcdKey)
 			}
 
@@ -494,7 +494,7 @@ resources:
 		t.Fatalf("Resource version should not have changed again after the initial version updated as a result of the keyID update. old pod: %v, new pod: %v", newPod, updatedNewPod)
 	}
 
-	assertPodDEKorSeeds(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
+	assertPodDEKSources(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
 		1, 1, "k8s:enc:kms:v2:kms-provider:", checkDEK,
 	)
 
@@ -547,10 +547,10 @@ resources:
 	}
 }
 
-func TestKMSv2ProviderDEKorSeedReuse(t *testing.T) {
+func TestKMSv2ProviderDEKSourceReuse(t *testing.T) {
 	t.Run("regular gcm", func(t *testing.T) {
 		defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2KDF, false)()
-		testKMSv2ProviderDEKorSeedReuse(t,
+		testKMSv2ProviderDEKSourceReuse(t,
 			func(i int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject) {
 				if obj.KeyID != "1" {
 					t.Errorf("key %s: want key ID %s, got %s", etcdKey, "1", obj.KeyID)
@@ -567,7 +567,7 @@ func TestKMSv2ProviderDEKorSeedReuse(t *testing.T) {
 
 	t.Run("extended nonce gcm", func(t *testing.T) {
 		defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2KDF, true)()
-		testKMSv2ProviderDEKorSeedReuse(t,
+		testKMSv2ProviderDEKSourceReuse(t,
 			func(_ int, _ uint64, etcdKey string, obj kmstypes.EncryptedObject) {
 				if obj.KeyID != "1" {
 					t.Errorf("key %s: want key ID %s, got %s", etcdKey, "1", obj.KeyID)
@@ -577,7 +577,7 @@ func TestKMSv2ProviderDEKorSeedReuse(t *testing.T) {
 	})
 }
 
-func testKMSv2ProviderDEKorSeedReuse(t *testing.T, f checkFunc) {
+func testKMSv2ProviderDEKSourceReuse(t *testing.T, f checkFunc) {
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2, true)()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -625,7 +625,7 @@ resources:
 		}
 	}
 
-	assertPodDEKorSeeds(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
+	assertPodDEKSources(ctx, t, test.kubeAPIServer.ServerOpts.Etcd.StorageConfig,
 		podCount, 1, // key ID does not change during the test so we should only have a single DEK
 		"k8s:enc:kms:v2:kms-provider:", f,
 	)
@@ -633,7 +633,7 @@ resources:
 
 type checkFunc func(i int, counter uint64, etcdKey string, obj kmstypes.EncryptedObject)
 
-func assertPodDEKorSeeds(ctx context.Context, t *testing.T, config storagebackend.Config, podCount, dekOrSeedCount int, kmsPrefix string, f checkFunc) {
+func assertPodDEKSources(ctx context.Context, t *testing.T, config storagebackend.Config, podCount, dekSourcesCount int, kmsPrefix string, f checkFunc) {
 	t.Helper()
 
 	rawClient, etcdClient, err := integration.GetEtcdClients(config.Transport)
@@ -688,21 +688,18 @@ func assertPodDEKorSeeds(ctx context.Context, t *testing.T, config storagebacken
 		f(i, counter, string(kv.Key), out[i])
 	}
 
-	uniqueDEKorSeeds := sets.NewString()
+	uniqueDEKSources := sets.NewString()
 	for _, object := range out {
-		if useSeed {
-			uniqueDEKorSeeds.Insert(string(object.EncryptedSeed))
-		} else {
-			uniqueDEKorSeeds.Insert(string(object.EncryptedDEK))
-		}
+		object := object
+		uniqueDEKSources.Insert(string(object.EncryptedDEKSource))
 	}
 
-	if uniqueDEKorSeeds.Has("") {
-		t.Error("unexpected empty DEK/seed seen")
+	if uniqueDEKSources.Has("") {
+		t.Error("unexpected empty DEK source seen")
 	}
 
-	if uniqueDEKorSeeds.Len() != dekOrSeedCount {
-		t.Errorf("expected %d DEKs or seeds, got: %d", dekOrSeedCount, uniqueDEKorSeeds.Len())
+	if uniqueDEKSources.Len() != dekSourcesCount {
+		t.Errorf("expected %d DEK sources, got: %d", dekSourcesCount, uniqueDEKSources.Len())
 	}
 }
 
