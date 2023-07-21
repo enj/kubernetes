@@ -692,6 +692,15 @@ func assertPodDEKSources(ctx context.Context, t *testing.T, config storagebacken
 	for _, object := range out {
 		object := object
 		uniqueDEKSources.Insert(string(object.EncryptedDEKSource))
+		if useSeed {
+			if object.EncryptedDEKSourceType != kmstypes.EncryptedDEKSourceType_HKDF_SHA256_XNONCE_AES_GCM_SEED {
+				t.Errorf("invalid type: %d", object.EncryptedDEKSourceType)
+			}
+		} else {
+			if object.EncryptedDEKSourceType != kmstypes.EncryptedDEKSourceType_AES_GCM_KEY {
+				t.Errorf("invalid type: %d", object.EncryptedDEKSourceType)
+			}
+		}
 	}
 
 	if uniqueDEKSources.Has("") {
