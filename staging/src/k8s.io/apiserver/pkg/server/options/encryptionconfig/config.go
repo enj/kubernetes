@@ -415,12 +415,13 @@ func (h *kmsv2PluginProbe) getCurrentState() (envelopekmsv2.State, error) {
 		return envelopekmsv2.State{}, fmt.Errorf("got unexpected nil transformer")
 	}
 
-	if len(state.EncryptedObject.EncryptedDEKSource) == 0 {
-		return envelopekmsv2.State{}, fmt.Errorf("got unexpected empty EncryptedDEK and EncryptedSeed")
+	encryptedObjectCopy := state.EncryptedObject
+	if len(encryptedObjectCopy.EncryptedData) != 0 {
+		return envelopekmsv2.State{}, fmt.Errorf("got unexpected non-empty EncryptedData")
 	}
-
-	if len(state.EncryptedObject.KeyID) == 0 {
-		return envelopekmsv2.State{}, fmt.Errorf("got unexpected empty keyID")
+	encryptedObjectCopy.EncryptedData = []byte{0} // any non-empty value to pass validation
+	if err := envelopekmsv2.ValidateEncryptedObject(&encryptedObjectCopy); err != nil {
+		return envelopekmsv2.State{}, fmt.Errorf("got invalid EncryptedObject: %w", err)
 	}
 
 	if state.ExpirationTimestamp.IsZero() {
