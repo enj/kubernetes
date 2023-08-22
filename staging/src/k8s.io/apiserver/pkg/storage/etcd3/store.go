@@ -112,33 +112,35 @@ func newStore(c *clientv3.Client, codec runtime.Codec, newFunc, newListFunc func
 		pathPrefix += "/"
 	}
 
-	// TODO(p0lyn0mial): pass newListFunc and resourcePrefix to the watcher
+	s := &store{}
 	w := &watcher{
-		client:        c,
-		codec:         codec,
-		groupResource: groupResource,
-		newFunc:       newFunc,
-		versioner:     versioner,
-		transformer:   transformer,
+		client:         c,
+		codec:          codec,
+		newFunc:        newFunc,
+		resourcePrefix: resourcePrefix,
+		groupResource:  groupResource,
+		versioner:      versioner,
+		transformer:    transformer,
 	}
 	if newFunc == nil {
 		w.objectType = "<unknown>"
 	} else {
 		w.objectType = reflect.TypeOf(newFunc()).String()
 	}
-
-	s := &store{
-		client:              c,
-		codec:               codec,
-		versioner:           versioner,
-		transformer:         transformer,
-		pagingEnabled:       pagingEnabled,
-		pathPrefix:          pathPrefix,
-		groupResource:       groupResource,
-		groupResourceString: groupResource.String(),
-		watcher:             w,
-		leaseManager:        newDefaultLeaseManager(c, leaseManagerConfig),
+	w.getCurrentResourceVersionFromStorage = func(ctx context.Context) (uint64, error) {
+		return storage.GetCurrentResourceVersionFromStorage(ctx, s, newListFunc, resourcePrefix, w.objectType)
 	}
+
+	s.client = c
+	s.codec = codec
+	s.versioner = versioner
+	s.transformer = transformer
+	s.pagingEnabled = pagingEnabled
+	s.pathPrefix = pathPrefix
+	s.groupResource = groupResource
+	s.groupResourceString = groupResource.String()
+	s.watcher = w
+	s.leaseManager = newDefaultLeaseManager(c, leaseManagerConfig)
 	return s
 }
 

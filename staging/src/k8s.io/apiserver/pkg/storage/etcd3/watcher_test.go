@@ -134,7 +134,7 @@ func TestSendInitialEventsBackwardCompatibility(t *testing.T) {
 func TestWatchErrResultNotBlockAfterCancel(t *testing.T) {
 	origCtx, store, _ := testSetup(t)
 	ctx, cancel := context.WithCancel(origCtx)
-	w := store.watcher.createWatchChan(ctx, "/abc", 0, false, false, storage.Everything)
+	w := store.watcher.createWatchChan(ctx, "/abc", 0, false, false, false, storage.Everything)
 	// make resultChan and errChan blocking to ensure ordering.
 	w.resultChan = make(chan watch.Event)
 	w.errChan = make(chan error)
@@ -253,6 +253,7 @@ func TestWatchChanSync(t *testing.T) {
 				testCase.watchKey,
 				0,
 				true,
+				false,
 				false,
 				storage.Everything)
 
