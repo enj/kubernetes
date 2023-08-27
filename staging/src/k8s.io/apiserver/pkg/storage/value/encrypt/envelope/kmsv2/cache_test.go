@@ -161,10 +161,10 @@ func TestMetrics(t *testing.T) {
 	var record sync.Map
 	cache.recordCacheSize = func(providerName string, size int) {
 		if providerName != "panda" {
-			panic(fmt.Sprintf(`expected "panda" as provider name, got %q`, providerName))
+			t.Errorf(`expected "panda" as provider name, got %q`, providerName)
 		}
 		if _, loaded := record.LoadOrStore(size, nil); loaded {
-			panic(fmt.Sprintf("detected duplicated cache size metric for %d", size))
+			t.Errorf("detected duplicated cache size metric for %d", size)
 		}
 	}
 	transformer := &envelopeTransformer{}
@@ -177,11 +177,6 @@ func TestMetrics(t *testing.T) {
 		k := fmt.Sprintf("key-%d", i)
 		wg.Add(1)
 		go func(key string) {
-			defer func() {
-				if r := recover(); r != nil {
-					t.Error(r)
-				}
-			}()
 			defer wg.Done()
 			<-startCh
 			cache.set([]byte(key), transformer)
