@@ -82,7 +82,7 @@ func (c *simpleCache) set(key []byte, transformer value.Read) {
 	}
 	c.cache.Set(c.keyFunc(key), transformer, c.ttl)
 	// Add metrics for cache size
-	c.recordCacheSize(c.providerName, c.cache.Len()) // TODO integration test
+	c.recordCacheSize(c.providerName, c.cache.Len())
 }
 
 // keyFunc generates a string key by hashing the inputs.
