@@ -41,7 +41,7 @@ type simpleCache struct {
 	// SHA-256 is used to prevent collisions
 	hashPool        *sync.Pool
 	providerName    string
-	recordCacheSize func(providerName string, size int)
+	recordCacheSize func(providerName string, size int) // for unit tests
 }
 
 func newSimpleCache(clock clock.Clock, ttl time.Duration, providerName string) *simpleCache {
@@ -79,7 +79,7 @@ func (c *simpleCache) set(key []byte, transformer value.Read) {
 	}
 	c.cache.Set(c.keyFunc(key), transformer, c.ttl)
 	// Add metrics for cache size
-	c.recordCacheSize(c.providerName, c.cache.Len())
+	c.recordCacheSize(c.providerName, c.cache.Len()) // TODO integration test
 }
 
 // keyFunc generates a string key by hashing the inputs.
