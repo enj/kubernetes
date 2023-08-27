@@ -39,8 +39,9 @@ type simpleCache struct {
 	ttl   time.Duration
 	// hashPool is a per cache pool of hash.Hash (to avoid allocations from building the Hash)
 	// SHA-256 is used to prevent collisions
-	hashPool     *sync.Pool
-	providerName string
+	hashPool        *sync.Pool
+	providerName    string
+	recordCacheSize func(providerName string, size int)
 }
 
 func newSimpleCache(clock clock.Clock, ttl time.Duration, providerName string) *simpleCache {
@@ -54,7 +55,8 @@ func newSimpleCache(clock clock.Clock, ttl time.Duration, providerName string) *
 				return sha256.New()
 			},
 		},
-		providerName: providerName,
+		providerName:    providerName,
+		recordCacheSize: metrics.RecordDekSourceCacheSize,
 	}
 }
 
@@ -77,7 +79,7 @@ func (c *simpleCache) set(key []byte, transformer value.Read) {
 	}
 	c.cache.Set(c.keyFunc(key), transformer, c.ttl)
 	// Add metrics for cache size
-	metrics.RecordDekSourceCacheSize(c.providerName, c.cache.Len())
+	c.recordCacheSize(c.providerName, c.cache.Len())
 }
 
 // keyFunc generates a string key by hashing the inputs.
