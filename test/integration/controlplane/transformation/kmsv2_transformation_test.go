@@ -62,7 +62,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
-	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/klog/v2"
 	kmsv2api "k8s.io/kms/apis/v2"
 	kmsv2svc "k8s.io/kms/pkg/service"
@@ -183,9 +182,6 @@ func TestKMSv2Provider(t *testing.T) {
 func testKMSv2Provider(t *testing.T) {
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2, true)()
 
-	// the global metrics registry persists across test runs - reset it here so we can make assertions
-	legacyregistry.Reset()
-
 	encryptionConfig := `
 kind: EncryptionConfiguration
 apiVersion: apiserver.config.k8s.io/v1
@@ -211,6 +207,18 @@ resources:
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// the global metrics registry persists across test runs - reset it here so we can make assertions
+	copyConfig := rest.CopyConfig(test.kubeAPIServer.ClientConfig)
+	copyConfig.GroupVersion = &schema.GroupVersion{}
+	copyConfig.NegotiatedSerializer = unstructuredscheme.NewUnstructuredNegotiatedSerializer()
+	rc, err := rest.RESTClientFor(copyConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rc.Delete().AbsPath("/metrics").Do(ctx).Error(); err != nil {
+		t.Fatal(err)
+	}
+
 	// assert that the metrics we collect during the test run match expectations
 	wantMetricStrings := []string{
 		`apiserver_envelope_encryption_dek_cache_fill_percent 0`, // this can be ignored as it is KMS v1 only
@@ -219,13 +227,6 @@ resources:
 		`apiserver_envelope_encryption_key_id_hash_total{key_id_hash="sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",provider_name="kms-provider",transformation_type="to_storage"} 1`,
 	}
 	defer func() {
-		copyConfig := rest.CopyConfig(test.kubeAPIServer.ClientConfig)
-		copyConfig.GroupVersion = &schema.GroupVersion{}
-		copyConfig.NegotiatedSerializer = unstructuredscheme.NewUnstructuredNegotiatedSerializer()
-		rc, err := rest.RESTClientFor(copyConfig)
-		if err != nil {
-			t.Fatal(err)
-		}
 		body, err := rc.Get().AbsPath("/metrics").DoRaw(ctx)
 		if err != nil {
 			t.Fatal(err)
