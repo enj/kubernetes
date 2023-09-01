@@ -1294,6 +1294,8 @@ resources:
 
 	_ = kmsv2mock.NewBase64Plugin(t, "@kms-provider.sock")
 
+	// the value.Context.AuthenticatedData during read is the etcd storage path of the associated resource
+	// thus we need to manually construct the storage config so that we can have a static path
 	const legacyDataEtcdPrefix = "43da1478-5e9c-4ef3-a92a-2b19d540c8a5"
 
 	storageConfig := storagebackend.NewDefaultConfig(path.Join(legacyDataEtcdPrefix, "registry"), nil)
