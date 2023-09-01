@@ -27,11 +27,13 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gogo/protobuf/proto"
+	"github.com/google/go-cmp/cmp"
 	clientv3 "go.etcd.io/etcd/client/v3"
 
 	corev1 "k8s.io/api/core/v1"
@@ -1259,3 +1261,77 @@ resources:
 }
 
 func randomBool() bool { return utilrand.Int()%2 == 1 }
+
+// TestKMSv2ProviderLegacyData confirms that legacy data recorded from the earliest released commit can still be read.
+func TestKMSv2ProviderLegacyData(t *testing.T) {
+	t.Run("regular gcm", func(t *testing.T) {
+		defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2KDF, false)()
+		testKMSv2ProviderLegacyData(t)
+	})
+
+	t.Run("extended nonce gcm", func(t *testing.T) {
+		defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2KDF, true)()
+		testKMSv2ProviderLegacyData(t)
+	})
+}
+
+func testKMSv2ProviderLegacyData(t *testing.T) {
+	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv2, true)()
+
+	encryptionConfig := `
+kind: EncryptionConfiguration
+apiVersion: apiserver.config.k8s.io/v1
+resources:
+  - resources:
+    - secrets
+    providers:
+    - kms:
+       apiVersion: v2
+       name: kms-provider
+       endpoint: unix:///@kms-provider.sock
+`
+
+	_ = kmsv2mock.NewBase64Plugin(t, "@kms-provider.sock")
+
+	const legacyDataEtcdPrefix = "43da1478-5e9c-4ef3-a92a-2b19d540c8a5"
+
+	storageConfig := storagebackend.NewDefaultConfig(path.Join(legacyDataEtcdPrefix, "registry"), nil)
+	storageConfig.Transport.ServerList = []string{framework.GetEtcdURL()}
+
+	test, err := newTransformTest(t, encryptionConfig, false, "", storageConfig)
+	if err != nil {
+		t.Fatalf("failed to start KUBE API Server with encryptionConfig\n %s, error: %v", encryptionConfig, err)
+	}
+	defer test.cleanUp()
+
+	const legacyDataNamespace = "kms-v2-legacy-data"
+
+	if _, err := test.createNamespace(legacyDataNamespace); err != nil {
+		t.Fatal(err)
+	}
+
+	// commit: 1b4df30b3cdfeaba6024e81e559a6cd09a089d65
+	// tag: v1.27.0
+	const dekSourceAESGCMKeyData = "k8s:enc:kms:v2:kms-provider:\n\x8a\x03,{ϥ\x02ʚ;\x00\x00\x00\x00|\xe0|\xbe7\xa5L\x1eO\xebj{\x94\xfd\x81\xb1\x06\x01\xc7\xdb\xc6=\xfc\x9b\xfdq;\x9a\x91\x95k\xc5LL\xbd\xce'͆J.y\xb3Gh\x89B\x8dI\xfa(\xdb\xecx\x17d\x88\\2Z\xdd;6\x7f\xd0\x16\x83\x13\xc67v9!\xa1\xebEÍ\x12M \x9eE\xb1\x1e\x02n\xa5v鶂=\x04\x9b\xd3\xdf\x187\xb8\xef\x98\xd5Fղ\x19\xbc\x18\x0f\xc5Z8\xa9\bO9\x05\xc3\xedQ\xacU,\xa11\xb4w\x18Y\xab\x10\xced\xbe\xb2\xa4$=\xec\xae\v\x89\x93\x1e\xaf]\xcbj#6\xcbL\xec.\xaf\"\x7f\x8eGe\xf6\fY\x85\xbb\xcb\xe1y\xd7\v\xe6\xb9\xe9#\xb6f\xc7@\xbd)\xa3z\x90\xfe\x9b\xe5\xc8\x06\xb3\x87-8\x80\xdcK\x8f\xdcf\x90\x13\f\xb8\xdb\xc3K,\xf7 \xe8#]\xd0\x1c+M\x7f\r\xeb\xc3d\x1c\x97\xf6\xa1Lck\xbf\x84=nm\xe1\xa2\xff\xbe\xc1lpDuy\x1bTS;\xf6vq~ܪ0>D|\xbaݾ\xa6\x89*\xb7\xae\xf73\xb3I\xf0{p\xb6\xc1\x18\xbc'2\x19\xc5\xe4\xc2\"I\xa4͵\xf6\xa9]յë\xb4\x17(\x9b=\x90N\xfc\x87_ή\x05;\x88\xd99Np\xff\x01\x9e\x82+\t0\x87O\xeew\xec\xe9\xcaH(\x1dM\xb6\x04\xb0F18\xa72\xe8\xcc\b|\xfe\x86bf!\b\xddTPH\xd2;\x1b\xf6\x7f\xff5\x9fE\xbeDښ\xc0\x90w#\xd8\x04y\xd6=\x88m6\xbcj\x97\x02\x12\x011\x1a,N01ohszum3s73OMG+yUf9RZw3L3zg3NBpCJdADunvJw=\"2\n\x1blocal-kek.kms.kubernetes.io\x12\x13encrypted-local-kek"
+	dekSourceAESGCMKeyPath := test.getETCDPathForResource(test.storageConfig.Prefix, "", "secrets", "dek-source-aes-gcm-key", legacyDataNamespace)
+	if _, err := test.writeRawRecordToETCD(dekSourceAESGCMKeyPath, []byte(dekSourceAESGCMKeyData)); err != nil {
+		t.Fatal(err)
+	}
+
+	// commit: 855e7c48de7388eb330da0f8d9d2394ee818fb8d
+	// tag: v1.28.0
+	const dekSourceHKDFSHA256XNonceAESGCMSeedData = "k8s:enc:kms:v2:kms-provider:\n\xd1\x03\x12\x0f\x87\xae\xa2\xa2\xf5J\x11\x06о\x8a\x81\xb6\x15\xdf4H\xa3\xb7i\x93^)\xe5i\xe2\x7f\xfdo\xee\"\x170\xb7\n\xa0\v\xec\xe0\xfa\t#\tƖ\xf6ǧw\x01\xb9\xab\xb3\xf4\xdf\xec\x9eJ\x95$&Z=\x8awAc\xa5\xb2;\t\xd5\xf9\x05\xc1E)\x8b\xb8\x14\xc9\xda\x14{I\rV?\xe5:\xf0BM\x9b\xad\xaaHn>W/Q\xa3\xf5\xba\xe7˚\n\xe7\"\xa7\\p\x8c\xba2\xf2\xb0x<Ą\x88\x9a\xf1\xb5:d=z\xe3\xc3&\x03\x99m\x96\xe7\\\xe3\xa3\xd7i\xb2\f\x84g\xf94\xd2\f\xd6~\xed\xac\xf8\x1b\xc6(,[\xd1\xff\xba\x89ȇD\x02):wTM12\xb5\xfdl\xd2\xf2\x85\x120\xd3\xd9aak\xce\xddI֥\x0fk2\xf6I\xd0\xf9\xc2\xda\vŗ\xd7\u05fb\x83\xd6\xf7\x1a\xbf\x13iH\x8f\xe4\xb3#\xf3\xdf\xc8$y\rL(F\\Xt\x86\xbb\xe5K\x88=\x92\xe9\x04\xf70\x1e\t>\xac;\x9e\xe6\xf0+ۙ4\x1d\x1aV9Մ-g\xf3\xc7Z\x00\xf73\x0e\xe7\xa6\xcf\xc4\xfc\xe0\xb2\x1f\xa0\xbb\x1a\x81\xb3\xe4צ\x7f\xc6\b\x94͉\xad@\xac\x81\x015\x0f\xe8A\xe9B\xfb2\x81o\x9c?*\f\x8c\x15\xa8)\"\xe8\xff\x8d8\xd5!O\x17\xc5㍀\x83\xd3´\xca1;\xf7\xb0\xf4\x90x\xa6\x01\x95\x85\xc0\xaf\xf6\x82Qk\xab\xc1\x82<D\x93\xcf\r\xdb\xdf\x1c\x94\x17Q\xfaS\xe6\xcb\xd4Xƿ\x80\x1d\xc4\x1c\x9dP74\x82JK\vy\xe9)\xbchY\xbe\xcc|\xe4\x97\xdd<;3\x90J\a\xee#\xb2y\xe3\t`\xef\xef\x1f\"k\x8b\x96\xa0\x98\xd9\xffs\xde&\xb7\xa6\x0e\xf1\x7f2ͅb\xe3\xda5\"c\\K\xe21\xa2\xec`\x1b\xe5R\xe6j\b@\x187\xe1\xdb\x04\xf6bNO\x0e\x12\x011\x1a,/+WnKXQEM/AhXICYRNBeGk+WSuB+7OBuSYJTbP66Zyc=\"2\n\x1blocal-kek.kms.kubernetes.io\x12\x13encrypted-local-kek(\x01"
+	dekSourceHKDFSHA256XNonceAESGCMSeedPath := test.getETCDPathForResource(test.storageConfig.Prefix, "", "secrets", "dek-source-hkdf-sha256-xnonce-aes-gcm-seed", legacyDataNamespace)
+	if _, err := test.writeRawRecordToETCD(dekSourceHKDFSHA256XNonceAESGCMSeedPath, []byte(dekSourceHKDFSHA256XNonceAESGCMSeedData)); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := testContext(t)
+
+	legacySecrets, err := test.restClient.CoreV1().Secrets(legacyDataNamespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Error(cmp.Diff("", legacySecrets.Items))
+}
