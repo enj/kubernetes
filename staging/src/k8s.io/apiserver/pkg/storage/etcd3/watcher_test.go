@@ -130,6 +130,16 @@ func TestSendInitialEventsBackwardCompatibility(t *testing.T) {
 	storagetesting.RunSendInitialEventsBackwardCompatibility(ctx, t, store)
 }
 
+func TestEtcdWatchSemantics(t *testing.T) {
+	ctx, store, _ := testSetup(t)
+	storagetesting.RunWatchSemantics(ctx, t, store)
+}
+
+func TestEtcdWatchSemanticInitialEventsExtended(t *testing.T) {
+	ctx, store, _ := testSetup(t)
+	storagetesting.RunWatchSemanticInitialEventsExtended(ctx, t, store)
+}
+
 // =======================================================================
 // Implementation-specific tests are following.
 // The following tests are exercising the details of the implementation
