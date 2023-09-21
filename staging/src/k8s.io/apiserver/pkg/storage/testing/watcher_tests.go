@@ -1320,14 +1320,25 @@ func RunWatchSemantics(ctx context.Context, t *testing.T, store storage.Interfac
 			},
 		},
 		{
+			name:                               "sendInitialEvents=false, RV=17",
+			sendInitialEvents:                  &falseVal,
+			resourceVersion:                    "17",
+			initialPods:                        func(ns string) []*example.Pod { return []*example.Pod{makePod(ns, "18"), makePod(ns, "19")} },
+			podsAfterEstablishingWatch:         func(ns string) []*example.Pod { return []*example.Pod{makePod(ns, "20")} },
+			expectedInitialEventsInRandomOrder: addEventsFromCreatedPods,
+			expectedEventsAfterEstablishingWatch: func(createdPodsAfterWatch []*example.Pod) []watch.Event {
+				return []watch.Event{{Type: watch.Added, Object: createdPodsAfterWatch[0]}}
+			},
+		},
+		{
 			name:                               "legacy, RV=0",
 			resourceVersion:                    "0",
-			initialPods:                        func(ns string) []*example.Pod { return []*example.Pod{makePod(ns, "18"), makePod(ns, "19")} },
+			initialPods:                        func(ns string) []*example.Pod { return []*example.Pod{makePod(ns, "21"), makePod(ns, "22")} },
 			expectedInitialEventsInRandomOrder: addEventsFromCreatedPods,
 		},
 		{
 			name:                               "legacy, RV=unset",
-			initialPods:                        func(ns string) []*example.Pod { return []*example.Pod{makePod(ns, "20"), makePod(ns, "21")} },
+			initialPods:                        func(ns string) []*example.Pod { return []*example.Pod{makePod(ns, "23"), makePod(ns, "24")} },
 			expectedInitialEventsInRandomOrder: addEventsFromCreatedPods,
 		},
 	}
