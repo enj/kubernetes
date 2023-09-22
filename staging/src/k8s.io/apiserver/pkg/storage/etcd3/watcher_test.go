@@ -302,7 +302,7 @@ func TestWatchChanSync(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			defaultWatcherMaxLimit = testCase.watcherMaxLimit
+			DefaultWatcherMaxLimit = testCase.watcherMaxLimit
 
 			origCtx, store, _ := testSetup(t)
 			initList, err := initStoreData(origCtx, store)

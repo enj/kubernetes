@@ -69,7 +69,7 @@ func validateWatchOptions(options *internalversion.ListOptions, isWatchListFeatu
 			allErrs = append(allErrs, field.NotSupported(field.NewPath("resourceVersionMatch"), match, []string{string(metav1.ResourceVersionMatchNotOlderThan)}))
 		}
 		if len(options.Continue) > 0 {
-			allErrs = append(allErrs, field.Forbidden(field.NewPath("resourceVersionMatch"), "resourceVersionMatch is forbidden when continue is provided"))
+			// allErrs = append(allErrs, field.Forbidden(field.NewPath("resourceVersionMatch"), "resourceVersionMatch is forbidden when continue is provided"))
 		}
 	}
 	return allErrs

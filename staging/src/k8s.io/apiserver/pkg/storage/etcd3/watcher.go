@@ -51,8 +51,8 @@ const (
 	outgoingBufSize = 100
 )
 
-// defaultWatcherMaxLimit is used to facilitate construction tests
-var defaultWatcherMaxLimit int64 = maxLimit
+// DefaultWatcherMaxLimit is used to facilitate construction tests
+var DefaultWatcherMaxLimit int64 = maxLimit
 
 // fatalOnDecodeError is used during testing to panic the server if watcher encounters a decoding error
 var fatalOnDecodeError = false
@@ -84,6 +84,7 @@ type watcher struct {
 type watchChan struct {
 	watcher           *watcher
 	key               string
+	keyPrefix         string
 	initialRev        int64
 	recursive         bool
 	progressNotify    bool
@@ -102,7 +103,7 @@ type watchChan struct {
 // If opts.Recursive is false, it watches on given key.
 // If opts.Recursive is true, it watches any children and directories under the key, excluding the root key itself.
 // pred must be non-nil. Only if opts.Predicate matches the change, it will be returned.
-func (w *watcher) Watch(ctx context.Context, key string, rev int64, opts storage.ListOptions) (watch.Interface, error) {
+func (w *watcher) Watch(ctx context.Context, key, keyPrefix string, rev int64, opts storage.ListOptions) (watch.Interface, error) {
 	if opts.Recursive && !strings.HasSuffix(key, "/") {
 		key += "/"
 	}
@@ -117,7 +118,7 @@ func (w *watcher) Watch(ctx context.Context, key string, rev int64, opts storage
 	if err != nil {
 		return nil, err
 	}
-	wc := w.createWatchChan(ctx, key, rev, opts.Recursive, opts.ProgressNotify, opts.Predicate)
+	wc := w.createWatchChan(ctx, key, keyPrefix, rev, opts.Recursive, opts.ProgressNotify, opts.Predicate)
 	go wc.run(initialEventsEndBookmarkRequired)
 
 	// For etcd watch we don't have an easy way to answer whether the watch
@@ -130,10 +131,11 @@ func (w *watcher) Watch(ctx context.Context, key string, rev int64, opts storage
 	return wc, nil
 }
 
-func (w *watcher) createWatchChan(ctx context.Context, key string, rev int64, recursive, progressNotify bool, pred storage.SelectionPredicate) *watchChan {
+func (w *watcher) createWatchChan(ctx context.Context, key, keyPrefix string, rev int64, recursive, progressNotify bool, pred storage.SelectionPredicate) *watchChan {
 	wc := &watchChan{
 		watcher:           w,
 		key:               key,
+		keyPrefix:         keyPrefix,
 		initialRev:        rev,
 		recursive:         recursive,
 		progressNotify:    progressNotify,
@@ -299,8 +301,8 @@ func (wc *watchChan) RequestWatchProgress() error {
 func (wc *watchChan) sync() error {
 	opts := []clientv3.OpOption{}
 	if wc.recursive {
-		opts = append(opts, clientv3.WithLimit(defaultWatcherMaxLimit))
-		rangeEnd := clientv3.GetPrefixRangeEnd(wc.key)
+		opts = append(opts, clientv3.WithLimit(DefaultWatcherMaxLimit))
+		rangeEnd := clientv3.GetPrefixRangeEnd(wc.keyPrefix)
 		opts = append(opts, clientv3.WithRange(rangeEnd))
 	}
 
@@ -321,7 +323,7 @@ func (wc *watchChan) sync() error {
 		getResp, err = wc.watcher.client.KV.Get(wc.ctx, preparedKey, opts...)
 		metrics.RecordEtcdRequest(metricsOp, wc.watcher.groupResource.String(), err, startTime)
 		if err != nil {
-			return interpretListError(err, true, preparedKey, wc.key)
+			return interpretListError(err, true, preparedKey, wc.keyPrefix)
 		}
 
 		if len(getResp.Kvs) == 0 && getResp.More {
@@ -416,7 +418,7 @@ func (wc *watchChan) startWatching(watchClosedCh chan struct{}, initialEventsEnd
 	if wc.progressNotify {
 		opts = append(opts, clientv3.WithProgressNotify())
 	}
-	wch := wc.watcher.client.Watch(wc.ctx, wc.key, opts...)
+	wch := wc.watcher.client.Watch(wc.ctx, wc.keyPrefix, opts...)
 	for wres := range wch {
 		if wres.Err() != nil {
 			err := wres.Err()

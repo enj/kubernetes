@@ -861,11 +861,40 @@ func (s *store) Watch(ctx context.Context, key string, opts storage.ListOptions)
 	if err != nil {
 		return nil, err
 	}
+
+	keyPrefix := preparedKey
+	if opts.Recursive && !strings.HasSuffix(keyPrefix, "/") {
+		keyPrefix += "/"
+	}
+
+	if opts.SendInitialEvents != nil && *opts.SendInitialEvents && opts.ResourceVersion == "-1" {
+		opts.ResourceVersion = "0"
+	}
+
 	rev, err := s.versioner.ParseResourceVersion(opts.ResourceVersion)
 	if err != nil {
 		return nil, err
 	}
-	return s.watcher.Watch(s.watchContext(ctx), preparedKey, int64(rev), opts)
+
+	if len(opts.Predicate.Continue) > 0 {
+		continueKey, continueRV, err := storage.DecodeContinue(opts.Predicate.Continue, keyPrefix)
+		if err != nil {
+			return nil, apierrors.NewBadRequest(fmt.Sprintf("invalid continue token: %v", err))
+		}
+
+		if len(opts.ResourceVersion) > 0 && opts.ResourceVersion != "0" {
+			return nil, apierrors.NewBadRequest("specifying resource version is not allowed when using continue")
+		}
+		preparedKey = continueKey
+		// If continueRV > 0, the LIST request needs a specific resource version.
+		// continueRV==0 is invalid.
+		// If continueRV < 0, the request is for the latest resource version.
+		if continueRV > 0 {
+			rev = uint64(continueRV)
+		}
+	}
+
+	return s.watcher.Watch(s.watchContext(ctx), preparedKey, keyPrefix, int64(rev), opts)
 }
 
 func (s *store) watchContext(ctx context.Context) context.Context {

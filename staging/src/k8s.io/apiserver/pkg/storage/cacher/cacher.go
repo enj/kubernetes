@@ -519,6 +519,12 @@ func (c *Cacher) Watch(ctx context.Context, key string, opts storage.ListOptions
 	if opts.SendInitialEvents == nil && opts.ResourceVersion == "" {
 		return c.storage.Watch(ctx, key, opts)
 	}
+
+	// skip watch cache when continue is set or the RV is -1
+	if len(pred.Continue) > 0 || opts.ResourceVersion == "-1" {
+		return c.storage.Watch(ctx, key, opts)
+	}
+
 	requestedWatchRV, err := c.versioner.ParseResourceVersion(opts.ResourceVersion)
 	if err != nil {
 		return nil, err
