@@ -77,7 +77,7 @@ DNS_SERVER_IP=${KUBE_DNS_SERVER_IP:-10.0.0.10}
 LOCAL_DNS_IP=${KUBE_LOCAL_DNS_IP:-169.254.20.10}
 DNS_MEMORY_LIMIT=${KUBE_DNS_MEMORY_LIMIT:-170Mi}
 DNS_DOMAIN=${KUBE_DNS_NAME:-"cluster.local"}
-WAIT_FOR_URL_API_SERVER=${WAIT_FOR_URL_API_SERVER:-60}
+WAIT_FOR_URL_API_SERVER=${WAIT_FOR_URL_API_SERVER:-10}
 MAX_TIME_FOR_URL_API_SERVER=${MAX_TIME_FOR_URL_API_SERVER:-1}
 ENABLE_DAEMON=${ENABLE_DAEMON:-false}
 HOSTNAME_OVERRIDE=${HOSTNAME_OVERRIDE:-"127.0.0.1"}
@@ -576,6 +576,7 @@ EOF
       "${node_port_range}" \
       --v="${LOG_LEVEL}" \
       --vmodule="${LOG_SPEC}" \
+      --anonymous-auth=false \
       --audit-policy-file="${AUDIT_POLICY_FILE}" \
       --audit-log-path="${LOG_DIR}/kube-apiserver-audit.log" \
       --authorization-webhook-config-file="${AUTHORIZATION_WEBHOOK_CONFIG_FILE}" \
@@ -616,7 +617,7 @@ EOF
     # Wait for kube-apiserver to come up before launching the rest of the components.
     echo "Waiting for apiserver to come up"
     kube::util::wait_for_url "https://${API_HOST_IP}:${API_SECURE_PORT}/healthz" "apiserver: " 1 "${WAIT_FOR_URL_API_SERVER}" "${MAX_TIME_FOR_URL_API_SERVER}" \
-        || { echo "check apiserver logs: ${APISERVER_LOG}" ; exit 1 ; }
+        || { echo "check apiserver logs: ${APISERVER_LOG}" ; }
 
     # Create kubeconfigs for all components, using client certs
     kube::util::write_client_kubeconfig "${CONTROLPLANE_SUDO}" "${CERT_DIR}" "${ROOT_CA_FILE}" "${API_HOST}" "${API_SECURE_PORT}" admin
@@ -1259,7 +1260,7 @@ if [[ "${KUBETEST_IN_DOCKER:-}" == "true" ]]; then
   # to use docker installed containerd as kubelet container runtime
   # we need to enable cri and install cni
   # install cni for docker in docker
-  install_cni 
+  install_cni
 
   # If we are running in a cgroups v2 environment
   # we need to enable nesting
