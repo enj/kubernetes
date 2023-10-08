@@ -184,6 +184,12 @@ const (
 	// Enables server-side field validation.
 	ServerSideFieldValidation featuregate.Feature = "ServerSideFieldValidation"
 
+	// owner: @enj
+	// Deprecated: v1.29
+	//
+	// When enabled, http2 DOS mitigations for unauthenticated clients are skipped.
+	SkipUnauthenticatedHTTP2DOSMitigation featuregate.Feature = "SkipUnauthenticatedHTTP2DOSMitigation"
+
 	// owner: @caesarxuchao @roycaihw
 	// alpha: v1.20
 	//
@@ -280,6 +286,8 @@ var defaultKubernetesFeatureGates = map[featuregate.Feature]featuregate.FeatureS
 	ServerSideApply: {Default: true, PreRelease: featuregate.GA, LockToDefault: true}, // remove in 1.29
 
 	ServerSideFieldValidation: {Default: true, PreRelease: featuregate.GA, LockToDefault: true}, // remove in 1.29
+
+	SkipUnauthenticatedHTTP2DOSMitigation: {Default: false, PreRelease: featuregate.Deprecated}, // remove in 1.30
 
 	StorageVersionAPI: {Default: false, PreRelease: featuregate.Alpha},
 
