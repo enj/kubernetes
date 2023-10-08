@@ -108,6 +108,9 @@ func withAuthentication(handler http.Handler, auth authenticator.Request, failed
 
 func Unauthorized(s runtime.NegotiatedSerializer) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Proto == "HTTP/2.0" {
+			w.Header().Set("Connection", "close")
+		}
 		ctx := req.Context()
 		requestInfo, found := genericapirequest.RequestInfoFrom(ctx)
 		if !found {
