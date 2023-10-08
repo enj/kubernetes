@@ -127,13 +127,15 @@ type rudimentaryErrorBackoff struct {
 // This will prevent overly tight hot error loops.
 func (r *rudimentaryErrorBackoff) OnError(error) {
 	r.lastErrorTimeLock.Lock()
-	defer r.lastErrorTimeLock.Unlock()
 	d := time.Since(r.lastErrorTime)
-	if d < r.minPeriod {
-		// If the time moves backwards for any reason, do nothing
-		time.Sleep(r.minPeriod - d)
-	}
 	r.lastErrorTime = time.Now()
+	r.lastErrorTimeLock.Unlock()
+
+	// Do not sleep with the lock held because that causes all callers of HandleError to block.
+	// We only want the current goroutine to block.
+	// A negative or zero duration causes Sleep to return immediately.
+	// If the time moves backwards for any reason, do nothing.
+	time.Sleep(r.minPeriod - d)
 }
 
 // GetCaller returns the caller of the function that calls it.
