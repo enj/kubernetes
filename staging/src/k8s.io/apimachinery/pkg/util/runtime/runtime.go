@@ -126,8 +126,9 @@ type rudimentaryErrorBackoff struct {
 // OnError will block if it is called more often than the embedded period time.
 // This will prevent overly tight hot error loops.
 func (r *rudimentaryErrorBackoff) OnError(error) {
+	now := time.Now() // start the timer before acquiring the lock
 	r.lastErrorTimeLock.Lock()
-	d := time.Since(r.lastErrorTime)
+	d := now.Sub(r.lastErrorTime)
 	r.lastErrorTime = time.Now()
 	r.lastErrorTimeLock.Unlock()
 
