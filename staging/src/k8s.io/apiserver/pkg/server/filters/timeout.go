@@ -146,13 +146,13 @@ func (t *timeoutHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return false
 		})
 		defer postTimeoutFn()
-		tw.timeout(r, err)
+		tw.timeout(err)
 	}
 }
 
 type timeoutWriter interface {
 	http.ResponseWriter
-	timeout(*http.Request, *apierrors.StatusError)
+	timeout(*apierrors.StatusError)
 }
 
 func newTimeoutWriter(w http.ResponseWriter) (timeoutWriter, http.ResponseWriter) {
@@ -245,7 +245,7 @@ func copyHeaders(dst, src http.Header) {
 	}
 }
 
-func (tw *baseTimeoutWriter) timeout(r *http.Request, err *apierrors.StatusError) {
+func (tw *baseTimeoutWriter) timeout(err *apierrors.StatusError) {
 	tw.mu.Lock()
 	defer tw.mu.Unlock()
 
@@ -255,9 +255,6 @@ func (tw *baseTimeoutWriter) timeout(r *http.Request, err *apierrors.StatusError
 	// We can safely timeout the HTTP request by sending by a timeout
 	// handler
 	if !tw.wroteHeader && !tw.hijacked {
-		if r.Proto == "HTTP/2.0" {
-			tw.w.Header().Set("Connection", "close")
-		}
 		tw.w.WriteHeader(http.StatusGatewayTimeout)
 		enc := json.NewEncoder(tw.w)
 		enc.Encode(&err.ErrStatus)
