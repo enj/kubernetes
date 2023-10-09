@@ -146,13 +146,13 @@ func (t *timeoutHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return false
 		})
 		defer postTimeoutFn()
-		tw.timeout(err)
+		tw.timeout(r, err)
 	}
 }
 
 type timeoutWriter interface {
 	http.ResponseWriter
-	timeout(*apierrors.StatusError)
+	timeout(*http.Request, *apierrors.StatusError)
 }
 
 func newTimeoutWriter(w http.ResponseWriter) (timeoutWriter, http.ResponseWriter) {
@@ -176,6 +176,8 @@ type baseTimeoutWriter struct {
 	timedOut bool
 	// if this timeout writer has wrote header
 	wroteHeader bool
+	// if this timeout writer has wrote body
+	wroteBody bool
 	// if this timeout writer has been hijacked
 	hijacked bool
 }
@@ -210,6 +212,8 @@ func (tw *baseTimeoutWriter) Write(p []byte) (int, error) {
 		copyHeaders(tw.w.Header(), tw.handlerHeaders)
 		tw.wroteHeader = true
 	}
+
+	tw.wroteBody = true
 	return tw.w.Write(p)
 }
 
@@ -221,6 +225,7 @@ func (tw *baseTimeoutWriter) Flush() {
 		return
 	}
 
+	tw.wroteBody = true
 	// the outer ResponseWriter object returned by WrapForHTTP1Or2 implements
 	// http.Flusher if the inner object (tw.w) implements http.Flusher.
 	tw.w.(http.Flusher).Flush()
@@ -245,11 +250,15 @@ func copyHeaders(dst, src http.Header) {
 	}
 }
 
-func (tw *baseTimeoutWriter) timeout(err *apierrors.StatusError) {
+func (tw *baseTimeoutWriter) timeout(r *http.Request, err *apierrors.StatusError) {
 	tw.mu.Lock()
 	defer tw.mu.Unlock()
 
 	tw.timedOut = true
+
+	if !tw.wroteBody && r.Proto == "HTTP/2.0" {
+		tw.w.Header().Set("Connection", "close")
+	}
 
 	// The timeout writer has not been used by the inner handler.
 	// We can safely timeout the HTTP request by sending by a timeout
@@ -273,6 +282,9 @@ func (tw *baseTimeoutWriter) timeout(err *apierrors.StatusError) {
 		// an error, panic with the value ErrAbortHandler.
 		//
 		// We are throwing http.ErrAbortHandler deliberately so that a client is notified and to suppress a not helpful stacktrace in the logs
+		if !tw.wroteBody && r.Proto == "HTTP/2.0" {
+			tw.w.(http.Flusher).Flush()
+		}
 		panic(http.ErrAbortHandler)
 	}
 }
