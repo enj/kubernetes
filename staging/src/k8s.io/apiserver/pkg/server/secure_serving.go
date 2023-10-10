@@ -189,7 +189,7 @@ func (s *SecureServingInfo) Serve(handler http.Handler, shutdownTimeout time.Dur
 	if s.HTTP2MaxStreamsPerConnection > 0 {
 		http2Options.MaxConcurrentStreams = uint32(s.HTTP2MaxStreamsPerConnection)
 	} else {
-		http2Options.MaxConcurrentStreams = 250
+		http2Options.MaxConcurrentStreams = 100 // match http2.initialMaxConcurrentStreams used by clients
 	}
 
 	// increase the connection buffer size from the 1MB default to handle the specified number of concurrent streams
