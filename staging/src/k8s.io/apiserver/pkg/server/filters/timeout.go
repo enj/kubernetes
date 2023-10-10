@@ -146,13 +146,13 @@ func (t *timeoutHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return false
 		})
 		defer postTimeoutFn()
-		tw.timeout(err)
+		tw.timeout(r, err)
 	}
 }
 
 type timeoutWriter interface {
 	http.ResponseWriter
-	timeout(*apierrors.StatusError)
+	timeout(*http.Request, *apierrors.StatusError)
 }
 
 func newTimeoutWriter(w http.ResponseWriter) (timeoutWriter, http.ResponseWriter) {
@@ -245,7 +245,7 @@ func copyHeaders(dst, src http.Header) {
 	}
 }
 
-func (tw *baseTimeoutWriter) timeout(err *apierrors.StatusError) {
+func (tw *baseTimeoutWriter) timeout(r *http.Request, err *apierrors.StatusError) {
 	tw.mu.Lock()
 	defer tw.mu.Unlock()
 
@@ -255,6 +255,9 @@ func (tw *baseTimeoutWriter) timeout(err *apierrors.StatusError) {
 	// We can safely timeout the HTTP request by sending by a timeout
 	// handler
 	if !tw.wroteHeader && !tw.hijacked {
+		if isLikelyEarlyHTTP2Reset(r) {
+			tw.w.Header().Set("Connection", "close")
+		}
 		tw.w.WriteHeader(http.StatusGatewayTimeout)
 		enc := json.NewEncoder(tw.w)
 		enc.Encode(&err.ErrStatus)
@@ -275,6 +278,20 @@ func (tw *baseTimeoutWriter) timeout(err *apierrors.StatusError) {
 		// We are throwing http.ErrAbortHandler deliberately so that a client is notified and to suppress a not helpful stacktrace in the logs
 		panic(http.ErrAbortHandler)
 	}
+}
+
+func isLikelyEarlyHTTP2Reset(r *http.Request) bool {
+	if r.ProtoMajor != 2 {
+		return false
+	}
+
+	deadline, ok := r.Context().Deadline()
+	if !ok {
+		return true // this context had no deadline but was canceled meaning the client likely reset it early
+	}
+
+	// this context was canceled before its deadline meaning the client likely reset it early
+	return time.Now().Before(deadline)
 }
 
 func (tw *baseTimeoutWriter) CloseNotify() <-chan bool {
