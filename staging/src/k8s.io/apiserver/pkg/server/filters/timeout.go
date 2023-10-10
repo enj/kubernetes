@@ -287,7 +287,7 @@ func (tw *baseTimeoutWriter) timeout(r *http.Request, err *apierrors.StatusError
 
 // isLikelyEarlyHTTP2Reset returns true if an http2 stream was reset before the request deadline.
 // Note that this does not prevent a client from trying to create more streams than the configured
-// max, but https://github.com/golang/net/commit/b225e7ca6dde1ef5a5ae5ce922861bda011cfabd prevents
+// max, but https://github.com/golang/net/commit/b225e7ca6dde1ef5a5ae5ce922861bda011cfabd protects
 // us from abuse via that vector.
 func isLikelyEarlyHTTP2Reset(r *http.Request) bool {
 	if r.ProtoMajor != 2 {
