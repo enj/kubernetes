@@ -31,7 +31,9 @@ import (
 	"k8s.io/apiserver/pkg/endpoints/metrics"
 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/endpoints/responsewriter"
+	genericfeatures "k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/server/httplog"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 )
 
 // WithTimeoutForNonLongRunningRequests times out non-long-running requests after the time given by timeout.
@@ -260,7 +262,7 @@ func (tw *baseTimeoutWriter) timeout(r *http.Request, err *apierrors.StatusError
 		// Do not allow clients to reset these connections
 		// prematurely as that can trivially OOM the api server
 		// (i.e. basically degrade them to http1).
-		if isLikelyEarlyHTTP2Reset(r) {
+		if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.SkipHTTP2DOSMitigation) && isLikelyEarlyHTTP2Reset(r) {
 			tw.w.Header().Set("Connection", "close")
 		}
 		tw.w.WriteHeader(http.StatusGatewayTimeout)
