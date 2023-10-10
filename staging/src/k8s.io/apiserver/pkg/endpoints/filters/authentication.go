@@ -102,6 +102,10 @@ func withAuthentication(handler http.Handler, auth authenticator.Request, failed
 			)
 		}
 
+		// http2 is an expensive protocol that is prone to abuse,
+		// see CVE-2023-44487 and CVE-2023-39325 for an example.
+		// Do not allow unauthenticated clients to keep these
+		// connections open (i.e. basically degrade them to http1).
 		if req.ProtoMajor == 2 && isAnonymousUser(resp.User) {
 			w.Header().Set("Connection", "close")
 		}
@@ -113,6 +117,10 @@ func withAuthentication(handler http.Handler, auth authenticator.Request, failed
 
 func Unauthorized(s runtime.NegotiatedSerializer) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// http2 is an expensive protocol that is prone to abuse,
+		// see CVE-2023-44487 and CVE-2023-39325 for an example.
+		// Do not allow unauthenticated clients to keep these
+		// connections open (i.e. basically degrade them to http1).
 		if req.ProtoMajor == 2 {
 			w.Header().Set("Connection", "close")
 		}

@@ -255,6 +255,11 @@ func (tw *baseTimeoutWriter) timeout(r *http.Request, err *apierrors.StatusError
 	// We can safely timeout the HTTP request by sending by a timeout
 	// handler
 	if !tw.wroteHeader && !tw.hijacked {
+		// http2 is an expensive protocol that is prone to abuse,
+		// see CVE-2023-44487 and CVE-2023-39325 for an example.
+		// Do not allow clients to reset these connections
+		// prematurely as that can trivially OOM the api server
+		// (i.e. basically degrade them to http1).
 		if isLikelyEarlyHTTP2Reset(r) {
 			tw.w.Header().Set("Connection", "close")
 		}
@@ -280,6 +285,10 @@ func (tw *baseTimeoutWriter) timeout(r *http.Request, err *apierrors.StatusError
 	}
 }
 
+// isLikelyEarlyHTTP2Reset returns true if an http2 stream was reset before the request deadline.
+// Note that this does not prevent a client from trying to create more streams than the configured
+// max, but https://github.com/golang/net/commit/b225e7ca6dde1ef5a5ae5ce922861bda011cfabd prevents
+// us from abuse via that vector.
 func isLikelyEarlyHTTP2Reset(r *http.Request) bool {
 	if r.ProtoMajor != 2 {
 		return false
