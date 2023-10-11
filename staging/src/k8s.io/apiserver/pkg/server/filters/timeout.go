@@ -18,6 +18,7 @@ package filters
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -148,13 +149,13 @@ func (t *timeoutHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return false
 		})
 		defer postTimeoutFn()
-		tw.timeout(r, err)
+		tw.timeout(r.Context(), r.ProtoMajor, err)
 	}
 }
 
 type timeoutWriter interface {
 	http.ResponseWriter
-	timeout(*http.Request, *apierrors.StatusError)
+	timeout(ctx context.Context, protoMajor int, err *apierrors.StatusError)
 }
 
 func newTimeoutWriter(w http.ResponseWriter) (timeoutWriter, http.ResponseWriter) {
@@ -247,7 +248,7 @@ func copyHeaders(dst, src http.Header) {
 	}
 }
 
-func (tw *baseTimeoutWriter) timeout(r *http.Request, err *apierrors.StatusError) {
+func (tw *baseTimeoutWriter) timeout(ctx context.Context, protoMajor int, err *apierrors.StatusError) {
 	tw.mu.Lock()
 	defer tw.mu.Unlock()
 
@@ -262,7 +263,7 @@ func (tw *baseTimeoutWriter) timeout(r *http.Request, err *apierrors.StatusError
 		// Do not allow clients to reset these connections
 		// prematurely as that can trivially OOM the api server
 		// (i.e. basically degrade them to http1).
-		if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.SkipHTTP2DOSMitigation) && isLikelyEarlyHTTP2Reset(r) {
+		if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.SkipHTTP2DOSMitigation) && isLikelyEarlyHTTP2Reset(ctx, protoMajor) {
 			tw.w.Header().Set("Connection", "close")
 		}
 		tw.w.WriteHeader(http.StatusGatewayTimeout)
@@ -291,17 +292,17 @@ func (tw *baseTimeoutWriter) timeout(r *http.Request, err *apierrors.StatusError
 // Note that this does not prevent a client from trying to create more streams than the configured
 // max, but https://github.com/golang/net/commit/b225e7ca6dde1ef5a5ae5ce922861bda011cfabd protects
 // us from abuse via that vector.
-func isLikelyEarlyHTTP2Reset(r *http.Request) bool {
-	if r.ProtoMajor != 2 {
+func isLikelyEarlyHTTP2Reset(ctx context.Context, protoMajor int) bool {
+	if protoMajor != 2 {
 		return false
 	}
 
-	deadline, ok := r.Context().Deadline()
+	deadline, ok := ctx.Deadline()
 	if !ok {
 		return true // this context had no deadline but was canceled meaning the client likely reset it early
 	}
 
-	// this context was canceled before its deadline meaning the client likely reset it early
+	// check if this context was canceled before its deadline meaning the client likely reset it early
 	return time.Now().Before(deadline)
 }
 
