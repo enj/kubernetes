@@ -587,64 +587,77 @@ func TestUnauthenticatedHTTP2ClientConnectionClose(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SkipUnauthenticatedHTTP2DOSMitigation, tc.skipHTTP2DOSMitigation)()
+			f := func(t *testing.T, nextProto string, expectConnections uint64) {
+				defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SkipUnauthenticatedHTTP2DOSMitigation, tc.skipHTTP2DOSMitigation)()
 
-			var localAddrs atomic.Uint64 // indicates how many TCP connection set up
+				var localAddrs atomic.Uint64 // indicates how many TCP connection set up
 
-			tlsConfig := &tls.Config{
-				RootCAs:    rootCAs,
-				NextProtos: []string{http2.NextProtoTLS},
-			}
+				tlsConfig := &tls.Config{
+					RootCAs:    rootCAs,
+					NextProtos: []string{nextProto},
+				}
 
-			dailer := tls.Dialer{
-				Config: tlsConfig,
-			}
+				dailer := tls.Dialer{
+					Config: tlsConfig,
+				}
 
-			tr := &http.Transport{
-				TLSHandshakeTimeout: 10 * time.Second,
-				TLSClientConfig:     tlsConfig,
-				// Disable connection pooling to avoid additional connections
-				// that cause the test to flake
-				MaxIdleConnsPerHost: -1,
-				DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-					conn, err := dailer.DialContext(ctx, network, addr)
+				tr := &http.Transport{
+					TLSHandshakeTimeout: 10 * time.Second,
+					TLSClientConfig:     tlsConfig,
+					// Disable connection pooling to avoid additional connections
+					// that cause the test to flake
+					MaxIdleConnsPerHost: -1,
+					DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+						conn, err := dailer.DialContext(ctx, network, addr)
+						if err != nil {
+							return nil, err
+						}
+
+						localAddrs.Add(1)
+
+						return conn, nil
+					},
+				}
+
+				if nextProto == http2.NextProtoTLS {
+					if err := http2.ConfigureTransport(tr); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				client := &http.Client{
+					Transport: tr,
+				}
+
+				for i := 0; i < 2; i++ {
+					req, err := http.NewRequest(http.MethodGet, s.URL, nil)
 					if err != nil {
-						return nil, err
+						t.Fatal(err)
+					}
+					if len(tc.authorizationHeader) > 0 {
+						req.Header.Set("Authorization", tc.authorizationHeader)
 					}
 
-					localAddrs.Add(1)
-
-					return conn, nil
-				},
-			}
-			if err := http2.ConfigureTransport(tr); err != nil {
-				t.Fatal(err)
-			}
-
-			client := &http.Client{
-				Transport: tr,
-			}
-
-			for i := 0; i < 2; i++ {
-				req, err := http.NewRequest(http.MethodGet, s.URL, nil)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if len(tc.authorizationHeader) > 0 {
-					req.Header.Set("Authorization", tc.authorizationHeader)
+					resp, err := client.Do(req)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, _ = io.Copy(io.Discard, resp.Body)
+					_ = resp.Body.Close()
 				}
 
-				resp, err := client.Do(req)
-				if err != nil {
-					t.Fatal(err)
+				if expectConnections != localAddrs.Load() {
+					t.Fatalf("expect TCP connection: %d, actual: %d", expectConnections, localAddrs.Load())
 				}
-				defer resp.Body.Close()
-				_, _ = io.Copy(io.Discard, resp.Body)
 			}
 
-			if tc.expectConnections != localAddrs.Load() {
-				t.Fatalf("expect TCP connection: %d, actual: %d", tc.expectConnections, localAddrs.Load())
-			}
+			t.Run(http2.NextProtoTLS, func(t *testing.T) {
+				f(t, http2.NextProtoTLS, tc.expectConnections)
+			})
+
+			t.Run("http/1.1", func(t *testing.T) {
+				f(t, "http/1.1", 1)
+			})
 		})
 	}
 }
