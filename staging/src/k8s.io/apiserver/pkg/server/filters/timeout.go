@@ -263,7 +263,7 @@ func (tw *baseTimeoutWriter) timeout(ctx context.Context, protoMajor int, err *a
 		// Do not allow clients to reset these connections
 		// prematurely as that can trivially OOM the api server
 		// (i.e. basically degrade them to http1).
-		if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.SkipHTTP2DOSMitigation) && isLikelyEarlyHTTP2Reset(ctx, protoMajor) {
+		if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.SkipUnauthenticatedHTTP2DOSMitigation) && isLikelyEarlyHTTP2Reset(ctx, protoMajor) {
 			tw.w.Header().Set("Connection", "close")
 		}
 		tw.w.WriteHeader(http.StatusGatewayTimeout)

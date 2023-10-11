@@ -108,7 +108,7 @@ func withAuthentication(handler http.Handler, auth authenticator.Request, failed
 		// see CVE-2023-44487 and CVE-2023-39325 for an example.
 		// Do not allow unauthenticated clients to keep these
 		// connections open (i.e. basically degrade them to http1).
-		if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.SkipHTTP2DOSMitigation) && req.ProtoMajor == 2 && isAnonymousUser(resp.User) {
+		if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.SkipUnauthenticatedHTTP2DOSMitigation) && req.ProtoMajor == 2 && isAnonymousUser(resp.User) {
 			w.Header().Set("Connection", "close")
 		}
 
@@ -123,7 +123,7 @@ func Unauthorized(s runtime.NegotiatedSerializer) http.Handler {
 		// see CVE-2023-44487 and CVE-2023-39325 for an example.
 		// Do not allow unauthenticated clients to keep these
 		// connections open (i.e. basically degrade them to http1).
-		if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.SkipHTTP2DOSMitigation) && req.ProtoMajor == 2 {
+		if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.SkipUnauthenticatedHTTP2DOSMitigation) && req.ProtoMajor == 2 {
 			w.Header().Set("Connection", "close")
 		}
 		ctx := req.Context()

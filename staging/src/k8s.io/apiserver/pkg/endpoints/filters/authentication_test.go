@@ -587,7 +587,7 @@ func TestUnauthenticatedHTTP2ClientConnectionClose(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SkipHTTP2DOSMitigation, tc.skipHTTP2DOSMitigation)()
+			defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SkipUnauthenticatedHTTP2DOSMitigation, tc.skipHTTP2DOSMitigation)()
 
 			var localAddrs atomic.Uint64 // indicates how many TCP connection set up
 
