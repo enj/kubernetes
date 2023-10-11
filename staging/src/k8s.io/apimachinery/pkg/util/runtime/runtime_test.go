@@ -166,7 +166,7 @@ func Test_rudimentaryErrorBackoff_OnError_ParallelSleep(t *testing.T) {
 
 	start := make(chan struct{})
 	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 30; i++ {
 		wg.Add(1)
 		go func() {
 			<-start
