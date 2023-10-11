@@ -190,12 +190,6 @@ const (
 	// When enabled, http2 DOS mitigations for unauthenticated clients are skipped.
 	SkipUnauthenticatedHTTP2DOSMitigation featuregate.Feature = "SkipUnauthenticatedHTTP2DOSMitigation"
 
-	// owner: @enj
-	// deprecated: v1.29
-	//
-	// When enabled, http2 DOS mitigations for authenticated clients are skipped.
-	SkipAuthenticatedHTTP2DOSMitigation featuregate.Feature = "SkipAuthenticatedHTTP2DOSMitigation"
-
 	// owner: @caesarxuchao @roycaihw
 	// alpha: v1.20
 	//
@@ -294,8 +288,6 @@ var defaultKubernetesFeatureGates = map[featuregate.Feature]featuregate.FeatureS
 	ServerSideFieldValidation: {Default: true, PreRelease: featuregate.GA, LockToDefault: true}, // remove in 1.29
 
 	SkipUnauthenticatedHTTP2DOSMitigation: {Default: false, PreRelease: featuregate.Deprecated}, // remove in 1.30
-
-	SkipAuthenticatedHTTP2DOSMitigation: {Default: false, PreRelease: featuregate.Deprecated}, // remove in 1.30
 
 	StorageVersionAPI: {Default: false, PreRelease: featuregate.Alpha},
 
