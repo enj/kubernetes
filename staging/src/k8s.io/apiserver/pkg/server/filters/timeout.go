@@ -18,7 +18,6 @@ package filters
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -32,9 +31,7 @@ import (
 	"k8s.io/apiserver/pkg/endpoints/metrics"
 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/endpoints/responsewriter"
-	genericfeatures "k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/server/httplog"
-	utilfeature "k8s.io/apiserver/pkg/util/feature"
 )
 
 // WithTimeoutForNonLongRunningRequests times out non-long-running requests after the time given by timeout.
@@ -149,13 +146,13 @@ func (t *timeoutHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return false
 		})
 		defer postTimeoutFn()
-		tw.timeout(r.Context(), r.ProtoMajor, err)
+		tw.timeout(err)
 	}
 }
 
 type timeoutWriter interface {
 	http.ResponseWriter
-	timeout(ctx context.Context, protoMajor int, err *apierrors.StatusError)
+	timeout(*apierrors.StatusError)
 }
 
 func newTimeoutWriter(w http.ResponseWriter) (timeoutWriter, http.ResponseWriter) {
@@ -248,7 +245,7 @@ func copyHeaders(dst, src http.Header) {
 	}
 }
 
-func (tw *baseTimeoutWriter) timeout(ctx context.Context, protoMajor int, err *apierrors.StatusError) {
+func (tw *baseTimeoutWriter) timeout(err *apierrors.StatusError) {
 	tw.mu.Lock()
 	defer tw.mu.Unlock()
 
@@ -258,14 +255,6 @@ func (tw *baseTimeoutWriter) timeout(ctx context.Context, protoMajor int, err *a
 	// We can safely timeout the HTTP request by sending by a timeout
 	// handler
 	if !tw.wroteHeader && !tw.hijacked {
-		// http2 is an expensive protocol that is prone to abuse,
-		// see CVE-2023-44487 and CVE-2023-39325 for an example.
-		// Do not allow clients to reset these connections
-		// prematurely as that can trivially OOM the api server
-		// (i.e. basically degrade them to http1).
-		if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.SkipUnauthenticatedHTTP2DOSMitigation) && isLikelyEarlyHTTP2Reset(ctx, protoMajor) {
-			tw.w.Header().Set("Connection", "close")
-		}
 		tw.w.WriteHeader(http.StatusGatewayTimeout)
 		enc := json.NewEncoder(tw.w)
 		enc.Encode(&err.ErrStatus)
@@ -286,24 +275,6 @@ func (tw *baseTimeoutWriter) timeout(ctx context.Context, protoMajor int, err *a
 		// We are throwing http.ErrAbortHandler deliberately so that a client is notified and to suppress a not helpful stacktrace in the logs
 		panic(http.ErrAbortHandler)
 	}
-}
-
-// isLikelyEarlyHTTP2Reset returns true if an http2 stream was reset before the request deadline.
-// Note that this does not prevent a client from trying to create more streams than the configured
-// max, but https://github.com/golang/net/commit/b225e7ca6dde1ef5a5ae5ce922861bda011cfabd protects
-// us from abuse via that vector.
-func isLikelyEarlyHTTP2Reset(ctx context.Context, protoMajor int) bool {
-	if protoMajor != 2 {
-		return false
-	}
-
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		return true // this context had no deadline but was canceled meaning the client likely reset it early
-	}
-
-	// check if this context was canceled before its deadline meaning the client likely reset it early
-	return time.Now().Before(deadline)
 }
 
 func (tw *baseTimeoutWriter) CloseNotify() <-chan bool {
