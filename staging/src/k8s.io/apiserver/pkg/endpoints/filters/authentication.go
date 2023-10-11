@@ -107,8 +107,11 @@ func withAuthentication(handler http.Handler, auth authenticator.Request, failed
 		// http2 is an expensive protocol that is prone to abuse,
 		// see CVE-2023-44487 and CVE-2023-39325 for an example.
 		// Do not allow unauthenticated clients to keep these
-		// connections open (i.e. basically degrade them to http1).
+		// connections open (i.e. basically degrade them to the
+		// performance of http1 with keep-alive disabled).
 		if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.SkipUnauthenticatedHTTP2DOSMitigation) && req.ProtoMajor == 2 && isAnonymousUser(resp.User) {
+			// limit this connection to just this request,
+			// and then send a GOAWAY and tear down the TCP connection
 			w.Header().Set("Connection", "close")
 		}
 
@@ -122,8 +125,11 @@ func Unauthorized(s runtime.NegotiatedSerializer) http.Handler {
 		// http2 is an expensive protocol that is prone to abuse,
 		// see CVE-2023-44487 and CVE-2023-39325 for an example.
 		// Do not allow unauthenticated clients to keep these
-		// connections open (i.e. basically degrade them to http1).
+		// connections open (i.e. basically degrade them to the
+		// performance of http1 with keep-alive disabled).
 		if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.SkipUnauthenticatedHTTP2DOSMitigation) && req.ProtoMajor == 2 {
+			// limit this connection to just this request,
+			// and then send a GOAWAY and tear down the TCP connection
 			w.Header().Set("Connection", "close")
 		}
 		ctx := req.Context()
