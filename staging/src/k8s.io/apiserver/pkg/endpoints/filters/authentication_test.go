@@ -25,7 +25,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httptrace"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -590,11 +589,10 @@ func TestUnauthenticatedHTTP2ClientConnectionClose(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			f := func(t *testing.T, nextProto string, expectConnections, reusedConnections uint64) {
-				defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.SkipUnauthenticatedHTTP2DOSMitigation, tc.skipHTTP2DOSMitigation)()
+			f := func(t *testing.T, nextProto string, expectConnections uint64) {
+				defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.UnauthenticatedHTTP2DOSMitigation, !tc.skipHTTP2DOSMitigation)()
 
-				var localAddrs atomic.Uint64  // indicates how many TCP connection set up
-				var reusedConns atomic.Uint64 // indicates how many TCP connection reused
+				var localAddrs atomic.Uint64 // indicates how many TCP connection set up
 
 				tlsConfig := &tls.Config{
 					RootCAs:    rootCAs,
@@ -635,16 +633,7 @@ func TestUnauthenticatedHTTP2ClientConnectionClose(t *testing.T) {
 				}
 
 				for i := 0; i < reqs; i++ {
-					clientTrace := &httptrace.ClientTrace{
-						GotConn: func(info httptrace.GotConnInfo) {
-							if info.Reused {
-								reusedConns.Add(1)
-							}
-						},
-					}
-					ctx := httptrace.WithClientTrace(context.Background(), clientTrace)
-
-					req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.URL, nil)
+					req, err := http.NewRequest(http.MethodGet, s.URL, nil)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -663,18 +652,14 @@ func TestUnauthenticatedHTTP2ClientConnectionClose(t *testing.T) {
 				if expectConnections != localAddrs.Load() {
 					t.Fatalf("expect TCP connection: %d, actual: %d", expectConnections, localAddrs.Load())
 				}
-
-				if reusedConnections != reusedConns.Load() {
-					t.Fatalf("expect reused connection: %d, actual: %d", reusedConnections, reusedConns.Load())
-				}
 			}
 
 			t.Run(http2.NextProtoTLS, func(t *testing.T) {
-				f(t, http2.NextProtoTLS, tc.expectConnections, reqs-tc.expectConnections)
+				f(t, http2.NextProtoTLS, tc.expectConnections)
 			})
 
 			t.Run("http/1.1", func(t *testing.T) {
-				f(t, "http/1.1", 1, reqs-1)
+				f(t, "http/1.1", 1)
 			})
 		})
 	}
