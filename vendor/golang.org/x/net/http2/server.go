@@ -1983,7 +1983,7 @@ func (sc *serverConn) processHeaders(f *MetaHeadersFrame) error {
 		return sc.countError("max_concurrent_handlers", ConnectionError(ErrCodeEnhanceYourCalm))
 	}
 	cleanup := func() { sc.maxConcurrentHandlers.Release(1) }
-	defer cleanup()
+	defer func() { cleanup() }()
 
 	initialState := stateOpen
 	if f.StreamEnded() {
