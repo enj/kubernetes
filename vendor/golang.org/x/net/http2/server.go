@@ -2289,27 +2289,22 @@ func (sc *serverConn) newWriterAndRequestNoBody(st *stream, rp requestParam) (*r
 }
 
 func (sc *serverConn) newResponseWriter(st *stream, req *http.Request) *responseWriter {
-	rw := &responseWriter{cancelCtx: st.cancelCtx}
-	rw.prep = func() {
-		rws := responseWriterStatePool.Get().(*responseWriterState)
-		bwSave := rws.bw
-		*rws = responseWriterState{} // zero all the fields
-		rws.conn = sc
-		rws.bw = bwSave
-		rws.bw.Reset(chunkWriter{rws})
-		rws.stream = st
-		rws.req = req
-		rw.rws = rws
-	}
-	return rw
+	rws := responseWriterStatePool.Get().(*responseWriterState)
+	bwSave := rws.bw
+	*rws = responseWriterState{} // zero all the fields
+	rws.conn = sc
+	rws.bw = bwSave
+	rws.bw.Reset(chunkWriter{rws})
+	rws.stream = st
+	rws.req = req
+	return &responseWriter{rws: rws}
 }
 
 // Run on its own goroutine.
 func (sc *serverConn) runHandler(rw *responseWriter, req *http.Request, handler func(http.ResponseWriter, *http.Request)) {
 	didPanic := true
-	ranHandler := false
 	defer func() {
-		rw.cancelCtx()
+		rw.rws.stream.cancelCtx()
 		if req.MultipartForm != nil {
 			req.MultipartForm.RemoveAll()
 		}
@@ -2328,18 +2323,9 @@ func (sc *serverConn) runHandler(rw *responseWriter, req *http.Request, handler 
 			}
 			return
 		}
-		if ranHandler {
-			rw.handlerDone()
-		} else {
-			// TODO do we need to write a response in this case?
-		}
+		rw.handlerDone()
 	}()
-	// skip the handler if the stream has already been closed
-	if req.Context().Err() == nil {
-		ranHandler = true
-		rw.prep()
-		handler(rw, req)
-	}
+	handler(rw, req)
 	didPanic = false
 }
 
@@ -2496,9 +2482,7 @@ func (b *requestBody) Read(p []byte) (n int, err error) {
 // simply crash (caller's mistake), but the much larger responseWriterState
 // and buffers are reused between multiple requests.
 type responseWriter struct {
-	prep      func()
-	cancelCtx func()
-	rws       *responseWriterState
+	rws *responseWriterState
 }
 
 // Optional http.ResponseWriter interfaces implemented.
