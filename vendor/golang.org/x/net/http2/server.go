@@ -425,7 +425,7 @@ func (s *Server) ServeConn(c net.Conn, opts *ServeConnOpts) {
 		serveG:                      newGoroutineLock(),
 		pushEnabled:                 true,
 		sawClientPreface:            opts.SawClientPreface,
-		maxConcurrentHandlers:       semaphore.NewWeighted(int64(s.maxConcurrentStreams()) * 110 / 100),
+		maxConcurrentHandlers:       semaphore.NewWeighted(int64(s.maxConcurrentStreams())),
 	}
 
 	s.state.registerConn(sc)
@@ -1978,7 +1978,7 @@ func (sc *serverConn) processHeaders(f *MetaHeadersFrame) error {
 	}
 
 	// we do not use the stream's context here because we only want to hit the error case on a timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 37*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := sc.maxConcurrentHandlers.Acquire(ctx, 1); err != nil {
 		return sc.countError("max_concurrent_handlers", ConnectionError(ErrCodeEnhanceYourCalm))
