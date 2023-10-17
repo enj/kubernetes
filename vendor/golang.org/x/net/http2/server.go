@@ -2029,9 +2029,10 @@ func (sc *serverConn) processHeaders(f *MetaHeadersFrame) error {
 		st.readDeadline = time.AfterFunc(sc.hs.ReadTimeout, st.onReadTimeout)
 	}
 
+	handlerCleanup := cleanup
 	cleanup = func() {}
 	go func() {
-		defer sc.maxConcurrentHandlers.Release(1)
+		defer handlerCleanup()
 		sc.runHandler(rw, req, handler)
 	}()
 	return nil
