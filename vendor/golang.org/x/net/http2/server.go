@@ -1977,19 +1977,13 @@ func (sc *serverConn) processHeaders(f *MetaHeadersFrame) error {
 		return sc.countError("over_max_streams_race", streamError(id, ErrCodeRefusedStream))
 	}
 
-	// we do not use the stream's context here because we only want to hit the error case on a timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(sc.baseCtx, 10*time.Second) // TODO maybe make the timeout configurable?
 	defer cancel()
 	if err := sc.maxConcurrentHandlers.Acquire(ctx, 1); err != nil {
 		return sc.countError("max_concurrent_handlers", ConnectionError(ErrCodeEnhanceYourCalm))
 	}
-	var ranHandler bool
-	defer func() {
-		if ranHandler {
-			return
-		}
-		sc.maxConcurrentHandlers.Release(1)
-	}()
+	cleanup := func() { sc.maxConcurrentHandlers.Release(1) }
+	defer cleanup()
 
 	initialState := stateOpen
 	if f.StreamEnded() {
@@ -2035,7 +2029,7 @@ func (sc *serverConn) processHeaders(f *MetaHeadersFrame) error {
 		st.readDeadline = time.AfterFunc(sc.hs.ReadTimeout, st.onReadTimeout)
 	}
 
-	ranHandler = true
+	cleanup = func() {}
 	go func() {
 		defer sc.maxConcurrentHandlers.Release(1)
 		sc.runHandler(rw, req, handler)
