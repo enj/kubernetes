@@ -1977,6 +1977,20 @@ func (sc *serverConn) processHeaders(f *MetaHeadersFrame) error {
 		return sc.countError("over_max_streams_race", streamError(id, ErrCodeRefusedStream))
 	}
 
+	// we do not use the stream's context here because we only want to hit the error case on a timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 37*time.Second)
+	defer cancel()
+	if err := sc.maxConcurrentHandlers.Acquire(ctx, 1); err != nil {
+		return sc.countError("max_concurrent_handlers", ConnectionError(ErrCodeEnhanceYourCalm))
+	}
+	var ranHandler bool
+	defer func() {
+		if ranHandler {
+			return
+		}
+		sc.maxConcurrentHandlers.Release(1)
+	}()
+
 	initialState := stateOpen
 	if f.StreamEnded() {
 		initialState = stateHalfClosedRemote
@@ -1988,13 +2002,6 @@ func (sc *serverConn) processHeaders(f *MetaHeadersFrame) error {
 			return err
 		}
 		sc.writeSched.AdjustStream(st.id, f.Priority)
-	}
-
-	// we do not use the request's context here because we only want to hit the error case on a timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 37*time.Second)
-	defer cancel()
-	if err := sc.maxConcurrentHandlers.Acquire(ctx, 1); err != nil {
-		return sc.countError("max_concurrent_handlers", ConnectionError(ErrCodeEnhanceYourCalm))
 	}
 
 	rw, req, err := sc.newWriterAndRequest(st, f)
@@ -2028,6 +2035,7 @@ func (sc *serverConn) processHeaders(f *MetaHeadersFrame) error {
 		st.readDeadline = time.AfterFunc(sc.hs.ReadTimeout, st.onReadTimeout)
 	}
 
+	ranHandler = true
 	go func() {
 		defer sc.maxConcurrentHandlers.Release(1)
 		sc.runHandler(rw, req, handler)
