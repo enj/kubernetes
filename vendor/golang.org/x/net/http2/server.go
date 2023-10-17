@@ -1990,6 +1990,13 @@ func (sc *serverConn) processHeaders(f *MetaHeadersFrame) error {
 		sc.writeSched.AdjustStream(st.id, f.Priority)
 	}
 
+	// we do not use the request's context here because we only want to hit the error case on a timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 37*time.Second)
+	if err := sc.maxConcurrentHandlers.Acquire(ctx, 1); err != nil {
+		cancel()
+		return sc.countError("max_concurrent_handlers", ConnectionError(ErrCodeEnhanceYourCalm))
+	}
+
 	rw, req, err := sc.newWriterAndRequest(st, f)
 	if err != nil {
 		return err
@@ -2021,12 +2028,6 @@ func (sc *serverConn) processHeaders(f *MetaHeadersFrame) error {
 		st.readDeadline = time.AfterFunc(sc.hs.ReadTimeout, st.onReadTimeout)
 	}
 
-	// we do not use the request's context here because we only want to hit the error case on a timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 37*time.Second)
-	if err := sc.maxConcurrentHandlers.Acquire(ctx, 1); err != nil {
-		cancel()
-		return sc.countError("max_concurrent_handlers", ConnectionError(ErrCodeEnhanceYourCalm))
-	}
 	go func() {
 		defer cancel()
 		defer sc.maxConcurrentHandlers.Release(1)
