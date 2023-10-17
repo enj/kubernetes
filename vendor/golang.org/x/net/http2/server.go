@@ -1992,8 +1992,8 @@ func (sc *serverConn) processHeaders(f *MetaHeadersFrame) error {
 
 	// we do not use the request's context here because we only want to hit the error case on a timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 37*time.Second)
+	defer cancel()
 	if err := sc.maxConcurrentHandlers.Acquire(ctx, 1); err != nil {
-		cancel()
 		return sc.countError("max_concurrent_handlers", ConnectionError(ErrCodeEnhanceYourCalm))
 	}
 
@@ -2029,7 +2029,6 @@ func (sc *serverConn) processHeaders(f *MetaHeadersFrame) error {
 	}
 
 	go func() {
-		defer cancel()
 		defer sc.maxConcurrentHandlers.Release(1)
 		sc.runHandler(rw, req, handler)
 	}()
@@ -2282,22 +2281,27 @@ func (sc *serverConn) newWriterAndRequestNoBody(st *stream, rp requestParam) (*r
 }
 
 func (sc *serverConn) newResponseWriter(st *stream, req *http.Request) *responseWriter {
-	rws := responseWriterStatePool.Get().(*responseWriterState)
-	bwSave := rws.bw
-	*rws = responseWriterState{} // zero all the fields
-	rws.conn = sc
-	rws.bw = bwSave
-	rws.bw.Reset(chunkWriter{rws})
-	rws.stream = st
-	rws.req = req
-	return &responseWriter{rws: rws}
+	rw := &responseWriter{cancelCtx: st.cancelCtx}
+	rw.prep = func() {
+		rws := responseWriterStatePool.Get().(*responseWriterState)
+		bwSave := rws.bw
+		*rws = responseWriterState{} // zero all the fields
+		rws.conn = sc
+		rws.bw = bwSave
+		rws.bw.Reset(chunkWriter{rws})
+		rws.stream = st
+		rws.req = req
+		rw.rws = rws
+	}
+	return rw
 }
 
 // Run on its own goroutine.
 func (sc *serverConn) runHandler(rw *responseWriter, req *http.Request, handler func(http.ResponseWriter, *http.Request)) {
 	didPanic := true
+	ranHandler := false
 	defer func() {
-		rw.rws.stream.cancelCtx()
+		rw.cancelCtx()
 		if req.MultipartForm != nil {
 			req.MultipartForm.RemoveAll()
 		}
@@ -2316,9 +2320,18 @@ func (sc *serverConn) runHandler(rw *responseWriter, req *http.Request, handler 
 			}
 			return
 		}
-		rw.handlerDone()
+		if ranHandler {
+			rw.handlerDone()
+		} else {
+			// TODO do we need to write a response in this case?
+		}
 	}()
-	handler(rw, req)
+	// skip the handler if the stream has already been closed
+	if req.Context().Err() == nil {
+		ranHandler = true
+		rw.prep()
+		handler(rw, req)
+	}
 	didPanic = false
 }
 
@@ -2475,7 +2488,9 @@ func (b *requestBody) Read(p []byte) (n int, err error) {
 // simply crash (caller's mistake), but the much larger responseWriterState
 // and buffers are reused between multiple requests.
 type responseWriter struct {
-	rws *responseWriterState
+	prep      func()
+	cancelCtx func()
+	rws       *responseWriterState
 }
 
 // Optional http.ResponseWriter interfaces implemented.
