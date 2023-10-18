@@ -425,7 +425,7 @@ func (s *Server) ServeConn(c net.Conn, opts *ServeConnOpts) {
 		serveG:                      newGoroutineLock(),
 		pushEnabled:                 true,
 		sawClientPreface:            opts.SawClientPreface,
-		maxConcurrentHandlers:       semaphore.NewWeighted(int64(s.maxConcurrentStreams())),
+		maxConcurrentHandlers:       semaphore.NewWeighted(int64(s.maxConcurrentStreams()) + 1),
 	}
 
 	s.state.registerConn(sc)
@@ -961,7 +961,16 @@ func (sc *serverConn) serve() {
 			if !sc.processFrameFromReader(res) {
 				return
 			}
-			res.readMore()
+
+			ctx, cancel := context.WithTimeout(sc.baseCtx, 10*time.Second) // TODO maybe make the timeout configurable?
+			if err := sc.maxConcurrentHandlers.Acquire(ctx, 1); err != nil {
+				sc.goAway(ErrCodeEnhanceYourCalm)
+			} else {
+				sc.maxConcurrentHandlers.Release(1)
+
+				res.readMore()
+			}
+			cancel()
 			if settingsTimer != nil {
 				settingsTimer.Stop()
 				settingsTimer = nil
