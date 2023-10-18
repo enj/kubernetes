@@ -50,6 +50,7 @@ import (
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http2/hpack"
 	"golang.org/x/sync/semaphore"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -426,6 +427,7 @@ func (s *Server) ServeConn(c net.Conn, opts *ServeConnOpts) {
 		pushEnabled:                 true,
 		sawClientPreface:            opts.SawClientPreface,
 		maxConcurrentHandlers:       semaphore.NewWeighted(int64(s.maxConcurrentStreams()) + 1),
+		maxHandlersRelease:          rate.NewLimiter(rate.Every(10*time.Millisecond), 4*int(s.maxConcurrentStreams())),
 	}
 
 	s.state.registerConn(sc)
@@ -609,6 +611,7 @@ type serverConn struct {
 	shutdownOnce sync.Once
 
 	maxConcurrentHandlers *semaphore.Weighted
+	maxHandlersRelease    *rate.Limiter
 }
 
 func (sc *serverConn) maxHeaderListSize() uint32 {
@@ -962,15 +965,12 @@ func (sc *serverConn) serve() {
 				return
 			}
 
-			ctx, cancel := context.WithTimeout(sc.baseCtx, 10*time.Second) // TODO maybe make the timeout configurable?
-			if err := sc.maxConcurrentHandlers.Acquire(ctx, 1); err != nil {
-				sc.goAway(ErrCodeEnhanceYourCalm)
-			} else {
-				sc.maxConcurrentHandlers.Release(1)
-
+			if sc.check() {
 				res.readMore()
+			} else {
+				sc.goAway(ErrCodeEnhanceYourCalm)
 			}
-			cancel()
+
 			if settingsTimer != nil {
 				settingsTimer.Stop()
 				settingsTimer = nil
@@ -1045,6 +1045,24 @@ func (sc *serverConn) sendServeMsg(msg interface{}) {
 	case sc.serveMsgCh <- msg:
 	case <-sc.doneServing:
 	}
+}
+
+func (sc *serverConn) acquire() bool {
+	ctx, cancel := context.WithTimeout(sc.baseCtx, 10*time.Second) // TODO maybe make the timeout configurable?
+	defer cancel()
+	return sc.maxConcurrentHandlers.Acquire(ctx, 1) == nil
+}
+
+func (sc *serverConn) release() bool {
+	ctx, cancel := context.WithTimeout(sc.baseCtx, 10*time.Second) // TODO maybe make the timeout configurable?
+	defer cancel()
+	ok := sc.maxHandlersRelease.Wait(ctx) == nil
+	sc.maxConcurrentHandlers.Release(1)
+	return ok
+}
+
+func (sc *serverConn) check() bool {
+	return sc.acquire() && sc.release()
 }
 
 var errPrefaceTimeout = errors.New("timeout waiting for client preface")
@@ -1986,12 +2004,10 @@ func (sc *serverConn) processHeaders(f *MetaHeadersFrame) error {
 		return sc.countError("over_max_streams_race", streamError(id, ErrCodeRefusedStream))
 	}
 
-	ctx, cancel := context.WithTimeout(sc.baseCtx, 10*time.Second) // TODO maybe make the timeout configurable?
-	defer cancel()
-	if err := sc.maxConcurrentHandlers.Acquire(ctx, 1); err != nil {
+	if ok := sc.acquire(); !ok {
 		return sc.countError("max_concurrent_handlers", ConnectionError(ErrCodeEnhanceYourCalm))
 	}
-	cleanup := func() { sc.maxConcurrentHandlers.Release(1) }
+	cleanup := func() { sc.release() }
 	defer func() { cleanup() }()
 
 	initialState := stateOpen
