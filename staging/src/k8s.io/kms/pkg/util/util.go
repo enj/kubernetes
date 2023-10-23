@@ -17,12 +17,9 @@ limitations under the License.
 package util
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"strings"
-	"time"
 )
 
 const (
@@ -54,70 +51,4 @@ func ParseEndpoint(endpoint string) (string, error) {
 	}
 
 	return u.Path, nil
-}
-
-// PollImmediateUntilWithContext suggested using a simple inline for loop
-// with sleep instead of copying code from apimachinery/util.
-func PollImmediateUntilWithContext(ctx context.Context, interval time.Duration, condition func(context.Context) (done bool, err error)) error {
-	done, err := condition(ctx)
-
-	if err != nil {
-		return err
-	}
-	if done {
-		return nil
-	}
-
-	select {
-	case <-ctx.Done():
-		// returning ctx.Err() will break backward compatibility, use new PollUntilContext*
-		// methods instead
-		return errors.New("timed out waiting for the condition")
-	default:
-		waitCtx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		c := make(chan struct{})
-
-		go func() {
-			defer close(c)
-
-			tick := time.NewTicker(interval)
-			defer tick.Stop()
-
-			for {
-				select {
-				case <-tick.C:
-					// If the consumer isn't ready for this signal drop it and
-					// check the other channels.
-					select {
-					case c <- struct{}{}:
-					default:
-					}
-				case <-waitCtx.Done():
-					return
-				}
-			}
-		}()
-
-		for {
-			select {
-			case _, open := <-c:
-				ok, err := condition(ctx)
-				if err != nil {
-					return err
-				}
-				if ok {
-					return nil
-				}
-				if !open {
-					return errors.New("timed out waiting for the condition")
-				}
-			case <-ctx.Done():
-				// returning ctx.Err() will break backward compatibility, use new PollUntilContext*
-				// methods instead
-				return errors.New("timed out waiting for the condition")
-			}
-		}
-	}
 }
