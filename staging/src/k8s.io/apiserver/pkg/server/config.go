@@ -35,6 +35,7 @@ import (
 	jsonpatch "github.com/evanphx/json-patch"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/cryptobyte"
+	"golang.org/x/sync/semaphore"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1048,7 +1049,15 @@ func DefaultBuildHandlerChain(apiHandler http.Handler, c *Config) http.Handler {
 }
 
 func foo(handler http.Handler) http.Handler {
+	s := semaphore.NewWeighted(10)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS.ServerName == "hello.com" {
+			if err := s.Acquire(r.Context(), 1); err != nil {
+				panic(http.ErrAbortHandler)
+			}
+			defer s.Release(1)
+		}
+
 		ctx := &hackContext{Context: r.Context()}
 		handler.ServeHTTP(w, r.WithContext(ctx))
 	})
