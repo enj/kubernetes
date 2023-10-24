@@ -160,9 +160,9 @@ type Config struct {
 	// TracerProvider can provide a tracer, which records spans for distributed tracing.
 	TracerProvider tracing.TracerProvider
 
-	//===========================================================================
+	// ===========================================================================
 	// Fields you probably don't care about changing
-	//===========================================================================
+	// ===========================================================================
 
 	// BuildHandlerChainFunc allows you to build custom handler chains by decorating the apiHandler.
 	BuildHandlerChainFunc func(apiHandler http.Handler, c *Config) (secure http.Handler)
@@ -266,9 +266,9 @@ type Config struct {
 	// rejected with a 429 status code and a 'Retry-After' response.
 	ShutdownSendRetryAfter bool
 
-	//===========================================================================
+	// ===========================================================================
 	// values below here are targets for removal
-	//===========================================================================
+	// ===========================================================================
 
 	// PublicAddress is the IP address where members of the cluster (kubelet,
 	// kube-proxy, services, etc.) can reach the GenericAPIServer.
@@ -527,9 +527,9 @@ func (c *AuthenticationInfo) ApplyClientCert(clientCA dynamiccertificates.CACont
 type completedConfig struct {
 	*Config
 
-	//===========================================================================
+	// ===========================================================================
 	// values below here are filled in during completion
-	//===========================================================================
+	// ===========================================================================
 
 	// SharedInformerFactory provides shared informers for resources
 	SharedInformerFactory informers.SharedInformerFactory
@@ -1041,7 +1041,45 @@ func DefaultBuildHandlerChain(apiHandler http.Handler, c *Config) http.Handler {
 	handler = genericapifilters.WithMuxAndDiscoveryComplete(handler, c.lifecycleSignals.MuxAndDiscoveryComplete.Signaled())
 	handler = genericfilters.WithPanicRecovery(handler, c.RequestInfoResolver)
 	handler = genericapifilters.WithAuditInit(handler)
+
+	handler = foo(handler)
+
 	return handler
+}
+
+func foo(handler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := &hackContext{Context: r.Context()}
+		handler.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+type hackContext struct {
+	context.Context
+}
+
+func (c *hackContext) Value(key any) any {
+	if c.Context.Err() != nil && callerIsHttpHandler() {
+		panic(http.ErrAbortHandler)
+	}
+	return c.Context.Value(key)
+}
+
+func callerIsHttpHandler() bool {
+	var pc [32]uintptr // TODO how many frames is enough?
+	n := goruntime.Callers(2, pc[:])
+	for _, caller := range pc[:n] {
+		f := goruntime.FuncForPC(caller)
+		if f == nil {
+			return false
+		}
+		name := f.Name()
+		if strings.HasSuffix(name, ".ServeHTTP") ||
+			strings.Contains(name, ".ServeHTTP.") {
+			return true
+		}
+	}
+	return false
 }
 
 func installAPI(s *GenericAPIServer, c *Config) {
