@@ -51,21 +51,27 @@ apiserver_encryption_config_controller_automatic_reload_failures_total{apiserver
 `
 
 	tests := []struct {
-		name                     string
-		wantECFileHash           string
-		wantTransformerClosed    bool
-		wantLoadCalls            int
-		wantAddRateLimitedCount  uint64
-		wantMetrics              string
-		mockLoadEncryptionConfig func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error)
+		name                        string
+		wantECFileHash              string
+		wantTransformerClosed       bool
+		wantLoadCalls               int
+		wantHashCalls               int
+		wantAddRateLimitedCount     uint64
+		wantMetrics                 string
+		mockLoadEncryptionConfig    func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error)
+		mockGetEncryptionConfigHash func(ctx context.Context, filepath string) (string, error)
 	}{
 		{
 			name:                    "when invalid config is provided previous config shouldn't be changed",
 			wantECFileHash:          "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
 			wantLoadCalls:           1,
+			wantHashCalls:           1,
 			wantTransformerClosed:   true,
 			wantMetrics:             expectedFailureMetricValue,
 			wantAddRateLimitedCount: 1,
+			mockGetEncryptionConfigHash: func(ctx context.Context, filepath string) (string, error) {
+				return "always changes and never errors", nil
+			},
 			mockLoadEncryptionConfig: func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
 				return nil, fmt.Errorf("empty config file")
 			},
@@ -74,8 +80,12 @@ apiserver_encryption_config_controller_automatic_reload_failures_total{apiserver
 			name:                    "when new valid config is provided it should be updated",
 			wantECFileHash:          "some new config hash",
 			wantLoadCalls:           1,
+			wantHashCalls:           1,
 			wantMetrics:             expectedSuccessMetricValue,
 			wantAddRateLimitedCount: 0,
+			mockGetEncryptionConfigHash: func(ctx context.Context, filepath string) (string, error) {
+				return "always changes and never errors", nil
+			},
 			mockLoadEncryptionConfig: func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
 				return &encryptionconfig.EncryptionConfiguration{
 					HealthChecks: []healthz.HealthChecker{
@@ -92,9 +102,13 @@ apiserver_encryption_config_controller_automatic_reload_failures_total{apiserver
 			name:                    "when same valid config is provided previous config shouldn't be changed",
 			wantECFileHash:          "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
 			wantLoadCalls:           1,
+			wantHashCalls:           1,
 			wantTransformerClosed:   true,
 			wantMetrics:             "",
 			wantAddRateLimitedCount: 0,
+			mockGetEncryptionConfigHash: func(ctx context.Context, filepath string) (string, error) {
+				return "always changes and never errors", nil
+			},
 			mockLoadEncryptionConfig: func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
 				return &encryptionconfig.EncryptionConfiguration{
 					HealthChecks: []healthz.HealthChecker{
@@ -112,9 +126,13 @@ apiserver_encryption_config_controller_automatic_reload_failures_total{apiserver
 			name:                    "when transformer's health check fails previous config shouldn't be changed",
 			wantECFileHash:          "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
 			wantLoadCalls:           1,
+			wantHashCalls:           1,
 			wantTransformerClosed:   true,
 			wantMetrics:             expectedFailureMetricValue,
 			wantAddRateLimitedCount: 1,
+			mockGetEncryptionConfigHash: func(ctx context.Context, filepath string) (string, error) {
+				return "always changes and never errors", nil
+			},
 			mockLoadEncryptionConfig: func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
 				return &encryptionconfig.EncryptionConfiguration{
 					HealthChecks: []healthz.HealthChecker{
@@ -132,9 +150,13 @@ apiserver_encryption_config_controller_automatic_reload_failures_total{apiserver
 			name:                    "when multiple health checks are present previous config shouldn't be changed",
 			wantECFileHash:          "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
 			wantLoadCalls:           1,
+			wantHashCalls:           1,
 			wantTransformerClosed:   true,
 			wantMetrics:             expectedFailureMetricValue,
 			wantAddRateLimitedCount: 1,
+			mockGetEncryptionConfigHash: func(ctx context.Context, filepath string) (string, error) {
+				return "always changes and never errors", nil
+			},
 			mockLoadEncryptionConfig: func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
 				return &encryptionconfig.EncryptionConfiguration{
 					HealthChecks: []healthz.HealthChecker{
@@ -155,9 +177,13 @@ apiserver_encryption_config_controller_automatic_reload_failures_total{apiserver
 			name:                    "when invalid health check URL is provided previous config shouldn't be changed",
 			wantECFileHash:          "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
 			wantLoadCalls:           1,
+			wantHashCalls:           1,
 			wantTransformerClosed:   true,
 			wantMetrics:             expectedFailureMetricValue,
 			wantAddRateLimitedCount: 1,
+			mockGetEncryptionConfigHash: func(ctx context.Context, filepath string) (string, error) {
+				return "always changes and never errors", nil
+			},
 			mockLoadEncryptionConfig: func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
 				return &encryptionconfig.EncryptionConfiguration{
 					HealthChecks: []healthz.HealthChecker{
@@ -174,9 +200,13 @@ apiserver_encryption_config_controller_automatic_reload_failures_total{apiserver
 			name:                    "when config is not updated transformers are closed correctly",
 			wantECFileHash:          "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
 			wantLoadCalls:           1,
+			wantHashCalls:           1,
 			wantTransformerClosed:   true,
 			wantMetrics:             "",
 			wantAddRateLimitedCount: 0,
+			mockGetEncryptionConfigHash: func(ctx context.Context, filepath string) (string, error) {
+				return "always changes and never errors", nil
+			},
 			mockLoadEncryptionConfig: func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
 				return &encryptionconfig.EncryptionConfiguration{
 					HealthChecks: []healthz.HealthChecker{
@@ -230,14 +260,16 @@ apiserver_encryption_config_controller_automatic_reload_failures_total{apiserver
 			}
 			d.queue = queue
 
-			var loadCalls int
+			var hashCalls, loadCalls int
 			d.loadEncryptionConfig = func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
 				loadCalls++
 				queue.ctx = ctx
 				return test.mockLoadEncryptionConfig(ctx, filepath, reload, apiServerID)
 			}
-			d.getEncryptionConfigHash = func(filepath string) (string, error) {
-				return "never matches", nil
+			d.getEncryptionConfigHash = func(ctx context.Context, filepath string) (string, error) {
+				hashCalls++
+				queue.ctx = ctx
+				return test.mockGetEncryptionConfigHash(ctx, filepath)
 			}
 
 			d.Run(serverCtx) // this should block and run exactly one iteration of the worker loop
@@ -250,8 +282,10 @@ apiserver_encryption_config_controller_automatic_reload_failures_total{apiserver
 				t.Errorf("load calls does not match: want=%v, got=%v", test.wantLoadCalls, loadCalls)
 			}
 
-			// transformers are closed when closeTransformer's CancelFunc is called.
-			// a successful call to closeTransformers will close its context's Done channel, indicating successful closure.
+			if test.wantHashCalls != hashCalls {
+				t.Errorf("hash calls does not match: want=%v, got=%v", test.wantHashCalls, hashCalls)
+			}
+
 			if test.wantTransformerClosed != queue.wasCanceled {
 				t.Errorf("transformer closed does not match: want=%v, got=%v", test.wantTransformerClosed, queue.wasCanceled)
 			}

@@ -58,7 +58,7 @@ type DynamicKMSEncryptionConfigContent struct {
 	apiServerID string
 
 	// can be swapped during testing
-	getEncryptionConfigHash func(filepath string) (string, error)
+	getEncryptionConfigHash func(ctx context.Context, filepath string) (string, error)
 	loadEncryptionConfig    func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error)
 }
 
@@ -80,8 +80,10 @@ func NewDynamicEncryptionConfiguration(
 		dynamicTransformers:            dynamicTransformers,
 		queue:                          workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), name),
 		apiServerID:                    apiServerID,
-		getEncryptionConfigHash:        encryptionconfig.GetEncryptionConfigHash,
-		loadEncryptionConfig:           encryptionconfig.LoadEncryptionConfig,
+		getEncryptionConfigHash: func(_ context.Context, filepath string) (string, error) {
+			return encryptionconfig.GetEncryptionConfigHash(filepath)
+		},
+		loadEncryptionConfig: encryptionconfig.LoadEncryptionConfig,
 	}
 	encryptionConfig.queue.Add(workqueueKey) // to avoid missing any file changes that occur in between the initial load and Run
 
@@ -222,7 +224,7 @@ func (d *DynamicKMSEncryptionConfigContent) processEncryptionConfig(ctx context.
 	configChanged bool,
 	_ error,
 ) {
-	contentHash, err := d.getEncryptionConfigHash(d.filePath)
+	contentHash, err := d.getEncryptionConfigHash(ctx, d.filePath)
 	if err != nil {
 		return nil, false, err
 	}
