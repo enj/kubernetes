@@ -220,6 +220,37 @@ apiserver_encryption_config_controller_automatic_reload_failures_total{apiserver
 				}, nil
 			},
 		},
+		{
+			name:                    "when config hash is not updated transformers are closed correctly",
+			wantECFileHash:          "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
+			wantLoadCalls:           0,
+			wantHashCalls:           1,
+			wantTransformerClosed:   true,
+			wantMetrics:             "",
+			wantAddRateLimitedCount: 0,
+			mockGetEncryptionConfigHash: func(ctx context.Context, filepath string) (string, error) {
+				// hash of initial "testdata/ec_config.yaml" config file before reloading
+				return "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3", nil
+			},
+			mockLoadEncryptionConfig: func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
+				return nil, fmt.Errorf("should not be called")
+			},
+		},
+		{
+			name:                    "when config hash errors transformers are closed correctly",
+			wantECFileHash:          "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
+			wantLoadCalls:           0,
+			wantHashCalls:           1,
+			wantTransformerClosed:   true,
+			wantMetrics:             expectedFailureMetricValue,
+			wantAddRateLimitedCount: 1,
+			mockGetEncryptionConfigHash: func(ctx context.Context, filepath string) (string, error) {
+				return "", fmt.Errorf("some io error")
+			},
+			mockLoadEncryptionConfig: func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
+				return nil, fmt.Errorf("should not be called")
+			},
+		},
 	}
 
 	for _, test := range tests {
