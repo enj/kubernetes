@@ -309,7 +309,7 @@ resources:
 func TestEncryptionConfigHotReload(t *testing.T) {
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv1, true)()
 
-	// this makes the test super responsive. It's set to a default of 1 minute..
+	// this makes the test super responsive. It's set to a default of 1 minute.
 	encryptionconfigcontroller.EncryptionConfigFileChangePollDuration = time.Second
 
 	storageConfig := framework.SharedEtcd()
@@ -824,7 +824,7 @@ resources:
 func TestEncryptionConfigHotReloadFilePolling(t *testing.T) {
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv1, true)()
 
-	// this makes the test super responsive. It's set to a default of 1 minute..
+	// this makes the test super responsive. It's set to a default of 1 minute.
 	encryptionconfigcontroller.EncryptionConfigFileChangePollDuration = time.Second
 
 	testCases := []struct {
