@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,37 +39,44 @@ import (
 func TestController(t *testing.T) {
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.KMSv1, true)()
 
+	const expectedSuccessMetricValue = `
+# HELP apiserver_encryption_config_controller_automatic_reload_success_total [ALPHA] Total number of successful automatic reloads of encryption configuration split by apiserver identity.
+# TYPE apiserver_encryption_config_controller_automatic_reload_success_total counter
+apiserver_encryption_config_controller_automatic_reload_success_total{apiserver_id_hash="sha256:cd8a60cec6134082e9f37e7a4146b4bc14a0bf8a863237c36ec8fdb658c3e027"} 1
+`
+	const expectedFailureMetricValue = `
+# HELP apiserver_encryption_config_controller_automatic_reload_failures_total [ALPHA] Total number of failed automatic reloads of encryption configuration split by apiserver identity.
+# TYPE apiserver_encryption_config_controller_automatic_reload_failures_total counter
+apiserver_encryption_config_controller_automatic_reload_failures_total{apiserver_id_hash="sha256:cd8a60cec6134082e9f37e7a4146b4bc14a0bf8a863237c36ec8fdb658c3e027"} 1
+`
+
 	tests := []struct {
 		name                     string
-		ecFilePath               string
-		apiServerID              string
-		validateECFileHash       bool
-		validateTransformerClose bool
-		validateSuccessMetric    bool
-		validateFailureMetric    bool
-		mockLoadEncryptionConfig func(ctx context.Context, filePath string, enableEncryption bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error)
+		wantECFileHash           string
+		wantTransformerClosed    bool
+		wantLoadCalls            int
+		wantAddRateLimitedCount  uint64
+		wantMetrics              string
+		mockLoadEncryptionConfig func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error)
 	}{
 		{
-			name:                     "when invalid config is provided previous config shouldn't be changed",
-			ecFilePath:               "testdata/empty_config.yaml",
-			apiServerID:              "test-apiserver",
-			validateECFileHash:       true,
-			validateTransformerClose: true,
-			validateFailureMetric:    true,
-			mockLoadEncryptionConfig: func(ctx context.Context, filePath string, enableEncryption bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
-				return &encryptionconfig.EncryptionConfiguration{
-					// hash of initial "testdata/ec_config.yaml" config file before reloading
-					EncryptionFileContentHash: "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
-				}, fmt.Errorf("empty config file")
+			name:                    "when invalid config is provided previous config shouldn't be changed",
+			wantECFileHash:          "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
+			wantLoadCalls:           1,
+			wantTransformerClosed:   true,
+			wantMetrics:             expectedFailureMetricValue,
+			wantAddRateLimitedCount: 1,
+			mockLoadEncryptionConfig: func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
+				return nil, fmt.Errorf("empty config file")
 			},
 		},
 		{
-			name:                  "when new valid config is provided it should be updated",
-			ecFilePath:            "testdata/another_ec_config.yaml",
-			apiServerID:           "test-apiserver",
-			validateECFileHash:    true,
-			validateSuccessMetric: true,
-			mockLoadEncryptionConfig: func(ctx context.Context, filePath string, enableEncryption bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
+			name:                    "when new valid config is provided it should be updated",
+			wantECFileHash:          "some new config hash",
+			wantLoadCalls:           1,
+			wantMetrics:             expectedSuccessMetricValue,
+			wantAddRateLimitedCount: 0,
+			mockLoadEncryptionConfig: func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
 				return &encryptionconfig.EncryptionConfiguration{
 					HealthChecks: []healthz.HealthChecker{
 						&mockHealthChecker{
@@ -76,18 +84,18 @@ func TestController(t *testing.T) {
 							err:        nil,
 						},
 					},
-					// hash of "testdata/another_ec_config.yaml" config file
-					EncryptionFileContentHash: "8851cada892961c7465a85c610ea9fbddb73b8d425b8c496a05c068679bdd798",
+					EncryptionFileContentHash: "some new config hash",
 				}, nil
 			},
 		},
 		{
-			name:                     "when same valid config is provided previous config shouldn't be changed",
-			ecFilePath:               "testdata/ec_config.yaml",
-			apiServerID:              "test-apiserver",
-			validateECFileHash:       true,
-			validateTransformerClose: true,
-			mockLoadEncryptionConfig: func(ctx context.Context, filePath string, enableEncryption bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
+			name:                    "when same valid config is provided previous config shouldn't be changed",
+			wantECFileHash:          "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
+			wantLoadCalls:           1,
+			wantTransformerClosed:   true,
+			wantMetrics:             "",
+			wantAddRateLimitedCount: 0,
+			mockLoadEncryptionConfig: func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
 				return &encryptionconfig.EncryptionConfiguration{
 					HealthChecks: []healthz.HealthChecker{
 						&mockHealthChecker{
@@ -101,12 +109,13 @@ func TestController(t *testing.T) {
 			},
 		},
 		{
-			name:                     "when transformer's health check fails previous config shouldn't be changed",
-			ecFilePath:               "testdata/another_ec_config.yaml",
-			apiServerID:              "test-apiserver",
-			validateECFileHash:       true,
-			validateTransformerClose: true,
-			mockLoadEncryptionConfig: func(ctx context.Context, filePath string, enableEncryption bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
+			name:                    "when transformer's health check fails previous config shouldn't be changed",
+			wantECFileHash:          "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
+			wantLoadCalls:           1,
+			wantTransformerClosed:   true,
+			wantMetrics:             expectedFailureMetricValue,
+			wantAddRateLimitedCount: 1,
+			mockLoadEncryptionConfig: func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
 				return &encryptionconfig.EncryptionConfiguration{
 					HealthChecks: []healthz.HealthChecker{
 						&mockHealthChecker{
@@ -114,19 +123,19 @@ func TestController(t *testing.T) {
 							err:        fmt.Errorf("mockingly failing"),
 						},
 					},
-					KMSCloseGracePeriod: time.Second,
-					// hash of initial "testdata/ec_config.yaml" config file before reloading
-					EncryptionFileContentHash: "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
+					KMSCloseGracePeriod:       time.Second,
+					EncryptionFileContentHash: "anything different",
 				}, nil
 			},
 		},
 		{
-			name:                     "when multiple health checks are present previous config shouldn't be changed",
-			ecFilePath:               "testdata/another_ec_config.yaml",
-			apiServerID:              "test-apiserver",
-			validateECFileHash:       true,
-			validateTransformerClose: true,
-			mockLoadEncryptionConfig: func(ctx context.Context, filePath string, enableEncryption bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
+			name:                    "when multiple health checks are present previous config shouldn't be changed",
+			wantECFileHash:          "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
+			wantLoadCalls:           1,
+			wantTransformerClosed:   true,
+			wantMetrics:             expectedFailureMetricValue,
+			wantAddRateLimitedCount: 1,
+			mockLoadEncryptionConfig: func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
 				return &encryptionconfig.EncryptionConfiguration{
 					HealthChecks: []healthz.HealthChecker{
 						&mockHealthChecker{
@@ -138,18 +147,18 @@ func TestController(t *testing.T) {
 							err:        nil,
 						},
 					},
-					// hash of initial "testdata/ec_config.yaml" config file before reloading
-					EncryptionFileContentHash: "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
+					EncryptionFileContentHash: "anything different",
 				}, nil
 			},
 		},
 		{
-			name:                     "when invalid health check URL is provided previous config shouldn't be changed",
-			ecFilePath:               "testdata/another_ec_config.yaml",
-			apiServerID:              "test-apiserver",
-			validateECFileHash:       true,
-			validateTransformerClose: true,
-			mockLoadEncryptionConfig: func(ctx context.Context, filePath string, enableEncryption bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
+			name:                    "when invalid health check URL is provided previous config shouldn't be changed",
+			wantECFileHash:          "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
+			wantLoadCalls:           1,
+			wantTransformerClosed:   true,
+			wantMetrics:             expectedFailureMetricValue,
+			wantAddRateLimitedCount: 1,
+			mockLoadEncryptionConfig: func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
 				return &encryptionconfig.EncryptionConfiguration{
 					HealthChecks: []healthz.HealthChecker{
 						&mockHealthChecker{
@@ -157,17 +166,18 @@ func TestController(t *testing.T) {
 							err:        nil,
 						},
 					},
-					// hash of initial "testdata/ec_config.yaml" config file before reloading
-					EncryptionFileContentHash: "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
+					EncryptionFileContentHash: "anything different",
 				}, nil
 			},
 		},
 		{
-			name:                     "when config is not updated transformers are closed correctly",
-			ecFilePath:               "testdata/ec_config.yaml",
-			apiServerID:              "test-apiserver",
-			validateTransformerClose: true,
-			mockLoadEncryptionConfig: func(ctx context.Context, filePath string, enableEncryption bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
+			name:                    "when config is not updated transformers are closed correctly",
+			wantECFileHash:          "6bc9f4aa2e5587afbb96074e1809550cbc4de3cc3a35717dac8ff2800a147fd3",
+			wantLoadCalls:           1,
+			wantTransformerClosed:   true,
+			wantMetrics:             "",
+			wantAddRateLimitedCount: 0,
+			mockLoadEncryptionConfig: func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
 				return &encryptionconfig.EncryptionConfiguration{
 					HealthChecks: []healthz.HealthChecker{
 						&mockHealthChecker{
@@ -185,24 +195,8 @@ func TestController(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			serverCtx, closeServer := context.WithCancel(context.Background())
-			defer closeServer()
+			t.Cleanup(closeServer)
 
-			expectedFailureMetricValue := `
-# HELP apiserver_encryption_config_controller_automatic_reload_failures_total [ALPHA] Total number of failed automatic reloads of encryption configuration split by apiserver identity.
-# TYPE apiserver_encryption_config_controller_automatic_reload_failures_total counter
-apiserver_encryption_config_controller_automatic_reload_failures_total{apiserver_id_hash="sha256:cd8a60cec6134082e9f37e7a4146b4bc14a0bf8a863237c36ec8fdb658c3e027"} 1
-`
-			expectedSuccessMetricValue := `
-# HELP apiserver_encryption_config_controller_automatic_reload_success_total [ALPHA] Total number of successful automatic reloads of encryption configuration split by apiserver identity.
-# TYPE apiserver_encryption_config_controller_automatic_reload_success_total counter
-apiserver_encryption_config_controller_automatic_reload_success_total{apiserver_id_hash="sha256:cd8a60cec6134082e9f37e7a4146b4bc14a0bf8a863237c36ec8fdb658c3e027"} 1
-`
-			failureMetrics := []string{
-				"apiserver_encryption_config_controller_automatic_reload_failures_total",
-			}
-			successMetrics := []string{
-				"apiserver_encryption_config_controller_automatic_reload_success_total",
-			}
 			legacyregistry.Reset()
 
 			// load initial encryption config
@@ -210,7 +204,7 @@ apiserver_encryption_config_controller_automatic_reload_success_total{apiserver_
 				serverCtx,
 				"testdata/ec_config.yaml",
 				true,
-				test.apiServerID,
+				"test-apiserver",
 			)
 			if err != nil {
 				t.Fatalf("failed to load encryption config: %v", err)
@@ -218,7 +212,7 @@ apiserver_encryption_config_controller_automatic_reload_success_total{apiserver_
 
 			d := NewDynamicEncryptionConfiguration(
 				"test-controller",
-				test.ecFilePath,
+				"does not matter",
 				encryptionconfig.NewDynamicTransformers(
 					encryptionConfiguration.Transformers,
 					encryptionConfiguration.HealthChecks[0],
@@ -226,78 +220,97 @@ apiserver_encryption_config_controller_automatic_reload_success_total{apiserver_
 					encryptionConfiguration.KMSCloseGracePeriod,
 				),
 				encryptionConfiguration.EncryptionFileContentHash,
-				test.apiServerID,
+				"test-apiserver",
 			)
+			d.queue.ShutDown() // we do not use the real queue during tests
 
-			var testCtx context.Context
-			var testEC *encryptionconfig.EncryptionConfiguration
+			queue := &mockWorkQueue{
+				addCalled: make(chan struct{}),
+				cancel:    closeServer,
+			}
+			d.queue = queue
+
 			var loadCalls int
-			d.loadEncryptionConfig = func(ctx context.Context, filePath string, enableEncryption bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
+			d.loadEncryptionConfig = func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error) {
 				loadCalls++
-				testCtx = ctx
-				ec, err := test.mockLoadEncryptionConfig(ctx, filePath, enableEncryption, apiServerID)
-				testEC = ec
-				return ec, err
+				queue.ctx = ctx
+				return test.mockLoadEncryptionConfig(ctx, filepath, reload, apiServerID)
+			}
+			d.getEncryptionConfigHash = func(filepath string) (string, error) {
+				return "never matches", nil
 			}
 
-			d.queue = &mockWorkQueue{
-				cancel: closeServer,
+			d.Run(serverCtx) // this should block and run exactly one iteration of the worker loop
+
+			if test.wantECFileHash != d.lastLoadedEncryptionConfigHash {
+				t.Errorf("expected encryption config hash %q but got %q", test.wantECFileHash, d.lastLoadedEncryptionConfigHash)
 			}
 
-			d.Run(serverCtx)
-
-			if test.validateECFileHash {
-				if d.lastLoadedEncryptionConfigHash != testEC.EncryptionFileContentHash && loadCalls == 1 {
-					t.Fatalf("expected encryption config hash %q but got %q", testEC.EncryptionFileContentHash, d.lastLoadedEncryptionConfigHash)
-				}
+			if test.wantLoadCalls != loadCalls {
+				t.Errorf("load calls does not match: want=%v, got=%v", test.wantLoadCalls, loadCalls)
 			}
 
-			if test.validateTransformerClose {
-				select {
-				case <-time.After(10 * time.Second):
-					t.Fatalf("ctx is expected to be Done but it is not")
-				case <-testCtx.Done():
-					// transformers are closed when closeTransformer's CancelFunc is called.
-					// a successful call to closeTransformers will close its context's Done channel, indicating successful closure.
-				}
+			// transformers are closed when closeTransformer's CancelFunc is called.
+			// a successful call to closeTransformers will close its context's Done channel, indicating successful closure.
+			if test.wantTransformerClosed != queue.wasCanceled {
+				t.Errorf("transformer closed does not match: want=%v, got=%v", test.wantTransformerClosed, queue.wasCanceled)
 			}
 
-			if test.validateFailureMetric {
-				if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(expectedFailureMetricValue), failureMetrics...); err != nil {
-					t.Fatalf("failed to validate failure metric: %v", err)
-				}
+			if test.wantAddRateLimitedCount != queue.addRateLimitedCount.Load() {
+				t.Errorf("queue addRateLimitedCount does not match: want=%v, got=%v", test.wantAddRateLimitedCount, queue.addRateLimitedCount.Load())
 			}
 
-			if test.validateSuccessMetric {
-				if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(expectedSuccessMetricValue), successMetrics...); err != nil {
-					t.Fatalf("failed to validate success metric: %v", err)
-				}
+			if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(test.wantMetrics),
+				"apiserver_encryption_config_controller_automatic_reload_success_total",
+				"apiserver_encryption_config_controller_automatic_reload_failures_total",
+			); err != nil {
+				t.Errorf("failed to validate metrics: %v", err)
 			}
 		})
 	}
 }
 
-// mock workqueue.RateLimitingInterface
 type mockWorkQueue struct {
 	workqueue.RateLimitingInterface // will panic if any unexpected method is called
-	count                           atomic.Uint64
-	cancel                          func()
-}
 
-var _ workqueue.RateLimitingInterface = &mockWorkQueue{}
+	closeOnce sync.Once
+	addCalled chan struct{}
+
+	count       atomic.Uint64
+	ctx         context.Context
+	wasCanceled bool
+	cancel      func()
+
+	addRateLimitedCount atomic.Uint64
+}
 
 func (m *mockWorkQueue) Done(item interface{}) {
 	m.count.Add(1)
+	m.wasCanceled = m.ctx.Err() != nil
 	m.cancel()
 }
 
 func (m *mockWorkQueue) Get() (item interface{}, shutdown bool) {
-	return nil, m.count.Load() > 0
+	<-m.addCalled
+
+	switch m.count.Load() {
+	case 0:
+		return nil, false
+	case 1:
+		return nil, true
+	default:
+		panic("too many calls to Get")
+	}
 }
 
-func (m *mockWorkQueue) Add(item interface{})            {}
+func (m *mockWorkQueue) Add(item interface{}) {
+	m.closeOnce.Do(func() {
+		close(m.addCalled)
+	})
+}
+
 func (m *mockWorkQueue) ShutDown()                       {}
-func (m *mockWorkQueue) AddRateLimited(item interface{}) {}
+func (m *mockWorkQueue) AddRateLimited(item interface{}) { m.addRateLimitedCount.Add(1) }
 
 type mockHealthChecker struct {
 	pluginName string

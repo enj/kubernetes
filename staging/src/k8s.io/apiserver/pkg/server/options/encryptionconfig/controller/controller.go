@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -57,7 +58,8 @@ type DynamicKMSEncryptionConfigContent struct {
 	apiServerID string
 
 	// can be swapped during testing
-	loadEncryptionConfig func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error)
+	getEncryptionConfigHash func(filepath string) (string, error)
+	loadEncryptionConfig    func(ctx context.Context, filepath string, reload bool, apiServerID string) (*encryptionconfig.EncryptionConfiguration, error)
 }
 
 func init() {
@@ -78,6 +80,7 @@ func NewDynamicEncryptionConfiguration(
 		dynamicTransformers:            dynamicTransformers,
 		queue:                          workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), name),
 		apiServerID:                    apiServerID,
+		getEncryptionConfigHash:        encryptionconfig.GetEncryptionConfigHash,
 		loadEncryptionConfig:           encryptionconfig.LoadEncryptionConfig,
 	}
 	encryptionConfig.queue.Add(workqueueKey) // to avoid missing any file changes that occur in between the initial load and Run
@@ -88,13 +91,26 @@ func NewDynamicEncryptionConfiguration(
 // Run starts the controller and blocks until ctx is canceled.
 func (d *DynamicKMSEncryptionConfigContent) Run(ctx context.Context) {
 	defer utilruntime.HandleCrash()
-	defer d.queue.ShutDown()
 
 	klog.InfoS("Starting controller", "name", d.name)
 	defer klog.InfoS("Shutting down controller", "name", d.name)
 
-	// start worker for processing content
-	go wait.UntilWithContext(ctx, d.runWorker, time.Second)
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer utilruntime.HandleCrash()
+		defer wg.Done()
+		defer d.queue.ShutDown()
+		<-ctx.Done()
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer utilruntime.HandleCrash()
+		defer wg.Done()
+		d.runWorker(ctx)
+	}()
 
 	// this function polls changes in the encryption config file by placing a dummy key in the queue.
 	// the 'runWorker' function then picks up this dummy key and processes the changes.
@@ -112,7 +128,7 @@ func (d *DynamicKMSEncryptionConfigContent) Run(ctx context.Context) {
 		},
 	)
 
-	<-ctx.Done()
+	wg.Wait()
 }
 
 // runWorker to process file content
@@ -202,19 +218,30 @@ func (d *DynamicKMSEncryptionConfigContent) processWorkItem(serverCtx context.Co
 
 // loadEncryptionConfig processes the next set of content from the file.
 func (d *DynamicKMSEncryptionConfigContent) processEncryptionConfig(ctx context.Context) (
-	encryptionConfiguration *encryptionconfig.EncryptionConfiguration,
+	_ *encryptionconfig.EncryptionConfiguration,
 	configChanged bool,
-	err error,
+	_ error,
 ) {
-	// this code path will only execute if reload=true. So passing true explicitly.
-	encryptionConfiguration, err = d.loadEncryptionConfig(ctx, d.filePath, true, d.apiServerID)
+	contentHash, err := d.getEncryptionConfigHash(d.filePath)
 	if err != nil {
 		return nil, false, err
 	}
 
 	// check if encryptionConfig is different from the current. Do nothing if they are the same.
+	if contentHash == d.lastLoadedEncryptionConfigHash {
+		klog.V(4).InfoS("Encryption config has not changed (before load)", "name", d.name)
+		return nil, false, nil
+	}
+
+	// this code path will only execute if reload=true. So passing true explicitly.
+	encryptionConfiguration, err := d.loadEncryptionConfig(ctx, d.filePath, true, d.apiServerID)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// check if encryptionConfig is different from the current (again to avoid TOCTOU). Do nothing if they are the same.
 	if encryptionConfiguration.EncryptionFileContentHash == d.lastLoadedEncryptionConfigHash {
-		klog.V(4).InfoS("Encryption config has not changed", "name", d.name)
+		klog.V(4).InfoS("Encryption config has not changed (after load)", "name", d.name)
 		return nil, false, nil
 	}
 
