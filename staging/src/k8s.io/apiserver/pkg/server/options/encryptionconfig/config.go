@@ -539,6 +539,8 @@ func loadDataAndHash(filepath string) ([]byte, string, error) {
 	return data, computeEncryptionConfigHash(data), nil
 }
 
+// GetEncryptionConfigHash reads the encryption configuration file at filepath and returns the hash of the file.
+// It does not attempt to decode or load the config, and serves as a cheap check to determine if the file has changed.
 func GetEncryptionConfigHash(filepath string) (string, error) {
 	_, contentHash, err := loadDataAndHash(filepath)
 	return contentHash, err
