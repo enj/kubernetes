@@ -17,6 +17,7 @@ limitations under the License.
 package options
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -461,6 +462,9 @@ func (o *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticat
 		if ret.AuthenticationConfig, err = loadAuthenticationConfig(o.AuthenticationConfigFile); err != nil {
 			return kubeauthenticator.Config{}, err
 		}
+		ret.LoadAuthenticationConfig = func(_ context.Context, path string) (*apiserver.AuthenticationConfiguration, error) {
+			return loadAuthenticationConfig(path)
+		}
 	} else if o.OIDC != nil && len(o.OIDC.IssuerURL) > 0 && len(o.OIDC.ClientID) > 0 {
 		usernamePrefix := o.OIDC.UsernamePrefix
 
@@ -571,7 +575,7 @@ func (o *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticat
 }
 
 // ApplyTo requires already applied OpenAPIConfig and EgressSelector if present.
-func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.AuthenticationInfo, secureServing *genericapiserver.SecureServingInfo, egressSelector *egressselector.EgressSelector, openAPIConfig *openapicommon.Config, openAPIV3Config *openapicommon.OpenAPIV3Config, extclient kubernetes.Interface, versionedInformer informers.SharedInformerFactory) error {
+func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.AuthenticationInfo, secureServing *genericapiserver.SecureServingInfo, egressSelector *egressselector.EgressSelector, openAPIConfig *openapicommon.Config, openAPIV3Config *openapicommon.OpenAPIV3Config, addPostStartHook func(name string, hook genericapiserver.PostStartHookFunc) error, extclient kubernetes.Interface, versionedInformer informers.SharedInformerFactory) error {
 	if o == nil {
 		return nil
 	}
@@ -630,11 +634,32 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.Authen
 	}
 
 	// var openAPIV3SecuritySchemes spec3.SecuritySchemes
-	authenticator, openAPIV2SecurityDefinitions, openAPIV3SecuritySchemes, err := authenticatorConfig.New()
+	authenticator, updateAuthenticationConfig, openAPIV2SecurityDefinitions, openAPIV3SecuritySchemes, err := authenticatorConfig.New()
 	if err != nil {
 		return err
 	}
 	authInfo.Authenticator = authenticator
+
+	if updateAuthenticationConfig != nil && authenticatorConfig.LoadAuthenticationConfig != nil {
+		if err := addPostStartHook("start-kube-apiserver-authentication-reload",
+			func(hookContext genericapiserver.PostStartHookContext) error {
+				go wait.UntilWithContext(wait.ContextForChannel(hookContext.StopCh), func(ctx context.Context) {
+					// TODO does this validate the config??
+					authConfig, err := authenticatorConfig.LoadAuthenticationConfig(ctx, o.AuthenticationConfigFile)
+					if err != nil {
+						return // TODO log
+					}
+					if err := updateAuthenticationConfig(authConfig); err != nil {
+						return // TODO log
+					}
+				}, time.Minute)
+				return nil
+			},
+		); err != nil {
+			return err
+		}
+	}
+
 	openAPIConfig.SecurityDefinitions = openAPIV2SecurityDefinitions
 	if openAPIV3Config != nil {
 		openAPIV3Config.SecuritySchemes = openAPIV3SecuritySchemes
