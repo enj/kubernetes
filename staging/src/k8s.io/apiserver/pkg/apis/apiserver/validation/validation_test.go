@@ -58,7 +58,7 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 		{
 			name: "jwt authenticator is empty",
 			in:   &api.AuthenticationConfiguration{},
-			want: "jwt: Required value: at least one jwt is required",
+			want: "",
 		},
 		{
 			name: ">1 jwt authenticator",

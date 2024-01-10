@@ -228,6 +228,10 @@ var allowedSigningAlgs = map[string]bool{
 	oidc.PS512: true,
 }
 
+// BaseContext is the root context used when spawning go routines.
+// Exported so that it can be overridden in integration tests.
+var BaseContext = context.Background()
+
 func New(opts Options) (authenticator.Token, error) {
 	celMapper, fieldErr := apiservervalidation.CompileAndValidateJWTAuthenticator(opts.JWTAuthenticator, opts.DisallowedIssuers)
 	if err := fieldErr.ToAggregate(); err != nil {
@@ -297,7 +301,7 @@ func New(opts Options) (authenticator.Token, error) {
 		client = &clientWithDiscoveryURL
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(BaseContext)
 	ctx = oidc.ClientContext(ctx, client)
 
 	now := opts.now
