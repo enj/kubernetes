@@ -980,7 +980,7 @@ jwt:
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			config, err := loadAuthenticationConfig(tc.file())
+			config, _, err := loadAuthenticationConfig(tc.file())
 			if !strings.Contains(errString(err), tc.expectErr) {
 				t.Fatalf("expected error %q, got %v", tc.expectErr, err)
 			}

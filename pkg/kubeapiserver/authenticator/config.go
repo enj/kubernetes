@@ -59,6 +59,7 @@ type Config struct {
 
 	TokenAuthFile               string
 	AuthenticationConfig        *apiserver.AuthenticationConfiguration
+	AuthenticationConfigHash    string
 	OIDCSigningAlgs             []string
 	ServiceAccountKeyFiles      []string
 	ServiceAccountLookup        bool
