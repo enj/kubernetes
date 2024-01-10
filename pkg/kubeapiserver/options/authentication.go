@@ -17,11 +17,13 @@ limitations under the License.
 package options
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -51,6 +53,7 @@ import (
 	"k8s.io/kubernetes/pkg/features"
 	kubeauthenticator "k8s.io/kubernetes/pkg/kubeapiserver/authenticator"
 	authzmodes "k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
+	"k8s.io/kubernetes/pkg/util/filesystem"
 	"k8s.io/kubernetes/plugin/pkg/auth/authenticator/token/bootstrap"
 	"k8s.io/utils/pointer"
 )
@@ -464,7 +467,7 @@ func (o *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticat
 	// load the authentication config from the file.
 	if len(o.AuthenticationConfigFile) > 0 {
 		var err error
-		if ret.AuthenticationConfig, err = loadAuthenticationConfig(o.AuthenticationConfigFile); err != nil {
+		if ret.AuthenticationConfig, ret.AuthenticationConfigData, err = loadAuthenticationConfig(o.AuthenticationConfigFile); err != nil {
 			return kubeauthenticator.Config{}, err
 		}
 		// all known signing algs are allowed when using authentication config
@@ -580,7 +583,7 @@ func (o *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticat
 }
 
 // ApplyTo requires already applied OpenAPIConfig and EgressSelector if present.
-func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.AuthenticationInfo, secureServing *genericapiserver.SecureServingInfo, egressSelector *egressselector.EgressSelector, openAPIConfig *openapicommon.Config, openAPIV3Config *openapicommon.OpenAPIV3Config, extclient kubernetes.Interface, versionedInformer informers.SharedInformerFactory) error {
+func (o *BuiltInAuthenticationOptions) ApplyTo(ctx context.Context, authInfo *genericapiserver.AuthenticationInfo, secureServing *genericapiserver.SecureServingInfo, egressSelector *egressselector.EgressSelector, openAPIConfig *openapicommon.Config, openAPIV3Config *openapicommon.OpenAPIV3Config, extclient kubernetes.Interface, versionedInformer informers.SharedInformerFactory) error {
 	if o == nil {
 		return nil
 	}
@@ -639,11 +642,54 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.Authen
 	}
 
 	// var openAPIV3SecuritySchemes spec3.SecuritySchemes
-	authenticator, openAPIV2SecurityDefinitions, openAPIV3SecuritySchemes, err := authenticatorConfig.New()
+	authenticator, updateAuthenticationConfig, openAPIV2SecurityDefinitions, openAPIV3SecuritySchemes, err := authenticatorConfig.New(ctx)
 	if err != nil {
 		return err
 	}
 	authInfo.Authenticator = authenticator
+
+	if len(o.AuthenticationConfigFile) > 0 {
+		trackedAuthenticationConfigData := authenticatorConfig.AuthenticationConfigData
+		var mu sync.Mutex
+		go filesystem.WatchUntil(
+			ctx,
+			time.Minute,
+			o.AuthenticationConfigFile,
+			func() {
+				// TODO add metrics
+				// TODO collapse onto shared logic with DynamicEncryptionConfigContent controller
+
+				mu.Lock()
+				defer mu.Unlock()
+
+				authConfig, authConfigData, err := loadAuthenticationConfig(o.AuthenticationConfigFile)
+				if err != nil {
+					klog.ErrorS(err, "failed to load authentication config")
+					return
+				}
+
+				if authConfigData == trackedAuthenticationConfigData {
+					return
+				}
+
+				if err := apiservervalidation.ValidateAuthenticationConfiguration(authConfig, authenticatorConfig.ServiceAccountIssuers).ToAggregate(); err != nil {
+					klog.ErrorS(err, "failed to validate authentication config")
+					// this config is not structurally valid and never will be, update the tracker so we stop retrying
+					trackedAuthenticationConfigData = authConfigData
+					return
+				}
+				if err := updateAuthenticationConfig(authConfig); err != nil {
+					klog.ErrorS(err, "failed to update authentication config")
+					// we do not update the tracker here because this error could eventually resolve as we keep retrying
+					return
+				}
+
+				trackedAuthenticationConfigData = authConfigData
+			},
+			func(err error) { klog.ErrorS(err, "watching authentication config file") },
+		)
+	}
+
 	openAPIConfig.SecurityDefinitions = openAPIV2SecurityDefinitions
 	if openAPIV3Config != nil {
 		openAPIV3Config.SecuritySchemes = openAPIV3SecuritySchemes
@@ -701,25 +747,27 @@ func init() {
 	install.Install(cfgScheme)
 }
 
-// loadAuthenticationConfig parses the authentication configuration from the given file and returns it.
-func loadAuthenticationConfig(configFilePath string) (*apiserver.AuthenticationConfiguration, error) {
-	// read from file
+// loadAuthenticationConfig parses the authentication configuration from the given file and returns it and the file's contents.
+func loadAuthenticationConfig(configFilePath string) (*apiserver.AuthenticationConfiguration, string, error) {
 	data, err := os.ReadFile(configFilePath)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if len(data) == 0 {
-		return nil, fmt.Errorf("empty config file %q", configFilePath)
+		return nil, "", fmt.Errorf("empty config file %q", configFilePath)
 	}
 
 	decodedObj, err := runtime.Decode(codecs.UniversalDecoder(), data)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	configuration, ok := decodedObj.(*apiserver.AuthenticationConfiguration)
 	if !ok {
-		return nil, fmt.Errorf("expected AuthenticationConfiguration, got %T", decodedObj)
+		return nil, "", fmt.Errorf("expected AuthenticationConfiguration, got %T", decodedObj)
+	}
+	if configuration == nil { // sanity check, this should never happen but check just in case since we rely on it
+		return nil, "", fmt.Errorf("expected non-nil AuthenticationConfiguration")
 	}
 
-	return configuration, nil
+	return configuration, string(data), nil
 }
