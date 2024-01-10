@@ -59,7 +59,6 @@ type Config struct {
 
 	TokenAuthFile               string
 	AuthenticationConfig        *apiserver.AuthenticationConfiguration
-	LoadAuthenticationConfig    func(ctx context.Context, path string) (*apiserver.AuthenticationConfiguration, error)
 	OIDCSigningAlgs             []string
 	ServiceAccountKeyFiles      []string
 	ServiceAccountLookup        bool

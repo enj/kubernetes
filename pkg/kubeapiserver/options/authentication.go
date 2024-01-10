@@ -462,9 +462,6 @@ func (o *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticat
 		if ret.AuthenticationConfig, err = loadAuthenticationConfig(o.AuthenticationConfigFile); err != nil {
 			return kubeauthenticator.Config{}, err
 		}
-		ret.LoadAuthenticationConfig = func(_ context.Context, path string) (*apiserver.AuthenticationConfiguration, error) {
-			return loadAuthenticationConfig(path)
-		}
 	} else if o.OIDC != nil && len(o.OIDC.IssuerURL) > 0 && len(o.OIDC.ClientID) > 0 {
 		usernamePrefix := o.OIDC.UsernamePrefix
 
@@ -640,17 +637,25 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.Authen
 	}
 	authInfo.Authenticator = authenticator
 
-	if updateAuthenticationConfig != nil && authenticatorConfig.LoadAuthenticationConfig != nil {
-		if err := addPostStartHook("start-kube-apiserver-authentication-reload",
+	if len(o.AuthenticationConfigFile) > 0 {
+		if err := addPostStartHook("start-kube-apiserver-authentication-config-reload",
 			func(hookContext genericapiserver.PostStartHookContext) error {
 				go wait.UntilWithContext(wait.ContextForChannel(hookContext.StopCh), func(ctx context.Context) {
-					// TODO does this validate the config??
-					authConfig, err := authenticatorConfig.LoadAuthenticationConfig(ctx, o.AuthenticationConfigFile)
+					// TODO add metrics
+					// TODO collapse onto shared logic with DynamicEncryptionConfigContent controller
+					// TODO skip reload when the contents are unchanged
+					authConfig, err := loadAuthenticationConfig(o.AuthenticationConfigFile)
 					if err != nil {
-						return // TODO log
+						klog.ErrorS(err, "failed to load authentication config")
+						return
+					}
+					if err := apiservervalidation.ValidateAuthenticationConfiguration(authConfig).ToAggregate(); err != nil {
+						klog.ErrorS(err, "failed to validate authentication config")
+						return
 					}
 					if err := updateAuthenticationConfig(authConfig); err != nil {
-						return // TODO log
+						klog.ErrorS(err, "failed to update authentication config")
+						return
 					}
 				}, time.Minute)
 				return nil
@@ -735,6 +740,9 @@ func loadAuthenticationConfig(configFilePath string) (*apiserver.AuthenticationC
 	configuration, ok := decodedObj.(*apiserver.AuthenticationConfiguration)
 	if !ok {
 		return nil, fmt.Errorf("expected AuthenticationConfiguration, got %T", decodedObj)
+	}
+	if configuration == nil { // sanity check, this should never happen but check just in case since we rely on it
+		return nil, fmt.Errorf("expected non-nil AuthenticationConfiguration")
 	}
 
 	return configuration, nil

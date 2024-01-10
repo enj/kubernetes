@@ -45,16 +45,6 @@ func ValidateAuthenticationConfiguration(c *api.AuthenticationConfiguration) fie
 	root := field.NewPath("jwt")
 	var allErrs field.ErrorList
 
-	// This stricter validation is solely based on what the current implementation supports.
-	// TODO(aramase): when StructuredAuthenticationConfiguration feature gate is added and wired up,
-	// relax this check to allow 0 authenticators. This will allow us to support the case where
-	// API server is initially configured with no authenticators and then authenticators are added
-	// later via dynamic config.
-	if len(c.JWT) == 0 {
-		allErrs = append(allErrs, field.Required(root, fmt.Sprintf(atLeastOneRequiredErrFmt, root)))
-		return allErrs
-	}
-
 	// This stricter validation is because the --oidc-* flag option is singular.
 	// TODO(aramase): when StructuredAuthenticationConfiguration feature gate is added and wired up,
 	// remove the 1 authenticator limit check and add set the limit to 64.
