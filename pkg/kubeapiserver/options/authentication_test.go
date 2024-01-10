@@ -676,7 +676,8 @@ jwt:
 						},
 					},
 				},
-				OIDCSigningAlgs: []string{"ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "RS256", "RS384", "RS512"},
+				AuthenticationConfigHash: "k8s:authentication:unstable:1:35670cc94e2af2b90861caae43a5e1c2b16c5c713ab3a3fd07e2c168532034d6",
+				OIDCSigningAlgs:          []string{"ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "RS256", "RS384", "RS512"},
 			},
 		},
 	}
@@ -873,15 +874,16 @@ func TestValidateOIDCOptions(t *testing.T) {
 
 func TestLoadAuthenticationConfig(t *testing.T) {
 	testCases := []struct {
-		name           string
-		file           func() string
-		expectErr      string
-		expectedConfig *apiserver.AuthenticationConfiguration
+		name                string
+		file                func() string
+		expectErr           string
+		expectedConfig      *apiserver.AuthenticationConfiguration
+		expectedContentHash string
 	}{
 		{
 			name:           "empty file",
 			file:           func() string { return writeTempFile(t, ``) },
-			expectErr:      "empty config file",
+			expectErr:      "authentication configuration file is empty",
 			expectedConfig: nil,
 		},
 		{
@@ -901,6 +903,7 @@ func TestLoadAuthenticationConfig(t *testing.T) {
 					},
 				},
 			},
+			expectedContentHash: "k8s:authentication:unstable:1:1ebca07f6ffbebca943e449ebb3d0919f719624254001b3526bfbeccfb3a2f84",
 		},
 		{
 			name:           "missing file",
@@ -974,6 +977,7 @@ func TestLoadAuthenticationConfig(t *testing.T) {
 					},
 				},
 			},
+			expectedContentHash: "k8s:authentication:unstable:1:409cdda5b0b986d405407f42eaeab1a534652f55781c0b5ccec8ea2b700276db",
 		},
 		{
 			name: "v1alpha1 - yaml",
@@ -1005,6 +1009,7 @@ jwt:
 					},
 				},
 			},
+			expectedContentHash: "k8s:authentication:unstable:1:cb790c447d64268d763dff18bd214a7d8a28b57691bdc38d42b5dabe440bb0b0",
 		},
 		{
 			name: "v1alpha1 - no jwt",
@@ -1013,18 +1018,22 @@ jwt:
 							"apiVersion":"apiserver.config.k8s.io/v1alpha1",
 							"kind":"AuthenticationConfiguration"}`)
 			},
-			expectedConfig: &apiserver.AuthenticationConfiguration{},
+			expectedConfig:      &apiserver.AuthenticationConfiguration{},
+			expectedContentHash: "k8s:authentication:unstable:1:40a2cf52ff27920077ba78dc5d0587e8dcad243a484756bf6554c54e3b81b1df",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			config, err := loadAuthenticationConfig(tc.file())
+			config, contentHash, err := loadAuthenticationConfig(tc.file())
 			if !strings.Contains(errString(err), tc.expectErr) {
 				t.Fatalf("expected error %q, got %v", tc.expectErr, err)
 			}
 			if !reflect.DeepEqual(config, tc.expectedConfig) {
 				t.Fatalf("unexpected config:\n%s", cmp.Diff(tc.expectedConfig, config))
+			}
+			if contentHash != tc.expectedContentHash {
+				t.Errorf("unexpected content hash: want=%q, got=%q", tc.expectedContentHash, contentHash)
 			}
 		})
 	}

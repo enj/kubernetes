@@ -121,6 +121,8 @@ func BuildAndRunTestServer(t *testing.T, caPath, caKeyPath string) *TestServer {
 		userInfoURL, err := url.JoinPath(httpServer.URL + authWebPath)
 		require.NoError(t, err)
 
+		writer.Header().Set("Content-Type", "application/json")
+
 		err = json.NewEncoder(writer).Encode(struct {
 			Issuer      string `json:"issuer"`
 			AuthURL     string `json:"authorization_endpoint"`
@@ -135,9 +137,6 @@ func BuildAndRunTestServer(t *testing.T, caPath, caKeyPath string) *TestServer {
 			UserInfoURL: userInfoURL,
 		})
 		require.NoError(t, err)
-
-		writer.Header().Add("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusOK)
 	})
 
 	mux.HandleFunc(tokenWebPath, func(writer http.ResponseWriter, request *http.Request) {

@@ -17,8 +17,10 @@ limitations under the License.
 package authenticator
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	utilnet "k8s.io/apimachinery/pkg/util/net"
@@ -50,6 +52,10 @@ import (
 	"k8s.io/kubernetes/pkg/serviceaccount"
 )
 
+// JWTAuthenticatorTime controls file reload polling and sleeps associated with authenticator readiness.
+// Exported as a variable so that it can be overridden in integration tests.
+var JWTAuthenticatorTime = time.Minute
+
 // Config contains the data on how to authenticate a request to the Kube API Server
 type Config struct {
 	Anonymous      bool
@@ -57,6 +63,7 @@ type Config struct {
 
 	TokenAuthFile               string
 	AuthenticationConfig        *apiserver.AuthenticationConfiguration
+	AuthenticationConfigHash    string
 	OIDCSigningAlgs             []string
 	ServiceAccountKeyFiles      []string
 	ServiceAccountLookup        bool
@@ -90,7 +97,7 @@ type Config struct {
 
 // New returns an authenticator.Request or an error that supports the standard
 // Kubernetes authentication mechanisms.
-func (config Config) New() (authenticator.Request, *spec.SecurityDefinitions, spec3.SecuritySchemes, error) {
+func (config Config) New() (authenticator.Request, func(*apiserver.AuthenticationConfiguration) error, *spec.SecurityDefinitions, spec3.SecuritySchemes, error) {
 	var authenticators []authenticator.Request
 	var tokenAuthenticators []authenticator.Token
 	securityDefinitionsV2 := spec.SecurityDefinitions{}
@@ -119,21 +126,21 @@ func (config Config) New() (authenticator.Request, *spec.SecurityDefinitions, sp
 	if len(config.TokenAuthFile) > 0 {
 		tokenAuth, err := newAuthenticatorFromTokenFile(config.TokenAuthFile)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		tokenAuthenticators = append(tokenAuthenticators, authenticator.WrapAudienceAgnosticToken(config.APIAudiences, tokenAuth))
 	}
 	if len(config.ServiceAccountKeyFiles) > 0 {
 		serviceAccountAuth, err := newLegacyServiceAccountAuthenticator(config.ServiceAccountKeyFiles, config.ServiceAccountLookup, config.APIAudiences, config.ServiceAccountTokenGetter, config.SecretsWriter)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		tokenAuthenticators = append(tokenAuthenticators, serviceAccountAuth)
 	}
 	if len(config.ServiceAccountIssuers) > 0 {
 		serviceAccountAuth, err := newServiceAccountAuthenticator(config.ServiceAccountIssuers, config.ServiceAccountKeyFiles, config.APIAudiences, config.ServiceAccountTokenGetter)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		tokenAuthenticators = append(tokenAuthenticators, serviceAccountAuth)
 	}
@@ -148,32 +155,49 @@ func (config Config) New() (authenticator.Request, *spec.SecurityDefinitions, sp
 	// cache misses for all requests using the other. While the service account plugin
 	// simply returns an error, the OpenID Connect plugin may query the provider to
 	// update the keys, causing performance hits.
+	var updateAuthenticationConfig func(*apiserver.AuthenticationConfiguration) error
 	if config.AuthenticationConfig != nil {
-		for _, jwtAuthenticator := range config.AuthenticationConfig.JWT {
-			var oidcCAContent oidc.CAContentProvider
-			if len(jwtAuthenticator.Issuer.CertificateAuthority) > 0 {
-				var oidcCAError error
-				oidcCAContent, oidcCAError = dynamiccertificates.NewStaticCAContent("oidc-authenticator", []byte(jwtAuthenticator.Issuer.CertificateAuthority))
-				if oidcCAError != nil {
-					return nil, nil, nil, oidcCAError
-				}
-			}
-			oidcAuth, err := oidc.New(oidc.Options{
-				JWTAuthenticator:     jwtAuthenticator,
-				CAContentProvider:    oidcCAContent,
-				SupportedSigningAlgs: config.OIDCSigningAlgs,
-			})
+		var jwtAuthenticatorPtr atomic.Pointer[jwtAuthenticatorWithClose]
+		var loaded bool
+		updateAuthenticationConfig = func(authConfig *apiserver.AuthenticationConfiguration) error {
+			jwtAuthenticator, err := newJWTAuthenticator(authConfig, config.OIDCSigningAlgs, config.APIAudiences)
 			if err != nil {
-				return nil, nil, nil, err
+				return err
 			}
-			tokenAuthenticators = append(tokenAuthenticators, authenticator.WrapAudienceAgnosticToken(config.APIAudiences, oidcAuth))
+
+			if loaded {
+				// TODO fix the initialization logic so that we can properly health check and block the swap until ready
+				time.Sleep(JWTAuthenticatorTime)
+			}
+
+			oldJWTAuthenticator := jwtAuthenticatorPtr.Swap(jwtAuthenticator)
+			if oldJWTAuthenticator != nil {
+				// TODO maybe track requests so we know when this is safe to do
+				time.Sleep(JWTAuthenticatorTime)
+				// TODO wire in context and drop closing logic
+				oldJWTAuthenticator.closeFunc()
+			}
+
+			loaded = true
+
+			return nil
 		}
+
+		if err := updateAuthenticationConfig(config.AuthenticationConfig); err != nil {
+			return nil, nil, nil, nil, err
+		}
+
+		tokenAuthenticators = append(tokenAuthenticators,
+			authenticator.TokenFunc(func(ctx context.Context, token string) (*authenticator.Response, bool, error) {
+				return jwtAuthenticatorPtr.Load().jwtAuthenticator.AuthenticateToken(ctx, token)
+			}),
+		)
 	}
 
 	if len(config.WebhookTokenAuthnConfigFile) > 0 {
 		webhookTokenAuth, err := newWebhookTokenAuthenticator(config)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 
 		tokenAuthenticators = append(tokenAuthenticators, webhookTokenAuth)
@@ -208,9 +232,9 @@ func (config Config) New() (authenticator.Request, *spec.SecurityDefinitions, sp
 
 	if len(authenticators) == 0 {
 		if config.Anonymous {
-			return anonymous.NewAuthenticator(), &securityDefinitionsV2, securitySchemesV3, nil
+			return anonymous.NewAuthenticator(), nil, &securityDefinitionsV2, securitySchemesV3, nil
 		}
-		return nil, &securityDefinitionsV2, securitySchemesV3, nil
+		return nil, nil, &securityDefinitionsV2, securitySchemesV3, nil
 	}
 
 	authenticator := union.New(authenticators...)
@@ -223,7 +247,47 @@ func (config Config) New() (authenticator.Request, *spec.SecurityDefinitions, sp
 		authenticator = union.NewFailOnError(authenticator, anonymous.NewAuthenticator())
 	}
 
-	return authenticator, &securityDefinitionsV2, securitySchemesV3, nil
+	return authenticator, updateAuthenticationConfig, &securityDefinitionsV2, securitySchemesV3, nil
+}
+
+type jwtAuthenticatorWithClose struct {
+	jwtAuthenticator authenticator.Token
+	closeFunc        func()
+}
+
+func newJWTAuthenticator(config *apiserver.AuthenticationConfiguration, oidcSigningAlgs []string, apiAudiences authenticator.Audiences) (*jwtAuthenticatorWithClose, error) {
+	var jwtAuthenticators []authenticator.Token
+	var closeFuncs []func()
+	for _, jwtAuthenticator := range config.JWT {
+		// TODO remove this CAContentProvider indirection
+		var oidcCAContent oidc.CAContentProvider
+		if len(jwtAuthenticator.Issuer.CertificateAuthority) > 0 {
+			var oidcCAError error
+			oidcCAContent, oidcCAError = dynamiccertificates.NewStaticCAContent("oidc-authenticator", []byte(jwtAuthenticator.Issuer.CertificateAuthority))
+			if oidcCAError != nil {
+				return nil, oidcCAError
+			}
+		}
+		oidcAuth, err := oidc.New(oidc.Options{
+			JWTAuthenticator:     jwtAuthenticator,
+			CAContentProvider:    oidcCAContent,
+			SupportedSigningAlgs: oidcSigningAlgs,
+		})
+		if err != nil {
+			return nil, err
+		}
+		jwtAuthenticators = append(jwtAuthenticators, oidcAuth)
+		closeFuncs = append(closeFuncs, oidcAuth.Close)
+	}
+	return &jwtAuthenticatorWithClose{
+		jwtAuthenticator: authenticator.WrapAudienceAgnosticToken(apiAudiences, tokenunion.New(jwtAuthenticators...)), // this handles the empty jwtAuthenticators slice case correctly
+		closeFunc: func() {
+			for _, closeFunc := range closeFuncs {
+				closeFunc := closeFunc
+				closeFunc()
+			}
+		},
+	}, nil
 }
 
 // IsValidServiceAccountKeyFile returns true if a valid public RSA key can be read from the given file

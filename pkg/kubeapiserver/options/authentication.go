@@ -17,11 +17,14 @@ limitations under the License.
 package options
 
 import (
+	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -51,6 +54,7 @@ import (
 	"k8s.io/kubernetes/pkg/features"
 	kubeauthenticator "k8s.io/kubernetes/pkg/kubeapiserver/authenticator"
 	authzmodes "k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
+	"k8s.io/kubernetes/pkg/util/filesystem"
 	"k8s.io/kubernetes/plugin/pkg/auth/authenticator/token/bootstrap"
 	"k8s.io/utils/pointer"
 )
@@ -459,7 +463,7 @@ func (o *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticat
 	// load the authentication config from the file.
 	if len(o.AuthenticationConfigFile) > 0 {
 		var err error
-		if ret.AuthenticationConfig, err = loadAuthenticationConfig(o.AuthenticationConfigFile); err != nil {
+		if ret.AuthenticationConfig, ret.AuthenticationConfigHash, err = loadAuthenticationConfig(o.AuthenticationConfigFile); err != nil {
 			return kubeauthenticator.Config{}, err
 		}
 		// all known signing algs are allowed when using authentication config
@@ -575,7 +579,7 @@ func (o *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticat
 }
 
 // ApplyTo requires already applied OpenAPIConfig and EgressSelector if present.
-func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.AuthenticationInfo, secureServing *genericapiserver.SecureServingInfo, egressSelector *egressselector.EgressSelector, openAPIConfig *openapicommon.Config, openAPIV3Config *openapicommon.OpenAPIV3Config, extclient kubernetes.Interface, versionedInformer informers.SharedInformerFactory) error {
+func (o *BuiltInAuthenticationOptions) ApplyTo(ctx context.Context, authInfo *genericapiserver.AuthenticationInfo, secureServing *genericapiserver.SecureServingInfo, egressSelector *egressselector.EgressSelector, openAPIConfig *openapicommon.Config, openAPIV3Config *openapicommon.OpenAPIV3Config, extclient kubernetes.Interface, versionedInformer informers.SharedInformerFactory) error {
 	if o == nil {
 		return nil
 	}
@@ -634,11 +638,64 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.Authen
 	}
 
 	// var openAPIV3SecuritySchemes spec3.SecuritySchemes
-	authenticator, openAPIV2SecurityDefinitions, openAPIV3SecuritySchemes, err := authenticatorConfig.New()
+	authenticator, updateAuthenticationConfig, openAPIV2SecurityDefinitions, openAPIV3SecuritySchemes, err := authenticatorConfig.New()
 	if err != nil {
 		return err
 	}
 	authInfo.Authenticator = authenticator
+
+	if len(o.AuthenticationConfigFile) > 0 {
+		trackedAuthenticationConfigHash := authenticatorConfig.AuthenticationConfigHash
+		var mu sync.Mutex
+		go filesystem.WatchUntil(
+			ctx,
+			time.Minute,
+			o.AuthenticationConfigFile,
+			func() {
+				// TODO add metrics
+				// TODO collapse onto shared logic with DynamicEncryptionConfigContent controller
+
+				mu.Lock()
+				defer mu.Unlock()
+
+				// scope currentHash to this block because we only want to track the hash from the load func
+				{
+					currentHash, err := getAuthenticationConfigHash(o.AuthenticationConfigFile)
+					if err != nil {
+						klog.ErrorS(err, "failed to get authentication config")
+						return
+					}
+
+					if currentHash == trackedAuthenticationConfigHash {
+						return
+					}
+				}
+
+				authConfig, authConfigHash, err := loadAuthenticationConfig(o.AuthenticationConfigFile)
+				if err != nil {
+					klog.ErrorS(err, "failed to load authentication config")
+					return
+				}
+
+				if authConfigHash == trackedAuthenticationConfigHash {
+					return
+				}
+
+				if err := apiservervalidation.ValidateAuthenticationConfiguration(authConfig).ToAggregate(); err != nil {
+					klog.ErrorS(err, "failed to validate authentication config")
+					return
+				}
+				if err := updateAuthenticationConfig(authConfig); err != nil {
+					klog.ErrorS(err, "failed to update authentication config")
+					return
+				}
+
+				trackedAuthenticationConfigHash = authConfigHash
+			},
+			func(err error) { klog.ErrorS(err, "watching authentication config file") },
+		)
+	}
+
 	openAPIConfig.SecurityDefinitions = openAPIV2SecurityDefinitions
 	if openAPIV3Config != nil {
 		openAPIV3Config.SecuritySchemes = openAPIV3SecuritySchemes
@@ -696,25 +753,50 @@ func init() {
 	install.Install(cfgScheme)
 }
 
-// loadAuthenticationConfig parses the authentication configuration from the given file and returns it.
-func loadAuthenticationConfig(configFilePath string) (*apiserver.AuthenticationConfiguration, error) {
-	// read from file
-	data, err := os.ReadFile(configFilePath)
+// loadAuthenticationConfig parses the authentication configuration from the given file and returns it and the file's hash.
+func loadAuthenticationConfig(configFilePath string) (*apiserver.AuthenticationConfiguration, string, error) {
+	data, contentHash, err := readAuthenticationConfigDataAndHash(configFilePath)
 	if err != nil {
-		return nil, err
-	}
-	if len(data) == 0 {
-		return nil, fmt.Errorf("empty config file %q", configFilePath)
+		return nil, "", err
 	}
 
 	decodedObj, err := runtime.Decode(codecs.UniversalDecoder(), data)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	configuration, ok := decodedObj.(*apiserver.AuthenticationConfiguration)
 	if !ok {
-		return nil, fmt.Errorf("expected AuthenticationConfiguration, got %T", decodedObj)
+		return nil, "", fmt.Errorf("expected AuthenticationConfiguration, got %T", decodedObj)
+	}
+	if configuration == nil { // sanity check, this should never happen but check just in case since we rely on it
+		return nil, "", fmt.Errorf("expected non-nil AuthenticationConfiguration")
 	}
 
-	return configuration, nil
+	return configuration, contentHash, nil
+}
+
+// getAuthenticationConfigHash reads the authentication configuration file at filepath and returns the hash of the file.
+// It does not attempt to decode or load the config, and serves as a cheap check to determine if the file has changed.
+func getAuthenticationConfigHash(filepath string) (string, error) {
+	_, contentHash, err := readAuthenticationConfigDataAndHash(filepath)
+	return contentHash, err
+}
+
+func readAuthenticationConfigDataAndHash(filepath string) ([]byte, string, error) {
+	data, err := os.ReadFile(filepath)
+	if err != nil {
+		return nil, "", fmt.Errorf("error reading authentication configuration file %q: %w", filepath, err)
+	}
+	if len(data) == 0 {
+		return nil, "", fmt.Errorf("authentication configuration file is empty: %s", filepath)
+	}
+
+	return data, computeAuthenticationConfigHash(data), nil
+}
+
+// computeAuthenticationConfigHash returns the expected hash for an authentication config file that has been loaded as bytes.
+// We use a hash instead of the raw file contents when tracking changes to avoid holding any sensitive information outside of places where it is needed.
+// This hash must be used in-memory and not externalized to the process because it has no cross-release stability guarantees.
+func computeAuthenticationConfigHash(data []byte) string {
+	return fmt.Sprintf("k8s:authentication:unstable:1:%x", sha256.Sum256(data))
 }
