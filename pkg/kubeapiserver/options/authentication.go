@@ -642,7 +642,7 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.Authen
 		if err := addPostStartHook("start-kube-apiserver-authentication-config-reload",
 			func(hookContext genericapiserver.PostStartHookContext) error {
 				trackedAuthenticationConfigHash := authenticatorConfig.AuthenticationConfigHash
-				go wait.UntilWithContext(wait.ContextForChannel(hookContext.StopCh), func(ctx context.Context) {
+				go wait.UntilWithContext(wait.ContextForChannel(hookContext.StopCh), func(ctx context.Context) { // TODO integration tests
 					// TODO add metrics
 					// TODO collapse onto shared logic with DynamicEncryptionConfigContent controller
 
@@ -765,6 +765,8 @@ func loadAuthenticationConfig(configFilePath string) (*apiserver.AuthenticationC
 
 	return configuration, contentHash, nil
 }
+
+// TODO fix any exisiting unit tests that were broken
 
 // TODO unit tests for the functions below
 
