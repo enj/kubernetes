@@ -153,14 +153,22 @@ func (config Config) New() (authenticator.Request, func(*apiserver.Authenticatio
 	// update the keys, causing performance hits.
 	var updateAuthenticationConfig func(*apiserver.AuthenticationConfiguration) error
 	if config.AuthenticationConfig != nil {
-		var jwtAuthenticatorPtr atomic.Pointer[authenticator.Token]
+		var jwtAuthenticatorPtr atomic.Pointer[jwtAuthenticatorWithClose]
 
 		updateAuthenticationConfig = func(authConfig *apiserver.AuthenticationConfiguration) error {
 			jwtAuthenticator, err := newJWTAuthenticator(authConfig, config.OIDCSigningAlgs, config.APIAudiences)
 			if err != nil {
 				return err
 			}
-			jwtAuthenticatorPtr.Store(&jwtAuthenticator)
+
+			// TODO fix the initialization logic so that we can properly health check and block the swap until ready
+			time.Sleep(time.Minute)
+
+			oldJWTAuthenticator := jwtAuthenticatorPtr.Swap(jwtAuthenticator)
+			if oldJWTAuthenticator != nil {
+				oldJWTAuthenticator.closeFunc() // TODO wait for some time before closing
+			}
+
 			return nil
 		}
 
@@ -170,7 +178,7 @@ func (config Config) New() (authenticator.Request, func(*apiserver.Authenticatio
 
 		tokenAuthenticators = append(tokenAuthenticators,
 			authenticator.TokenFunc(func(ctx context.Context, token string) (*authenticator.Response, bool, error) {
-				return (*jwtAuthenticatorPtr.Load()).AuthenticateToken(ctx, token)
+				return jwtAuthenticatorPtr.Load().jwtAuthenticator.AuthenticateToken(ctx, token)
 			}),
 		)
 	}
@@ -231,8 +239,14 @@ func (config Config) New() (authenticator.Request, func(*apiserver.Authenticatio
 	return authenticator, updateAuthenticationConfig, &securityDefinitionsV2, securitySchemesV3, nil
 }
 
-func newJWTAuthenticator(config *apiserver.AuthenticationConfiguration, oidcSigningAlgs []string, apiAudiences authenticator.Audiences) (authenticator.Token, error) {
+type jwtAuthenticatorWithClose struct {
+	jwtAuthenticator authenticator.Token
+	closeFunc        func()
+}
+
+func newJWTAuthenticator(config *apiserver.AuthenticationConfiguration, oidcSigningAlgs []string, apiAudiences authenticator.Audiences) (*jwtAuthenticatorWithClose, error) {
 	var jwtAuthenticators []authenticator.Token
+	var closeFuncs []func()
 	for _, jwtAuthenticator := range config.JWT {
 		var oidcCAContent oidc.CAContentProvider
 		if len(jwtAuthenticator.Issuer.CertificateAuthority) > 0 {
@@ -251,8 +265,17 @@ func newJWTAuthenticator(config *apiserver.AuthenticationConfiguration, oidcSign
 			return nil, err
 		}
 		jwtAuthenticators = append(jwtAuthenticators, authenticator.WrapAudienceAgnosticToken(apiAudiences, oidcAuth))
+		closeFuncs = append(closeFuncs, oidcAuth.Close)
 	}
-	return tokenunion.New(jwtAuthenticators...), nil // this handles the empty jwtAuthenticators slice case correctly
+	return &jwtAuthenticatorWithClose{
+		jwtAuthenticator: tokenunion.New(jwtAuthenticators...), // this handles the empty jwtAuthenticators slice case correctly
+		closeFunc: func() {
+			for _, closeFunc := range closeFuncs {
+				closeFunc := closeFunc
+				closeFunc()
+			}
+		},
+	}, nil
 }
 
 // IsValidServiceAccountKeyFile returns true if a valid public RSA key can be read from the given file
