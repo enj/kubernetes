@@ -116,28 +116,7 @@ func TestStructuredAuthenticationConfig(t *testing.T) {
 }
 
 func runTests(t *testing.T, useAuthenticationConfig bool) {
-	type testRun[K utilsoidc.JosePrivateKey, L utilsoidc.JosePublicKey] struct {
-		name                    string
-		configureInfrastructure func(t *testing.T, fn authenticationConfigFunc, keyFunc func(t *testing.T) (K, L)) (
-			oidcServer *utilsoidc.TestServer,
-			apiServer *kubeapiserverapptesting.TestServer,
-			signingPrivateKey K,
-			caCertContent []byte,
-			caFilePath string,
-		)
-		configureOIDCServerBehaviour func(t *testing.T, oidcServer *utilsoidc.TestServer, signingPrivateKey K)
-		configureClient              func(
-			t *testing.T,
-			restCfg *rest.Config,
-			caCert []byte,
-			certPath,
-			oidcServerURL,
-			oidcServerTokenURL string,
-		) kubernetes.Interface
-		assertErrFn func(t *testing.T, errorToCheck error)
-	}
-
-	var tests = []testRun[*rsa.PrivateKey, *rsa.PublicKey]{
+	var tests = []singleTest[*rsa.PrivateKey, *rsa.PublicKey]{
 		{
 			name:                    "ID token is ok",
 			configureInfrastructure: configureTestInfrastructure[*rsa.PrivateKey, *rsa.PublicKey],
@@ -297,11 +276,41 @@ jwt:
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			fn := func(t *testing.T, issuerURL, caCert string) string { return "" }
-			if useAuthenticationConfig {
-				fn = func(t *testing.T, issuerURL, caCert string) string {
-					return fmt.Sprintf(`
+		t.Run(tt.name, singleTestRunner(useAuthenticationConfig, rsaGenerateKey, tt))
+	}
+}
+
+type singleTest[K utilsoidc.JosePrivateKey, L utilsoidc.JosePublicKey] struct {
+	name                    string
+	configureInfrastructure func(t *testing.T, fn authenticationConfigFunc, keyFunc func(t *testing.T) (K, L)) (
+		oidcServer *utilsoidc.TestServer,
+		apiServer *kubeapiserverapptesting.TestServer,
+		signingPrivateKey K,
+		caCertContent []byte,
+		caFilePath string,
+	)
+	configureOIDCServerBehaviour func(t *testing.T, oidcServer *utilsoidc.TestServer, signingPrivateKey K)
+	configureClient              func(
+		t *testing.T,
+		restCfg *rest.Config,
+		caCert []byte,
+		certPath,
+		oidcServerURL,
+		oidcServerTokenURL string,
+	) kubernetes.Interface
+	assertErrFn func(t *testing.T, errorToCheck error)
+}
+
+func singleTestRunner[K utilsoidc.JosePrivateKey, L utilsoidc.JosePublicKey](
+	useAuthenticationConfig bool,
+	keyFunc func(t *testing.T) (K, L),
+	tt singleTest[K, L],
+) func(t *testing.T) {
+	return func(t *testing.T) {
+		fn := func(t *testing.T, issuerURL, caCert string) string { return "" }
+		if useAuthenticationConfig {
+			fn = func(t *testing.T, issuerURL, caCert string) string {
+				return fmt.Sprintf(`
 apiVersion: apiserver.config.k8s.io/v1alpha1
 kind: AuthenticationConfiguration
 jwt:
@@ -316,22 +325,21 @@ jwt:
       claim: sub
       prefix: %s
 `, issuerURL, defaultOIDCClientID, indentCertificateAuthority(caCert), defaultOIDCUsernamePrefix)
-				}
 			}
-			oidcServer, apiServer, signingPrivateKey, caCert, certPath := tt.configureInfrastructure(t, fn, rsaGenerateKey)
+		}
+		oidcServer, apiServer, signingPrivateKey, caCert, certPath := tt.configureInfrastructure(t, fn, keyFunc)
 
-			tt.configureOIDCServerBehaviour(t, oidcServer, signingPrivateKey)
+		tt.configureOIDCServerBehaviour(t, oidcServer, signingPrivateKey)
 
-			tokenURL, err := oidcServer.TokenURL()
-			require.NoError(t, err)
+		tokenURL, err := oidcServer.TokenURL()
+		require.NoError(t, err)
 
-			client := tt.configureClient(t, apiServer.ClientConfig, caCert, certPath, oidcServer.URL(), tokenURL)
+		client := tt.configureClient(t, apiServer.ClientConfig, caCert, certPath, oidcServer.URL(), tokenURL)
 
-			ctx := testContext(t)
-			_, err = client.CoreV1().Pods(defaultNamespace).List(ctx, metav1.ListOptions{})
+		ctx := testContext(t)
+		_, err = client.CoreV1().Pods(defaultNamespace).List(ctx, metav1.ListOptions{})
 
-			tt.assertErrFn(t, err)
-		})
+		tt.assertErrFn(t, err)
 	}
 }
 
