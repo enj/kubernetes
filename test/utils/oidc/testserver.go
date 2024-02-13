@@ -233,6 +233,6 @@ func GetSignatureAlgorithm[K interface{ JosePrivateKey | JosePublicKey }](key K)
 	case *ecdsa.PrivateKey, *ecdsa.PublicKey:
 		return jose.ES256
 	default:
-		panic("unknown public key type")
+		panic("unknown key type") // should be impossible
 	}
 }
