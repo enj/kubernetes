@@ -836,7 +836,7 @@ func startTestAPIServerForOIDC[L utilsoidc.JosePublicKey](t *testing.T, oidcURL,
 			fmt.Sprintf("--oidc-client-id=%s", oidcClientID),
 			fmt.Sprintf("--oidc-ca-file=%s", oidcCAFilePath),
 			fmt.Sprintf("--oidc-username-prefix=%s", defaultOIDCUsernamePrefix),
-			fmt.Sprintf("--oidc-signing-algs=%s", utilsoidc.GetSignatureAlgorithm(publicKey)),
+			fmt.Sprintf("--oidc-signing-algs=%s", utilsoidc.GetSignatureAlgorithm(publicKey)), // TODO need to test for the unset case still, use rand probably
 		}
 	}
 	customFlags = append(customFlags, "--authorization-mode=RBAC")
