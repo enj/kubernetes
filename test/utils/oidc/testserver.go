@@ -185,7 +185,7 @@ func TokenHandlerBehaviorReturningPredefinedJWT[K JosePrivateKey](
 	t.Helper()
 
 	return func() (Token, error) {
-		signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, nil)
+		signer, err := jose.NewSigner(jose.SigningKey{Algorithm: getAlg(privateKey), Key: privateKey}, nil)
 		require.NoError(t, err)
 
 		payloadJSON, err := json.Marshal(claims)
@@ -214,7 +214,7 @@ func DefaultJwksHandlerBehavior[K JosePublicKey](t *testing.T, verificationPubli
 	t.Helper()
 
 	return func() jose.JSONWebKeySet {
-		key := jose.JSONWebKey{Key: verificationPublicKey, Use: "sig", Algorithm: getAlg(verificationPublicKey)}
+		key := jose.JSONWebKey{Key: verificationPublicKey, Use: "sig", Algorithm: string(getAlg(verificationPublicKey))}
 
 		thumbprint, err := key.Thumbprint(crypto.SHA256)
 		require.NoError(t, err)
@@ -226,12 +226,12 @@ func DefaultJwksHandlerBehavior[K JosePublicKey](t *testing.T, verificationPubli
 	}
 }
 
-func getAlg[K JosePublicKey](verificationPublicKey K) string {
-	switch any(verificationPublicKey).(type) {
-	case *rsa.PublicKey:
-		return string(jose.RS256)
-	case *ecdsa.PublicKey:
-		return string(jose.ES256)
+func getAlg(key any) jose.SignatureAlgorithm {
+	switch key.(type) {
+	case *rsa.PrivateKey, *rsa.PublicKey:
+		return jose.RS256
+	case *ecdsa.PrivateKey, *ecdsa.PublicKey:
+		return jose.ES256
 	default:
 		panic("unknown public key type")
 	}
