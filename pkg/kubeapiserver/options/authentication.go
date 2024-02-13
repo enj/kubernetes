@@ -462,6 +462,8 @@ func (o *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticat
 		if ret.AuthenticationConfig, err = loadAuthenticationConfig(o.AuthenticationConfigFile); err != nil {
 			return kubeauthenticator.Config{}, err
 		}
+		// all known signing algs are allowed when using authentication config
+		// TODO: what we really want to express is 'any alg is fine as long it matches a public key'
 		ret.OIDCSigningAlgs = []string{
 			oidc.RS256,
 			oidc.RS384,
