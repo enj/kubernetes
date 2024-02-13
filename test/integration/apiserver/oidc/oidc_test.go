@@ -240,9 +240,9 @@ jwt:
       claim: sub
       prefix: %s
 `, oidcServer.URL(), defaultOIDCClientID, indentCertificateAuthority(string(caCertContent)), defaultOIDCUsernamePrefix)
-					apiServer = startTestAPIServerForOIDC(t, "", "", "", authenticationConfig)
+					apiServer = startTestAPIServerForOIDC(t, "", "", "", authenticationConfig, &signingPrivateKey.PublicKey)
 				} else {
-					apiServer = startTestAPIServerForOIDC(t, oidcServer.URL(), defaultOIDCClientID, caFilePath, "")
+					apiServer = startTestAPIServerForOIDC(t, oidcServer.URL(), defaultOIDCClientID, caFilePath, "", &signingPrivateKey.PublicKey)
 				}
 
 				adminClient := kubernetes.NewForConfigOrDie(apiServer.ClientConfig)
@@ -770,9 +770,9 @@ func configureTestInfrastructure[K utilsoidc.JosePrivateKey, L utilsoidc.JosePub
 
 	authenticationConfig := fn(t, oidcServer.URL(), string(caCertContent))
 	if len(authenticationConfig) > 0 {
-		apiServer = startTestAPIServerForOIDC(t, "", "", "", authenticationConfig)
+		apiServer = startTestAPIServerForOIDC(t, "", "", "", authenticationConfig, publicKey)
 	} else {
-		apiServer = startTestAPIServerForOIDC(t, oidcServer.URL(), defaultOIDCClientID, caFilePath, "")
+		apiServer = startTestAPIServerForOIDC(t, oidcServer.URL(), defaultOIDCClientID, caFilePath, "", publicKey)
 	}
 
 	oidcServer.JwksHandler().EXPECT().KeySet().AnyTimes().DoAndReturn(utilsoidc.DefaultJwksHandlerBehavior(t, publicKey))
@@ -824,7 +824,7 @@ func configureClientConfigForOIDC(t *testing.T, config *rest.Config, clientID, c
 	return cfg
 }
 
-func startTestAPIServerForOIDC(t *testing.T, oidcURL, oidcClientID, oidcCAFilePath, authenticationConfigYAML string) *kubeapiserverapptesting.TestServer {
+func startTestAPIServerForOIDC[L utilsoidc.JosePublicKey](t *testing.T, oidcURL, oidcClientID, oidcCAFilePath, authenticationConfigYAML string, publicKey L) *kubeapiserverapptesting.TestServer {
 	t.Helper()
 
 	var customFlags []string
@@ -836,6 +836,7 @@ func startTestAPIServerForOIDC(t *testing.T, oidcURL, oidcClientID, oidcCAFilePa
 			fmt.Sprintf("--oidc-client-id=%s", oidcClientID),
 			fmt.Sprintf("--oidc-ca-file=%s", oidcCAFilePath),
 			fmt.Sprintf("--oidc-username-prefix=%s", defaultOIDCUsernamePrefix),
+			fmt.Sprintf("--oidc-signing-algs=%s", utilsoidc.GetSignatureAlgorithm(publicKey)),
 		}
 	}
 	customFlags = append(customFlags, "--authorization-mode=RBAC")
