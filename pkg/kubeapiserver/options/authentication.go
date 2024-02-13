@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coreos/go-oidc"
 	"github.com/spf13/pflag"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -460,6 +461,19 @@ func (o *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticat
 		var err error
 		if ret.AuthenticationConfig, err = loadAuthenticationConfig(o.AuthenticationConfigFile); err != nil {
 			return kubeauthenticator.Config{}, err
+		}
+		// all known signing algs are allowed when using authentication config
+		// TODO: what we really want to express is 'any alg is fine as long it matches a public key'
+		ret.OIDCSigningAlgs = []string{
+			oidc.RS256,
+			oidc.RS384,
+			oidc.RS512,
+			oidc.ES256,
+			oidc.ES384,
+			oidc.ES512,
+			oidc.PS256,
+			oidc.PS384,
+			oidc.PS512,
 		}
 	} else if o.OIDC != nil && len(o.OIDC.IssuerURL) > 0 && len(o.OIDC.ClientID) > 0 {
 		usernamePrefix := o.OIDC.UsernamePrefix
