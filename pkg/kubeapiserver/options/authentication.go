@@ -691,7 +691,7 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.Authen
 					}
 
 					trackedAuthenticationConfigHash = authConfigHash
-				}, time.Minute)
+				}, kubeauthenticator.JWTAuthenticatorTime)
 				return nil
 			},
 		); err != nil {

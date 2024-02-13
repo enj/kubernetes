@@ -52,6 +52,10 @@ import (
 	"k8s.io/kubernetes/pkg/serviceaccount"
 )
 
+// JWTAuthenticatorTime controls file reload polling and sleeps associated with authenticator readiness.
+// Exported as a variable so that it can be overridden in integration tests.
+var JWTAuthenticatorTime = time.Minute
+
 // Config contains the data on how to authenticate a request to the Kube API Server
 type Config struct {
 	Anonymous      bool
@@ -154,20 +158,26 @@ func (config Config) New() (authenticator.Request, func(*apiserver.Authenticatio
 	var updateAuthenticationConfig func(*apiserver.AuthenticationConfiguration) error
 	if config.AuthenticationConfig != nil {
 		var jwtAuthenticatorPtr atomic.Pointer[jwtAuthenticatorWithClose]
-
+		var loaded bool
 		updateAuthenticationConfig = func(authConfig *apiserver.AuthenticationConfiguration) error {
 			jwtAuthenticator, err := newJWTAuthenticator(authConfig, config.OIDCSigningAlgs, config.APIAudiences)
 			if err != nil {
 				return err
 			}
 
-			// TODO fix the initialization logic so that we can properly health check and block the swap until ready
-			time.Sleep(time.Minute)
+			if loaded {
+				// TODO fix the initialization logic so that we can properly health check and block the swap until ready
+				time.Sleep(JWTAuthenticatorTime)
+			}
 
 			oldJWTAuthenticator := jwtAuthenticatorPtr.Swap(jwtAuthenticator)
 			if oldJWTAuthenticator != nil {
-				oldJWTAuthenticator.closeFunc() // TODO wait for some time before closing
+				// TODO maybe track requests so we know when this is safe to do
+				time.Sleep(JWTAuthenticatorTime)
+				oldJWTAuthenticator.closeFunc()
 			}
+
+			loaded = true
 
 			return nil
 		}
