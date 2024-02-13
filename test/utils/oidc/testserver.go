@@ -226,7 +226,9 @@ func DefaultJwksHandlerBehavior[K JosePublicKey](t *testing.T, verificationPubli
 	}
 }
 
-func GetSignatureAlgorithm[K interface{ JosePrivateKey | JosePublicKey }](key K) jose.SignatureAlgorithm {
+type JoseKey interface{ JosePrivateKey | JosePublicKey }
+
+func GetSignatureAlgorithm[K JoseKey](key K) jose.SignatureAlgorithm {
 	switch any(key).(type) {
 	case *rsa.PrivateKey, *rsa.PublicKey:
 		return jose.RS256

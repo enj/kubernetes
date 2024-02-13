@@ -37,11 +37,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/square/go-jose.v2"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apiserver/pkg/features"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/kubernetes"
@@ -875,8 +877,8 @@ func startTestAPIServerForOIDC[L utilsoidc.JosePublicKey](t *testing.T, oidcURL,
 			fmt.Sprintf("--oidc-client-id=%s", oidcClientID),
 			fmt.Sprintf("--oidc-ca-file=%s", oidcCAFilePath),
 			fmt.Sprintf("--oidc-username-prefix=%s", defaultOIDCUsernamePrefix),
-			fmt.Sprintf("--oidc-signing-algs=%s", utilsoidc.GetSignatureAlgorithm(publicKey)), // TODO need to test for the unset case still, use rand probably
 		}
+		customFlags = append(customFlags, maybeSetSigningAlgs(publicKey)...)
 	}
 	customFlags = append(customFlags, "--authorization-mode=RBAC")
 
@@ -892,6 +894,18 @@ func startTestAPIServerForOIDC[L utilsoidc.JosePublicKey](t *testing.T, oidcURL,
 
 	return &server
 }
+
+func maybeSetSigningAlgs[K utilsoidc.JoseKey](key K) []string {
+	alg := utilsoidc.GetSignatureAlgorithm(key)
+	if alg == jose.RS256 && randomBool() {
+		return nil // check the default case of RS256 by not always setting the flag
+	}
+	return []string{
+		fmt.Sprintf("--oidc-signing-algs=%s", alg), // all other algs need to be manually set
+	}
+}
+
+func randomBool() bool { return utilrand.Int()%2 == 1 }
 
 func fetchOIDCCredentials(t *testing.T, oidcTokenURL string, caCertContent []byte) (idToken, refreshToken string) {
 	t.Helper()
