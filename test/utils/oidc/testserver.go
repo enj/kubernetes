@@ -214,7 +214,7 @@ func DefaultJwksHandlerBehavior[K JosePublicKey](t *testing.T, verificationPubli
 	t.Helper()
 
 	return func() jose.JSONWebKeySet {
-		key := jose.JSONWebKey{Key: verificationPublicKey, Use: "sig", Algorithm: string(jose.RS256)}
+		key := jose.JSONWebKey{Key: verificationPublicKey, Use: "sig", Algorithm: getAlg(verificationPublicKey)}
 
 		thumbprint, err := key.Thumbprint(crypto.SHA256)
 		require.NoError(t, err)
@@ -223,5 +223,16 @@ func DefaultJwksHandlerBehavior[K JosePublicKey](t *testing.T, verificationPubli
 		return jose.JSONWebKeySet{
 			Keys: []jose.JSONWebKey{key},
 		}
+	}
+}
+
+func getAlg[K JosePublicKey](verificationPublicKey K) string {
+	switch any(verificationPublicKey).(type) {
+	case *rsa.PublicKey:
+		return string(jose.RS256)
+	case *ecdsa.PublicKey:
+		return string(jose.ES256)
+	default:
+		panic("unknown public key type")
 	}
 }
