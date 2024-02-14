@@ -198,7 +198,7 @@ func (a *Authenticator) Close() {
 }
 
 func AllValidSigningAlgorithms() []string {
-	return sets.KeySet(allowedSigningAlgs).UnsortedList()
+	return sets.List(sets.KeySet(allowedSigningAlgs))
 }
 
 // allowlist of signing algorithms to ensure users don't mistakenly pass something goofy.
