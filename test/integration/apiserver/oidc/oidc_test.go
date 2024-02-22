@@ -876,9 +876,13 @@ func TestStructuredAuthenticationConfigReload(t *testing.T) {
 		newWantUser    *authenticationv1.UserInfo
 	}
 
+	// TODO add tests:
+	//  invalid to valid
+	//  valid to structurally invalid (should be ignored)
+	//  valid to invalid via typo (should break)
 	tests := []testRun[*rsa.PrivateKey, *rsa.PublicKey]{
 		{
-			name: "valid config to valid config",
+			name: "old valid config to new valid config",
 			authConfigFn: func(t *testing.T, issuerURL, caCert string) string {
 				return fmt.Sprintf(`
 apiVersion: apiserver.config.k8s.io/v1alpha1
@@ -912,7 +916,7 @@ jwt:
         %s
   claimMappings:
     username:
-      expression: "'panda-' + claims.sub"
+      expression: "'panda-' + claims.sub"   # this is the only new part of the config
 `, issuerURL, defaultOIDCClientID, indentCertificateAuthority(caCert))
 			},
 			configureInfrastructure: configureTestInfrastructure[*rsa.PrivateKey, *rsa.PublicKey],
