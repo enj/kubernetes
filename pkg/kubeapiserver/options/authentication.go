@@ -24,9 +24,9 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/coreos/go-oidc"
 	"github.com/spf13/pflag"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -54,6 +54,7 @@ import (
 	"k8s.io/kubernetes/pkg/features"
 	kubeauthenticator "k8s.io/kubernetes/pkg/kubeapiserver/authenticator"
 	authzmodes "k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
+	"k8s.io/kubernetes/pkg/util/filesystem"
 	"k8s.io/kubernetes/plugin/pkg/auth/authenticator/token/bootstrap"
 	"k8s.io/utils/pointer"
 )
@@ -578,7 +579,7 @@ func (o *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticat
 }
 
 // ApplyTo requires already applied OpenAPIConfig and EgressSelector if present.
-func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.AuthenticationInfo, secureServing *genericapiserver.SecureServingInfo, egressSelector *egressselector.EgressSelector, openAPIConfig *openapicommon.Config, openAPIV3Config *openapicommon.OpenAPIV3Config, addPostStartHook func(name string, hook genericapiserver.PostStartHookFunc) error, extclient kubernetes.Interface, versionedInformer informers.SharedInformerFactory) error {
+func (o *BuiltInAuthenticationOptions) ApplyTo(ctx context.Context, authInfo *genericapiserver.AuthenticationInfo, secureServing *genericapiserver.SecureServingInfo, egressSelector *egressselector.EgressSelector, openAPIConfig *openapicommon.Config, openAPIV3Config *openapicommon.OpenAPIV3Config, extclient kubernetes.Interface, versionedInformer informers.SharedInformerFactory) error {
 	if o == nil {
 		return nil
 	}
@@ -644,52 +645,56 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(authInfo *genericapiserver.Authen
 	authInfo.Authenticator = authenticator
 
 	if len(o.AuthenticationConfigFile) > 0 {
-		if err := addPostStartHook("start-kube-apiserver-authentication-config-reload",
-			func(hookContext genericapiserver.PostStartHookContext) error {
-				trackedAuthenticationConfigHash := authenticatorConfig.AuthenticationConfigHash
-				go wait.UntilWithContext(wait.ContextForChannel(hookContext.StopCh), func(ctx context.Context) { // TODO integration tests
-					// TODO add metrics
-					// TODO collapse onto shared logic with DynamicEncryptionConfigContent controller
+		trackedAuthenticationConfigHash := authenticatorConfig.AuthenticationConfigHash
+		var mu sync.Mutex
+		go filesystem.WatchUntil(
+			ctx,
+			time.Minute,
+			o.AuthenticationConfigFile,
+			func() {
+				// TODO integration tests
+				// TODO add metrics
+				// TODO collapse onto shared logic with DynamicEncryptionConfigContent controller
 
-					// scope currentHash to this block because we only want to track the hash from the load func
-					{
-						currentHash, err := getAuthenticationConfigHash(o.AuthenticationConfigFile)
-						if err != nil {
-							klog.ErrorS(err, "failed to get authentication config")
-							return
-						}
+				mu.Lock()
+				defer mu.Unlock()
 
-						if currentHash == trackedAuthenticationConfigHash {
-							return
-						}
-					}
-
-					authConfig, authConfigHash, err := loadAuthenticationConfig(o.AuthenticationConfigFile)
+				// scope currentHash to this block because we only want to track the hash from the load func
+				{
+					currentHash, err := getAuthenticationConfigHash(o.AuthenticationConfigFile)
 					if err != nil {
-						klog.ErrorS(err, "failed to load authentication config")
+						klog.ErrorS(err, "failed to get authentication config")
 						return
 					}
 
-					if authConfigHash == trackedAuthenticationConfigHash {
+					if currentHash == trackedAuthenticationConfigHash {
 						return
 					}
+				}
 
-					if err := apiservervalidation.ValidateAuthenticationConfiguration(authConfig).ToAggregate(); err != nil {
-						klog.ErrorS(err, "failed to validate authentication config")
-						return
-					}
-					if err := updateAuthenticationConfig(authConfig); err != nil {
-						klog.ErrorS(err, "failed to update authentication config")
-						return
-					}
+				authConfig, authConfigHash, err := loadAuthenticationConfig(o.AuthenticationConfigFile)
+				if err != nil {
+					klog.ErrorS(err, "failed to load authentication config")
+					return
+				}
 
-					trackedAuthenticationConfigHash = authConfigHash
-				}, kubeauthenticator.JWTAuthenticatorTime)
-				return nil
+				if authConfigHash == trackedAuthenticationConfigHash {
+					return
+				}
+
+				if err := apiservervalidation.ValidateAuthenticationConfiguration(authConfig).ToAggregate(); err != nil {
+					klog.ErrorS(err, "failed to validate authentication config")
+					return
+				}
+				if err := updateAuthenticationConfig(authConfig); err != nil {
+					klog.ErrorS(err, "failed to update authentication config")
+					return
+				}
+
+				trackedAuthenticationConfigHash = authConfigHash
 			},
-		); err != nil {
-			return err
-		}
+			func(err error) { klog.ErrorS(err, "watching authentication config file") },
+		)
 	}
 
 	openAPIConfig.SecurityDefinitions = openAPIV2SecurityDefinitions
