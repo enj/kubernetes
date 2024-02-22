@@ -45,6 +45,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/features"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/kubernetes"
@@ -978,15 +979,20 @@ jwt:
 			err = os.WriteFile(apiServer.ServerOpts.Authentication.AuthenticationConfigFile, []byte(tt.newAuthConfigFn(t, oidcServer.URL(), string(caCert))), 0600)
 			require.NoError(t, err)
 
-			require.Eventuallyf(t, func() bool {
+			err = wait.PollUntilContextTimeout(ctx, time.Second, 30*time.Second, true, func(ctx context.Context) (done bool, err error) {
 				res, err := client.AuthenticationV1().SelfSubjectReviews().Create(ctx, &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
-				require.NoError(t, err)
+				if err != nil {
+					return false, err
+				}
+
 				diff := cmp.Diff(*tt.newWantUser, res.Status.UserInfo)
 				if len(diff) > 0 {
 					t.Logf("%s saw new user diff:\n%s", t.Name(), diff)
 				}
-				return len(diff) == 0
-			}, 30*time.Second, time.Second, "new authentication config not loaded")
+
+				return len(diff) == 0, nil
+			})
+			require.NoError(t, err, "new authentication config not loaded")
 
 			_, err = client.CoreV1().Pods(defaultNamespace).List(ctx, metav1.ListOptions{})
 			tt.newAssertErrFn(t, err)
