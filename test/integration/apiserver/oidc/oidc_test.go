@@ -35,6 +35,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/square/go-jose.v2"
@@ -54,6 +55,7 @@ import (
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	kubeapiserverapptesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
 	"k8s.io/kubernetes/pkg/apis/rbac"
+	"k8s.io/kubernetes/pkg/kubeapiserver/authenticator"
 	"k8s.io/kubernetes/test/integration/framework"
 	utilsoidc "k8s.io/kubernetes/test/utils/oidc"
 	utilsnet "k8s.io/utils/net"
@@ -836,6 +838,158 @@ jwt:
 
 			_, err = client.CoreV1().Pods(defaultNamespace).List(ctx, metav1.ListOptions{})
 			tt.assertErrFn(t, err)
+		})
+	}
+}
+
+func TestStructuredAuthenticationConfigReload(t *testing.T) {
+	origJWTAuthenticatorTime := authenticator.JWTAuthenticatorTime
+	t.Cleanup(func() { authenticator.JWTAuthenticatorTime = origJWTAuthenticatorTime })
+	authenticator.JWTAuthenticatorTime = time.Second
+
+	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StructuredAuthenticationConfiguration, true)()
+
+	type testRun[K utilsoidc.JosePrivateKey, L utilsoidc.JosePublicKey] struct {
+		name                    string
+		authConfigFn            authenticationConfigFunc
+		newAuthConfigFn         authenticationConfigFunc
+		configureInfrastructure func(t *testing.T, fn authenticationConfigFunc, keyFunc func(t *testing.T) (K, L)) (
+			oidcServer *utilsoidc.TestServer,
+			apiServer *kubeapiserverapptesting.TestServer,
+			signingPrivateKey *rsa.PrivateKey,
+			caCertContent []byte,
+			caFilePath string,
+		)
+		configureOIDCServerBehaviour func(t *testing.T, oidcServer *utilsoidc.TestServer, signingPrivateKey K)
+		configureClient              func(
+			t *testing.T,
+			restCfg *rest.Config,
+			caCert []byte,
+			certPath,
+			oidcServerURL,
+			oidcServerTokenURL string,
+		) kubernetes.Interface
+		assertErrFn    func(t *testing.T, errorToCheck error)
+		wantUser       *authenticationv1.UserInfo
+		newAssertErrFn func(t *testing.T, errorToCheck error)
+		newWantUser    *authenticationv1.UserInfo
+	}
+
+	tests := []testRun[*rsa.PrivateKey, *rsa.PublicKey]{
+		{
+			name: "valid config to valid config",
+			authConfigFn: func(t *testing.T, issuerURL, caCert string) string {
+				return fmt.Sprintf(`
+apiVersion: apiserver.config.k8s.io/v1alpha1
+kind: AuthenticationConfiguration
+jwt:
+- issuer:
+    url: %s
+    audiences:
+    - %s
+    - another-audience
+    audienceMatchPolicy: MatchAny
+    certificateAuthority: |
+        %s
+  claimMappings:
+    username:
+      expression: "'k8s-' + claims.sub"
+`, issuerURL, defaultOIDCClientID, indentCertificateAuthority(caCert))
+			},
+			newAuthConfigFn: func(t *testing.T, issuerURL, caCert string) string {
+				return fmt.Sprintf(`
+apiVersion: apiserver.config.k8s.io/v1alpha1
+kind: AuthenticationConfiguration
+jwt:
+- issuer:
+    url: %s
+    audiences:
+    - %s
+    - another-audience
+    audienceMatchPolicy: MatchAny
+    certificateAuthority: |
+        %s
+  claimMappings:
+    username:
+      expression: "'panda-' + claims.sub"
+`, issuerURL, defaultOIDCClientID, indentCertificateAuthority(caCert))
+			},
+			configureInfrastructure: configureTestInfrastructure[*rsa.PrivateKey, *rsa.PublicKey],
+			configureOIDCServerBehaviour: func(t *testing.T, oidcServer *utilsoidc.TestServer, signingPrivateKey *rsa.PrivateKey) {
+				idTokenLifetime := time.Second * 1200
+				oidcServer.TokenHandler().EXPECT().Token().Times(1).DoAndReturn(utilsoidc.TokenHandlerBehaviorReturningPredefinedJWT(
+					t,
+					signingPrivateKey,
+					map[string]interface{}{
+						"iss": oidcServer.URL(),
+						"sub": defaultOIDCClaimedUsername,
+						"aud": defaultOIDCClientID,
+						"exp": time.Now().Add(idTokenLifetime).Unix(),
+					},
+					defaultStubAccessToken,
+					defaultStubRefreshToken,
+				))
+			},
+			configureClient: configureClientFetchingOIDCCredentials,
+			assertErrFn: func(t *testing.T, errorToCheck error) {
+				assert.NoError(t, errorToCheck)
+			},
+			wantUser: &authenticationv1.UserInfo{
+				Username: "k8s-john_doe",
+				Groups:   []string{"system:authenticated"},
+			},
+			newAssertErrFn: func(t *testing.T, errorToCheck error) {
+				_ = assert.True(t, apierrors.IsForbidden(errorToCheck)) &&
+					assert.Equal(
+						t,
+						`pods is forbidden: User "panda-john_doe" cannot list resource "pods" in API group "" in the namespace "default"`,
+						errorToCheck.Error(),
+					)
+			},
+			newWantUser: &authenticationv1.UserInfo{
+				Username: "panda-john_doe",
+				Groups:   []string{"system:authenticated"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oidcServer, apiServer, signingPrivateKey, caCert, certPath := tt.configureInfrastructure(t, tt.authConfigFn, rsaGenerateKey)
+
+			tt.configureOIDCServerBehaviour(t, oidcServer, signingPrivateKey)
+
+			tokenURL, err := oidcServer.TokenURL()
+			require.NoError(t, err)
+
+			client := tt.configureClient(t, apiServer.ClientConfig, caCert, certPath, oidcServer.URL(), tokenURL)
+
+			ctx := testContext(t)
+
+			if tt.wantUser != nil {
+				res, err := client.AuthenticationV1().SelfSubjectReviews().Create(ctx, &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
+				require.NoError(t, err)
+				assert.Equal(t, *tt.wantUser, res.Status.UserInfo)
+			}
+
+			_, err = client.CoreV1().Pods(defaultNamespace).List(ctx, metav1.ListOptions{})
+			tt.assertErrFn(t, err)
+
+			err = os.WriteFile(apiServer.ServerOpts.Authentication.AuthenticationConfigFile, []byte(tt.newAuthConfigFn(t, oidcServer.URL(), string(caCert))), 0600)
+			require.NoError(t, err)
+
+			require.Eventuallyf(t, func() bool {
+				res, err := client.AuthenticationV1().SelfSubjectReviews().Create(ctx, &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
+				require.NoError(t, err)
+				diff := cmp.Diff(*tt.newWantUser, res.Status.UserInfo)
+				if len(diff) > 0 {
+					t.Logf("%s saw new user diff:\n%s", t.Name(), diff)
+				}
+				return len(diff) == 0
+			}, 30*time.Second, time.Second, "new authentication config not loaded")
+
+			_, err = client.CoreV1().Pods(defaultNamespace).List(ctx, metav1.ListOptions{})
+			tt.newAssertErrFn(t, err)
 		})
 	}
 }
