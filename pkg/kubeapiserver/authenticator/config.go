@@ -174,6 +174,7 @@ func (config Config) New() (authenticator.Request, func(*apiserver.Authenticatio
 			if oldJWTAuthenticator != nil {
 				// TODO maybe track requests so we know when this is safe to do
 				time.Sleep(JWTAuthenticatorTime)
+				// TODO wire in context and drop closing logic
 				oldJWTAuthenticator.closeFunc()
 			}
 
