@@ -878,7 +878,6 @@ func TestStructuredAuthenticationConfigReload(t *testing.T) {
 	}
 
 	// TODO add tests:
-	//  invalid to valid
 	//  valid to empty (should break)
 	//  valid to structurally invalid (should be ignored)
 	//  valid to invalid via typo (should break for now, ideally ignored in the future)
@@ -1019,6 +1018,74 @@ jwt:
 				Groups:   []string{"system:authenticated"},
 			},
 		},
+		{
+			name: "old invalid config to new valid config",
+			authConfigFn: func(t *testing.T, issuerURL, _ string) string {
+				return fmt.Sprintf(`
+apiVersion: apiserver.config.k8s.io/v1alpha1
+kind: AuthenticationConfiguration
+jwt:
+- issuer:
+    url: %s
+    audiences:
+    - %s
+    - another-audience
+    audienceMatchPolicy: MatchAny
+    certificateAuthority: ""  # missing CA
+  claimMappings:
+    username:
+      expression: "'k8s-' + claims.sub"
+`, issuerURL, defaultOIDCClientID)
+			},
+			newAuthConfigFn: func(t *testing.T, issuerURL, caCert string) string {
+				return fmt.Sprintf(`
+apiVersion: apiserver.config.k8s.io/v1alpha1
+kind: AuthenticationConfiguration
+jwt:
+- issuer:
+    url: %s
+    audiences:
+    - %s
+    - another-audience
+    audienceMatchPolicy: MatchAny
+    # this is the only new part of the config
+    certificateAuthority: |
+        %s
+  claimMappings:
+    username:
+      expression: "'k8s-' + claims.sub"
+`, issuerURL, defaultOIDCClientID, indentCertificateAuthority(caCert))
+			},
+			configureInfrastructure: configureTestInfrastructure[*rsa.PrivateKey, *rsa.PublicKey],
+			configureOIDCServerBehaviour: func(t *testing.T, oidcServer *utilsoidc.TestServer, signingPrivateKey *rsa.PrivateKey) {
+				idTokenLifetime := time.Second * 1200
+				oidcServer.TokenHandler().EXPECT().Token().Times(1).DoAndReturn(utilsoidc.TokenHandlerBehaviorReturningPredefinedJWT(
+					t,
+					signingPrivateKey,
+					map[string]interface{}{
+						"iss": oidcServer.URL(),
+						"sub": defaultOIDCClaimedUsername,
+						"aud": defaultOIDCClientID,
+						"exp": time.Now().Add(idTokenLifetime).Unix(),
+					},
+					defaultStubAccessToken,
+					defaultStubRefreshToken,
+				))
+			},
+			configureClient: configureClientFetchingOIDCCredentials,
+			assertErrFn: func(t *testing.T, errorToCheck error) {
+				assert.True(t, apierrors.IsUnauthorized(errorToCheck))
+			},
+			wantUser:              nil,
+			ignoreTransitionErrFn: apierrors.IsUnauthorized,
+			newAssertErrFn: func(t *testing.T, errorToCheck error) {
+				assert.NoError(t, errorToCheck)
+			},
+			newWantUser: &authenticationv1.UserInfo{
+				Username: "k8s-john_doe",
+				Groups:   []string{"system:authenticated"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1046,7 +1113,9 @@ jwt:
 			err = os.WriteFile(apiServer.ServerOpts.Authentication.AuthenticationConfigFile, []byte(tt.newAuthConfigFn(t, oidcServer.URL(), string(caCert))), 0600)
 			require.NoError(t, err)
 
-			err = wait.PollUntilContextTimeout(ctx, time.Second, 30*time.Second, true, func(ctx context.Context) (done bool, err error) {
+			const hardCodedTokenCacheTTL = 10 * time.Second
+			start := time.Now()
+			err = wait.PollUntilContextTimeout(ctx, time.Second, 3*hardCodedTokenCacheTTL, true, func(ctx context.Context) (done bool, err error) {
 				res, err := client.AuthenticationV1().SelfSubjectReviews().Create(ctx, &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
 				if err != nil {
 					if tt.ignoreTransitionErrFn != nil && tt.ignoreTransitionErrFn(err) {
@@ -1056,7 +1125,7 @@ jwt:
 				}
 
 				diff := cmp.Diff(*tt.newWantUser, res.Status.UserInfo)
-				if len(diff) > 0 {
+				if len(diff) > 0 && time.Since(start) > 2*hardCodedTokenCacheTTL {
 					t.Logf("%s saw new user diff:\n%s", t.Name(), diff)
 				}
 
