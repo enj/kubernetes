@@ -259,6 +259,7 @@ func newJWTAuthenticator(config *apiserver.AuthenticationConfiguration, oidcSign
 	var jwtAuthenticators []authenticator.Token
 	var closeFuncs []func()
 	for _, jwtAuthenticator := range config.JWT {
+		// TODO remove this CAContentProvider indirection
 		var oidcCAContent oidc.CAContentProvider
 		if len(jwtAuthenticator.Issuer.CertificateAuthority) > 0 {
 			var oidcCAError error
@@ -275,11 +276,11 @@ func newJWTAuthenticator(config *apiserver.AuthenticationConfiguration, oidcSign
 		if err != nil {
 			return nil, err
 		}
-		jwtAuthenticators = append(jwtAuthenticators, authenticator.WrapAudienceAgnosticToken(apiAudiences, oidcAuth))
+		jwtAuthenticators = append(jwtAuthenticators, oidcAuth)
 		closeFuncs = append(closeFuncs, oidcAuth.Close)
 	}
 	return &jwtAuthenticatorWithClose{
-		jwtAuthenticator: tokenunion.New(jwtAuthenticators...), // this handles the empty jwtAuthenticators slice case correctly
+		jwtAuthenticator: authenticator.WrapAudienceAgnosticToken(apiAudiences, tokenunion.New(jwtAuthenticators...)), // this handles the empty jwtAuthenticators slice case correctly
 		closeFunc: func() {
 			for _, closeFunc := range closeFuncs {
 				closeFunc := closeFunc
