@@ -878,8 +878,10 @@ func TestStructuredAuthenticationConfigReload(t *testing.T) {
 
 	// TODO add tests:
 	//  invalid to valid
+	//  empty to valid
+	//  valid to empty (should break)
 	//  valid to structurally invalid (should be ignored)
-	//  valid to invalid via typo (should break)
+	//  valid to invalid via typo (should break for now, ideally ignored in the future)
 	tests := []testRun[*rsa.PrivateKey, *rsa.PublicKey]{
 		{
 			name: "old valid config to new valid config",
