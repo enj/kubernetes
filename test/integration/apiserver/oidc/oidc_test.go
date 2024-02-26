@@ -1165,20 +1165,7 @@ jwt:
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := testContext(t)
 
-			oidcServer, apiServer, signingPrivateKey, caCert, certPath := configureTestInfrastructure(t, tt.authConfigFn, rsaGenerateKey)
-
-			oidcServer.TokenHandler().EXPECT().Token().Times(1).DoAndReturn(utilsoidc.TokenHandlerBehaviorReturningPredefinedJWT(
-				t,
-				signingPrivateKey,
-				map[string]interface{}{
-					"iss": oidcServer.URL(),
-					"sub": defaultOIDCClaimedUsername,
-					"aud": defaultOIDCClientID,
-					"exp": time.Now().Add(10 * time.Minute).Unix(),
-				},
-				defaultStubAccessToken,
-				defaultStubRefreshToken,
-			))
+			oidcServer, apiServer, caCert, certPath := configureBasicTestInfrastructureWithRandomKeyType(t, tt.authConfigFn)
 
 			tokenURL, err := oidcServer.TokenURL()
 			require.NoError(t, err)
@@ -1228,6 +1215,47 @@ jwt:
 			tt.newAssertErrFn(t, err)
 		})
 	}
+}
+
+func configureBasicTestInfrastructureWithRandomKeyType(t *testing.T, fn authenticationConfigFunc) (
+	oidcServer *utilsoidc.TestServer,
+	apiServer *kubeapiserverapptesting.TestServer,
+	caCertContent []byte,
+	caFilePath string,
+) {
+	t.Helper()
+
+	if randomBool() {
+		return configureBasicTestInfrastructure(t, fn, rsaGenerateKey)
+	}
+
+	return configureBasicTestInfrastructure(t, fn, ecdsaGenerateKey)
+}
+
+func configureBasicTestInfrastructure[K utilsoidc.JosePrivateKey, L utilsoidc.JosePublicKey](t *testing.T, fn authenticationConfigFunc, keyFunc func(t *testing.T) (K, L)) (
+	oidcServer *utilsoidc.TestServer,
+	apiServer *kubeapiserverapptesting.TestServer,
+	caCertContent []byte,
+	caFilePath string,
+) {
+	t.Helper()
+
+	oidcServer, apiServer, signingPrivateKey, caCertContent, caFilePath := configureTestInfrastructure(t, fn, keyFunc)
+
+	oidcServer.TokenHandler().EXPECT().Token().Times(1).DoAndReturn(utilsoidc.TokenHandlerBehaviorReturningPredefinedJWT(
+		t,
+		signingPrivateKey,
+		map[string]interface{}{
+			"iss": oidcServer.URL(),
+			"sub": defaultOIDCClaimedUsername,
+			"aud": defaultOIDCClientID,
+			"exp": time.Now().Add(10 * time.Minute).Unix(),
+		},
+		defaultStubAccessToken,
+		defaultStubRefreshToken,
+	))
+
+	return oidcServer, apiServer, caCertContent, caFilePath
 }
 
 func rsaGenerateKey(t *testing.T) (*rsa.PrivateKey, *rsa.PublicKey) {
