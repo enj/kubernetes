@@ -776,8 +776,6 @@ func loadAuthenticationConfig(configFilePath string) (*apiserver.AuthenticationC
 	return configuration, contentHash, nil
 }
 
-// TODO unit tests for the functions below
-
 // getAuthenticationConfigHash reads the authentication configuration file at filepath and returns the hash of the file.
 // It does not attempt to decode or load the config, and serves as a cheap check to determine if the file has changed.
 func getAuthenticationConfigHash(filepath string) (string, error) {
