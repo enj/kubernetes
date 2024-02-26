@@ -879,7 +879,6 @@ func TestStructuredAuthenticationConfigReload(t *testing.T) {
 	}
 
 	// TODO add tests:
-	//  valid to empty (should break)
 	//  valid to invalid via typo (should break for now, ideally ignored in the future)
 	tests := []testRun[*rsa.PrivateKey, *rsa.PublicKey]{
 		{
@@ -1157,6 +1156,62 @@ jwt:
 			},
 			waitAfterConfigSwap: true,
 		},
+		{
+			name: "old valid config to new valid empty config (should cause tokens to stop working)",
+			authConfigFn: func(t *testing.T, issuerURL, caCert string) string {
+				return fmt.Sprintf(`
+apiVersion: apiserver.config.k8s.io/v1alpha1
+kind: AuthenticationConfiguration
+jwt:
+- issuer:
+    url: %s
+    audiences:
+    - %s
+    - another-audience
+    audienceMatchPolicy: MatchAny
+    certificateAuthority: |
+        %s
+  claimMappings:
+    username:
+      expression: "'k8s-' + claims.sub"
+`, issuerURL, defaultOIDCClientID, indentCertificateAuthority(caCert))
+			},
+			newAuthConfigFn: func(t *testing.T, _, _ string) string {
+				return `
+apiVersion: apiserver.config.k8s.io/v1alpha1
+kind: AuthenticationConfiguration
+`
+			},
+			configureInfrastructure: configureTestInfrastructure[*rsa.PrivateKey, *rsa.PublicKey],
+			configureOIDCServerBehaviour: func(t *testing.T, oidcServer *utilsoidc.TestServer, signingPrivateKey *rsa.PrivateKey) {
+				idTokenLifetime := time.Second * 1200
+				oidcServer.TokenHandler().EXPECT().Token().Times(1).DoAndReturn(utilsoidc.TokenHandlerBehaviorReturningPredefinedJWT(
+					t,
+					signingPrivateKey,
+					map[string]interface{}{
+						"iss": oidcServer.URL(),
+						"sub": defaultOIDCClaimedUsername,
+						"aud": defaultOIDCClientID,
+						"exp": time.Now().Add(idTokenLifetime).Unix(),
+					},
+					defaultStubAccessToken,
+					defaultStubRefreshToken,
+				))
+			},
+			configureClient: configureClientFetchingOIDCCredentials,
+			assertErrFn: func(t *testing.T, errorToCheck error) {
+				assert.NoError(t, errorToCheck)
+			},
+			wantUser: &authenticationv1.UserInfo{
+				Username: "k8s-john_doe",
+				Groups:   []string{"system:authenticated"},
+			},
+			newAssertErrFn: func(t *testing.T, errorToCheck error) {
+				assert.True(t, apierrors.IsUnauthorized(errorToCheck))
+			},
+			newWantUser:         nil,
+			waitAfterConfigSwap: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1190,24 +1245,26 @@ jwt:
 				time.Sleep(2 * hardCodedTokenCacheTTL)
 			}
 
-			start := time.Now()
-			err = wait.PollUntilContextTimeout(ctx, time.Second, 3*hardCodedTokenCacheTTL, true, func(ctx context.Context) (done bool, err error) {
-				res, err := client.AuthenticationV1().SelfSubjectReviews().Create(ctx, &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
-				if err != nil {
-					if tt.ignoreTransitionErrFn != nil && tt.ignoreTransitionErrFn(err) {
-						return false, nil
+			if tt.newWantUser != nil {
+				start := time.Now()
+				err = wait.PollUntilContextTimeout(ctx, time.Second, 3*hardCodedTokenCacheTTL, true, func(ctx context.Context) (done bool, err error) {
+					res, err := client.AuthenticationV1().SelfSubjectReviews().Create(ctx, &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
+					if err != nil {
+						if tt.ignoreTransitionErrFn != nil && tt.ignoreTransitionErrFn(err) {
+							return false, nil
+						}
+						return false, err
 					}
-					return false, err
-				}
 
-				diff := cmp.Diff(*tt.newWantUser, res.Status.UserInfo)
-				if len(diff) > 0 && time.Since(start) > 2*hardCodedTokenCacheTTL {
-					t.Logf("%s saw new user diff:\n%s", t.Name(), diff)
-				}
+					diff := cmp.Diff(*tt.newWantUser, res.Status.UserInfo)
+					if len(diff) > 0 && time.Since(start) > 2*hardCodedTokenCacheTTL {
+						t.Logf("%s saw new user diff:\n%s", t.Name(), diff)
+					}
 
-				return len(diff) == 0, nil
-			})
-			require.NoError(t, err, "new authentication config not loaded")
+					return len(diff) == 0, nil
+				})
+				require.NoError(t, err, "new authentication config not loaded")
+			}
 
 			_, err = client.CoreV1().Pods(defaultNamespace).List(ctx, metav1.ListOptions{})
 			tt.newAssertErrFn(t, err)
