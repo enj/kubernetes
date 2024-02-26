@@ -652,7 +652,6 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(ctx context.Context, authInfo *ge
 			time.Minute,
 			o.AuthenticationConfigFile,
 			func() {
-				// TODO integration tests
 				// TODO add metrics
 				// TODO collapse onto shared logic with DynamicEncryptionConfigContent controller
 
