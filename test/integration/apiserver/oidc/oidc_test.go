@@ -855,35 +855,14 @@ func TestStructuredAuthenticationConfigReload(t *testing.T) {
 
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StructuredAuthenticationConfiguration, true)()
 
-	type testRun[K utilsoidc.JosePrivateKey, L utilsoidc.JosePublicKey] struct {
-		name                    string
-		authConfigFn            authenticationConfigFunc
-		newAuthConfigFn         authenticationConfigFunc
-		configureInfrastructure func(t *testing.T, fn authenticationConfigFunc, keyFunc func(t *testing.T) (K, L)) (
-			oidcServer *utilsoidc.TestServer,
-			apiServer *kubeapiserverapptesting.TestServer,
-			signingPrivateKey *rsa.PrivateKey,
-			caCertContent []byte,
-			caFilePath string,
-		)
-		configureOIDCServerBehaviour func(t *testing.T, oidcServer *utilsoidc.TestServer, signingPrivateKey K)
-		configureClient              func(
-			t *testing.T,
-			restCfg *rest.Config,
-			caCert []byte,
-			certPath,
-			oidcServerURL,
-			oidcServerTokenURL string,
-		) kubernetes.Interface
-		assertErrFn           func(t *testing.T, errorToCheck error)
-		wantUser              *authenticationv1.UserInfo
-		ignoreTransitionErrFn func(error) bool
-		newAssertErrFn        func(t *testing.T, errorToCheck error)
-		newWantUser           *authenticationv1.UserInfo
-		waitAfterConfigSwap   bool
-	}
-
-	tests := []testRun[*rsa.PrivateKey, *rsa.PublicKey]{
+	tests := []struct {
+		name                          string
+		authConfigFn, newAuthConfigFn authenticationConfigFunc
+		assertErrFn, newAssertErrFn   func(t *testing.T, errorToCheck error)
+		wantUser, newWantUser         *authenticationv1.UserInfo
+		ignoreTransitionErrFn         func(error) bool
+		waitAfterConfigSwap           bool
+	}{
 		{
 			name: "old valid config to new valid config",
 			authConfigFn: func(t *testing.T, issuerURL, caCert string) string {
@@ -922,23 +901,6 @@ jwt:
       expression: "'panda-' + claims.sub"   # this is the only new part of the config
 `, issuerURL, defaultOIDCClientID, indentCertificateAuthority(caCert))
 			},
-			configureInfrastructure: configureTestInfrastructure[*rsa.PrivateKey, *rsa.PublicKey],
-			configureOIDCServerBehaviour: func(t *testing.T, oidcServer *utilsoidc.TestServer, signingPrivateKey *rsa.PrivateKey) {
-				idTokenLifetime := time.Second * 1200
-				oidcServer.TokenHandler().EXPECT().Token().Times(1).DoAndReturn(utilsoidc.TokenHandlerBehaviorReturningPredefinedJWT(
-					t,
-					signingPrivateKey,
-					map[string]interface{}{
-						"iss": oidcServer.URL(),
-						"sub": defaultOIDCClaimedUsername,
-						"aud": defaultOIDCClientID,
-						"exp": time.Now().Add(idTokenLifetime).Unix(),
-					},
-					defaultStubAccessToken,
-					defaultStubRefreshToken,
-				))
-			},
-			configureClient: configureClientFetchingOIDCCredentials,
 			assertErrFn: func(t *testing.T, errorToCheck error) {
 				assert.NoError(t, errorToCheck)
 			},
@@ -985,23 +947,6 @@ jwt:
       expression: "'snorlax-' + claims.sub"
 `, issuerURL, defaultOIDCClientID, indentCertificateAuthority(caCert))
 			},
-			configureInfrastructure: configureTestInfrastructure[*rsa.PrivateKey, *rsa.PublicKey],
-			configureOIDCServerBehaviour: func(t *testing.T, oidcServer *utilsoidc.TestServer, signingPrivateKey *rsa.PrivateKey) {
-				idTokenLifetime := time.Second * 1200
-				oidcServer.TokenHandler().EXPECT().Token().Times(1).DoAndReturn(utilsoidc.TokenHandlerBehaviorReturningPredefinedJWT(
-					t,
-					signingPrivateKey,
-					map[string]interface{}{
-						"iss": oidcServer.URL(),
-						"sub": defaultOIDCClaimedUsername,
-						"aud": defaultOIDCClientID,
-						"exp": time.Now().Add(idTokenLifetime).Unix(),
-					},
-					defaultStubAccessToken,
-					defaultStubRefreshToken,
-				))
-			},
-			configureClient: configureClientFetchingOIDCCredentials,
 			assertErrFn: func(t *testing.T, errorToCheck error) {
 				assert.True(t, apierrors.IsUnauthorized(errorToCheck))
 			},
@@ -1058,23 +1003,6 @@ jwt:
       expression: "'k8s-' + claims.sub"
 `, issuerURL, defaultOIDCClientID, indentCertificateAuthority(caCert))
 			},
-			configureInfrastructure: configureTestInfrastructure[*rsa.PrivateKey, *rsa.PublicKey],
-			configureOIDCServerBehaviour: func(t *testing.T, oidcServer *utilsoidc.TestServer, signingPrivateKey *rsa.PrivateKey) {
-				idTokenLifetime := time.Second * 1200
-				oidcServer.TokenHandler().EXPECT().Token().Times(1).DoAndReturn(utilsoidc.TokenHandlerBehaviorReturningPredefinedJWT(
-					t,
-					signingPrivateKey,
-					map[string]interface{}{
-						"iss": oidcServer.URL(),
-						"sub": defaultOIDCClaimedUsername,
-						"aud": defaultOIDCClientID,
-						"exp": time.Now().Add(idTokenLifetime).Unix(),
-					},
-					defaultStubAccessToken,
-					defaultStubRefreshToken,
-				))
-			},
-			configureClient: configureClientFetchingOIDCCredentials,
 			assertErrFn: func(t *testing.T, errorToCheck error) {
 				assert.True(t, apierrors.IsUnauthorized(errorToCheck))
 			},
@@ -1126,23 +1054,6 @@ jwt:
       expression: "'k8s-' + claimss.sub"  # has typo
 `, issuerURL, defaultOIDCClientID, indentCertificateAuthority(caCert))
 			},
-			configureInfrastructure: configureTestInfrastructure[*rsa.PrivateKey, *rsa.PublicKey],
-			configureOIDCServerBehaviour: func(t *testing.T, oidcServer *utilsoidc.TestServer, signingPrivateKey *rsa.PrivateKey) {
-				idTokenLifetime := time.Second * 1200
-				oidcServer.TokenHandler().EXPECT().Token().Times(1).DoAndReturn(utilsoidc.TokenHandlerBehaviorReturningPredefinedJWT(
-					t,
-					signingPrivateKey,
-					map[string]interface{}{
-						"iss": oidcServer.URL(),
-						"sub": defaultOIDCClaimedUsername,
-						"aud": defaultOIDCClientID,
-						"exp": time.Now().Add(idTokenLifetime).Unix(),
-					},
-					defaultStubAccessToken,
-					defaultStubRefreshToken,
-				))
-			},
-			configureClient: configureClientFetchingOIDCCredentials,
 			assertErrFn: func(t *testing.T, errorToCheck error) {
 				assert.NoError(t, errorToCheck)
 			},
@@ -1185,23 +1096,6 @@ apiVersion: apiserver.config.k8s.io/v1alpha1
 kind: AuthenticationConfiguration
 `
 			},
-			configureInfrastructure: configureTestInfrastructure[*rsa.PrivateKey, *rsa.PublicKey],
-			configureOIDCServerBehaviour: func(t *testing.T, oidcServer *utilsoidc.TestServer, signingPrivateKey *rsa.PrivateKey) {
-				idTokenLifetime := time.Second * 1200
-				oidcServer.TokenHandler().EXPECT().Token().Times(1).DoAndReturn(utilsoidc.TokenHandlerBehaviorReturningPredefinedJWT(
-					t,
-					signingPrivateKey,
-					map[string]interface{}{
-						"iss": oidcServer.URL(),
-						"sub": defaultOIDCClaimedUsername,
-						"aud": defaultOIDCClientID,
-						"exp": time.Now().Add(idTokenLifetime).Unix(),
-					},
-					defaultStubAccessToken,
-					defaultStubRefreshToken,
-				))
-			},
-			configureClient: configureClientFetchingOIDCCredentials,
 			assertErrFn: func(t *testing.T, errorToCheck error) {
 				assert.NoError(t, errorToCheck)
 			},
@@ -1252,23 +1146,6 @@ jwt:
       expression: "'k8s-' + claims.sub"
 `, issuerURL, defaultOIDCClientID)
 			},
-			configureInfrastructure: configureTestInfrastructure[*rsa.PrivateKey, *rsa.PublicKey],
-			configureOIDCServerBehaviour: func(t *testing.T, oidcServer *utilsoidc.TestServer, signingPrivateKey *rsa.PrivateKey) {
-				idTokenLifetime := time.Second * 1200
-				oidcServer.TokenHandler().EXPECT().Token().Times(1).DoAndReturn(utilsoidc.TokenHandlerBehaviorReturningPredefinedJWT(
-					t,
-					signingPrivateKey,
-					map[string]interface{}{
-						"iss": oidcServer.URL(),
-						"sub": defaultOIDCClaimedUsername,
-						"aud": defaultOIDCClientID,
-						"exp": time.Now().Add(idTokenLifetime).Unix(),
-					},
-					defaultStubAccessToken,
-					defaultStubRefreshToken,
-				))
-			},
-			configureClient: configureClientFetchingOIDCCredentials,
 			assertErrFn: func(t *testing.T, errorToCheck error) {
 				assert.NoError(t, errorToCheck)
 			},
@@ -1286,16 +1163,27 @@ jwt:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			oidcServer, apiServer, signingPrivateKey, caCert, certPath := tt.configureInfrastructure(t, tt.authConfigFn, rsaGenerateKey)
+			ctx := testContext(t)
 
-			tt.configureOIDCServerBehaviour(t, oidcServer, signingPrivateKey)
+			oidcServer, apiServer, signingPrivateKey, caCert, certPath := configureTestInfrastructure(t, tt.authConfigFn, rsaGenerateKey)
+
+			oidcServer.TokenHandler().EXPECT().Token().Times(1).DoAndReturn(utilsoidc.TokenHandlerBehaviorReturningPredefinedJWT(
+				t,
+				signingPrivateKey,
+				map[string]interface{}{
+					"iss": oidcServer.URL(),
+					"sub": defaultOIDCClaimedUsername,
+					"aud": defaultOIDCClientID,
+					"exp": time.Now().Add(10 * time.Minute).Unix(),
+				},
+				defaultStubAccessToken,
+				defaultStubRefreshToken,
+			))
 
 			tokenURL, err := oidcServer.TokenURL()
 			require.NoError(t, err)
 
-			client := tt.configureClient(t, apiServer.ClientConfig, caCert, certPath, oidcServer.URL(), tokenURL)
-
-			ctx := testContext(t)
+			client := configureClientFetchingOIDCCredentials(t, apiServer.ClientConfig, caCert, certPath, oidcServer.URL(), tokenURL)
 
 			if tt.wantUser != nil {
 				res, err := client.AuthenticationV1().SelfSubjectReviews().Create(ctx, &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
