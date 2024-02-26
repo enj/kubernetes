@@ -48,6 +48,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/features"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/apiserver/plugin/pkg/authenticator/token/oidc"
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc"
 	"k8s.io/client-go/rest"
@@ -848,6 +849,10 @@ func TestStructuredAuthenticationConfigReload(t *testing.T) {
 	t.Cleanup(func() { authenticator.JWTAuthenticatorTime = origJWTAuthenticatorTime })
 	authenticator.JWTAuthenticatorTime = 3 * time.Second // anything shorter than this is likely to flake in CI
 
+	origBaseContext := oidc.BaseContext
+	t.Cleanup(func() { oidc.BaseContext = origBaseContext })
+	oidc.BaseContext = testContext(t)
+
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StructuredAuthenticationConfiguration, true)()
 
 	type testRun[K utilsoidc.JosePrivateKey, L utilsoidc.JosePublicKey] struct {
@@ -878,8 +883,6 @@ func TestStructuredAuthenticationConfigReload(t *testing.T) {
 		waitAfterConfigSwap   bool
 	}
 
-	// TODO add tests:
-	//  valid to invalid via typo (should break for now, ideally ignored in the future)
 	tests := []testRun[*rsa.PrivateKey, *rsa.PublicKey]{
 		{
 			name: "old valid config to new valid config",
@@ -1212,6 +1215,73 @@ kind: AuthenticationConfiguration
 			newWantUser:         nil,
 			waitAfterConfigSwap: true,
 		},
+		{
+			name: "old valid config to new valid config with typo (should cause tokens to stop working)", // TODO: in the future, the old config should be honored instead
+			authConfigFn: func(t *testing.T, issuerURL, caCert string) string {
+				return fmt.Sprintf(`
+apiVersion: apiserver.config.k8s.io/v1alpha1
+kind: AuthenticationConfiguration
+jwt:
+- issuer:
+    url: %s
+    audiences:
+    - %s
+    - another-audience
+    audienceMatchPolicy: MatchAny
+    certificateAuthority: |
+        %s
+  claimMappings:
+    username:
+      expression: "'k8s-' + claims.sub"
+`, issuerURL, defaultOIDCClientID, indentCertificateAuthority(caCert))
+			},
+			newAuthConfigFn: func(t *testing.T, issuerURL, _ string) string {
+				return fmt.Sprintf(`
+apiVersion: apiserver.config.k8s.io/v1alpha1
+kind: AuthenticationConfiguration
+jwt:
+- issuer:
+    url: %s
+    audiences:
+    - %s
+    - another-audience
+    audienceMatchPolicy: MatchAny
+    certificateAuthority: ""  # missing CA
+  claimMappings:
+    username:
+      expression: "'k8s-' + claims.sub"
+`, issuerURL, defaultOIDCClientID)
+			},
+			configureInfrastructure: configureTestInfrastructure[*rsa.PrivateKey, *rsa.PublicKey],
+			configureOIDCServerBehaviour: func(t *testing.T, oidcServer *utilsoidc.TestServer, signingPrivateKey *rsa.PrivateKey) {
+				idTokenLifetime := time.Second * 1200
+				oidcServer.TokenHandler().EXPECT().Token().Times(1).DoAndReturn(utilsoidc.TokenHandlerBehaviorReturningPredefinedJWT(
+					t,
+					signingPrivateKey,
+					map[string]interface{}{
+						"iss": oidcServer.URL(),
+						"sub": defaultOIDCClaimedUsername,
+						"aud": defaultOIDCClientID,
+						"exp": time.Now().Add(idTokenLifetime).Unix(),
+					},
+					defaultStubAccessToken,
+					defaultStubRefreshToken,
+				))
+			},
+			configureClient: configureClientFetchingOIDCCredentials,
+			assertErrFn: func(t *testing.T, errorToCheck error) {
+				assert.NoError(t, errorToCheck)
+			},
+			wantUser: &authenticationv1.UserInfo{
+				Username: "k8s-john_doe",
+				Groups:   []string{"system:authenticated"},
+			},
+			newAssertErrFn: func(t *testing.T, errorToCheck error) {
+				assert.True(t, apierrors.IsUnauthorized(errorToCheck))
+			},
+			newWantUser:         nil,
+			waitAfterConfigSwap: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1503,7 +1573,7 @@ func indentCertificateAuthority(caCert string) string {
 }
 
 func testContext(t *testing.T) context.Context {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	t.Cleanup(cancel)
 	return ctx
 }
