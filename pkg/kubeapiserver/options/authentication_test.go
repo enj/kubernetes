@@ -676,7 +676,8 @@ jwt:
 						},
 					},
 				},
-				OIDCSigningAlgs: []string{"ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "RS256", "RS384", "RS512"},
+				AuthenticationConfigHash: "k8s:authentication:unstable:1:35670cc94e2af2b90861caae43a5e1c2b16c5c713ab3a3fd07e2c168532034d6",
+				OIDCSigningAlgs:          []string{"ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "RS256", "RS384", "RS512"},
 			},
 		},
 	}
@@ -881,7 +882,7 @@ func TestLoadAuthenticationConfig(t *testing.T) {
 		{
 			name:           "empty file",
 			file:           func() string { return writeTempFile(t, ``) },
-			expectErr:      "empty config file",
+			expectErr:      "authentication configuration file is empty",
 			expectedConfig: nil,
 		},
 		{

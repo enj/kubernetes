@@ -776,8 +776,6 @@ func loadAuthenticationConfig(configFilePath string) (*apiserver.AuthenticationC
 	return configuration, contentHash, nil
 }
 
-// TODO fix any exisiting unit tests that were broken
-
 // TODO unit tests for the functions below
 
 // getAuthenticationConfigHash reads the authentication configuration file at filepath and returns the hash of the file.
@@ -793,7 +791,7 @@ func readAuthenticationConfigDataAndHash(filepath string) ([]byte, string, error
 		return nil, "", fmt.Errorf("error reading authentication configuration file %q: %w", filepath, err)
 	}
 	if len(data) == 0 {
-		return nil, "", fmt.Errorf("authentication configuration file %q is empty", filepath)
+		return nil, "", fmt.Errorf("authentication configuration file is empty: %s", filepath)
 	}
 
 	return data, computeAuthenticationConfigHash(data), nil
