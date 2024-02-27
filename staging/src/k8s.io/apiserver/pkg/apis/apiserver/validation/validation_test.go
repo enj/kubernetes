@@ -204,7 +204,7 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ValidateAuthenticationConfiguration(tt.in).ToAggregate()
+			got := ValidateAuthenticationConfiguration(tt.in, nil).ToAggregate()
 			if d := cmp.Diff(tt.want, errString(got)); d != "" {
 				t.Fatalf("AuthenticationConfiguration validation mismatch (-want +got):\n%s", d)
 			}

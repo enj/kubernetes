@@ -89,6 +89,8 @@ type Options struct {
 	// https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation
 	SupportedSigningAlgs []string
 
+	DisallowedIssuers []string
+
 	// now is used for testing. It defaults to time.Now.
 	now func() time.Time
 }
@@ -222,7 +224,7 @@ var allowedSigningAlgs = map[string]bool{
 }
 
 func New(opts Options) (*Authenticator, error) {
-	celMapper, fieldErr := apiservervalidation.CompileAndValidateJWTAuthenticator(opts.JWTAuthenticator)
+	celMapper, fieldErr := apiservervalidation.CompileAndValidateJWTAuthenticator(opts.JWTAuthenticator, opts.DisallowedIssuers)
 	if err := fieldErr.ToAggregate(); err != nil {
 		return nil, err
 	}
