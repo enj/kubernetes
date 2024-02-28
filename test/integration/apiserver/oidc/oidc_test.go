@@ -315,6 +315,7 @@ jwt:
 						fmt.Sprintf("--oidc-issuer-url=%s", oidcServer.URL()),
 						fmt.Sprintf("--oidc-client-id=%s", defaultOIDCClientID),
 						fmt.Sprintf("--oidc-ca-file=%s", caFilePath),
+						"--oidc-username-prefix=-",
 					}
 					customFlags = append(customFlags, maybeSetSigningAlgs(&signingPrivateKey.PublicKey)...)
 
@@ -327,6 +328,8 @@ jwt:
 					require.NoError(t, err)
 
 					t.Cleanup(server.TearDownFn)
+
+					apiServer = &server
 				}
 
 				oidcServer.JwksHandler().EXPECT().KeySet().AnyTimes().DoAndReturn(utilsoidc.DefaultJwksHandlerBehavior(t, &signingPrivateKey.PublicKey))
