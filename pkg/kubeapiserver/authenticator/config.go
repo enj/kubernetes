@@ -99,7 +99,8 @@ type Config struct {
 // Kubernetes authentication mechanisms.
 func (config Config) New(ctx context.Context) (authenticator.Request, func(*apiserver.AuthenticationConfiguration) error, *spec.SecurityDefinitions, spec3.SecuritySchemes, error) {
 	var authenticators []authenticator.Request
-	var tokenAuthenticators []authenticator.Token
+	var opaqueTokenAuthenticators []authenticator.Token
+	var jwtSchemaAuthenticators []authenticator.Token
 	securityDefinitionsV2 := spec.SecurityDefinitions{}
 	securitySchemesV3 := spec3.SecuritySchemes{}
 
@@ -128,25 +129,19 @@ func (config Config) New(ctx context.Context) (authenticator.Request, func(*apis
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
-		tokenAuthenticators = append(tokenAuthenticators, authenticator.WrapAudienceAgnosticToken(config.APIAudiences, tokenAuth))
-	}
-	if len(config.ServiceAccountKeyFiles) > 0 {
-		serviceAccountAuth, err := newLegacyServiceAccountAuthenticator(config.ServiceAccountKeyFiles, config.ServiceAccountLookup, config.APIAudiences, config.ServiceAccountTokenGetter, config.SecretsWriter)
-		if err != nil {
-			return nil, nil, nil, nil, err
-		}
-		tokenAuthenticators = append(tokenAuthenticators, serviceAccountAuth)
-	}
-	if len(config.ServiceAccountIssuers) > 0 {
-		serviceAccountAuth, err := newServiceAccountAuthenticator(config.ServiceAccountIssuers, config.ServiceAccountKeyFiles, config.APIAudiences, config.ServiceAccountTokenGetter)
-		if err != nil {
-			return nil, nil, nil, nil, err
-		}
-		tokenAuthenticators = append(tokenAuthenticators, serviceAccountAuth)
+		opaqueTokenAuthenticators = append(opaqueTokenAuthenticators, authenticator.WrapAudienceAgnosticToken(config.APIAudiences, tokenAuth))
 	}
 
 	if config.BootstrapToken && config.BootstrapTokenAuthenticator != nil {
-		tokenAuthenticators = append(tokenAuthenticators, authenticator.WrapAudienceAgnosticToken(config.APIAudiences, config.BootstrapTokenAuthenticator))
+		opaqueTokenAuthenticators = append(opaqueTokenAuthenticators, authenticator.WrapAudienceAgnosticToken(config.APIAudiences, config.BootstrapTokenAuthenticator))
+	}
+
+	saAuthenticator, err := config.buildServiceAccountAuthenticator()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	if saAuthenticator != nil {
+		jwtSchemaAuthenticators = append(jwtSchemaAuthenticators, saAuthenticator)
 	}
 
 	// NOTE(ericchiang): Keep the OpenID Connect after Service Accounts.
@@ -181,7 +176,7 @@ func (config Config) New(ctx context.Context) (authenticator.Request, func(*apis
 			return nil, nil, nil, nil, err
 		}
 
-		tokenAuthenticators = append(tokenAuthenticators,
+		jwtSchemaAuthenticators = append(jwtSchemaAuthenticators,
 			authenticator.TokenFunc(func(ctx context.Context, token string) (*authenticator.Response, bool, error) {
 				return jwtAuthenticatorPtr.Load().jwtAuthenticator.AuthenticateToken(ctx, token)
 			}),
@@ -194,12 +189,33 @@ func (config Config) New(ctx context.Context) (authenticator.Request, func(*apis
 			return nil, nil, nil, nil, err
 		}
 
-		tokenAuthenticators = append(tokenAuthenticators, webhookTokenAuth)
+		// model webhook authn as a JWT authenticator because it just needs to be at the end and
+		// should not be sent tokens that another JWT authenticator has already tried to process
+		jwtSchemaAuthenticators = append(jwtSchemaAuthenticators, webhookTokenAuth)
 	}
 
-	if len(tokenAuthenticators) > 0 {
-		// Union the token authenticators
-		tokenAuth := tokenunion.New(tokenAuthenticators...)
+	if len(opaqueTokenAuthenticators)+len(jwtSchemaAuthenticators) > 0 {
+		// opaque token authenticator errors are allowed to fallthrough to the next opaque token authenticator
+		opaqueTokenAuthenticator := tokenunion.New(opaqueTokenAuthenticators...)
+
+		// JWT token authenticator errors are terminal after the first failure
+		// we already guarantee that the SA and OIDC/JWT authenticators have distinct issuers
+		// thus either one of them will attempt to process it, or it will fallthrough to webhook authn.
+		// but once any single authenticator attempts to process the token, we do not fallthrough.
+		// thus a failed SA token authn will not be sent to webhook authn.
+		// similarly, a failed OIDC/JWT token authn will not be sent to webhook authn.
+		jwtSchemaAuthenticator := tokenunion.NewFailOnError(jwtSchemaAuthenticators...)
+
+		var tokenAuth authenticator.Token
+		if len(opaqueTokenAuthenticators) == 0 {
+			tokenAuth = jwtSchemaAuthenticator
+		} else if len(jwtSchemaAuthenticators) == 0 {
+			tokenAuth = opaqueTokenAuthenticator
+		} else {
+			// any error with an opaque token authenticator is allowed to fallthrough to a JWT / webhook authenticator
+			tokenAuth = tokenunion.New(opaqueTokenAuthenticator, jwtSchemaAuthenticator)
+		}
+
 		// Optionally cache authentication results
 		if config.TokenSuccessCacheTTL > 0 || config.TokenFailureCacheTTL > 0 {
 			tokenAuth = tokencache.New(tokenAuth, true, config.TokenSuccessCacheTTL, config.TokenFailureCacheTTL)
@@ -244,6 +260,29 @@ func (config Config) New(ctx context.Context) (authenticator.Request, func(*apis
 	return authenticator, updateAuthenticationConfig, &securityDefinitionsV2, securitySchemesV3, nil
 }
 
+func (config Config) buildServiceAccountAuthenticator() (authenticator.Token, error) {
+	var saAuthenticators []authenticator.Token
+	if len(config.ServiceAccountIssuers) > 0 {
+		serviceAccountAuth, err := newServiceAccountAuthenticator(config.ServiceAccountIssuers, config.ServiceAccountKeyFiles, config.APIAudiences, config.ServiceAccountTokenGetter)
+		if err != nil {
+			return nil, err
+		}
+		saAuthenticators = append(saAuthenticators, serviceAccountAuth)
+	}
+	if len(config.ServiceAccountKeyFiles) > 0 {
+		serviceAccountAuth, err := newLegacyServiceAccountAuthenticator(config.ServiceAccountKeyFiles, config.ServiceAccountLookup, config.APIAudiences, config.ServiceAccountTokenGetter, config.SecretsWriter)
+		if err != nil {
+			return nil, err
+		}
+		saAuthenticators = append(saAuthenticators, serviceAccountAuth)
+	}
+	if len(saAuthenticators) == 0 {
+		return nil, nil
+	}
+	// union with fallthrough since we do not guarantee that new and legacy SA authn will not have issuer overlap
+	return tokenunion.New(saAuthenticators...), nil
+}
+
 type jwtAuthenticatorWithCancel struct {
 	jwtAuthenticator authenticator.Token
 	cancel           func()
@@ -281,7 +320,9 @@ func newJWTAuthenticator(ctx context.Context, config *apiserver.AuthenticationCo
 		jwtAuthenticators = append(jwtAuthenticators, oidcAuth)
 	}
 	return &jwtAuthenticatorWithCancel{
-		jwtAuthenticator: authenticator.WrapAudienceAgnosticToken(apiAudiences, tokenunion.NewFailOnError(jwtAuthenticators...)), // this handles the empty jwtAuthenticators slice case correctly
+		// we do not fallthrough to the next jwt authenticator after an error because we know each one has a distinct issuer
+		// this handles the empty jwtAuthenticators slice case correctly
+		jwtAuthenticator: authenticator.WrapAudienceAgnosticToken(apiAudiences, tokenunion.NewFailOnError(jwtAuthenticators...)),
 		cancel:           cancel,
 	}, nil
 }
