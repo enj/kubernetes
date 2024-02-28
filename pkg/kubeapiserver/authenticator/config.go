@@ -99,7 +99,8 @@ type Config struct {
 // Kubernetes authentication mechanisms.
 func (config Config) New() (authenticator.Request, func(*apiserver.AuthenticationConfiguration) error, *spec.SecurityDefinitions, spec3.SecuritySchemes, error) {
 	var authenticators []authenticator.Request
-	var tokenAuthenticators []authenticator.Token
+	var internalTokenAuthenticators []authenticator.Token
+	var externalTokenAuthenticators []authenticator.Token
 	securityDefinitionsV2 := spec.SecurityDefinitions{}
 	securitySchemesV3 := spec3.SecuritySchemes{}
 
@@ -128,25 +129,25 @@ func (config Config) New() (authenticator.Request, func(*apiserver.Authenticatio
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
-		tokenAuthenticators = append(tokenAuthenticators, authenticator.WrapAudienceAgnosticToken(config.APIAudiences, tokenAuth))
+		internalTokenAuthenticators = append(internalTokenAuthenticators, authenticator.WrapAudienceAgnosticToken(config.APIAudiences, tokenAuth))
 	}
 	if len(config.ServiceAccountKeyFiles) > 0 {
 		serviceAccountAuth, err := newLegacyServiceAccountAuthenticator(config.ServiceAccountKeyFiles, config.ServiceAccountLookup, config.APIAudiences, config.ServiceAccountTokenGetter, config.SecretsWriter)
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
-		tokenAuthenticators = append(tokenAuthenticators, serviceAccountAuth)
+		internalTokenAuthenticators = append(internalTokenAuthenticators, serviceAccountAuth)
 	}
 	if len(config.ServiceAccountIssuers) > 0 {
 		serviceAccountAuth, err := newServiceAccountAuthenticator(config.ServiceAccountIssuers, config.ServiceAccountKeyFiles, config.APIAudiences, config.ServiceAccountTokenGetter)
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
-		tokenAuthenticators = append(tokenAuthenticators, serviceAccountAuth)
+		internalTokenAuthenticators = append(internalTokenAuthenticators, serviceAccountAuth)
 	}
 
 	if config.BootstrapToken && config.BootstrapTokenAuthenticator != nil {
-		tokenAuthenticators = append(tokenAuthenticators, authenticator.WrapAudienceAgnosticToken(config.APIAudiences, config.BootstrapTokenAuthenticator))
+		internalTokenAuthenticators = append(internalTokenAuthenticators, authenticator.WrapAudienceAgnosticToken(config.APIAudiences, config.BootstrapTokenAuthenticator))
 	}
 
 	// NOTE(ericchiang): Keep the OpenID Connect after Service Accounts.
@@ -187,7 +188,7 @@ func (config Config) New() (authenticator.Request, func(*apiserver.Authenticatio
 			return nil, nil, nil, nil, err
 		}
 
-		tokenAuthenticators = append(tokenAuthenticators,
+		externalTokenAuthenticators = append(externalTokenAuthenticators,
 			authenticator.TokenFunc(func(ctx context.Context, token string) (*authenticator.Response, bool, error) {
 				return jwtAuthenticatorPtr.Load().jwtAuthenticator.AuthenticateToken(ctx, token)
 			}),
@@ -200,12 +201,26 @@ func (config Config) New() (authenticator.Request, func(*apiserver.Authenticatio
 			return nil, nil, nil, nil, err
 		}
 
-		tokenAuthenticators = append(tokenAuthenticators, webhookTokenAuth)
+		externalTokenAuthenticators = append(externalTokenAuthenticators, webhookTokenAuth)
 	}
 
-	if len(tokenAuthenticators) > 0 {
-		// Union the token authenticators
-		tokenAuth := tokenunion.New(tokenAuthenticators...)
+	if len(internalTokenAuthenticators)+len(externalTokenAuthenticators) > 0 {
+		// internal token authenticator errors are allowed to fallthrough to the next internal authenticator
+		internalTokenAuthenticator := tokenunion.New(internalTokenAuthenticators...)
+
+		// external token authenticator errors are terminal after the first failure
+		externalTokenAuthenticator := tokenunion.NewFailOnError(externalTokenAuthenticators...)
+
+		var tokenAuth authenticator.Token
+		if len(internalTokenAuthenticators) == 0 {
+			tokenAuth = externalTokenAuthenticator
+		} else if len(externalTokenAuthenticators) == 0 {
+			tokenAuth = internalTokenAuthenticator
+		} else {
+			// any error with an internal token authenticator is allowed to fallthrough to an external token authenticator
+			tokenAuth = tokenunion.New(internalTokenAuthenticator, externalTokenAuthenticator)
+		}
+
 		// Optionally cache authentication results
 		if config.TokenSuccessCacheTTL > 0 || config.TokenFailureCacheTTL > 0 {
 			tokenAuth = tokencache.New(tokenAuth, true, config.TokenSuccessCacheTTL, config.TokenFailureCacheTTL)
