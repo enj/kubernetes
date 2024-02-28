@@ -310,7 +310,23 @@ jwt:
 `, oidcServer.URL(), defaultOIDCClientID, indentCertificateAuthority(string(caCertContent)))
 					apiServer = startTestAPIServerForOIDC(t, "", "", "", authenticationConfig, &signingPrivateKey.PublicKey)
 				} else {
-					t.Skip("TODO need to fix flag logic to support this")
+					customFlags := []string{
+						"--authorization-mode=RBAC",
+						fmt.Sprintf("--oidc-issuer-url=%s", oidcServer.URL()),
+						fmt.Sprintf("--oidc-client-id=%s", defaultOIDCClientID),
+						fmt.Sprintf("--oidc-ca-file=%s", caFilePath),
+					}
+					customFlags = append(customFlags, maybeSetSigningAlgs(&signingPrivateKey.PublicKey)...)
+
+					server, err := kubeapiserverapptesting.StartTestServer(
+						t,
+						kubeapiserverapptesting.NewDefaultTestServerOptions(),
+						customFlags,
+						framework.SharedEtcd(),
+					)
+					require.NoError(t, err)
+
+					t.Cleanup(server.TearDownFn)
 				}
 
 				oidcServer.JwksHandler().EXPECT().KeySet().AnyTimes().DoAndReturn(utilsoidc.DefaultJwksHandlerBehavior(t, &signingPrivateKey.PublicKey))
