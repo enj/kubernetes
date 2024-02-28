@@ -277,6 +277,65 @@ jwt:
 				assert.True(t, apierrors.IsUnauthorized(errorToCheck), errorToCheck)
 			},
 		},
+		{
+			name: "ID token is okay but username is empty",
+			configureInfrastructure: func(t *testing.T, fn authenticationConfigFunc, keyFunc func(t *testing.T) (*rsa.PrivateKey, *rsa.PublicKey)) (
+				oidcServer *utilsoidc.TestServer,
+				apiServer *kubeapiserverapptesting.TestServer,
+				signingPrivateKey *rsa.PrivateKey,
+				caCertContent []byte,
+				caFilePath string,
+			) {
+				caCertContent, _, caFilePath, caKeyFilePath := generateCert(t)
+
+				signingPrivateKey, _ = keyFunc(t)
+
+				oidcServer = utilsoidc.BuildAndRunTestServer(t, caFilePath, caKeyFilePath)
+
+				if useAuthenticationConfig {
+					authenticationConfig := fmt.Sprintf(`
+apiVersion: apiserver.config.k8s.io/v1alpha1
+kind: AuthenticationConfiguration
+jwt:
+- issuer:
+    url: %s
+    audiences:
+    - %s
+    certificateAuthority: |
+        %s
+  claimMappings:
+    username:
+      claim: sub
+      prefix: ""
+`, oidcServer.URL(), defaultOIDCClientID, indentCertificateAuthority(string(caCertContent)))
+					apiServer = startTestAPIServerForOIDC(t, "", "", "", authenticationConfig, &signingPrivateKey.PublicKey)
+				} else {
+					t.Skip("TODO need to fix flag logic to support this")
+				}
+
+				oidcServer.JwksHandler().EXPECT().KeySet().AnyTimes().DoAndReturn(utilsoidc.DefaultJwksHandlerBehavior(t, &signingPrivateKey.PublicKey))
+
+				return oidcServer, apiServer, signingPrivateKey, caCertContent, caFilePath
+			},
+			configureOIDCServerBehaviour: func(t *testing.T, oidcServer *utilsoidc.TestServer, signingPrivateKey *rsa.PrivateKey) {
+				oidcServer.TokenHandler().EXPECT().Token().Times(1).DoAndReturn(utilsoidc.TokenHandlerBehaviorReturningPredefinedJWT(
+					t,
+					signingPrivateKey,
+					map[string]interface{}{
+						"iss": oidcServer.URL(),
+						"sub": "",
+						"aud": defaultOIDCClientID,
+						"exp": time.Now().Add(time.Second * 1200).Unix(),
+					},
+					defaultStubAccessToken,
+					defaultStubRefreshToken,
+				))
+			},
+			configureClient: configureClientFetchingOIDCCredentials,
+			assertErrFn: func(t *testing.T, errorToCheck error) {
+				assert.True(t, apierrors.IsUnauthorized(errorToCheck), errorToCheck)
+			},
+		},
 	}
 
 	for _, tt := range tests {

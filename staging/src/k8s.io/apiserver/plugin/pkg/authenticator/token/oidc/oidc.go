@@ -633,6 +633,10 @@ func (a *Authenticator) AuthenticateToken(ctx context.Context, token string) (*a
 		return nil, false, err
 	}
 
+	if len(username) == 0 {
+		return nil, false, fmt.Errorf("oidc: empty username is not allowed")
+	}
+
 	info := &user.DefaultInfo{Name: username}
 	if info.Groups, err = a.getGroups(ctx, c, claimsUnstructured); err != nil {
 		return nil, false, err

@@ -2903,7 +2903,7 @@ func TestToken(t *testing.T) {
 		// test to ensure omitempty fields not included in user info
 		// are set and accessible for CEL evaluation.
 		{
-			name: "test user validation rule doesn't fail when user info is empty",
+			name: "test user validation rule doesn't fail when user info is empty except username",
 			options: Options{
 				JWTAuthenticator: apiserver.JWTAuthenticator{
 					Issuer: apiserver.Issuer{
@@ -2920,8 +2920,8 @@ func TestToken(t *testing.T) {
 					},
 					UserValidationRules: []apiserver.UserValidationRule{
 						{
-							Expression: `user.username == ""`,
-							Message:    "username must be empty string",
+							Expression: `user.username == " "`,
+							Message:    "username must be single space",
 						},
 						{
 							Expression: `user.uid == ""`,
@@ -2946,12 +2946,12 @@ func TestToken(t *testing.T) {
 			claims: fmt.Sprintf(`{
 				"iss": "https://auth.example.com",
 				"aud": "my-client",
-				"username": "",
+				"username": " ",
 				"groups": null,
 				"exp": %d,
 				"baz": "qux"
 			}`, valid.Unix()),
-			want: &user.DefaultInfo{},
+			want: &user.DefaultInfo{Name: " "},
 		},
 	}
 	for _, test := range tests {
