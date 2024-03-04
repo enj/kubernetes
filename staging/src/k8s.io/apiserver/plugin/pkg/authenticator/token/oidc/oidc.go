@@ -151,7 +151,7 @@ func newAsyncIDTokenVerifier(ctx context.Context, c *oidc.Config, iss string, au
 
 	go func() {
 		if done, _ := initFn(); !done {
-			go wait.PollUntil(time.Second*10, initFn, ctx.Done())
+			_ = wait.PollUntil(time.Second*10, initFn, ctx.Done())
 		}
 	}()
 
@@ -169,14 +169,12 @@ func (a *asyncIDTokenVerifier) verifier() *idTokenVerifier {
 	return a.v
 }
 
-type Authenticator struct {
+type jwtAuthenticator struct {
 	jwtAuthenticator apiserver.JWTAuthenticator
 
 	// Contains an *oidc.IDTokenVerifier. Do not access directly use the
 	// idTokenVerifier method.
 	verifier atomic.Value
-
-	cancel context.CancelFunc
 
 	// resolver is used to resolve distributed claims.
 	resolver *claimResolver
@@ -196,19 +194,15 @@ type idTokenVerifier struct {
 	audiences sets.Set[string]
 }
 
-func (a *Authenticator) setVerifier(v *idTokenVerifier) {
+func (a *jwtAuthenticator) setVerifier(v *idTokenVerifier) {
 	a.verifier.Store(v)
 }
 
-func (a *Authenticator) idTokenVerifier() (*idTokenVerifier, bool) {
+func (a *jwtAuthenticator) idTokenVerifier() (*idTokenVerifier, bool) {
 	if v := a.verifier.Load(); v != nil {
 		return v.(*idTokenVerifier), true
 	}
 	return nil, false
-}
-
-func (a *Authenticator) Close() {
-	a.cancel()
 }
 
 func AllValidSigningAlgorithms() []string {
@@ -228,11 +222,7 @@ var allowedSigningAlgs = map[string]bool{
 	oidc.PS512: true,
 }
 
-// BaseContext is the root context used when spawning go routines.
-// Exported so that it can be overridden in integration tests.
-var BaseContext = context.Background()
-
-func New(opts Options) (authenticator.Token, error) {
+func New(ctx context.Context, opts Options) (authenticator.Token, error) {
 	celMapper, fieldErr := apiservervalidation.CompileAndValidateJWTAuthenticator(opts.JWTAuthenticator, opts.DisallowedIssuers)
 	if err := fieldErr.ToAggregate(); err != nil {
 		return nil, err
@@ -301,7 +291,6 @@ func New(opts Options) (authenticator.Token, error) {
 		client = &clientWithDiscoveryURL
 	}
 
-	ctx, cancel := context.WithCancel(BaseContext)
 	ctx = oidc.ClientContext(ctx, client)
 
 	now := opts.now
@@ -328,7 +317,7 @@ func New(opts Options) (authenticator.Token, error) {
 	var resolver *claimResolver
 	groupsClaim := opts.JWTAuthenticator.ClaimMappings.Groups.Claim
 	if groupsClaim != "" {
-		resolver = newClaimResolver(groupsClaim, client, verifierConfig, audiences)
+		resolver = newClaimResolver(ctx, groupsClaim, client, verifierConfig, audiences)
 	}
 
 	requiredClaims := make(map[string]string)
@@ -338,9 +327,8 @@ func New(opts Options) (authenticator.Token, error) {
 		}
 	}
 
-	authenticator := &Authenticator{
+	authenticator := &jwtAuthenticator{
 		jwtAuthenticator: opts.JWTAuthenticator,
-		cancel:           cancel,
 		resolver:         resolver,
 		celMapper:        celMapper,
 		requiredClaims:   requiredClaims,
@@ -452,6 +440,8 @@ type endpoint struct {
 // claimResolver expands distributed claims by calling respective claim source
 // endpoints.
 type claimResolver struct {
+	ctx context.Context
+
 	// claim is the distributed claim that may be resolved.
 	claim string
 
@@ -475,8 +465,9 @@ type claimResolver struct {
 }
 
 // newClaimResolver creates a new resolver for distributed claims.
-func newClaimResolver(claim string, client *http.Client, config *oidc.Config, audiences sets.Set[string]) *claimResolver {
+func newClaimResolver(ctx context.Context, claim string, client *http.Client, config *oidc.Config, audiences sets.Set[string]) *claimResolver {
 	return &claimResolver{
+		ctx:               ctx,
 		claim:             claim,
 		audiences:         audiences,
 		client:            client,
@@ -491,8 +482,7 @@ func (r *claimResolver) Verifier(iss string) (*idTokenVerifier, error) {
 	av := r.verifierPerIssuer[iss]
 	if av == nil {
 		// This lazy init should normally be very quick.
-		// TODO: Make this context cancelable.
-		ctx := oidc.ClientContext(context.Background(), r.client)
+		ctx := oidc.ClientContext(r.ctx, r.client)
 		av = newAsyncIDTokenVerifier(ctx, r.config, iss, r.audiences)
 		r.verifierPerIssuer[iss] = av
 	}
@@ -642,7 +632,7 @@ func (v *idTokenVerifier) verifyAudience(t *oidc.IDToken) error {
 	return fmt.Errorf("oidc: expected audience in %q got %q", sets.List(v.audiences), t.Audience)
 }
 
-func (a *Authenticator) AuthenticateToken(ctx context.Context, token string) (*authenticator.Response, bool, error) {
+func (a *jwtAuthenticator) AuthenticateToken(ctx context.Context, token string) (*authenticator.Response, bool, error) {
 	if !hasCorrectIssuer(a.jwtAuthenticator.Issuer.URL, token) {
 		return nil, false, nil
 	}
@@ -763,7 +753,7 @@ func (a *Authenticator) AuthenticateToken(ctx context.Context, token string) (*a
 	return &authenticator.Response{User: info}, true, nil
 }
 
-func (a *Authenticator) getUsername(ctx context.Context, c claims, claimsUnstructured *unstructured.Unstructured) (string, error) {
+func (a *jwtAuthenticator) getUsername(ctx context.Context, c claims, claimsUnstructured *unstructured.Unstructured) (string, error) {
 	if a.celMapper.Username != nil {
 		evalResult, err := a.celMapper.Username.EvalClaimMapping(ctx, claimsUnstructured)
 		if err != nil {
@@ -811,7 +801,7 @@ func (a *Authenticator) getUsername(ctx context.Context, c claims, claimsUnstruc
 	return username, nil
 }
 
-func (a *Authenticator) getGroups(ctx context.Context, c claims, claimsUnstructured *unstructured.Unstructured) ([]string, error) {
+func (a *jwtAuthenticator) getGroups(ctx context.Context, c claims, claimsUnstructured *unstructured.Unstructured) ([]string, error) {
 	groupsClaim := a.jwtAuthenticator.ClaimMappings.Groups.Claim
 	if len(groupsClaim) > 0 {
 		if _, ok := c[groupsClaim]; ok {
@@ -851,7 +841,7 @@ func (a *Authenticator) getGroups(ctx context.Context, c claims, claimsUnstructu
 	return groups, nil
 }
 
-func (a *Authenticator) getUID(ctx context.Context, c claims, claimsUnstructured *unstructured.Unstructured) (string, error) {
+func (a *jwtAuthenticator) getUID(ctx context.Context, c claims, claimsUnstructured *unstructured.Unstructured) (string, error) {
 	uidClaim := a.jwtAuthenticator.ClaimMappings.UID.Claim
 	if len(uidClaim) > 0 {
 		var uid string
@@ -876,7 +866,7 @@ func (a *Authenticator) getUID(ctx context.Context, c claims, claimsUnstructured
 	return evalResult.EvalResult.Value().(string), nil
 }
 
-func (a *Authenticator) getExtra(ctx context.Context, claimsUnstructured *unstructured.Unstructured) (map[string][]string, error) {
+func (a *jwtAuthenticator) getExtra(ctx context.Context, claimsUnstructured *unstructured.Unstructured) (map[string][]string, error) {
 	if a.celMapper.Extra == nil {
 		return nil, nil
 	}

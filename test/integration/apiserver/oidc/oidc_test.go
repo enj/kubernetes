@@ -48,7 +48,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/features"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/apiserver/plugin/pkg/authenticator/token/oidc"
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc"
 	"k8s.io/client-go/rest"
@@ -967,10 +966,6 @@ func TestStructuredAuthenticationConfigReload(t *testing.T) {
 	origJWTAuthenticatorTime := authenticator.JWTAuthenticatorTime
 	t.Cleanup(func() { authenticator.JWTAuthenticatorTime = origJWTAuthenticatorTime })
 	authenticator.JWTAuthenticatorTime = 3 * time.Second // anything shorter than this is likely to flake in CI
-
-	origBaseContext := oidc.BaseContext
-	t.Cleanup(func() { oidc.BaseContext = origBaseContext })
-	oidc.BaseContext = testContext(t)
 
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StructuredAuthenticationConfiguration, true)()
 

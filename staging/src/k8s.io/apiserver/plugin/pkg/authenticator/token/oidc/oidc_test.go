@@ -283,8 +283,10 @@ func (c *claimsTest) run(t *testing.T) {
 
 	expectInitErr := len(c.wantInitErr) > 0
 
+	ctx := testContext(t)
+
 	// Initialize the authenticator.
-	a, err := New(c.options)
+	a, err := New(ctx, c.options)
 	if err != nil {
 		if !expectInitErr {
 			t.Fatalf("initialize authenticator: %v", err)
@@ -317,11 +319,10 @@ func (c *claimsTest) run(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected authenticator to be instrumented")
 	}
-	authenticator, ok := ia.delegate.(*Authenticator)
+	authenticator, ok := ia.delegate.(*jwtAuthenticator)
 	if !ok {
 		t.Fatalf("expected delegate to be Authenticator")
 	}
-	ctx := testContext(t)
 	// wait for the authenticator to be initialized
 	err = wait.PollUntilContextCancel(ctx, time.Millisecond, true, func(context.Context) (bool, error) {
 		if v, _ := authenticator.idTokenVerifier(); v == nil {

@@ -97,7 +97,7 @@ type Config struct {
 
 // New returns an authenticator.Request or an error that supports the standard
 // Kubernetes authentication mechanisms.
-func (config Config) New() (authenticator.Request, func(*apiserver.AuthenticationConfiguration) error, *spec.SecurityDefinitions, spec3.SecuritySchemes, error) {
+func (config Config) New(ctx context.Context) (authenticator.Request, func(*apiserver.AuthenticationConfiguration) error, *spec.SecurityDefinitions, spec3.SecuritySchemes, error) {
 	var authenticators []authenticator.Request
 	var tokenAuthenticators []authenticator.Token
 	securityDefinitionsV2 := spec.SecurityDefinitions{}
@@ -157,10 +157,10 @@ func (config Config) New() (authenticator.Request, func(*apiserver.Authenticatio
 	// update the keys, causing performance hits.
 	var updateAuthenticationConfig func(*apiserver.AuthenticationConfiguration) error
 	if config.AuthenticationConfig != nil {
-		var jwtAuthenticatorPtr atomic.Pointer[jwtAuthenticatorWithClose]
+		var jwtAuthenticatorPtr atomic.Pointer[jwtAuthenticatorWithCancel]
 		var loaded bool
 		updateAuthenticationConfig = func(authConfig *apiserver.AuthenticationConfiguration) error {
-			jwtAuthenticator, err := newJWTAuthenticator(authConfig, config.OIDCSigningAlgs, config.APIAudiences, config.ServiceAccountIssuers)
+			jwtAuthenticator, err := newJWTAuthenticator(ctx, authConfig, config.OIDCSigningAlgs, config.APIAudiences, config.ServiceAccountIssuers)
 			if err != nil {
 				return err
 			}
@@ -174,8 +174,7 @@ func (config Config) New() (authenticator.Request, func(*apiserver.Authenticatio
 			if oldJWTAuthenticator != nil {
 				// TODO maybe track requests so we know when this is safe to do
 				time.Sleep(JWTAuthenticatorTime)
-				// TODO wire in context and drop closing logic
-				oldJWTAuthenticator.closeFunc()
+				oldJWTAuthenticator.cancel()
 			}
 
 			loaded = true
@@ -250,14 +249,20 @@ func (config Config) New() (authenticator.Request, func(*apiserver.Authenticatio
 	return authenticator, updateAuthenticationConfig, &securityDefinitionsV2, securitySchemesV3, nil
 }
 
-type jwtAuthenticatorWithClose struct {
+type jwtAuthenticatorWithCancel struct {
 	jwtAuthenticator authenticator.Token
-	closeFunc        func()
+	cancel           func()
 }
 
-func newJWTAuthenticator(config *apiserver.AuthenticationConfiguration, oidcSigningAlgs []string, apiAudiences authenticator.Audiences, disallowedIssuers []string) (*jwtAuthenticatorWithClose, error) {
+func newJWTAuthenticator(ctx context.Context, config *apiserver.AuthenticationConfiguration, oidcSigningAlgs []string, apiAudiences authenticator.Audiences, disallowedIssuers []string) (_ *jwtAuthenticatorWithCancel, buildErr error) {
+	ctx, cancel := context.WithCancel(ctx)
+
+	defer func() {
+		if buildErr != nil {
+			cancel()
+		}
+	}()
 	var jwtAuthenticators []authenticator.Token
-	var closeFuncs []func()
 	for _, jwtAuthenticator := range config.JWT {
 		// TODO remove this CAContentProvider indirection
 		var oidcCAContent oidc.CAContentProvider
@@ -268,7 +273,7 @@ func newJWTAuthenticator(config *apiserver.AuthenticationConfiguration, oidcSign
 				return nil, oidcCAError
 			}
 		}
-		oidcAuth, err := oidc.New(oidc.Options{
+		oidcAuth, err := oidc.New(ctx, oidc.Options{
 			JWTAuthenticator:     jwtAuthenticator,
 			CAContentProvider:    oidcCAContent,
 			SupportedSigningAlgs: oidcSigningAlgs,
@@ -278,16 +283,10 @@ func newJWTAuthenticator(config *apiserver.AuthenticationConfiguration, oidcSign
 			return nil, err
 		}
 		jwtAuthenticators = append(jwtAuthenticators, oidcAuth)
-		closeFuncs = append(closeFuncs, oidcAuth.Close)
 	}
-	return &jwtAuthenticatorWithClose{
+	return &jwtAuthenticatorWithCancel{
 		jwtAuthenticator: authenticator.WrapAudienceAgnosticToken(apiAudiences, tokenunion.NewFailOnError(jwtAuthenticators...)), // this handles the empty jwtAuthenticators slice case correctly
-		closeFunc: func() {
-			for _, closeFunc := range closeFuncs {
-				closeFunc := closeFunc
-				closeFunc()
-			}
-		},
+		cancel:           cancel,
 	}, nil
 }
 
