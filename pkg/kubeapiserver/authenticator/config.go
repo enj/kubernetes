@@ -281,7 +281,7 @@ func newJWTAuthenticator(config *apiserver.AuthenticationConfiguration, oidcSign
 		closeFuncs = append(closeFuncs, oidcAuth.Close)
 	}
 	return &jwtAuthenticatorWithClose{
-		jwtAuthenticator: authenticator.WrapAudienceAgnosticToken(apiAudiences, tokenunion.New(jwtAuthenticators...)), // this handles the empty jwtAuthenticators slice case correctly
+		jwtAuthenticator: authenticator.WrapAudienceAgnosticToken(apiAudiences, tokenunion.NewFailOnError(jwtAuthenticators...)), // this handles the empty jwtAuthenticators slice case correctly
 		closeFunc: func() {
 			for _, closeFunc := range closeFuncs {
 				closeFunc := closeFunc
