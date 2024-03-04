@@ -338,7 +338,7 @@ jwt:
 
 				signingPrivateKey, _ = keyFunc(t)
 
-				oidcServer = utilsoidc.BuildAndRunTestServer(t, caFilePath, caKeyFilePath)
+				oidcServer = utilsoidc.BuildAndRunTestServer(t, caFilePath, caKeyFilePath, "")
 
 				if useAuthenticationConfig {
 					authenticationConfig := fmt.Sprintf(`
@@ -353,10 +353,9 @@ jwt:
         %s
   claimMappings:
     username:
-      claim: sub
-      prefix: ""
+      expression: claims.sub
 `, oidcServer.URL(), defaultOIDCClientID, indentCertificateAuthority(string(caCertContent)))
-					apiServer = startTestAPIServerForOIDC(t, "", "", "", authenticationConfig, &signingPrivateKey.PublicKey)
+					apiServer = startTestAPIServerForOIDC(t, apiServerOIDCConfig{authenticationConfigYAML: authenticationConfig}, &signingPrivateKey.PublicKey)
 				} else {
 					customFlags := []string{
 						"--authorization-mode=RBAC",
@@ -400,7 +399,17 @@ jwt:
 			},
 			configureClient: configureClientFetchingOIDCCredentials,
 			assertErrFn: func(t *testing.T, errorToCheck error) {
-				assert.True(t, apierrors.IsUnauthorized(errorToCheck), errorToCheck)
+				if useAuthenticationConfig { // since the config uses a CEL expression
+					assert.True(t, apierrors.IsUnauthorized(errorToCheck), errorToCheck)
+				} else {
+					// the claim based approach is still allowed to use empty usernames
+					_ = assert.True(t, apierrors.IsForbidden(errorToCheck), errorToCheck) &&
+						assert.Equal(
+							t,
+							`pods is forbidden: User "" cannot list resource "pods" in API group "" in the namespace "default"`,
+							errorToCheck.Error(),
+						)
+				}
 			},
 		},
 	}

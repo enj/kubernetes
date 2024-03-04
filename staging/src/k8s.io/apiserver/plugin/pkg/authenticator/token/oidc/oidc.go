@@ -681,10 +681,6 @@ func (a *Authenticator) AuthenticateToken(ctx context.Context, token string) (*a
 		return nil, false, err
 	}
 
-	if len(username) == 0 {
-		return nil, false, fmt.Errorf("oidc: empty username is not allowed")
-	}
-
 	info := &user.DefaultInfo{Name: username}
 	if info.Groups, err = a.getGroups(ctx, c, claimsUnstructured); err != nil {
 		return nil, false, err
@@ -771,7 +767,13 @@ func (a *Authenticator) getUsername(ctx context.Context, c claims, claimsUnstruc
 			return "", fmt.Errorf("oidc: error evaluating username claim expression: %w", fmt.Errorf("username claim expression must return a string"))
 		}
 
-		return evalResult.EvalResult.Value().(string), nil
+		username := evalResult.EvalResult.Value().(string)
+
+		if len(username) == 0 {
+			return "", fmt.Errorf("oidc: empty username via CEL expression is not allowed")
+		}
+
+		return username, nil
 	}
 
 	var username string

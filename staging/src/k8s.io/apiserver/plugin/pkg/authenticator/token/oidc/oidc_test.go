@@ -2980,6 +2980,58 @@ func TestToken(t *testing.T) {
 			}`, valid.Unix()),
 			want: &user.DefaultInfo{Name: " "},
 		},
+		{
+			name: "empty username is allowed via claim",
+			options: Options{
+				JWTAuthenticator: apiserver.JWTAuthenticator{
+					Issuer: apiserver.Issuer{
+						URL:       "https://auth.example.com",
+						Audiences: []string{"my-client"},
+					},
+					ClaimMappings: apiserver.ClaimMappings{
+						Username: apiserver.PrefixedClaimOrExpression{
+							Claim:  "username",
+							Prefix: pointer.String(""),
+						},
+						Groups: apiserver.PrefixedClaimOrExpression{
+							Expression: "claims.groups",
+						},
+					},
+					UserValidationRules: []apiserver.UserValidationRule{
+						{
+							Expression: `user.username == ""`,
+							Message:    "username must be empty string",
+						},
+						{
+							Expression: `user.uid == ""`,
+							Message:    "uid must be empty string",
+						},
+						{
+							Expression: `!('bar' in user.groups)`,
+							Message:    "groups must not contain bar",
+						},
+						{
+							Expression: `!('bar' in user.extra)`,
+							Message:    "extra must not contain bar",
+						},
+					},
+				},
+				now: func() time.Time { return now },
+			},
+			signingKey: loadRSAPrivKey(t, "testdata/rsa_1.pem", jose.RS256),
+			pubKeys: []*jose.JSONWebKey{
+				loadRSAKey(t, "testdata/rsa_1.pem", jose.RS256),
+			},
+			claims: fmt.Sprintf(`{
+				"iss": "https://auth.example.com",
+				"aud": "my-client",
+				"username": "",
+				"groups": null,
+				"exp": %d,
+				"baz": "qux"
+			}`, valid.Unix()),
+			want: &user.DefaultInfo{Name: ""},
+		},
 		// test to assert the minimum valid jwt payload
 		// the required claims are iss, aud, exp and <claimMappings.Username> (in this case user).
 		{
