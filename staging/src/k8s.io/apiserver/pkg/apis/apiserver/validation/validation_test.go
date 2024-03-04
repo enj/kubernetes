@@ -294,7 +294,7 @@ func TestValidateIssuerURL(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
-			got := validateIssuerURL(tt.in, fldPath).ToAggregate()
+			got := validateIssuerURL(tt.in, tt.disallowedIssuers, fldPath).ToAggregate()
 			if d := cmp.Diff(tt.want, errString(got)); d != "" {
 				t.Fatalf("URL validation mismatch (-want +got):\n%s", d)
 			}
@@ -379,7 +379,7 @@ func TestValidateIssuerDiscoveryURL(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
-			got := validateIssuerDiscoveryURL(tt.issuerURL, tt.in, tt.disallowedIssuers, fldPath).ToAggregate()
+			got := validateIssuerDiscoveryURL(tt.issuerURL, tt.in, fldPath).ToAggregate()
 			if d := cmp.Diff(tt.want, errString(got)); d != "" {
 				t.Fatalf("URL validation mismatch (-want +got):\n%s", d)
 			}

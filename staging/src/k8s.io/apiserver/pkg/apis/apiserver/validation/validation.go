@@ -108,12 +108,12 @@ func validateIssuer(issuer api.Issuer, disallowedIssuers sets.Set[string], fldPa
 	return allErrs
 }
 
-func validateIssuerURL(issuerURL string, fldPath *field.Path) field.ErrorList {
+func validateIssuerURL(issuerURL string, disallowedIssuers sets.Set[string], fldPath *field.Path) field.ErrorList {
 	if len(issuerURL) == 0 {
 		return field.ErrorList{field.Required(fldPath, "URL is required")}
 	}
 
-	return validateURL(issuerURL, fldPath)
+	return validateURL(issuerURL, disallowedIssuers, fldPath)
 }
 
 func validateIssuerDiscoveryURL(issuerURL, issuerDiscoveryURL string, fldPath *field.Path) field.ErrorList {
@@ -127,7 +127,8 @@ func validateIssuerDiscoveryURL(issuerURL, issuerDiscoveryURL string, fldPath *f
 		allErrs = append(allErrs, field.Invalid(fldPath, issuerDiscoveryURL, "discoveryURL must be different from URL"))
 	}
 
-	allErrs = append(allErrs, validateURL(issuerDiscoveryURL, fldPath)...)
+	// issuerDiscoveryURL is not an issuer URL and does not need to validated against any set of disallowed issuers
+	allErrs = append(allErrs, validateURL(issuerDiscoveryURL, nil, fldPath)...)
 	return allErrs
 }
 
