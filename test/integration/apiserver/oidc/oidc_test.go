@@ -963,9 +963,9 @@ jwt:
 }
 
 func TestStructuredAuthenticationConfigReload(t *testing.T) {
-	origJWTAuthenticatorTime := authenticator.JWTAuthenticatorTime
-	t.Cleanup(func() { authenticator.JWTAuthenticatorTime = origJWTAuthenticatorTime })
-	authenticator.JWTAuthenticatorTime = 3 * time.Second // anything shorter than this is likely to flake in CI
+	origJWTAuthenticatorSleepAfterSwapTime := authenticator.JWTAuthenticatorSleepAfterSwapTime
+	t.Cleanup(func() { authenticator.JWTAuthenticatorSleepAfterSwapTime = origJWTAuthenticatorSleepAfterSwapTime })
+	authenticator.JWTAuthenticatorSleepAfterSwapTime = time.Second
 
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StructuredAuthenticationConfiguration, true)()
 
@@ -1224,7 +1224,7 @@ kind: AuthenticationConfiguration
 			waitAfterConfigSwap: true,
 		},
 		{
-			name: "old valid config to new valid config with typo (should cause tokens to stop working)", // TODO: in the future, the old config should be honored instead
+			name: "old valid config to new valid config with typo (should be ignored)",
 			authConfigFn: func(t *testing.T, issuerURL, caCert string) string {
 				return fmt.Sprintf(`
 apiVersion: apiserver.config.k8s.io/v1alpha1
@@ -1268,9 +1268,12 @@ jwt:
 				Groups:   []string{"system:authenticated"},
 			},
 			newAssertErrFn: func(t *testing.T, errorToCheck error) {
-				assert.True(t, apierrors.IsUnauthorized(errorToCheck))
+				assert.NoError(t, errorToCheck)
 			},
-			newWantUser:         nil,
+			newWantUser: &authenticationv1.UserInfo{
+				Username: "k8s-john_doe",
+				Groups:   []string{"system:authenticated"},
+			},
 			waitAfterConfigSwap: true,
 		},
 	}

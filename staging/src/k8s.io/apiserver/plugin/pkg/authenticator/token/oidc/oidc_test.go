@@ -36,6 +36,7 @@ import (
 
 	"gopkg.in/square/go-jose.v2"
 
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/apis/apiserver"
 	"k8s.io/apiserver/pkg/authentication/user"
@@ -275,6 +276,8 @@ func (c *claimsTest) run(t *testing.T) {
 	if !c.fetchKeysFromRemote {
 		// Set the verifier to use the public key set instead of reading from a remote.
 		c.options.KeySet = &staticKeySet{keys: c.pubKeys}
+	} else {
+		c.options.SynchronousInitialization = randomBool() // check both ways of setting up the verifier
 	}
 
 	if c.optsFunc != nil {
@@ -323,15 +326,17 @@ func (c *claimsTest) run(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected delegate to be Authenticator")
 	}
-	// wait for the authenticator to be initialized
-	err = wait.PollUntilContextCancel(ctx, time.Millisecond, true, func(context.Context) (bool, error) {
-		if v, _ := authenticator.idTokenVerifier(); v == nil {
-			return false, nil
+	// wait for the authenticator to be initialized if needed
+	if !c.options.SynchronousInitialization && c.options.KeySet == nil {
+		err = wait.PollUntilContextCancel(ctx, time.Millisecond, true, func(context.Context) (bool, error) {
+			if v, _ := authenticator.idTokenVerifier(); v == nil {
+				return false, nil
+			}
+			return true, nil
+		})
+		if err != nil {
+			t.Fatalf("failed to initialize the authenticator: %v", err)
 		}
-		return true, nil
-	})
-	if err != nil {
-		t.Fatalf("failed to initialize the authenticator: %v", err)
 	}
 
 	got, ok, err := a.AuthenticateToken(ctx, token)
@@ -2062,6 +2067,56 @@ func TestToken(t *testing.T) {
 			wantInitErr: "oidc: Client and CAContentProvider are mutually exclusive",
 		},
 		{
+			name: "keyset and sync init mutually exclusive",
+			options: Options{
+				JWTAuthenticator: apiserver.JWTAuthenticator{
+					Issuer: apiserver.Issuer{
+						URL:       "https://auth.example.com",
+						Audiences: []string{"my-client"},
+					},
+					ClaimMappings: apiserver.ClaimMappings{
+						Username: apiserver.PrefixedClaimOrExpression{
+							Claim:  "username",
+							Prefix: pointer.String("prefix:"),
+						},
+					},
+				},
+				SupportedSigningAlgs:      []string{"RS256"},
+				now:                       func() time.Time { return now },
+				KeySet:                    &staticKeySet{},
+				SynchronousInitialization: true,
+			},
+			pubKeys: []*jose.JSONWebKey{
+				loadRSAKey(t, "testdata/rsa_1.pem", jose.RS256),
+			},
+			wantInitErr: "oidc: KeySet and SynchronousInitialization are mutually exclusive",
+		},
+		{
+			name: "keyset and discovery URL mutually exclusive",
+			options: Options{
+				JWTAuthenticator: apiserver.JWTAuthenticator{
+					Issuer: apiserver.Issuer{
+						URL:          "https://auth.example.com",
+						DiscoveryURL: "https://auth.example.com/foo",
+						Audiences:    []string{"my-client"},
+					},
+					ClaimMappings: apiserver.ClaimMappings{
+						Username: apiserver.PrefixedClaimOrExpression{
+							Claim:  "username",
+							Prefix: pointer.String("prefix:"),
+						},
+					},
+				},
+				SupportedSigningAlgs: []string{"RS256"},
+				now:                  func() time.Time { return now },
+				KeySet:               &staticKeySet{},
+			},
+			pubKeys: []*jose.JSONWebKey{
+				loadRSAKey(t, "testdata/rsa_1.pem", jose.RS256),
+			},
+			wantInitErr: "oidc: KeySet and DiscoveryURL are mutually exclusive",
+		},
+		{
 			name: "accounts.google.com issuer",
 			options: Options{
 				JWTAuthenticator: apiserver.JWTAuthenticator{
@@ -3430,3 +3485,5 @@ func testContext(t *testing.T) context.Context {
 	t.Cleanup(cancel)
 	return ctx
 }
+
+func randomBool() bool { return utilrand.Int()%2 == 1 }

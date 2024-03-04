@@ -52,9 +52,9 @@ import (
 	"k8s.io/kubernetes/pkg/serviceaccount"
 )
 
-// JWTAuthenticatorTime controls file reload polling and sleeps associated with authenticator readiness.
+// JWTAuthenticatorSleepAfterSwapTime controls the sleep after which the old swapped out JWT authenticator is canceled.
 // Exported as a variable so that it can be overridden in integration tests.
-var JWTAuthenticatorTime = time.Minute
+var JWTAuthenticatorSleepAfterSwapTime = time.Minute
 
 // Config contains the data on how to authenticate a request to the Kube API Server
 type Config struct {
@@ -158,26 +158,21 @@ func (config Config) New(ctx context.Context) (authenticator.Request, func(*apis
 	var updateAuthenticationConfig func(*apiserver.AuthenticationConfiguration) error
 	if config.AuthenticationConfig != nil {
 		var jwtAuthenticatorPtr atomic.Pointer[jwtAuthenticatorWithCancel]
-		var loaded bool
+		var synchronousInitialization bool
 		updateAuthenticationConfig = func(authConfig *apiserver.AuthenticationConfiguration) error {
-			jwtAuthenticator, err := newJWTAuthenticator(ctx, authConfig, config.OIDCSigningAlgs, config.APIAudiences, config.ServiceAccountIssuers)
+			jwtAuthenticator, err := newJWTAuthenticator(ctx, authConfig, config.OIDCSigningAlgs, config.APIAudiences, config.ServiceAccountIssuers, synchronousInitialization)
 			if err != nil {
 				return err
-			}
-
-			if loaded {
-				// TODO fix the initialization logic so that we can properly health check and block the swap until ready
-				time.Sleep(JWTAuthenticatorTime)
 			}
 
 			oldJWTAuthenticator := jwtAuthenticatorPtr.Swap(jwtAuthenticator)
 			if oldJWTAuthenticator != nil {
 				// TODO maybe track requests so we know when this is safe to do
-				time.Sleep(JWTAuthenticatorTime)
+				time.Sleep(JWTAuthenticatorSleepAfterSwapTime)
 				oldJWTAuthenticator.cancel()
 			}
 
-			loaded = true
+			synchronousInitialization = true
 
 			return nil
 		}
@@ -254,7 +249,7 @@ type jwtAuthenticatorWithCancel struct {
 	cancel           func()
 }
 
-func newJWTAuthenticator(ctx context.Context, config *apiserver.AuthenticationConfiguration, oidcSigningAlgs []string, apiAudiences authenticator.Audiences, disallowedIssuers []string) (_ *jwtAuthenticatorWithCancel, buildErr error) {
+func newJWTAuthenticator(ctx context.Context, config *apiserver.AuthenticationConfiguration, oidcSigningAlgs []string, apiAudiences authenticator.Audiences, disallowedIssuers []string, synchronousInitialization bool) (_ *jwtAuthenticatorWithCancel, buildErr error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	defer func() {
@@ -274,10 +269,11 @@ func newJWTAuthenticator(ctx context.Context, config *apiserver.AuthenticationCo
 			}
 		}
 		oidcAuth, err := oidc.New(ctx, oidc.Options{
-			JWTAuthenticator:     jwtAuthenticator,
-			CAContentProvider:    oidcCAContent,
-			SupportedSigningAlgs: oidcSigningAlgs,
-			DisallowedIssuers:    disallowedIssuers,
+			JWTAuthenticator:          jwtAuthenticator,
+			CAContentProvider:         oidcCAContent,
+			SupportedSigningAlgs:      oidcSigningAlgs,
+			DisallowedIssuers:         disallowedIssuers,
+			SynchronousInitialization: synchronousInitialization,
 		})
 		if err != nil {
 			return nil, err

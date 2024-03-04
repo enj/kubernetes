@@ -74,8 +74,15 @@ const (
 type Options struct {
 	// JWTAuthenticator is the authenticator that will be used to verify the JWT.
 	JWTAuthenticator apiserver.JWTAuthenticator
-	// Optional KeySet to allow for synchronous initialization instead of fetching from the remote issuer.
+
+	// Optional KeySet to allow for custom initialization instead of fetching from the remote issuer.
+	// Mutually exclusive with SynchronousInitialization and JWTAuthenticator.Issuer.DiscoveryURL.
 	KeySet oidc.KeySet
+
+	// SynchronousInitialization blocks New for up to a minute and waits for the verifier to be ready.
+	// If the blocking times out or the lifecycle context is canceled, New returns an error.
+	// Mutually exclusive with KeySet.
+	SynchronousInitialization bool
 
 	// PEM encoded root certificate contents of the provider.  Mutually exclusive with Client.
 	CAContentProvider CAContentProvider
@@ -222,7 +229,7 @@ var allowedSigningAlgs = map[string]bool{
 	oidc.PS512: true,
 }
 
-func New(ctx context.Context, opts Options) (authenticator.Token, error) {
+func New(lifecycleCtx context.Context, opts Options) (authenticator.Token, error) {
 	celMapper, fieldErr := apiservervalidation.CompileAndValidateJWTAuthenticator(opts.JWTAuthenticator, opts.DisallowedIssuers)
 	if err := fieldErr.ToAggregate(); err != nil {
 		return nil, err
@@ -242,6 +249,10 @@ func New(ctx context.Context, opts Options) (authenticator.Token, error) {
 
 	if opts.Client != nil && opts.CAContentProvider != nil {
 		return nil, fmt.Errorf("oidc: Client and CAContentProvider are mutually exclusive")
+	}
+
+	if opts.KeySet != nil && opts.SynchronousInitialization {
+		return nil, fmt.Errorf("oidc: KeySet and SynchronousInitialization are mutually exclusive")
 	}
 
 	client := opts.Client
@@ -274,6 +285,10 @@ func New(ctx context.Context, opts Options) (authenticator.Token, error) {
 	// the discovery URL. This is useful for self-hosted providers, for example,
 	// providers that run on top of Kubernetes itself.
 	if len(opts.JWTAuthenticator.Issuer.DiscoveryURL) > 0 {
+		if opts.KeySet != nil {
+			return nil, fmt.Errorf("oidc: KeySet and DiscoveryURL are mutually exclusive")
+		}
+
 		discoveryURL, err := url.Parse(opts.JWTAuthenticator.Issuer.DiscoveryURL)
 		if err != nil {
 			return nil, fmt.Errorf("oidc: invalid discovery URL: %w", err)
@@ -291,7 +306,7 @@ func New(ctx context.Context, opts Options) (authenticator.Token, error) {
 		client = &clientWithDiscoveryURL
 	}
 
-	ctx = oidc.ClientContext(ctx, client)
+	lifecycleCtx = oidc.ClientContext(lifecycleCtx, client)
 
 	now := opts.now
 	if now == nil {
@@ -317,7 +332,7 @@ func New(ctx context.Context, opts Options) (authenticator.Token, error) {
 	var resolver *claimResolver
 	groupsClaim := opts.JWTAuthenticator.ClaimMappings.Groups.Claim
 	if groupsClaim != "" {
-		resolver = newClaimResolver(ctx, groupsClaim, client, verifierConfig, audiences)
+		resolver = newClaimResolver(lifecycleCtx, groupsClaim, client, verifierConfig, audiences)
 	}
 
 	requiredClaims := make(map[string]string)
@@ -344,17 +359,36 @@ func New(ctx context.Context, opts Options) (authenticator.Token, error) {
 	} else {
 		// Asynchronously attempt to initialize the authenticator. This enables
 		// self-hosted providers, providers that run on top of Kubernetes itself.
-		go wait.PollImmediateUntil(10*time.Second, func() (done bool, err error) {
-			provider, err := oidc.NewProvider(ctx, issuerURL)
-			if err != nil {
-				klog.Errorf("oidc authenticator: initializing plugin: %v", err)
-				return false, nil
-			}
+		initVerifier := func(initCtx context.Context) error {
+			var lastErr error
+			waitErr := wait.PollUntilContextCancel(initCtx, 10*time.Second, true, func(_ context.Context) (done bool, err error) {
+				// this must always use lifecycleCtx because NewProvider uses that context for future key set fetching.
+				// this also means that there is no correct way to control the timeout of the discovery request made by NewProvider.
+				provider, err := oidc.NewProvider(lifecycleCtx, issuerURL)
+				lastErr = err
+				if err != nil {
+					klog.Errorf("oidc authenticator: initializing plugin: %v", err)
+					return false, nil
+				}
 
-			verifier := provider.Verifier(verifierConfig)
-			authenticator.setVerifier(&idTokenVerifier{verifier, audiences})
-			return true, nil
-		}, ctx.Done())
+				verifier := provider.Verifier(verifierConfig)
+				authenticator.setVerifier(&idTokenVerifier{verifier, audiences})
+				return true, nil
+			})
+			if lastErr != nil {
+				return lastErr
+			}
+			return waitErr
+		}
+		if opts.SynchronousInitialization {
+			ctx, cancel := context.WithTimeout(lifecycleCtx, time.Minute)
+			defer cancel()
+			if err := initVerifier(ctx); err != nil {
+				return nil, fmt.Errorf("oidc: failed to init verifier: %w", err)
+			}
+		} else {
+			go initVerifier(lifecycleCtx)
+		}
 	}
 
 	return newInstrumentedAuthenticator(issuerURL, authenticator), nil
