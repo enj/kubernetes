@@ -507,6 +507,7 @@ func TestValidateClaimValidationRules(t *testing.T) {
 		structuredAuthnFeatureEnabled bool
 		want                          string
 		wantCELMapper                 bool
+		wantHasVerifiedEmail          bool
 	}{
 		{
 			name:                          "claim and expression are empty, structured authn feature enabled",
@@ -592,26 +593,52 @@ func TestValidateClaimValidationRules(t *testing.T) {
 			wantCELMapper:                 true,
 		},
 		{
-			name: "valid claim validation rule with multiple rules",
+			name: "valid claim validation rule with multiple rules and email_verified check",
 			in: []api.ClaimValidationRule{
 				{Claim: "claim1", RequiredValue: "value1"},
 				{Claim: "claim2", RequiredValue: "value2"},
+				{Expression: "has(claims.email_verified)"},
 			},
 			structuredAuthnFeatureEnabled: true,
 			want:                          "",
+			wantHasVerifiedEmail:          true,
+		},
+		{
+			name: "valid claim validation rule with multiple rules and almost email_verified check",
+			in: []api.ClaimValidationRule{
+				{Claim: "claim1", RequiredValue: "value1"},
+				{Claim: "claim2", RequiredValue: "value2"},
+				{Expression: "has(claims.email_verified_)"},
+			},
+			structuredAuthnFeatureEnabled: true,
+			want:                          "",
+			wantHasVerifiedEmail:          false,
+		},
+		{
+			name: "valid claim validation rule with multiple rules",
+			in: []api.ClaimValidationRule{
+				{Claim: "claim1", RequiredValue: "value1"},
+				{Claim: "claim2", RequiredValue: "claims.email_verified"}, // not a CEL expression
+			},
+			structuredAuthnFeatureEnabled: true,
+			want:                          "",
+			wantHasVerifiedEmail:          false,
 		},
 	}
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
 			celMapper := &authenticationcel.CELMapper{}
-			var hasVerifiedEmail bool // TODO check
+			var hasVerifiedEmail bool
 			got := validateClaimValidationRules(compiler, celMapper, &hasVerifiedEmail, tt.in, fldPath, tt.structuredAuthnFeatureEnabled).ToAggregate()
 			if d := cmp.Diff(tt.want, errString(got)); d != "" {
 				t.Fatalf("ClaimValidationRules validation mismatch (-want +got):\n%s", d)
 			}
 			if tt.wantCELMapper && celMapper.ClaimValidationRules == nil {
 				t.Fatalf("ClaimValidationRules validation mismatch: CELMapper.ClaimValidationRules is nil")
+			}
+			if tt.wantHasVerifiedEmail != hasVerifiedEmail {
+				t.Fatalf("ClaimValidationRules hasVerifiedEmail mismatch: want %v, got %v", tt.wantHasVerifiedEmail, hasVerifiedEmail)
 			}
 		})
 	}
