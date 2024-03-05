@@ -385,6 +385,9 @@ func usesEmailVerifiedClaim(ast *celgo.Ast) bool {
 }
 
 func hasSelectExp(exp *exprpb.Expr, operand, field string) bool {
+	if exp == nil {
+		return false
+	}
 	switch e := exp.ExprKind.(type) {
 	case *exprpb.Expr_ConstExpr,
 		*exprpb.Expr_IdentExpr:
