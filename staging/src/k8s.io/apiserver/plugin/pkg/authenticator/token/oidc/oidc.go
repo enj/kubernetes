@@ -142,7 +142,7 @@ func newAsyncIDTokenVerifier(ctx context.Context, c *oidc.Config, iss string, au
 	sync := make(chan struct{})
 	// Polls indefinitely in an attempt to initialize the distributed claims
 	// verifier, or until context canceled.
-	initFn := func() (done bool, err error) {
+	initFn := func(ctx context.Context) (done bool, err error) {
 		klog.V(4).Infof("oidc authenticator: attempting init: iss=%v", iss)
 		v, err := initVerifier(ctx, c, iss, audiences)
 		if err != nil {
@@ -157,9 +157,7 @@ func newAsyncIDTokenVerifier(ctx context.Context, c *oidc.Config, iss string, au
 	}
 
 	go func() {
-		if done, _ := initFn(); !done {
-			_ = wait.PollUntil(time.Second*10, initFn, ctx.Done())
-		}
+		_ = wait.PollUntilContextCancel(ctx, 10*time.Second, true, initFn)
 	}()
 
 	if synchronizeTokenIDVerifierForTest {
@@ -387,7 +385,7 @@ func New(lifecycleCtx context.Context, opts Options) (authenticator.Token, error
 				return nil, fmt.Errorf("oidc: failed to init verifier: %w", err)
 			}
 		} else {
-			go initVerifier(lifecycleCtx)
+			go func() { _ = initVerifier(lifecycleCtx) }() // errors are only logged when running asynchronously
 		}
 	}
 
