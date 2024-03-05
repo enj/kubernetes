@@ -260,8 +260,11 @@ func validateClaimValidationRules(compiler authenticationcel.Compiler, celMapper
 		}
 	}
 
-	if structuredAuthnFeatureEnabled && len(compilationResults) > 0 {
+	if structuredAuthnFeatureEnabled {
 		*hasVerifiedEmail = anyUsesEmailVerifiedClaim(compilationResults)
+	}
+
+	if structuredAuthnFeatureEnabled && len(compilationResults) > 0 {
 		celMapper.ClaimValidationRules = authenticationcel.NewClaimsMapper(compilationResults)
 	}
 
@@ -356,11 +359,12 @@ func validateClaimMappings(compiler authenticationcel.Compiler, celMapper *authe
 		}
 	}
 
+	if structuredAuthnFeatureEnabled && needsToVerifyEmail && !hasVerifiedEmail && !anyUsesEmailVerifiedClaim(extraCompilationResults) {
+		allErrs = append(allErrs, field.Invalid(fldPath.Child("username", "expression"), m.Username.Expression,
+			"claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression"))
+	}
+
 	if structuredAuthnFeatureEnabled && len(extraCompilationResults) > 0 {
-		if needsToVerifyEmail && !hasVerifiedEmail && !anyUsesEmailVerifiedClaim(extraCompilationResults) {
-			allErrs = append(allErrs, field.Invalid(fldPath.Child("username", "expression"), m.Username.Expression,
-				"claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression"))
-		}
 		celMapper.Extra = authenticationcel.NewClaimsMapper(extraCompilationResults)
 	}
 

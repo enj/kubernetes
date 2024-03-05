@@ -46,7 +46,7 @@ var (
 	compiler = authenticationcel.NewCompiler(environment.MustBaseEnvSet(environment.DefaultCompatibilityVersion()))
 )
 
-func TestValidateAuthenticationConfiguration(t *testing.T) { // TODO add more tests
+func TestValidateAuthenticationConfiguration(t *testing.T) {
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StructuredAuthenticationConfiguration, true)()
 
 	testCases := []struct {
@@ -201,6 +201,133 @@ func TestValidateAuthenticationConfiguration(t *testing.T) { // TODO add more te
 			},
 			disallowedIssuers: []string{"a", "b", "https://issuer-url", "c"},
 			want:              `jwt[0].issuer.url: Invalid value: "https://issuer-url": URL must not overlap with disallowed issuers: [a b c https://issuer-url]`,
+		},
+		{
+			name: "valid authentication configuration that uses unverified email",
+			in: &api.AuthenticationConfiguration{
+				JWT: []api.JWTAuthenticator{
+					{
+						Issuer: api.Issuer{
+							URL:       "https://issuer-url",
+							Audiences: []string{"audience"},
+						},
+						ClaimValidationRules: []api.ClaimValidationRule{
+							{
+								Claim:         "foo",
+								RequiredValue: "bar",
+							},
+						},
+						ClaimMappings: api.ClaimMappings{
+							Username: api.PrefixedClaimOrExpression{
+								Expression: "claims.email",
+							},
+						},
+					},
+				},
+			},
+			want: `jwt[0].claimMappings.username.expression: Invalid value: "claims.email": claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression`,
+		},
+		{
+			name: "valid authentication configuration that almost uses unverified email",
+			in: &api.AuthenticationConfiguration{
+				JWT: []api.JWTAuthenticator{
+					{
+						Issuer: api.Issuer{
+							URL:       "https://issuer-url",
+							Audiences: []string{"audience"},
+						},
+						ClaimValidationRules: []api.ClaimValidationRule{
+							{
+								Claim:         "foo",
+								RequiredValue: "bar",
+							},
+						},
+						ClaimMappings: api.ClaimMappings{
+							Username: api.PrefixedClaimOrExpression{
+								Expression: "claims.email_",
+							},
+						},
+					},
+				},
+			},
+			want: "",
+		},
+		{
+			name: "valid authentication configuration that uses unverified email join",
+			in: &api.AuthenticationConfiguration{
+				JWT: []api.JWTAuthenticator{
+					{
+						Issuer: api.Issuer{
+							URL:       "https://issuer-url",
+							Audiences: []string{"audience"},
+						},
+						ClaimValidationRules: []api.ClaimValidationRule{
+							{
+								Claim:         "foo",
+								RequiredValue: "bar",
+							},
+						},
+						ClaimMappings: api.ClaimMappings{
+							Username: api.PrefixedClaimOrExpression{
+								Expression: `['yay', string(claims.email), 'panda'].join(' ')`,
+							},
+						},
+					},
+				},
+			},
+			want: `jwt[0].claimMappings.username.expression: Invalid value: "['yay', string(claims.email), 'panda'].join(' ')": claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression`,
+		},
+		{
+			name: "valid authentication configuration that uses verified email join via rule",
+			in: &api.AuthenticationConfiguration{
+				JWT: []api.JWTAuthenticator{
+					{
+						Issuer: api.Issuer{
+							URL:       "https://issuer-url",
+							Audiences: []string{"audience"},
+						},
+						ClaimValidationRules: []api.ClaimValidationRule{
+							{
+								Expression: `string(claims.email_verified) == "panda"`,
+							},
+						},
+						ClaimMappings: api.ClaimMappings{
+							Username: api.PrefixedClaimOrExpression{
+								Expression: `['yay', string(claims.email), 'panda'].join(' ')`,
+							},
+						},
+					},
+				},
+			},
+			want: "",
+		},
+		{
+			name: "valid authentication configuration that uses verified email join via extra",
+			in: &api.AuthenticationConfiguration{
+				JWT: []api.JWTAuthenticator{
+					{
+						Issuer: api.Issuer{
+							URL:       "https://issuer-url",
+							Audiences: []string{"audience"},
+						},
+						ClaimValidationRules: []api.ClaimValidationRule{
+							{
+								Claim:         "foo",
+								RequiredValue: "bar",
+							},
+						},
+						ClaimMappings: api.ClaimMappings{
+							Username: api.PrefixedClaimOrExpression{
+								Expression: `['yay', string(claims.email), 'panda'].join(' ')`,
+							},
+							Extra: []api.ExtraMapping{
+								{Key: "panda.io/foo", ValueExpression: "claims.email_verified.upperAscii()"},
+							},
+						},
+					},
+				},
+			},
+			want: "",
 		},
 		{
 			name: "valid authentication configuration",
