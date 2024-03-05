@@ -921,6 +921,20 @@ func TestValidateClaimMappings(t *testing.T) {
 			want:                          `issuer.claimMappings.extra[0].key: Invalid value: "example.org/Foo": key must be lowercase`,
 		},
 		{
+			name: "valid claim mappings but uses email without verification",
+			in: api.ClaimMappings{
+				Username: api.PrefixedClaimOrExpression{Expression: "claims.emaily"},
+				Groups:   api.PrefixedClaimOrExpression{Expression: "claims.groups"},
+				UID:      api.ClaimOrExpression{Expression: "claims.uid"},
+				Extra: []api.ExtraMapping{
+					{Key: "example.org/foo", ValueExpression: "claims.extra"},
+				},
+			},
+			structuredAuthnFeatureEnabled: true,
+			wantCELMapper:                 true,
+			want:                          "",
+		},
+		{
 			name: "valid claim mappings",
 			in: api.ClaimMappings{
 				Username: api.PrefixedClaimOrExpression{Expression: "claims.username"},
