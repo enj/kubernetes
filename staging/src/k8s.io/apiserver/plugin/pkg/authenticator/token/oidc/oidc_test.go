@@ -149,6 +149,7 @@ type claimsTest struct {
 	claimToResponseMap  map[string]string
 	openIDConfig        string
 	fetchKeysFromRemote bool
+	ctxFunc             func() context.Context
 }
 
 // Replace formats the contents of v into the provided template.
@@ -277,7 +278,7 @@ func (c *claimsTest) run(t *testing.T) {
 		// Set the verifier to use the public key set instead of reading from a remote.
 		c.options.KeySet = &staticKeySet{keys: c.pubKeys}
 	} else {
-		c.options.SynchronousInitialization = randomBool() // check both ways of setting up the verifier
+		c.options.SynchronousInitialization = c.options.SynchronousInitialization || randomBool() // check both ways of setting up the verifier
 	}
 
 	if c.optsFunc != nil {
@@ -287,6 +288,9 @@ func (c *claimsTest) run(t *testing.T) {
 	expectInitErr := len(c.wantInitErr) > 0
 
 	ctx := testContext(t)
+	if c.ctxFunc != nil {
+		ctx = c.ctxFunc()
+	}
 
 	// Initialize the authenticator.
 	a, err := New(ctx, c.options)
@@ -2115,6 +2119,32 @@ func TestToken(t *testing.T) {
 				loadRSAKey(t, "testdata/rsa_1.pem", jose.RS256),
 			},
 			wantInitErr: "oidc: KeySet and DiscoveryURL are mutually exclusive",
+		},
+		{
+			name: "sync init failure",
+			options: Options{
+				JWTAuthenticator: apiserver.JWTAuthenticator{
+					Issuer: apiserver.Issuer{
+						URL:       "https://this-will-not-work.notatld",
+						Audiences: []string{"my-client"},
+					},
+					ClaimMappings: apiserver.ClaimMappings{
+						Username: apiserver.PrefixedClaimOrExpression{
+							Claim:  "username",
+							Prefix: pointer.String("prefix:"),
+						},
+					},
+				},
+				SupportedSigningAlgs:      []string{"RS256"},
+				SynchronousInitialization: true,
+			},
+			fetchKeysFromRemote: true,
+			ctxFunc: func() context.Context {
+				ctx, cancel := context.WithTimeout(context.Background(), 0)
+				cancel()
+				return ctx
+			},
+			wantInitErr: `oidc: failed to init verifier: Get "https://this-will-not-work.notatld/.well-known/openid-configuration": context deadline exceeded`,
 		},
 		{
 			name: "accounts.google.com issuer",
