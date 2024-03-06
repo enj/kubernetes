@@ -22,11 +22,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
+	"unsafe"
 
 	celgo "github.com/google/cel-go/cel"
-	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
+	"github.com/google/cel-go/common/ast"
 
 	v1 "k8s.io/api/authorization/v1"
 	"k8s.io/api/authorization/v1beta1"
@@ -372,7 +374,7 @@ func validateClaimMappings(compiler authenticationcel.Compiler, celMapper *authe
 }
 
 func usesEmailClaim(ast *celgo.Ast) bool {
-	return hasSelectExp(ast.Expr(), "claims", "email")
+	return hasSelectExp(ast, "claims", "email")
 }
 
 func anyUsesEmailVerifiedClaim(results []authenticationcel.CompilationResult) bool {
@@ -385,56 +387,35 @@ func anyUsesEmailVerifiedClaim(results []authenticationcel.CompilationResult) bo
 }
 
 func usesEmailVerifiedClaim(ast *celgo.Ast) bool {
-	return hasSelectExp(ast.Expr(), "claims", "email_verified")
+	return hasSelectExp(ast, "claims", "email_verified")
 }
 
-func hasSelectExp(exp *exprpb.Expr, operand, field string) bool {
-	if exp == nil {
-		return false
-	}
-	switch e := exp.ExprKind.(type) {
-	case *exprpb.Expr_ConstExpr,
-		*exprpb.Expr_IdentExpr:
-		return false
-	case *exprpb.Expr_SelectExpr:
-		if id := e.SelectExpr.Operand.GetIdentExpr(); id != nil && id.Name == operand && e.SelectExpr.Field == field {
-			return true
+func hasSelectExp(celast *celgo.Ast, operand, field string) bool {
+	var found bool
+	ast.PreOrderVisit(ast.NavigateAST(getPrivateField[*ast.AST](celast, "impl")), ast.NewExprVisitor(func(expr ast.Expr) {
+		if found {
+			return
 		}
-		return hasSelectExp(e.SelectExpr.Operand, operand, field)
-	case *exprpb.Expr_CallExpr:
-		for _, arg := range e.CallExpr.Args {
-			if hasSelectExp(arg, operand, field) {
-				return true
-			}
+
+		if expr.Kind() != ast.SelectKind {
+			return
 		}
-		return hasSelectExp(e.CallExpr.Target, operand, field)
-	case *exprpb.Expr_ListExpr:
-		for _, element := range e.ListExpr.Elements {
-			if hasSelectExp(element, operand, field) {
-				return true
-			}
+
+		s := expr.AsSelect()
+
+		op := s.Operand()
+		if op.Kind() != ast.IdentKind {
+			return
 		}
-		return false
-	case *exprpb.Expr_StructExpr: // TODO add unit test
-		for _, entry := range e.StructExpr.Entries {
-			if hasSelectExp(entry.GetMapKey(), operand, field) {
-				return true
-			}
-			if hasSelectExp(entry.Value, operand, field) {
-				return true
-			}
-		}
-		return false
-	case *exprpb.Expr_ComprehensionExpr: // TODO add unit test
-		c := e.ComprehensionExpr
-		return hasSelectExp(c.IterRange, operand, field) ||
-			hasSelectExp(c.AccuInit, operand, field) ||
-			hasSelectExp(c.LoopCondition, operand, field) ||
-			hasSelectExp(c.LoopStep, operand, field) ||
-			hasSelectExp(c.Result, operand, field)
-	default:
-		return false
-	}
+
+		found = op.AsIdent() == operand && s.FieldName() == field
+	}))
+	return found
+}
+
+func getPrivateField[T any](obj any, fieldName string) T {
+	refField := reflect.ValueOf(obj).Elem().FieldByName(fieldName)
+	return *((*T)(unsafe.Pointer(refField.UnsafeAddr())))
 }
 
 func validatePrefixClaimOrExpression(compiler authenticationcel.Compiler, mapping api.PrefixedClaimOrExpression, fldPath *field.Path, claimOrExpressionRequired bool) (*authenticationcel.CompilationResult, field.ErrorList) {
