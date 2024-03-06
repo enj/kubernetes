@@ -330,6 +330,7 @@ type ClaimMappings struct {
 	// The claim's value must be a singular string.
 	// Same as the --oidc-username-claim and --oidc-username-prefix flags.
 	// If username.expression is set, the expression must produce a string value.
+	// If username.expression uses claims.email, then TODO explain and add CEL example of how to do the validation
 	//
 	// In the flag based approach, the --oidc-username-claim and --oidc-username-prefix are optional. If --oidc-username-claim is not set,
 	// the default value is "sub". For the authentication config, there is no defaulting for claim or prefix. The claim and prefix must be set explicitly.
@@ -339,7 +340,7 @@ type ClaimMappings struct {
 	//         set username.prefix=""
 	//     (2) --oidc-username-prefix="" and  --oidc-username-claim != "email", prefix was "<value of --oidc-issuer-url>#". For the same
 	//         behavior using authentication config, set username.prefix="<value of issuer.url>#"
-	//	   (3) --oidc-username-prefix="<value>". For the same behavior using authentication config, set username.prefix="<value>"
+	//     (3) --oidc-username-prefix="<value>". For the same behavior using authentication config, set username.prefix="<value>"
 	// +required
 	Username PrefixedClaimOrExpression `json:"username"`
 	// groups represents an option for the groups attribute.
