@@ -1105,6 +1105,20 @@ func TestValidateClaimMappings(t *testing.T) {
 			want:                          `issuer.claimMappings.username.expression: Invalid value: "has(claims.email) ? claims.email : claims.sub": claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression`,
 		},
 		{
+			name: "valid claim mappings but uses email in CEL expression function without verification",
+			in: api.ClaimMappings{
+				Username: api.PrefixedClaimOrExpression{Expression: "claims.email.trim()"},
+				Groups:   api.PrefixedClaimOrExpression{Expression: "claims.groups"},
+				UID:      api.ClaimOrExpression{Expression: "claims.uid"},
+				Extra: []api.ExtraMapping{
+					{Key: "example.org/foo", ValueExpression: "claims.extra"},
+				},
+			},
+			structuredAuthnFeatureEnabled: true,
+			wantCELMapper:                 true,
+			want:                          `issuer.claimMappings.username.expression: Invalid value: "claims.email.trim()": claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression`,
+		},
+		{
 			name: "valid claim mappings and uses email with verification via extra",
 			in: api.ClaimMappings{
 				Username: api.PrefixedClaimOrExpression{Expression: "claims.email"},
@@ -1165,6 +1179,20 @@ func TestValidateClaimMappings(t *testing.T) {
 			name: "valid claim mappings that almost use claims.email",
 			in: api.ClaimMappings{
 				Username: api.PrefixedClaimOrExpression{Expression: "claims.email_"},
+				Groups:   api.PrefixedClaimOrExpression{Expression: "claims.groups"},
+				UID:      api.ClaimOrExpression{Expression: "claims.uid"},
+				Extra: []api.ExtraMapping{
+					{Key: "example.org/foo", ValueExpression: "claims.extra"},
+				},
+			},
+			structuredAuthnFeatureEnabled: true,
+			wantCELMapper:                 true,
+			want:                          "",
+		},
+		{
+			name: "valid claim mappings that almost use claims.email via nesting",
+			in: api.ClaimMappings{
+				Username: api.PrefixedClaimOrExpression{Expression: "claims.other.claims.email"},
 				Groups:   api.PrefixedClaimOrExpression{Expression: "claims.groups"},
 				UID:      api.ClaimOrExpression{Expression: "claims.uid"},
 				Extra: []api.ExtraMapping{
