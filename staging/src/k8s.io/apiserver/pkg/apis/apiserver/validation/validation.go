@@ -427,7 +427,7 @@ func hasSelectExp(exp *exprpb.Expr, operand, field string) bool {
 			}
 		}
 		return false
-	case *exprpb.Expr_StructExpr: // TODO add unit test
+	case *exprpb.Expr_StructExpr:
 		for _, entry := range e.StructExpr.Entries {
 			if hasSelectExp(entry.GetMapKey(), operand, field) {
 				return true
@@ -437,7 +437,7 @@ func hasSelectExp(exp *exprpb.Expr, operand, field string) bool {
 			}
 		}
 		return false
-	case *exprpb.Expr_ComprehensionExpr: // TODO add unit test
+	case *exprpb.Expr_ComprehensionExpr:
 		c := e.ComprehensionExpr
 		return hasSelectExp(c.IterRange, operand, field) ||
 			hasSelectExp(c.AccuInit, operand, field) ||
