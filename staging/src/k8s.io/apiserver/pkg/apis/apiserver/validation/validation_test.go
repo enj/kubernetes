@@ -225,7 +225,7 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 					},
 				},
 			},
-			want: `jwt[0].claimMappings.username.expression: Invalid value: "claims.email": claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression`,
+			want: `jwt[0].claimMappings.username.expression: Invalid value: "claims.email": claims.email_verified must be used in claimMappings.username.expression or claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in claimMappings.username.expression`,
 		},
 		{
 			name: "valid authentication configuration that almost uses unverified email",
@@ -275,7 +275,7 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 					},
 				},
 			},
-			want: `jwt[0].claimMappings.username.expression: Invalid value: "['yay', string(claims.email), 'panda'].join(' ')": claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression`,
+			want: `jwt[0].claimMappings.username.expression: Invalid value: "['yay', string(claims.email), 'panda'].join(' ')": claims.email_verified must be used in claimMappings.username.expression or claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in claimMappings.username.expression`,
 		},
 		{
 			name: "valid authentication configuration that uses unverified optional email",
@@ -300,7 +300,7 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 					},
 				},
 			},
-			want: `jwt[0].claimMappings.username.expression: Invalid value: "claims.?email": claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression`,
+			want: `jwt[0].claimMappings.username.expression: Invalid value: "claims.?email": claims.email_verified must be used in claimMappings.username.expression or claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in claimMappings.username.expression`,
 		},
 		{
 			name: "valid authentication configuration that uses unverified optional map email key",
@@ -325,7 +325,7 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 					},
 				},
 			},
-			want: `jwt[0].claimMappings.username.expression: Invalid value: "{claims.?email: \"panda\"}": claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression`,
+			want: `jwt[0].claimMappings.username.expression: Invalid value: "{claims.?email: \"panda\"}": claims.email_verified must be used in claimMappings.username.expression or claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in claimMappings.username.expression`,
 		},
 		{
 			name: "valid authentication configuration that uses unverified optional map email value",
@@ -350,7 +350,7 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 					},
 				},
 			},
-			want: `jwt[0].claimMappings.username.expression: Invalid value: "{\"fancy\": claims.?email}": claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression`,
+			want: `jwt[0].claimMappings.username.expression: Invalid value: "{\"fancy\": claims.?email}": claims.email_verified must be used in claimMappings.username.expression or claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in claimMappings.username.expression`,
 		},
 		{
 			name: "valid authentication configuration that uses unverified email value in list iteration",
@@ -375,7 +375,7 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 					},
 				},
 			},
-			want: `jwt[0].claimMappings.username.expression: Invalid value: "[\"a\"].map(i, i + claims.email)": claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression`,
+			want: `jwt[0].claimMappings.username.expression: Invalid value: "[\"a\"].map(i, i + claims.email)": claims.email_verified must be used in claimMappings.username.expression or claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in claimMappings.username.expression`,
 		},
 		{
 			name: "valid authentication configuration that uses verified email join via rule",
@@ -1267,7 +1267,7 @@ func TestValidateClaimMappings(t *testing.T) {
 			},
 			structuredAuthnFeatureEnabled: true,
 			wantCELMapper:                 true,
-			want:                          `issuer.claimMappings.username.expression: Invalid value: "claims.email": claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression`,
+			want:                          `issuer.claimMappings.username.expression: Invalid value: "claims.email": claims.email_verified must be used in claimMappings.username.expression or claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in claimMappings.username.expression`,
 		},
 		{
 			name: "valid claim mappings but uses email in complex CEL expression without verification",
@@ -1281,7 +1281,7 @@ func TestValidateClaimMappings(t *testing.T) {
 			},
 			structuredAuthnFeatureEnabled: true,
 			wantCELMapper:                 true,
-			want:                          `issuer.claimMappings.username.expression: Invalid value: "has(claims.email) ? claims.email : claims.sub": claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression`,
+			want:                          `issuer.claimMappings.username.expression: Invalid value: "has(claims.email) ? claims.email : claims.sub": claims.email_verified must be used in claimMappings.username.expression or claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in claimMappings.username.expression`,
 		},
 		{
 			name: "valid claim mappings but uses email in CEL expression function without verification",
@@ -1295,7 +1295,7 @@ func TestValidateClaimMappings(t *testing.T) {
 			},
 			structuredAuthnFeatureEnabled: true,
 			wantCELMapper:                 true,
-			want:                          `issuer.claimMappings.username.expression: Invalid value: "claims.email.trim()": claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression`,
+			want:                          `issuer.claimMappings.username.expression: Invalid value: "claims.email.trim()": claims.email_verified must be used in claimMappings.username.expression or claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in claimMappings.username.expression`,
 		},
 		{
 			name: "valid claim mappings and uses email with verification via extra",
@@ -1337,7 +1337,7 @@ func TestValidateClaimMappings(t *testing.T) {
 			},
 			structuredAuthnFeatureEnabled: true,
 			wantCELMapper:                 true,
-			want:                          `issuer.claimMappings.username.expression: Invalid value: "claims.email": claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression`,
+			want:                          `issuer.claimMappings.username.expression: Invalid value: "claims.email": claims.email_verified must be used in claimMappings.username.expression or claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in claimMappings.username.expression`,
 		},
 		{
 			name: "valid claim mappings and uses email with verification via hasVerifiedEmail",

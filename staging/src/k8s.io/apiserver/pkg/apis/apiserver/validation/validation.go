@@ -368,7 +368,7 @@ func validateClaimMappings(compiler authenticationcel.Compiler, state *validatio
 
 	if structuredAuthnFeatureEnabled && state.usesEmailClaim && !state.usesEmailVerifiedClaim {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("username", "expression"), m.Username.Expression,
-			"claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression"))
+			"claims.email_verified must be used in claimMappings.username.expression or claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in claimMappings.username.expression"))
 	}
 
 	if structuredAuthnFeatureEnabled && len(extraCompilationResults) > 0 {
