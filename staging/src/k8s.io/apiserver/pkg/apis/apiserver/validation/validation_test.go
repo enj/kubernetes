@@ -330,6 +330,58 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "valid authentication configuration that uses email and email_verified || true via username",
+			in: &api.AuthenticationConfiguration{
+				JWT: []api.JWTAuthenticator{
+					{
+						Issuer: api.Issuer{
+							URL:       "https://issuer-url",
+							Audiences: []string{"audience"},
+						},
+						ClaimValidationRules: []api.ClaimValidationRule{
+							{
+								Claim:         "foo",
+								RequiredValue: "bar",
+							},
+						},
+						// allow email claim when email_verified is true or absent
+						ClaimMappings: api.ClaimMappings{
+							Username: api.PrefixedClaimOrExpression{
+								Expression: `claims.?email_verified.orValue(true) ? claims.email : claims.sub`,
+							},
+						},
+					},
+				},
+			},
+			want: "",
+		},
+		{
+			name: "valid authentication configuration that uses email and email_verified || false via username",
+			in: &api.AuthenticationConfiguration{
+				JWT: []api.JWTAuthenticator{
+					{
+						Issuer: api.Issuer{
+							URL:       "https://issuer-url",
+							Audiences: []string{"audience"},
+						},
+						ClaimValidationRules: []api.ClaimValidationRule{
+							{
+								Claim:         "foo",
+								RequiredValue: "bar",
+							},
+						},
+						// allow email claim only when email_verified is present and true
+						ClaimMappings: api.ClaimMappings{
+							Username: api.PrefixedClaimOrExpression{
+								Expression: `claims.?email_verified.orValue(false) ? claims.email : claims.sub`,
+							},
+						},
+					},
+				},
+			},
+			want: "",
+		},
+		{
 			name: "valid authentication configuration",
 			in: &api.AuthenticationConfiguration{
 				JWT: []api.JWTAuthenticator{
