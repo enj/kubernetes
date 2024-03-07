@@ -634,7 +634,7 @@ func TestValidateClaimValidationRules(t *testing.T) {
 		structuredAuthnFeatureEnabled bool
 		want                          string
 		wantCELMapper                 bool
-		wantHasVerifiedEmail          bool
+		wantUsesEmailVerifiedClaim    bool
 	}{
 		{
 			name:                          "claim and expression are empty, structured authn feature enabled",
@@ -728,7 +728,7 @@ func TestValidateClaimValidationRules(t *testing.T) {
 			},
 			structuredAuthnFeatureEnabled: true,
 			want:                          "",
-			wantHasVerifiedEmail:          true,
+			wantUsesEmailVerifiedClaim:    true,
 		},
 		{
 			name: "valid claim validation rule with multiple rules and almost email_verified check",
@@ -739,7 +739,7 @@ func TestValidateClaimValidationRules(t *testing.T) {
 			},
 			structuredAuthnFeatureEnabled: true,
 			want:                          "",
-			wantHasVerifiedEmail:          false,
+			wantUsesEmailVerifiedClaim:    false,
 		},
 		{
 			name: "valid claim validation rule with multiple rules",
@@ -749,23 +749,22 @@ func TestValidateClaimValidationRules(t *testing.T) {
 			},
 			structuredAuthnFeatureEnabled: true,
 			want:                          "",
-			wantHasVerifiedEmail:          false,
+			wantUsesEmailVerifiedClaim:    false,
 		},
 	}
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
-			celMapper := &authenticationcel.CELMapper{}
-			var hasVerifiedEmail bool
-			got := validateClaimValidationRules(compiler, celMapper, &hasVerifiedEmail, tt.in, fldPath, tt.structuredAuthnFeatureEnabled).ToAggregate()
+			state := &validationState{}
+			got := validateClaimValidationRules(compiler, state, tt.in, fldPath, tt.structuredAuthnFeatureEnabled).ToAggregate()
 			if d := cmp.Diff(tt.want, errString(got)); d != "" {
 				t.Fatalf("ClaimValidationRules validation mismatch (-want +got):\n%s", d)
 			}
-			if tt.wantCELMapper && celMapper.ClaimValidationRules == nil {
+			if tt.wantCELMapper && state.mapper.ClaimValidationRules == nil {
 				t.Fatalf("ClaimValidationRules validation mismatch: CELMapper.ClaimValidationRules is nil")
 			}
-			if tt.wantHasVerifiedEmail != hasVerifiedEmail {
-				t.Fatalf("ClaimValidationRules hasVerifiedEmail mismatch: want %v, got %v", tt.wantHasVerifiedEmail, hasVerifiedEmail)
+			if tt.wantUsesEmailVerifiedClaim != state.usesEmailVerifiedClaim {
+				t.Fatalf("ClaimValidationRules state.usesEmailVerifiedClaim mismatch: want %v, got %v", tt.wantUsesEmailVerifiedClaim, state.usesEmailVerifiedClaim)
 			}
 		})
 	}
@@ -777,7 +776,7 @@ func TestValidateClaimMappings(t *testing.T) {
 	testCases := []struct {
 		name                          string
 		in                            api.ClaimMappings
-		hasVerifiedEmail              bool
+		usesEmailVerifiedClaim        bool
 		structuredAuthnFeatureEnabled bool
 		want                          string
 		wantCELMapper                 bool
@@ -1170,7 +1169,7 @@ func TestValidateClaimMappings(t *testing.T) {
 					{Key: "example.org/foo", ValueExpression: "claims.extra"},
 				},
 			},
-			hasVerifiedEmail:              true,
+			usesEmailVerifiedClaim:        true,
 			structuredAuthnFeatureEnabled: true,
 			wantCELMapper:                 true,
 			want:                          "",
@@ -1221,23 +1220,23 @@ func TestValidateClaimMappings(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
-			celMapper := &authenticationcel.CELMapper{}
-			got := validateClaimMappings(compiler, celMapper, tt.hasVerifiedEmail, tt.in, fldPath, tt.structuredAuthnFeatureEnabled).ToAggregate()
+			state := &validationState{usesEmailVerifiedClaim: tt.usesEmailVerifiedClaim}
+			got := validateClaimMappings(compiler, state, tt.in, fldPath, tt.structuredAuthnFeatureEnabled).ToAggregate()
 			if d := cmp.Diff(tt.want, errString(got)); d != "" {
 				fmt.Println(errString(got))
 				t.Fatalf("ClaimMappings validation mismatch (-want +got):\n%s", d)
 			}
 			if tt.wantCELMapper {
-				if len(tt.in.Username.Expression) > 0 && celMapper.Username == nil {
+				if len(tt.in.Username.Expression) > 0 && state.mapper.Username == nil {
 					t.Fatalf("ClaimMappings validation mismatch: CELMapper.Username is nil")
 				}
-				if len(tt.in.Groups.Expression) > 0 && celMapper.Groups == nil {
+				if len(tt.in.Groups.Expression) > 0 && state.mapper.Groups == nil {
 					t.Fatalf("ClaimMappings validation mismatch: CELMapper.Groups is nil")
 				}
-				if len(tt.in.UID.Expression) > 0 && celMapper.UID == nil {
+				if len(tt.in.UID.Expression) > 0 && state.mapper.UID == nil {
 					t.Fatalf("ClaimMappings validation mismatch: CELMapper.UID is nil")
 				}
-				if len(tt.in.Extra) > 0 && celMapper.Extra == nil {
+				if len(tt.in.Extra) > 0 && state.mapper.Extra == nil {
 					t.Fatalf("ClaimMappings validation mismatch: CELMapper.Extra is nil")
 				}
 			}
@@ -1310,12 +1309,12 @@ func TestValidateUserValidationRules(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
-			celMapper := &authenticationcel.CELMapper{}
-			got := validateUserValidationRules(compiler, celMapper, tt.in, fldPath, tt.structuredAuthnFeatureEnabled).ToAggregate()
+			state := &validationState{}
+			got := validateUserValidationRules(compiler, state, tt.in, fldPath, tt.structuredAuthnFeatureEnabled).ToAggregate()
 			if d := cmp.Diff(tt.want, errString(got)); d != "" {
 				t.Fatalf("UserValidationRules validation mismatch (-want +got):\n%s", d)
 			}
-			if tt.wantCELMapper && celMapper.UserValidationRules == nil {
+			if tt.wantCELMapper && state.mapper.UserValidationRules == nil {
 				t.Fatalf("UserValidationRules validation mismatch: CELMapper.UserValidationRules is nil")
 			}
 		})

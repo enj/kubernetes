@@ -90,15 +90,20 @@ func validateJWTAuthenticator(authenticator api.JWTAuthenticator, fldPath *field
 	var allErrs field.ErrorList
 
 	compiler := authenticationcel.NewCompiler(environment.MustBaseEnvSet(environment.DefaultCompatibilityVersion()))
-	mapper := &authenticationcel.CELMapper{}
-	var hasVerifiedEmail bool
+	state := &validationState{}
 
 	allErrs = append(allErrs, validateIssuer(authenticator.Issuer, disallowedIssuers, fldPath.Child("issuer"))...)
-	allErrs = append(allErrs, validateClaimValidationRules(compiler, mapper, &hasVerifiedEmail, authenticator.ClaimValidationRules, fldPath.Child("claimValidationRules"), structuredAuthnFeatureEnabled)...)
-	allErrs = append(allErrs, validateClaimMappings(compiler, mapper, hasVerifiedEmail, authenticator.ClaimMappings, fldPath.Child("claimMappings"), structuredAuthnFeatureEnabled)...)
-	allErrs = append(allErrs, validateUserValidationRules(compiler, mapper, authenticator.UserValidationRules, fldPath.Child("userValidationRules"), structuredAuthnFeatureEnabled)...)
+	allErrs = append(allErrs, validateClaimValidationRules(compiler, state, authenticator.ClaimValidationRules, fldPath.Child("claimValidationRules"), structuredAuthnFeatureEnabled)...)
+	allErrs = append(allErrs, validateClaimMappings(compiler, state, authenticator.ClaimMappings, fldPath.Child("claimMappings"), structuredAuthnFeatureEnabled)...)
+	allErrs = append(allErrs, validateUserValidationRules(compiler, state, authenticator.UserValidationRules, fldPath.Child("userValidationRules"), structuredAuthnFeatureEnabled)...)
 
-	return *mapper, allErrs
+	return state.mapper, allErrs
+}
+
+type validationState struct {
+	mapper                 authenticationcel.CELMapper
+	usesEmailClaim         bool
+	usesEmailVerifiedClaim bool
 }
 
 func validateIssuer(issuer api.Issuer, disallowedIssuers sets.Set[string], fldPath *field.Path) field.ErrorList {
@@ -208,7 +213,7 @@ func validateCertificateAuthority(certificateAuthority string, fldPath *field.Pa
 	return allErrs
 }
 
-func validateClaimValidationRules(compiler authenticationcel.Compiler, celMapper *authenticationcel.CELMapper, hasVerifiedEmail *bool, rules []api.ClaimValidationRule, fldPath *field.Path, structuredAuthnFeatureEnabled bool) field.ErrorList {
+func validateClaimValidationRules(compiler authenticationcel.Compiler, state *validationState, rules []api.ClaimValidationRule, fldPath *field.Path, structuredAuthnFeatureEnabled bool) field.ErrorList {
 	var allErrs field.ErrorList
 
 	seenClaims := sets.NewString()
@@ -260,18 +265,15 @@ func validateClaimValidationRules(compiler authenticationcel.Compiler, celMapper
 		}
 	}
 
-	if structuredAuthnFeatureEnabled {
-		*hasVerifiedEmail = anyUsesEmailVerifiedClaim(compilationResults)
-	}
-
 	if structuredAuthnFeatureEnabled && len(compilationResults) > 0 {
-		celMapper.ClaimValidationRules = authenticationcel.NewClaimsMapper(compilationResults)
+		state.mapper.ClaimValidationRules = authenticationcel.NewClaimsMapper(compilationResults)
+		state.usesEmailVerifiedClaim = state.usesEmailVerifiedClaim || anyUsesEmailVerifiedClaim(compilationResults)
 	}
 
 	return allErrs
 }
 
-func validateClaimMappings(compiler authenticationcel.Compiler, celMapper *authenticationcel.CELMapper, hasVerifiedEmail bool, m api.ClaimMappings, fldPath *field.Path, structuredAuthnFeatureEnabled bool) field.ErrorList {
+func validateClaimMappings(compiler authenticationcel.Compiler, state *validationState, m api.ClaimMappings, fldPath *field.Path, structuredAuthnFeatureEnabled bool) field.ErrorList {
 	var allErrs field.ErrorList
 
 	if !structuredAuthnFeatureEnabled {
@@ -289,20 +291,19 @@ func validateClaimMappings(compiler authenticationcel.Compiler, celMapper *authe
 		}
 	}
 
-	var needsToVerifyEmail bool
 	compilationResult, err := validatePrefixClaimOrExpression(compiler, m.Username, fldPath.Child("username"), true)
 	if err != nil {
 		allErrs = append(allErrs, err...)
 	} else if compilationResult != nil && structuredAuthnFeatureEnabled {
-		needsToVerifyEmail = usesEmailClaim(compilationResult.AST)
-		celMapper.Username = authenticationcel.NewClaimsMapper([]authenticationcel.CompilationResult{*compilationResult})
+		state.usesEmailClaim = state.usesEmailClaim || usesEmailClaim(compilationResult.AST)
+		state.mapper.Username = authenticationcel.NewClaimsMapper([]authenticationcel.CompilationResult{*compilationResult})
 	}
 
 	compilationResult, err = validatePrefixClaimOrExpression(compiler, m.Groups, fldPath.Child("groups"), false)
 	if err != nil {
 		allErrs = append(allErrs, err...)
 	} else if compilationResult != nil && structuredAuthnFeatureEnabled {
-		celMapper.Groups = authenticationcel.NewClaimsMapper([]authenticationcel.CompilationResult{*compilationResult})
+		state.mapper.Groups = authenticationcel.NewClaimsMapper([]authenticationcel.CompilationResult{*compilationResult})
 	}
 
 	switch {
@@ -316,7 +317,7 @@ func validateClaimMappings(compiler authenticationcel.Compiler, celMapper *authe
 		if err != nil {
 			allErrs = append(allErrs, err)
 		} else if structuredAuthnFeatureEnabled && compilationResult != nil {
-			celMapper.UID = authenticationcel.NewClaimsMapper([]authenticationcel.CompilationResult{*compilationResult})
+			state.mapper.UID = authenticationcel.NewClaimsMapper([]authenticationcel.CompilationResult{*compilationResult})
 		}
 	}
 
@@ -359,13 +360,17 @@ func validateClaimMappings(compiler authenticationcel.Compiler, celMapper *authe
 		}
 	}
 
-	if structuredAuthnFeatureEnabled && needsToVerifyEmail && !hasVerifiedEmail && !anyUsesEmailVerifiedClaim(extraCompilationResults) {
+	if structuredAuthnFeatureEnabled {
+		state.usesEmailVerifiedClaim = state.usesEmailVerifiedClaim || anyUsesEmailVerifiedClaim(extraCompilationResults)
+	}
+
+	if structuredAuthnFeatureEnabled && state.usesEmailClaim && !state.usesEmailVerifiedClaim {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child("username", "expression"), m.Username.Expression,
 			"claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression"))
 	}
 
 	if structuredAuthnFeatureEnabled && len(extraCompilationResults) > 0 {
-		celMapper.Extra = authenticationcel.NewClaimsMapper(extraCompilationResults)
+		state.mapper.Extra = authenticationcel.NewClaimsMapper(extraCompilationResults)
 	}
 
 	return allErrs
@@ -469,7 +474,7 @@ func validatePrefixClaimOrExpression(compiler authenticationcel.Compiler, mappin
 	return compilationResult, allErrs
 }
 
-func validateUserValidationRules(compiler authenticationcel.Compiler, celMapper *authenticationcel.CELMapper, rules []api.UserValidationRule, fldPath *field.Path, structuredAuthnFeatureEnabled bool) field.ErrorList {
+func validateUserValidationRules(compiler authenticationcel.Compiler, state *validationState, rules []api.UserValidationRule, fldPath *field.Path, structuredAuthnFeatureEnabled bool) field.ErrorList {
 	var allErrs field.ErrorList
 	var compilationResults []authenticationcel.CompilationResult
 
@@ -508,7 +513,7 @@ func validateUserValidationRules(compiler authenticationcel.Compiler, celMapper 
 	}
 
 	if structuredAuthnFeatureEnabled && len(compilationResults) > 0 {
-		celMapper.UserValidationRules = authenticationcel.NewUserMapper(compilationResults)
+		state.mapper.UserValidationRules = authenticationcel.NewUserMapper(compilationResults)
 	}
 
 	return allErrs
