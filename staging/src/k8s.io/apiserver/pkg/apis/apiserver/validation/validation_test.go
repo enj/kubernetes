@@ -278,6 +278,31 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 			want: `jwt[0].claimMappings.username.expression: Invalid value: "['yay', string(claims.email), 'panda'].join(' ')": claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression`,
 		},
 		{
+			name: "valid authentication configuration that uses unverified optional email",
+			in: &api.AuthenticationConfiguration{
+				JWT: []api.JWTAuthenticator{
+					{
+						Issuer: api.Issuer{
+							URL:       "https://issuer-url",
+							Audiences: []string{"audience"},
+						},
+						ClaimValidationRules: []api.ClaimValidationRule{
+							{
+								Claim:         "foo",
+								RequiredValue: "bar",
+							},
+						},
+						ClaimMappings: api.ClaimMappings{
+							Username: api.PrefixedClaimOrExpression{
+								Expression: `claims.?email`,
+							},
+						},
+					},
+				},
+			},
+			want: `jwt[0].claimMappings.username.expression: Invalid value: "claims.?email": claims.email_verified must be used in claimMappings.extra[*].valueExpression or claimValidationRules[*].expression when claims.email is used in the username expression`,
+		},
+		{
 			name: "valid authentication configuration that uses verified email join via rule",
 			in: &api.AuthenticationConfiguration{
 				JWT: []api.JWTAuthenticator{
@@ -322,6 +347,34 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 							},
 							Extra: []api.ExtraMapping{
 								{Key: "panda.io/foo", ValueExpression: "claims.email_verified.upperAscii()"},
+							},
+						},
+					},
+				},
+			},
+			want: "",
+		},
+		{
+			name: "valid authentication configuration that uses verified email join via extra optional",
+			in: &api.AuthenticationConfiguration{
+				JWT: []api.JWTAuthenticator{
+					{
+						Issuer: api.Issuer{
+							URL:       "https://issuer-url",
+							Audiences: []string{"audience"},
+						},
+						ClaimValidationRules: []api.ClaimValidationRule{
+							{
+								Claim:         "foo",
+								RequiredValue: "bar",
+							},
+						},
+						ClaimMappings: api.ClaimMappings{
+							Username: api.PrefixedClaimOrExpression{
+								Expression: `['yay', string(claims.email), 'panda'].join(' ')`,
+							},
+							Extra: []api.ExtraMapping{
+								{Key: "panda.io/foo", ValueExpression: "claims.?email_verified"},
 							},
 						},
 					},
