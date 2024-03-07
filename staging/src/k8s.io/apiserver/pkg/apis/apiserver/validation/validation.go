@@ -26,6 +26,7 @@ import (
 	"time"
 
 	celgo "github.com/google/cel-go/cel"
+	"github.com/google/cel-go/common/operators"
 	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
 
 	v1 "k8s.io/api/authorization/v1"
@@ -296,6 +297,7 @@ func validateClaimMappings(compiler authenticationcel.Compiler, state *validatio
 		allErrs = append(allErrs, err...)
 	} else if compilationResult != nil && structuredAuthnFeatureEnabled {
 		state.usesEmailClaim = state.usesEmailClaim || usesEmailClaim(compilationResult.AST)
+		state.usesEmailVerifiedClaim = state.usesEmailVerifiedClaim || usesEmailVerifiedClaim(compilationResult.AST)
 		state.mapper.Username = authenticationcel.NewClaimsMapper([]authenticationcel.CompilationResult{*compilationResult})
 	}
 
@@ -402,17 +404,22 @@ func hasSelectExp(exp *exprpb.Expr, operand, field string) bool {
 		*exprpb.Expr_IdentExpr:
 		return false
 	case *exprpb.Expr_SelectExpr:
-		if id := e.SelectExpr.Operand.GetIdentExpr(); id != nil && id.Name == operand && e.SelectExpr.Field == field {
+		if isIdentOperand(e.SelectExpr.Operand, operand) && e.SelectExpr.Field == field {
 			return true
 		}
 		return hasSelectExp(e.SelectExpr.Operand, operand, field)
 	case *exprpb.Expr_CallExpr:
-		for _, arg := range e.CallExpr.Args {
+		c := e.CallExpr
+		if c.Target == nil && c.Function == operators.OptSelect && len(c.Args) == 2 &&
+			isIdentOperand(c.Args[0], operand) && isConstField(c.Args[1], field) {
+			return true
+		}
+		for _, arg := range c.Args {
 			if hasSelectExp(arg, operand, field) {
 				return true
 			}
 		}
-		return hasSelectExp(e.CallExpr.Target, operand, field)
+		return hasSelectExp(c.Target, operand, field)
 	case *exprpb.Expr_ListExpr:
 		for _, element := range e.ListExpr.Elements {
 			if hasSelectExp(element, operand, field) {
@@ -440,6 +447,16 @@ func hasSelectExp(exp *exprpb.Expr, operand, field string) bool {
 	default:
 		return false
 	}
+}
+
+func isIdentOperand(exp *exprpb.Expr, operand string) bool {
+	id := exp.GetIdentExpr()
+	return id != nil && id.Name == operand
+}
+
+func isConstField(exp *exprpb.Expr, field string) bool {
+	c := exp.GetConstExpr()
+	return c != nil && c.GetStringValue() == field
 }
 
 func validatePrefixClaimOrExpression(compiler authenticationcel.Compiler, mapping api.PrefixedClaimOrExpression, fldPath *field.Path, claimOrExpressionRequired bool) (*authenticationcel.CompilationResult, field.ErrorList) {
