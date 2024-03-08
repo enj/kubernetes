@@ -53,10 +53,6 @@ import (
 	"k8s.io/kubernetes/pkg/serviceaccount"
 )
 
-// JWTAuthenticatorSleepAfterSwapTime controls the sleep after which the old swapped out JWT authenticator is canceled.
-// Exported as a variable so that it can be overridden in integration tests.
-var JWTAuthenticatorSleepAfterSwapTime = time.Minute
-
 // Config contains the data on how to authenticate a request to the Kube API Server
 type Config struct {
 	Anonymous      bool
@@ -179,9 +175,16 @@ func (config Config) New(ctx context.Context) (authenticator.Request, func(*apis
 
 			oldJWTAuthenticator := jwtAuthenticatorPtr.Swap(jwtAuthenticator)
 			if oldJWTAuthenticator != nil {
-				// TODO maybe track requests so we know when this is safe to do
-				time.Sleep(JWTAuthenticatorSleepAfterSwapTime)
-				oldJWTAuthenticator.cancel()
+				go func() {
+					t := time.NewTimer(time.Minute)
+					defer t.Stop()
+					select {
+					case <-ctx.Done():
+					case <-t.C:
+					}
+					// TODO maybe track requests so we know when this is safe to do
+					oldJWTAuthenticator.cancel()
+				}()
 			}
 
 			synchronousInitialization = true
