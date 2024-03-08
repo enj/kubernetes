@@ -315,17 +315,9 @@ func (c *claimsTest) run(t *testing.T) {
 		t.Fatalf("serialize token: %v", err)
 	}
 
-	ia, ok := a.(*instrumentedAuthenticator)
-	if !ok {
-		t.Fatalf("expected authenticator to be instrumented")
-	}
-	authenticator, ok := ia.delegate.(*jwtAuthenticator)
-	if !ok {
-		t.Fatalf("expected delegate to be Authenticator")
-	}
 	// wait for the authenticator to be healthy
 	err = wait.PollUntilContextCancel(ctx, time.Millisecond, true, func(context.Context) (bool, error) {
-		return authenticator.HealthCheck() == nil, nil
+		return a.HealthCheck() == nil, nil
 	})
 	if err != nil {
 		t.Fatalf("failed to initialize the authenticator: %v", err)
