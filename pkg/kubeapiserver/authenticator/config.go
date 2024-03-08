@@ -38,7 +38,9 @@ import (
 	tokencache "k8s.io/apiserver/pkg/authentication/token/cache"
 	"k8s.io/apiserver/pkg/authentication/token/tokenfile"
 	tokenunion "k8s.io/apiserver/pkg/authentication/token/union"
+	genericfeatures "k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	webhookutil "k8s.io/apiserver/pkg/util/webhook"
 	"k8s.io/apiserver/plugin/pkg/authenticator/token/oidc"
 	"k8s.io/apiserver/plugin/pkg/authenticator/token/webhook"
@@ -205,6 +207,11 @@ func (config Config) New(ctx context.Context) (authenticator.Request, func(*apis
 		// thus a failed SA token authn will not be sent to webhook authn.
 		// similarly, a failed OIDC/JWT token authn will not be sent to webhook authn.
 		jwtSchemaAuthenticator := tokenunion.NewFailOnError(jwtSchemaAuthenticators...)
+
+		// if strict handling is disabled, fallback to the legacy behavior of sending failed SA/OIDC/JWT tokens to webhook authn.
+		if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.StrictAuthenticationTokenHandling) {
+			jwtSchemaAuthenticator = tokenunion.New(jwtSchemaAuthenticators...)
+		}
 
 		var tokenAuth authenticator.Token
 		if len(opaqueTokenAuthenticators) == 0 {

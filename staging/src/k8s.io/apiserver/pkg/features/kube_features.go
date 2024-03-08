@@ -231,6 +231,14 @@ const (
 	// document.
 	StorageVersionHash featuregate.Feature = "StorageVersionHash"
 
+	// owner: @enj
+	// beta: v1.30
+	//
+	// When enabled, StrictAuthenticationTokenHandling prevents authentication tokens that are
+	// handled and fail authentication via the service account or JWT authenticator from being
+	// sent to any configured webhook authenticator.
+	StrictAuthenticationTokenHandling featuregate.Feature = "StrictAuthenticationTokenHandling"
+
 	// owner: @aramase, @enj, @nabokihms
 	// kep: https://kep.k8s.io/3331
 	// alpha: v1.29
@@ -336,6 +344,8 @@ var defaultKubernetesFeatureGates = map[featuregate.Feature]featuregate.FeatureS
 	StorageVersionAPI: {Default: false, PreRelease: featuregate.Alpha},
 
 	StorageVersionHash: {Default: true, PreRelease: featuregate.Beta},
+
+	StrictAuthenticationTokenHandling: {Default: true, PreRelease: featuregate.Beta},
 
 	StructuredAuthenticationConfiguration: {Default: false, PreRelease: featuregate.Alpha},
 
