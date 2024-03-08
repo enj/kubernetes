@@ -156,7 +156,10 @@ func newAsyncIDTokenVerifier(ctx context.Context, c *oidc.Config, iss string, au
 	}()
 
 	if synchronizeTokenIDVerifierForTest {
-		<-sync
+		select {
+		case <-sync:
+		case <-ctx.Done():
+		}
 	}
 
 	return t
