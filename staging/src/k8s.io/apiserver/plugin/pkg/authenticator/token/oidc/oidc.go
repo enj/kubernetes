@@ -79,11 +79,6 @@ type Options struct {
 	// Mutually exclusive with SynchronousInitialization and JWTAuthenticator.Issuer.DiscoveryURL.
 	KeySet oidc.KeySet
 
-	// SynchronousInitialization blocks New for up to a minute and waits for the verifier to be ready.
-	// If the blocking times out or the lifecycle context is canceled, New returns an error.
-	// Mutually exclusive with KeySet.
-	SynchronousInitialization bool
-
 	// PEM encoded root certificate contents of the provider.  Mutually exclusive with Client.
 	CAContentProvider CAContentProvider
 
@@ -190,6 +185,8 @@ type jwtAuthenticator struct {
 
 	// requiredClaims contains the list of claims that must be present in the token.
 	requiredClaims map[string]string
+
+	healthCheck atomic.Pointer[error]
 }
 
 // idTokenVerifier is a wrapper around oidc.IDTokenVerifier. It uses the oidc.IDTokenVerifier
@@ -227,7 +224,12 @@ var allowedSigningAlgs = map[string]bool{
 	oidc.PS512: true,
 }
 
-func New(lifecycleCtx context.Context, opts Options) (authenticator.Token, error) {
+type AuthenticatorTokenWithHealthCheck interface {
+	authenticator.Token
+	HealthCheck() error
+}
+
+func New(lifecycleCtx context.Context, opts Options) (AuthenticatorTokenWithHealthCheck, error) {
 	celMapper, fieldErr := apiservervalidation.CompileAndValidateJWTAuthenticator(opts.JWTAuthenticator, opts.DisallowedIssuers)
 	if err := fieldErr.ToAggregate(); err != nil {
 		return nil, err
@@ -247,10 +249,6 @@ func New(lifecycleCtx context.Context, opts Options) (authenticator.Token, error
 
 	if opts.Client != nil && opts.CAContentProvider != nil {
 		return nil, fmt.Errorf("oidc: Client and CAContentProvider are mutually exclusive")
-	}
-
-	if opts.KeySet != nil && opts.SynchronousInitialization {
-		return nil, fmt.Errorf("oidc: KeySet and SynchronousInitialization are mutually exclusive")
 	}
 
 	client := opts.Client
@@ -340,7 +338,7 @@ func New(lifecycleCtx context.Context, opts Options) (authenticator.Token, error
 		}
 	}
 
-	authenticator := &jwtAuthenticator{
+	authn := &jwtAuthenticator{
 		jwtAuthenticator: opts.JWTAuthenticator,
 		resolver:         resolver,
 		celMapper:        celMapper,
@@ -350,46 +348,35 @@ func New(lifecycleCtx context.Context, opts Options) (authenticator.Token, error
 	issuerURL := opts.JWTAuthenticator.Issuer.URL
 	if opts.KeySet != nil {
 		// We already have a key set, synchronously initialize the verifier.
-		authenticator.setVerifier(&idTokenVerifier{
+		authn.setVerifier(&idTokenVerifier{
 			oidc.NewVerifier(issuerURL, opts.KeySet, verifierConfig),
 			audiences,
 		})
 	} else {
 		// Asynchronously attempt to initialize the authenticator. This enables
 		// self-hosted providers, providers that run on top of Kubernetes itself.
-		initVerifier := func(initCtx context.Context) error {
-			var lastErr error
-			waitErr := wait.PollUntilContextCancel(initCtx, 10*time.Second, true, func(_ context.Context) (done bool, err error) {
+		go func() {
+			// we ignore any errors from polling because they can only come from the context being canceled
+			_ = wait.PollUntilContextCancel(lifecycleCtx, 10*time.Second, true, func(_ context.Context) (done bool, err error) {
 				// this must always use lifecycleCtx because NewProvider uses that context for future key set fetching.
 				// this also means that there is no correct way to control the timeout of the discovery request made by NewProvider.
+				// the global timeout of the http.Client is still honored.
 				provider, err := oidc.NewProvider(lifecycleCtx, issuerURL)
-				lastErr = err
 				if err != nil {
 					klog.Errorf("oidc authenticator: initializing plugin: %v", err)
+					authn.healthCheck.Store(&err)
 					return false, nil
 				}
 
 				verifier := provider.Verifier(verifierConfig)
-				authenticator.setVerifier(&idTokenVerifier{verifier, audiences})
+				authn.setVerifier(&idTokenVerifier{verifier, audiences})
+				authn.healthCheck.Store(nil)
 				return true, nil
 			})
-			if lastErr != nil {
-				return lastErr
-			}
-			return waitErr
-		}
-		if opts.SynchronousInitialization {
-			ctx, cancel := context.WithTimeout(lifecycleCtx, time.Minute)
-			defer cancel()
-			if err := initVerifier(ctx); err != nil {
-				return nil, fmt.Errorf("oidc: failed to init verifier: %w", err)
-			}
-		} else {
-			go func() { _ = initVerifier(lifecycleCtx) }() // errors are only logged when running asynchronously
-		}
+		}()
 	}
 
-	return newInstrumentedAuthenticator(issuerURL, authenticator), nil
+	return newInstrumentedAuthenticator(issuerURL, authn), nil
 }
 
 // discoveryURLRoundTripper is a http.RoundTripper that rewrites the
@@ -783,6 +770,19 @@ func (a *jwtAuthenticator) AuthenticateToken(ctx context.Context, token string) 
 	}
 
 	return &authenticator.Response{User: info}, true, nil
+}
+
+func (a *jwtAuthenticator) HealthCheck() error {
+	if errPtr := a.healthCheck.Load(); errPtr != nil && *errPtr != nil {
+		return fmt.Errorf("oidc: authenticator for issuer %q is not healthy: %w", a.jwtAuthenticator.Issuer.URL, *errPtr)
+	}
+
+	// healthCheck can return nil simply because the init loop has not started, so check that the verifier itself is ready
+	if _, ok := a.idTokenVerifier(); !ok {
+		return fmt.Errorf("oidc: authenticator for issuer %q is not initialized", a.jwtAuthenticator.Issuer.URL)
+	}
+
+	return nil
 }
 
 func (a *jwtAuthenticator) getUsername(ctx context.Context, c claims, claimsUnstructured *unstructured.Unstructured) (string, error) {

@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/apis/apiserver"
@@ -160,9 +161,20 @@ func (config Config) New(ctx context.Context) (authenticator.Request, func(*apis
 		var jwtAuthenticatorPtr atomic.Pointer[jwtAuthenticatorWithCancel]
 		var synchronousInitialization bool
 		updateAuthenticationConfig = func(authConfig *apiserver.AuthenticationConfiguration) error {
-			jwtAuthenticator, err := newJWTAuthenticator(ctx, authConfig, config.OIDCSigningAlgs, config.APIAudiences, config.ServiceAccountIssuers, synchronousInitialization)
+			jwtAuthenticator, err := newJWTAuthenticator(ctx, authConfig, config.OIDCSigningAlgs, config.APIAudiences, config.ServiceAccountIssuers)
 			if err != nil {
 				return err
+			}
+
+			if synchronousInitialization {
+				var lastErr error
+				if waitErr := wait.PollUntilContextTimeout(ctx, 10*time.Second, time.Minute, true, func(_ context.Context) (done bool, err error) {
+					lastErr = jwtAuthenticator.healthCheck()
+					return lastErr == nil, nil
+				}); lastErr != nil || waitErr != nil {
+					jwtAuthenticator.cancel()
+					return utilerrors.NewAggregate([]error{lastErr, waitErr}) // filters out nil errors
+				}
 			}
 
 			oldJWTAuthenticator := jwtAuthenticatorPtr.Swap(jwtAuthenticator)
@@ -246,10 +258,11 @@ func (config Config) New(ctx context.Context) (authenticator.Request, func(*apis
 
 type jwtAuthenticatorWithCancel struct {
 	jwtAuthenticator authenticator.Token
+	healthCheck      func() error
 	cancel           func()
 }
 
-func newJWTAuthenticator(ctx context.Context, config *apiserver.AuthenticationConfiguration, oidcSigningAlgs []string, apiAudiences authenticator.Audiences, disallowedIssuers []string, synchronousInitialization bool) (_ *jwtAuthenticatorWithCancel, buildErr error) {
+func newJWTAuthenticator(ctx context.Context, config *apiserver.AuthenticationConfiguration, oidcSigningAlgs []string, apiAudiences authenticator.Audiences, disallowedIssuers []string) (_ *jwtAuthenticatorWithCancel, buildErr error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	defer func() {
@@ -258,6 +271,7 @@ func newJWTAuthenticator(ctx context.Context, config *apiserver.AuthenticationCo
 		}
 	}()
 	var jwtAuthenticators []authenticator.Token
+	var healthChecks []func() error
 	for _, jwtAuthenticator := range config.JWT {
 		// TODO remove this CAContentProvider indirection
 		var oidcCAContent oidc.CAContentProvider
@@ -269,20 +283,29 @@ func newJWTAuthenticator(ctx context.Context, config *apiserver.AuthenticationCo
 			}
 		}
 		oidcAuth, err := oidc.New(ctx, oidc.Options{
-			JWTAuthenticator:          jwtAuthenticator,
-			CAContentProvider:         oidcCAContent,
-			SupportedSigningAlgs:      oidcSigningAlgs,
-			DisallowedIssuers:         disallowedIssuers,
-			SynchronousInitialization: synchronousInitialization,
+			JWTAuthenticator:     jwtAuthenticator,
+			CAContentProvider:    oidcCAContent,
+			SupportedSigningAlgs: oidcSigningAlgs,
+			DisallowedIssuers:    disallowedIssuers,
 		})
 		if err != nil {
 			return nil, err
 		}
 		jwtAuthenticators = append(jwtAuthenticators, oidcAuth)
+		healthChecks = append(healthChecks, oidcAuth.HealthCheck)
 	}
 	return &jwtAuthenticatorWithCancel{
 		jwtAuthenticator: authenticator.WrapAudienceAgnosticToken(apiAudiences, tokenunion.NewFailOnError(jwtAuthenticators...)), // this handles the empty jwtAuthenticators slice case correctly
-		cancel:           cancel,
+		healthCheck: func() error {
+			var errs []error
+			for _, check := range healthChecks {
+				if err := check(); err != nil {
+					errs = append(errs, err)
+				}
+			}
+			return utilerrors.NewAggregate(errs)
+		},
+		cancel: cancel,
 	}, nil
 }
 
