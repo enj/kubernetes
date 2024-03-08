@@ -36,7 +36,6 @@ import (
 
 	"gopkg.in/square/go-jose.v2"
 
-	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/apis/apiserver"
 	"k8s.io/apiserver/pkg/authentication/user"
@@ -149,7 +148,6 @@ type claimsTest struct {
 	claimToResponseMap  map[string]string
 	openIDConfig        string
 	fetchKeysFromRemote bool
-	ctxFunc             func() context.Context
 }
 
 // Replace formats the contents of v into the provided template.
@@ -277,8 +275,6 @@ func (c *claimsTest) run(t *testing.T) {
 	if !c.fetchKeysFromRemote {
 		// Set the verifier to use the public key set instead of reading from a remote.
 		c.options.KeySet = &staticKeySet{keys: c.pubKeys}
-	} else {
-		c.options.SynchronousInitialization = c.options.SynchronousInitialization || randomBool() // check both ways of setting up the verifier
 	}
 
 	if c.optsFunc != nil {
@@ -288,9 +284,6 @@ func (c *claimsTest) run(t *testing.T) {
 	expectInitErr := len(c.wantInitErr) > 0
 
 	ctx := testContext(t)
-	if c.ctxFunc != nil {
-		ctx = c.ctxFunc()
-	}
 
 	// Initialize the authenticator.
 	a, err := New(ctx, c.options)
@@ -330,17 +323,15 @@ func (c *claimsTest) run(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected delegate to be Authenticator")
 	}
-	// wait for the authenticator to be initialized if needed
-	if !c.options.SynchronousInitialization && c.options.KeySet == nil {
-		err = wait.PollUntilContextCancel(ctx, time.Millisecond, true, func(context.Context) (bool, error) {
-			if v, _ := authenticator.idTokenVerifier(); v == nil {
-				return false, nil
-			}
-			return true, nil
-		})
-		if err != nil {
-			t.Fatalf("failed to initialize the authenticator: %v", err)
+	// wait for the authenticator to be initialized
+	err = wait.PollUntilContextCancel(ctx, time.Millisecond, true, func(context.Context) (bool, error) {
+		if v, _ := authenticator.idTokenVerifier(); v == nil {
+			return false, nil
 		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("failed to initialize the authenticator: %v", err)
 	}
 
 	got, ok, err := a.AuthenticateToken(ctx, token)
@@ -2071,31 +2062,6 @@ func TestToken(t *testing.T) {
 			wantInitErr: "oidc: Client and CAContentProvider are mutually exclusive",
 		},
 		{
-			name: "keyset and sync init mutually exclusive",
-			options: Options{
-				JWTAuthenticator: apiserver.JWTAuthenticator{
-					Issuer: apiserver.Issuer{
-						URL:       "https://auth.example.com",
-						Audiences: []string{"my-client"},
-					},
-					ClaimMappings: apiserver.ClaimMappings{
-						Username: apiserver.PrefixedClaimOrExpression{
-							Claim:  "username",
-							Prefix: pointer.String("prefix:"),
-						},
-					},
-				},
-				SupportedSigningAlgs:      []string{"RS256"},
-				now:                       func() time.Time { return now },
-				KeySet:                    &staticKeySet{},
-				SynchronousInitialization: true,
-			},
-			pubKeys: []*jose.JSONWebKey{
-				loadRSAKey(t, "testdata/rsa_1.pem", jose.RS256),
-			},
-			wantInitErr: "oidc: KeySet and SynchronousInitialization are mutually exclusive",
-		},
-		{
 			name: "keyset and discovery URL mutually exclusive",
 			options: Options{
 				JWTAuthenticator: apiserver.JWTAuthenticator{
@@ -2119,32 +2085,6 @@ func TestToken(t *testing.T) {
 				loadRSAKey(t, "testdata/rsa_1.pem", jose.RS256),
 			},
 			wantInitErr: "oidc: KeySet and DiscoveryURL are mutually exclusive",
-		},
-		{
-			name: "sync init failure",
-			options: Options{
-				JWTAuthenticator: apiserver.JWTAuthenticator{
-					Issuer: apiserver.Issuer{
-						URL:       "https://this-will-not-work.notatld",
-						Audiences: []string{"my-client"},
-					},
-					ClaimMappings: apiserver.ClaimMappings{
-						Username: apiserver.PrefixedClaimOrExpression{
-							Claim:  "username",
-							Prefix: pointer.String("prefix:"),
-						},
-					},
-				},
-				SupportedSigningAlgs:      []string{"RS256"},
-				SynchronousInitialization: true,
-			},
-			fetchKeysFromRemote: true,
-			ctxFunc: func() context.Context {
-				ctx, cancel := context.WithTimeout(context.Background(), 0)
-				cancel()
-				return ctx
-			},
-			wantInitErr: `oidc: failed to init verifier: Get "https://this-will-not-work.notatld/.well-known/openid-configuration": context deadline exceeded`,
 		},
 		{
 			name: "accounts.google.com issuer",
@@ -3515,5 +3455,3 @@ func testContext(t *testing.T) context.Context {
 	t.Cleanup(cancel)
 	return ctx
 }
-
-func randomBool() bool { return utilrand.Int()%2 == 1 }

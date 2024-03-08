@@ -75,7 +75,7 @@ type Options struct {
 	// JWTAuthenticator is the authenticator that will be used to verify the JWT.
 	JWTAuthenticator apiserver.JWTAuthenticator
 
-	// Optional KeySet to allow for custom initialization instead of fetching from the remote issuer.
+	// Optional KeySet to allow for synchronous initialization instead of fetching from the remote issuer.
 	// Mutually exclusive with SynchronousInitialization and JWTAuthenticator.Issuer.DiscoveryURL.
 	KeySet oidc.KeySet
 
