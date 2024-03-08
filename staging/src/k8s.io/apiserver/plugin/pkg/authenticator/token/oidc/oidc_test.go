@@ -323,12 +323,9 @@ func (c *claimsTest) run(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected delegate to be Authenticator")
 	}
-	// wait for the authenticator to be initialized
+	// wait for the authenticator to be healthy
 	err = wait.PollUntilContextCancel(ctx, time.Millisecond, true, func(context.Context) (bool, error) {
-		if v, _ := authenticator.idTokenVerifier(); v == nil {
-			return false, nil
-		}
-		return true, nil
+		return authenticator.HealthCheck() == nil, nil
 	})
 	if err != nil {
 		t.Fatalf("failed to initialize the authenticator: %v", err)
