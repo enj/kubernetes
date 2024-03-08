@@ -53,6 +53,10 @@ import (
 	"k8s.io/kubernetes/pkg/serviceaccount"
 )
 
+// JWTAuthenticatorSynchronousInitializationTimeout controls how long we wait for JWT authenticator readiness.
+// Exported as a variable so that it can be overridden in integration tests.
+var JWTAuthenticatorSynchronousInitializationTimeout = time.Minute
+
 // Config contains the data on how to authenticate a request to the Kube API Server
 type Config struct {
 	Anonymous      bool
@@ -164,7 +168,7 @@ func (config Config) New(serverLifecycle context.Context) (authenticator.Request
 
 			if synchronousInitialization {
 				var lastErr error
-				if waitErr := wait.PollUntilContextTimeout(serverLifecycle, 10*time.Second, time.Minute, true, func(_ context.Context) (done bool, err error) {
+				if waitErr := wait.PollUntilContextTimeout(serverLifecycle, 10*time.Second, JWTAuthenticatorSynchronousInitializationTimeout, true, func(_ context.Context) (done bool, err error) {
 					lastErr = jwtAuthenticator.healthCheck()
 					return lastErr == nil, nil
 				}); lastErr != nil || waitErr != nil {
