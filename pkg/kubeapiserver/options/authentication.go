@@ -688,10 +688,13 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(ctx context.Context, authInfo *ge
 
 				if err := apiservervalidation.ValidateAuthenticationConfiguration(authConfig, authenticatorConfig.ServiceAccountIssuers).ToAggregate(); err != nil {
 					klog.ErrorS(err, "failed to validate authentication config")
+					// this config is not structurally valid and never will be, update the hash so we stop retrying
+					trackedAuthenticationConfigHash = authConfigHash
 					return
 				}
 				if err := updateAuthenticationConfig(authConfig); err != nil {
 					klog.ErrorS(err, "failed to update authentication config")
+					// we do not update trackedAuthenticationConfigHash here because this error could eventually resolve as we keep retrying
 					return
 				}
 
