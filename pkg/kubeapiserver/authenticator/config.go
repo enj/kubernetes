@@ -94,7 +94,7 @@ type Config struct {
 
 // New returns an authenticator.Request or an error that supports the standard
 // Kubernetes authentication mechanisms.
-func (config Config) New(ctx context.Context) (authenticator.Request, func(*apiserver.AuthenticationConfiguration) error, *spec.SecurityDefinitions, spec3.SecuritySchemes, error) {
+func (config Config) New(serverLifecycle context.Context) (authenticator.Request, func(*apiserver.AuthenticationConfiguration) error, *spec.SecurityDefinitions, spec3.SecuritySchemes, error) {
 	var authenticators []authenticator.Request
 	var tokenAuthenticators []authenticator.Token
 	securityDefinitionsV2 := spec.SecurityDefinitions{}
@@ -157,14 +157,14 @@ func (config Config) New(ctx context.Context) (authenticator.Request, func(*apis
 		var jwtAuthenticatorPtr atomic.Pointer[jwtAuthenticatorWithCancel]
 		var synchronousInitialization bool
 		updateAuthenticationConfig = func(authConfig *apiserver.AuthenticationConfiguration) error {
-			jwtAuthenticator, err := newJWTAuthenticator(ctx, authConfig, config.OIDCSigningAlgs, config.APIAudiences, config.ServiceAccountIssuers)
+			jwtAuthenticator, err := newJWTAuthenticator(serverLifecycle, authConfig, config.OIDCSigningAlgs, config.APIAudiences, config.ServiceAccountIssuers)
 			if err != nil {
 				return err
 			}
 
 			if synchronousInitialization {
 				var lastErr error
-				if waitErr := wait.PollUntilContextTimeout(ctx, 10*time.Second, time.Minute, true, func(_ context.Context) (done bool, err error) {
+				if waitErr := wait.PollUntilContextTimeout(serverLifecycle, 10*time.Second, time.Minute, true, func(_ context.Context) (done bool, err error) {
 					lastErr = jwtAuthenticator.healthCheck()
 					return lastErr == nil, nil
 				}); lastErr != nil || waitErr != nil {
@@ -179,7 +179,7 @@ func (config Config) New(ctx context.Context) (authenticator.Request, func(*apis
 					t := time.NewTimer(time.Minute)
 					defer t.Stop()
 					select {
-					case <-ctx.Done():
+					case <-serverLifecycle.Done():
 					case <-t.C:
 					}
 					// TODO maybe track requests so we know when this is safe to do
@@ -265,8 +265,8 @@ type jwtAuthenticatorWithCancel struct {
 	cancel           func()
 }
 
-func newJWTAuthenticator(ctx context.Context, config *apiserver.AuthenticationConfiguration, oidcSigningAlgs []string, apiAudiences authenticator.Audiences, disallowedIssuers []string) (_ *jwtAuthenticatorWithCancel, buildErr error) {
-	ctx, cancel := context.WithCancel(ctx)
+func newJWTAuthenticator(serverLifecycle context.Context, config *apiserver.AuthenticationConfiguration, oidcSigningAlgs []string, apiAudiences authenticator.Audiences, disallowedIssuers []string) (_ *jwtAuthenticatorWithCancel, buildErr error) {
+	ctx, cancel := context.WithCancel(serverLifecycle)
 
 	defer func() {
 		if buildErr != nil {
