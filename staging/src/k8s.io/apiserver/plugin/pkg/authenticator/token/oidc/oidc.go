@@ -232,6 +232,12 @@ type AuthenticatorTokenWithHealthCheck interface {
 	HealthCheck() error
 }
 
+// New returns an authenticator that is asynchronously initialized when opts.KeySet is not set.
+// The input lifecycleCtx is used to:
+// - terminate background goroutines that are needed for asynchronous initialization
+// - as the base context for any requests that are made (i.e. for key fetching)
+// Thus, once the lifecycleCtx is canceled, the authenticator must not be used.
+// A caller may check if the authenticator is healthy by calling the HealthCheck method.
 func New(lifecycleCtx context.Context, opts Options) (AuthenticatorTokenWithHealthCheck, error) {
 	celMapper, fieldErr := apiservervalidation.CompileAndValidateJWTAuthenticator(opts.JWTAuthenticator, opts.DisallowedIssuers)
 	if err := fieldErr.ToAggregate(); err != nil {
