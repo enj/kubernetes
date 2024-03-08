@@ -663,19 +663,6 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(ctx context.Context, authInfo *ge
 				mu.Lock()
 				defer mu.Unlock()
 
-				// scope currentHash to this block because we only want to track the hash from the load func
-				{
-					currentHash, err := getAuthenticationConfigHash(o.AuthenticationConfigFile)
-					if err != nil {
-						klog.ErrorS(err, "failed to get authentication config")
-						return
-					}
-
-					if currentHash == trackedAuthenticationConfigHash {
-						return
-					}
-				}
-
 				authConfig, authConfigHash, err := loadAuthenticationConfig(o.AuthenticationConfigFile)
 				if err != nil {
 					klog.ErrorS(err, "failed to load authentication config")
@@ -781,13 +768,6 @@ func loadAuthenticationConfig(configFilePath string) (*apiserver.AuthenticationC
 	}
 
 	return configuration, contentHash, nil
-}
-
-// getAuthenticationConfigHash reads the authentication configuration file at filepath and returns the hash of the file.
-// It does not attempt to decode or load the config, and serves as a cheap check to determine if the file has changed.
-func getAuthenticationConfigHash(filepath string) (string, error) {
-	_, contentHash, err := readAuthenticationConfigDataAndHash(filepath)
-	return contentHash, err
 }
 
 func readAuthenticationConfigDataAndHash(filepath string) ([]byte, string, error) {
