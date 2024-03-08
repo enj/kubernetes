@@ -145,6 +145,7 @@ type claimsTest struct {
 	wantSkip            bool
 	wantErr             string
 	wantInitErr         string
+	wantHealthErr       string
 	claimToResponseMap  map[string]string
 	openIDConfig        string
 	fetchKeysFromRemote bool
@@ -298,6 +299,25 @@ func (c *claimsTest) run(t *testing.T) {
 	}
 	if expectInitErr {
 		t.Fatalf("wanted initialization error %q but got none", c.wantInitErr)
+	}
+
+	if len(c.wantHealthErr) > 0 {
+		if err := wait.PollUntilContextTimeout(ctx, time.Second, time.Minute, true, func(context.Context) (bool, error) {
+			healthErr := a.HealthCheck()
+			if healthErr == nil {
+				return false, fmt.Errorf("authenticator reported healthy when it should not")
+			}
+
+			if c.wantHealthErr == healthErr.Error() {
+				return true, nil
+			}
+
+			t.Logf("saw health error that did not match: %v", healthErr)
+			return false, nil
+		}); err != nil {
+			t.Fatalf("authenticator did not match wanted health error: %v", err)
+		}
+		return
 	}
 
 	claims := struct{}{}
@@ -2076,6 +2096,26 @@ func TestToken(t *testing.T) {
 			wantInitErr: "oidc: KeySet and DiscoveryURL are mutually exclusive",
 		},
 		{
+			name: "health check failure",
+			options: Options{
+				JWTAuthenticator: apiserver.JWTAuthenticator{
+					Issuer: apiserver.Issuer{
+						URL:       "https://this-will-not-work.notatld",
+						Audiences: []string{"my-client"},
+					},
+					ClaimMappings: apiserver.ClaimMappings{
+						Username: apiserver.PrefixedClaimOrExpression{
+							Claim:  "username",
+							Prefix: pointer.String("prefix:"),
+						},
+					},
+				},
+				SupportedSigningAlgs: []string{"RS256"},
+			},
+			fetchKeysFromRemote: true,
+			wantHealthErr:       `oidc: authenticator for issuer "https://this-will-not-work.notatld" is not healthy: Get "https://this-will-not-work.notatld/.well-known/openid-configuration": dial tcp: lookup this-will-not-work.notatld: no such host`,
+		},
+		{
 			name: "accounts.google.com issuer",
 			options: Options{
 				JWTAuthenticator: apiserver.JWTAuthenticator{
@@ -3321,7 +3361,7 @@ func TestToken(t *testing.T) {
 	var successTestCount, failureTestCount int
 	for _, test := range tests {
 		t.Run(test.name, test.run)
-		if test.wantSkip || test.wantInitErr != "" {
+		if test.wantSkip || len(test.wantInitErr) > 0 || len(test.wantHealthErr) > 0 {
 			continue
 		}
 		// check metrics for success and failure

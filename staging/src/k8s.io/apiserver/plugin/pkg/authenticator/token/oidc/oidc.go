@@ -189,7 +189,7 @@ type jwtAuthenticator struct {
 	// requiredClaims contains the list of claims that must be present in the token.
 	requiredClaims map[string]string
 
-	healthCheck atomic.Pointer[error]
+	healthCheck atomic.Pointer[errorHolder]
 }
 
 // idTokenVerifier is a wrapper around oidc.IDTokenVerifier. It uses the oidc.IDTokenVerifier
@@ -347,6 +347,8 @@ func New(lifecycleCtx context.Context, opts Options) (AuthenticatorTokenWithHeal
 		celMapper:        celMapper,
 		requiredClaims:   requiredClaims,
 	}
+	var noError errorHolder
+	authn.healthCheck.Store(&noError)
 
 	issuerURL := opts.JWTAuthenticator.Issuer.URL
 	if opts.KeySet != nil {
@@ -367,19 +369,23 @@ func New(lifecycleCtx context.Context, opts Options) (AuthenticatorTokenWithHeal
 				provider, err := oidc.NewProvider(lifecycleCtx, issuerURL)
 				if err != nil {
 					klog.Errorf("oidc authenticator: initializing plugin: %v", err)
-					authn.healthCheck.Store(&err)
+					authn.healthCheck.Store(&errorHolder{err: err})
 					return false, nil
 				}
 
 				verifier := provider.Verifier(verifierConfig)
 				authn.setVerifier(&idTokenVerifier{verifier, audiences})
-				authn.healthCheck.Store(nil)
+				authn.healthCheck.Store(&noError)
 				return true, nil
 			})
 		}()
 	}
 
 	return newInstrumentedAuthenticator(issuerURL, authn), nil
+}
+
+type errorHolder struct {
+	err error
 }
 
 // discoveryURLRoundTripper is a http.RoundTripper that rewrites the
@@ -776,8 +782,8 @@ func (a *jwtAuthenticator) AuthenticateToken(ctx context.Context, token string) 
 }
 
 func (a *jwtAuthenticator) HealthCheck() error {
-	if errPtr := a.healthCheck.Load(); errPtr != nil && *errPtr != nil {
-		return fmt.Errorf("oidc: authenticator for issuer %q is not healthy: %w", a.jwtAuthenticator.Issuer.URL, *errPtr)
+	if holder := *a.healthCheck.Load(); holder.err != nil {
+		return fmt.Errorf("oidc: authenticator for issuer %q is not healthy: %w", a.jwtAuthenticator.Issuer.URL, holder.err)
 	}
 
 	// healthCheck can return nil simply because the init loop has not started, so check that the verifier itself is ready
