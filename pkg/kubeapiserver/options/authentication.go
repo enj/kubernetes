@@ -18,7 +18,6 @@ package options
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net/url"
@@ -468,7 +467,7 @@ func (o *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticat
 	// load the authentication config from the file.
 	if len(o.AuthenticationConfigFile) > 0 {
 		var err error
-		if ret.AuthenticationConfig, ret.AuthenticationConfigHash, err = loadAuthenticationConfig(o.AuthenticationConfigFile); err != nil {
+		if ret.AuthenticationConfig, ret.AuthenticationConfigData, err = loadAuthenticationConfig(o.AuthenticationConfigFile); err != nil {
 			return kubeauthenticator.Config{}, err
 		}
 		// all known signing algs are allowed when using authentication config
@@ -650,7 +649,7 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(ctx context.Context, authInfo *ge
 	authInfo.Authenticator = authenticator
 
 	if len(o.AuthenticationConfigFile) > 0 {
-		trackedAuthenticationConfigHash := authenticatorConfig.AuthenticationConfigHash
+		trackedAuthenticationConfigData := authenticatorConfig.AuthenticationConfigData
 		var mu sync.Mutex
 		go filesystem.WatchUntil(
 			ctx,
@@ -663,29 +662,29 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(ctx context.Context, authInfo *ge
 				mu.Lock()
 				defer mu.Unlock()
 
-				authConfig, authConfigHash, err := loadAuthenticationConfig(o.AuthenticationConfigFile)
+				authConfig, authConfigData, err := loadAuthenticationConfig(o.AuthenticationConfigFile)
 				if err != nil {
 					klog.ErrorS(err, "failed to load authentication config")
 					return
 				}
 
-				if authConfigHash == trackedAuthenticationConfigHash {
+				if authConfigData == trackedAuthenticationConfigData {
 					return
 				}
 
 				if err := apiservervalidation.ValidateAuthenticationConfiguration(authConfig, authenticatorConfig.ServiceAccountIssuers).ToAggregate(); err != nil {
 					klog.ErrorS(err, "failed to validate authentication config")
-					// this config is not structurally valid and never will be, update the hash so we stop retrying
-					trackedAuthenticationConfigHash = authConfigHash
+					// this config is not structurally valid and never will be, update the tracker so we stop retrying
+					trackedAuthenticationConfigData = authConfigData
 					return
 				}
 				if err := updateAuthenticationConfig(authConfig); err != nil {
 					klog.ErrorS(err, "failed to update authentication config")
-					// we do not update trackedAuthenticationConfigHash here because this error could eventually resolve as we keep retrying
+					// we do not update the tracker here because this error could eventually resolve as we keep retrying
 					return
 				}
 
-				trackedAuthenticationConfigHash = authConfigHash
+				trackedAuthenticationConfigData = authConfigData
 			},
 			func(err error) { klog.ErrorS(err, "watching authentication config file") },
 		)
@@ -748,11 +747,14 @@ func init() {
 	install.Install(cfgScheme)
 }
 
-// loadAuthenticationConfig parses the authentication configuration from the given file and returns it and the file's hash.
+// loadAuthenticationConfig parses the authentication configuration from the given file and returns it and the file's contents.
 func loadAuthenticationConfig(configFilePath string) (*apiserver.AuthenticationConfiguration, string, error) {
-	data, contentHash, err := readAuthenticationConfigDataAndHash(configFilePath)
+	data, err := os.ReadFile(configFilePath)
 	if err != nil {
 		return nil, "", err
+	}
+	if len(data) == 0 {
+		return nil, "", fmt.Errorf("empty config file %q", configFilePath)
 	}
 
 	decodedObj, err := runtime.Decode(codecs.UniversalDecoder(), data)
@@ -767,24 +769,5 @@ func loadAuthenticationConfig(configFilePath string) (*apiserver.AuthenticationC
 		return nil, "", fmt.Errorf("expected non-nil AuthenticationConfiguration")
 	}
 
-	return configuration, contentHash, nil
-}
-
-func readAuthenticationConfigDataAndHash(filepath string) ([]byte, string, error) {
-	data, err := os.ReadFile(filepath)
-	if err != nil {
-		return nil, "", fmt.Errorf("error reading authentication configuration file %q: %w", filepath, err)
-	}
-	if len(data) == 0 {
-		return nil, "", fmt.Errorf("authentication configuration file is empty: %s", filepath)
-	}
-
-	return data, computeAuthenticationConfigHash(data), nil
-}
-
-// computeAuthenticationConfigHash returns the expected hash for an authentication config file that has been loaded as bytes.
-// We use a hash instead of the raw file contents when tracking changes to avoid holding any sensitive information outside of places where it is needed.
-// This hash must be used in-memory and not externalized to the process because it has no cross-release stability guarantees.
-func computeAuthenticationConfigHash(data []byte) string {
-	return fmt.Sprintf("k8s:authentication:unstable:1:%x", sha256.Sum256(data))
+	return configuration, string(data), nil
 }
