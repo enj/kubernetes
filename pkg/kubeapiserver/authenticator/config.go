@@ -158,47 +158,19 @@ func (config Config) New(serverLifecycle context.Context) (authenticator.Request
 	// update the keys, causing performance hits.
 	var updateAuthenticationConfig func(*apiserver.AuthenticationConfiguration) error
 	if config.AuthenticationConfig != nil {
-		var jwtAuthenticatorPtr atomic.Pointer[jwtAuthenticatorWithCancel]
-		var synchronousInitialization bool
-		updateAuthenticationConfig = func(authConfig *apiserver.AuthenticationConfiguration) error {
-			jwtAuthenticator, err := newJWTAuthenticator(serverLifecycle, authConfig, config.OIDCSigningAlgs, config.APIAudiences, config.ServiceAccountIssuers)
-			if err != nil {
-				return err
-			}
-
-			if synchronousInitialization {
-				var lastErr error
-				if waitErr := wait.PollUntilContextTimeout(serverLifecycle, 10*time.Second, JWTAuthenticatorSynchronousInitializationTimeout, true, func(_ context.Context) (done bool, err error) {
-					lastErr = jwtAuthenticator.healthCheck()
-					return lastErr == nil, nil
-				}); lastErr != nil || waitErr != nil {
-					jwtAuthenticator.cancel()
-					return utilerrors.NewAggregate([]error{lastErr, waitErr}) // filters out nil errors
-				}
-			}
-
-			oldJWTAuthenticator := jwtAuthenticatorPtr.Swap(jwtAuthenticator)
-			if oldJWTAuthenticator != nil {
-				go func() {
-					t := time.NewTimer(time.Minute)
-					defer t.Stop()
-					select {
-					case <-serverLifecycle.Done():
-					case <-t.C:
-					}
-					// TODO maybe track requests so we know when this is safe to do
-					oldJWTAuthenticator.cancel()
-				}()
-			}
-
-			synchronousInitialization = true
-
-			return nil
-		}
-
-		if err := updateAuthenticationConfig(config.AuthenticationConfig); err != nil {
+		initialJWTAuthenticator, err := newJWTAuthenticator(serverLifecycle, config.AuthenticationConfig, config.OIDCSigningAlgs, config.APIAudiences, config.ServiceAccountIssuers)
+		if err != nil {
 			return nil, nil, nil, nil, err
 		}
+
+		jwtAuthenticatorPtr := &atomic.Pointer[jwtAuthenticatorWithCancel]{}
+		jwtAuthenticatorPtr.Store(initialJWTAuthenticator)
+
+		updateAuthenticationConfig = (&authenticationConfigUpdater{
+			serverLifecycle:     serverLifecycle,
+			config:              config,
+			jwtAuthenticatorPtr: jwtAuthenticatorPtr,
+		}).updateAuthenticationConfig
 
 		tokenAuthenticators = append(tokenAuthenticators,
 			authenticator.TokenFunc(func(ctx context.Context, token string) (*authenticator.Response, bool, error) {
@@ -314,6 +286,42 @@ func newJWTAuthenticator(serverLifecycle context.Context, config *apiserver.Auth
 		},
 		cancel: cancel,
 	}, nil
+}
+
+type authenticationConfigUpdater struct {
+	serverLifecycle     context.Context
+	config              Config
+	jwtAuthenticatorPtr *atomic.Pointer[jwtAuthenticatorWithCancel]
+}
+
+func (c *authenticationConfigUpdater) updateAuthenticationConfig(authConfig *apiserver.AuthenticationConfiguration) error {
+	updatedJWTAuthenticator, err := newJWTAuthenticator(c.serverLifecycle, authConfig, c.config.OIDCSigningAlgs, c.config.APIAudiences, c.config.ServiceAccountIssuers)
+	if err != nil {
+		return err
+	}
+
+	var lastErr error
+	if waitErr := wait.PollUntilContextTimeout(c.serverLifecycle, 10*time.Second, JWTAuthenticatorSynchronousInitializationTimeout, true, func(_ context.Context) (done bool, err error) {
+		lastErr = updatedJWTAuthenticator.healthCheck()
+		return lastErr == nil, nil
+	}); lastErr != nil || waitErr != nil {
+		updatedJWTAuthenticator.cancel()
+		return utilerrors.NewAggregate([]error{lastErr, waitErr}) // filters out nil errors
+	}
+
+	oldJWTAuthenticator := c.jwtAuthenticatorPtr.Swap(updatedJWTAuthenticator)
+	go func() {
+		t := time.NewTimer(time.Minute)
+		defer t.Stop()
+		select {
+		case <-c.serverLifecycle.Done():
+		case <-t.C:
+		}
+		// TODO maybe track requests so we know when this is safe to do
+		oldJWTAuthenticator.cancel()
+	}()
+
+	return nil
 }
 
 // IsValidServiceAccountKeyFile returns true if a valid public RSA key can be read from the given file
