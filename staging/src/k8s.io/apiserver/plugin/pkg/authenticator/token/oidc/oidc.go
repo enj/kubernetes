@@ -499,6 +499,7 @@ type claimResolver struct {
 }
 
 // newClaimResolver creates a new resolver for distributed claims.
+// the input ctx is retained and is used as the base context for background requests such as key fetching.
 func newClaimResolver(ctx context.Context, claim string, client *http.Client, config *oidc.Config, audiences sets.Set[string]) *claimResolver {
 	return &claimResolver{
 		ctx:               ctx,
