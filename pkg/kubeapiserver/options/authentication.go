@@ -70,6 +70,10 @@ const (
 	oidcRequiredClaimFlag  = "oidc-required-claim"
 )
 
+// UpdateAuthenticationConfigTimeout controls how long we wait for calls to updateAuthenticationConfig to succeed.
+// Exported as a variable so that it can be overridden in integration tests.
+var UpdateAuthenticationConfigTimeout = time.Minute
+
 // BuiltInAuthenticationOptions contains all build-in authentication options for API Server
 type BuiltInAuthenticationOptions struct {
 	APIAudiences    []string
@@ -678,7 +682,10 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(ctx context.Context, authInfo *ge
 					trackedAuthenticationConfigData = authConfigData
 					return
 				}
-				if err := updateAuthenticationConfig(authConfig); err != nil {
+
+				timeoutCtx, timeoutCancel := context.WithTimeout(ctx, UpdateAuthenticationConfigTimeout)
+				defer timeoutCancel()
+				if err := updateAuthenticationConfig(timeoutCtx, authConfig); err != nil {
 					klog.ErrorS(err, "failed to update authentication config")
 					// we do not update the tracker here because this error could eventually resolve as we keep retrying
 					return

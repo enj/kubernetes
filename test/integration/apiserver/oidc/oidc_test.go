@@ -56,7 +56,7 @@ import (
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	kubeapiserverapptesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
 	"k8s.io/kubernetes/pkg/apis/rbac"
-	"k8s.io/kubernetes/pkg/kubeapiserver/authenticator"
+	"k8s.io/kubernetes/pkg/kubeapiserver/options"
 	"k8s.io/kubernetes/test/integration/framework"
 	utilsoidc "k8s.io/kubernetes/test/utils/oidc"
 	utilsnet "k8s.io/utils/net"
@@ -963,9 +963,9 @@ jwt:
 }
 
 func TestStructuredAuthenticationConfigReload(t *testing.T) {
-	origJWTAuthSyncInitTimeout := authenticator.JWTAuthenticatorSynchronousInitializationTimeout
-	t.Cleanup(func() { authenticator.JWTAuthenticatorSynchronousInitializationTimeout = origJWTAuthSyncInitTimeout })
-	authenticator.JWTAuthenticatorSynchronousInitializationTimeout = 10 * time.Second
+	origUpdateAuthenticationConfigTimeout := options.UpdateAuthenticationConfigTimeout
+	t.Cleanup(func() { options.UpdateAuthenticationConfigTimeout = origUpdateAuthenticationConfigTimeout })
+	options.UpdateAuthenticationConfigTimeout = 10 * time.Second
 
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StructuredAuthenticationConfiguration, true)()
 

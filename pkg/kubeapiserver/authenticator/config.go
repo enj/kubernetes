@@ -53,10 +53,6 @@ import (
 	"k8s.io/kubernetes/pkg/serviceaccount"
 )
 
-// JWTAuthenticatorSynchronousInitializationTimeout controls how long we wait for JWT authenticator readiness.
-// Exported as a variable so that it can be overridden in integration tests.
-var JWTAuthenticatorSynchronousInitializationTimeout = time.Minute
-
 // Config contains the data on how to authenticate a request to the Kube API Server
 type Config struct {
 	Anonymous      bool
@@ -98,7 +94,7 @@ type Config struct {
 
 // New returns an authenticator.Request or an error that supports the standard
 // Kubernetes authentication mechanisms.
-func (config Config) New(serverLifecycle context.Context) (authenticator.Request, func(*apiserver.AuthenticationConfiguration) error, *spec.SecurityDefinitions, spec3.SecuritySchemes, error) {
+func (config Config) New(serverLifecycle context.Context) (authenticator.Request, func(context.Context, *apiserver.AuthenticationConfiguration) error, *spec.SecurityDefinitions, spec3.SecuritySchemes, error) {
 	var authenticators []authenticator.Request
 	var tokenAuthenticators []authenticator.Token
 	securityDefinitionsV2 := spec.SecurityDefinitions{}
@@ -156,7 +152,7 @@ func (config Config) New(serverLifecycle context.Context) (authenticator.Request
 	// cache misses for all requests using the other. While the service account plugin
 	// simply returns an error, the OpenID Connect plugin may query the provider to
 	// update the keys, causing performance hits.
-	var updateAuthenticationConfig func(*apiserver.AuthenticationConfiguration) error
+	var updateAuthenticationConfig func(context.Context, *apiserver.AuthenticationConfiguration) error
 	if config.AuthenticationConfig != nil {
 		initialJWTAuthenticator, err := newJWTAuthenticator(serverLifecycle, config.AuthenticationConfig, config.OIDCSigningAlgs, config.APIAudiences, config.ServiceAccountIssuers)
 		if err != nil {
@@ -294,14 +290,15 @@ type authenticationConfigUpdater struct {
 	jwtAuthenticatorPtr *atomic.Pointer[jwtAuthenticatorWithCancel]
 }
 
-func (c *authenticationConfigUpdater) updateAuthenticationConfig(authConfig *apiserver.AuthenticationConfiguration) error {
+// the input ctx controls the timeout for updateAuthenticationConfig to return, not the lifetime of the constructed authenticators.
+func (c *authenticationConfigUpdater) updateAuthenticationConfig(ctx context.Context, authConfig *apiserver.AuthenticationConfiguration) error {
 	updatedJWTAuthenticator, err := newJWTAuthenticator(c.serverLifecycle, authConfig, c.config.OIDCSigningAlgs, c.config.APIAudiences, c.config.ServiceAccountIssuers)
 	if err != nil {
 		return err
 	}
 
 	var lastErr error
-	if waitErr := wait.PollUntilContextTimeout(c.serverLifecycle, 10*time.Second, JWTAuthenticatorSynchronousInitializationTimeout, true, func(_ context.Context) (done bool, err error) {
+	if waitErr := wait.PollUntilContextCancel(ctx, 10*time.Second, true, func(_ context.Context) (done bool, err error) {
 		lastErr = updatedJWTAuthenticator.healthCheck()
 		return lastErr == nil, nil
 	}); lastErr != nil || waitErr != nil {
