@@ -201,6 +201,11 @@ type idTokenVerifier struct {
 
 func (a *jwtAuthenticator) setVerifier(v *idTokenVerifier) {
 	a.verifier.Store(v)
+	if v != nil {
+		// this must be done after the verifier has been stored so that a nil error
+		// from HealthCheck always means that the authenticator is ready for use.
+		a.healthCheck.Store(&errorHolder{})
+	}
 }
 
 func (a *jwtAuthenticator) idTokenVerifier() (*idTokenVerifier, bool) {
@@ -353,8 +358,9 @@ func New(lifecycleCtx context.Context, opts Options) (AuthenticatorTokenWithHeal
 		celMapper:        celMapper,
 		requiredClaims:   requiredClaims,
 	}
-	var noError errorHolder
-	authn.healthCheck.Store(&noError)
+	authn.healthCheck.Store(&errorHolder{
+		err: fmt.Errorf("oidc: authenticator for issuer %q is not initialized", authn.jwtAuthenticator.Issuer.URL),
+	})
 
 	issuerURL := opts.JWTAuthenticator.Issuer.URL
 	if opts.KeySet != nil {
@@ -381,7 +387,6 @@ func New(lifecycleCtx context.Context, opts Options) (AuthenticatorTokenWithHeal
 
 				verifier := provider.Verifier(verifierConfig)
 				authn.setVerifier(&idTokenVerifier{verifier, audiences})
-				authn.healthCheck.Store(&noError)
 				return true, nil
 			})
 		}()
@@ -791,11 +796,6 @@ func (a *jwtAuthenticator) AuthenticateToken(ctx context.Context, token string) 
 func (a *jwtAuthenticator) HealthCheck() error {
 	if holder := *a.healthCheck.Load(); holder.err != nil {
 		return fmt.Errorf("oidc: authenticator for issuer %q is not healthy: %w", a.jwtAuthenticator.Issuer.URL, holder.err)
-	}
-
-	// healthCheck can return nil simply because the init loop has not started, so check that the verifier itself is ready
-	if _, ok := a.idTokenVerifier(); !ok {
-		return fmt.Errorf("oidc: authenticator for issuer %q is not initialized", a.jwtAuthenticator.Issuer.URL)
 	}
 
 	return nil
