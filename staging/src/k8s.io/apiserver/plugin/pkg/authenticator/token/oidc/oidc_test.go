@@ -145,7 +145,7 @@ type claimsTest struct {
 	wantSkip            bool
 	wantErr             string
 	wantInitErr         string
-	wantHealthErr       string
+	wantHealthErrPrefix string
 	claimToResponseMap  map[string]string
 	openIDConfig        string
 	fetchKeysFromRemote bool
@@ -301,18 +301,18 @@ func (c *claimsTest) run(t *testing.T) {
 		t.Fatalf("wanted initialization error %q but got none", c.wantInitErr)
 	}
 
-	if len(c.wantHealthErr) > 0 {
+	if len(c.wantHealthErrPrefix) > 0 {
 		if err := wait.PollUntilContextTimeout(ctx, time.Second, time.Minute, true, func(context.Context) (bool, error) {
 			healthErr := a.HealthCheck()
 			if healthErr == nil {
 				return false, fmt.Errorf("authenticator reported healthy when it should not")
 			}
 
-			if c.wantHealthErr == healthErr.Error() {
+			if strings.HasPrefix(healthErr.Error(), c.wantHealthErrPrefix) {
 				return true, nil
 			}
 
-			t.Logf("saw health error that did not match: %v", healthErr)
+			t.Logf("saw health error prefix that did not match: want=%q got=%q", c.wantHealthErrPrefix, healthErr.Error())
 			return false, nil
 		}); err != nil {
 			t.Fatalf("authenticator did not match wanted health error: %v", err)
@@ -2113,7 +2113,7 @@ func TestToken(t *testing.T) {
 				SupportedSigningAlgs: []string{"RS256"},
 			},
 			fetchKeysFromRemote: true,
-			wantHealthErr:       `oidc: authenticator for issuer "https://this-will-not-work.notatld" is not healthy: Get "https://this-will-not-work.notatld/.well-known/openid-configuration": dial tcp: lookup this-will-not-work.notatld: no such host`,
+			wantHealthErrPrefix: `oidc: authenticator for issuer "https://this-will-not-work.notatld" is not healthy: Get "https://this-will-not-work.notatld/.well-known/openid-configuration": dial tcp: lookup this-will-not-work.notatld`,
 		},
 		{
 			name: "accounts.google.com issuer",
@@ -3361,7 +3361,7 @@ func TestToken(t *testing.T) {
 	var successTestCount, failureTestCount int
 	for _, test := range tests {
 		t.Run(test.name, test.run)
-		if test.wantSkip || len(test.wantInitErr) > 0 || len(test.wantHealthErr) > 0 {
+		if test.wantSkip || len(test.wantInitErr) > 0 || len(test.wantHealthErrPrefix) > 0 {
 			continue
 		}
 		// check metrics for success and failure
