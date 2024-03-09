@@ -144,7 +144,7 @@ func BuildGenericConfig(
 		return
 	}
 
-	ctx := wait.ContextForChannel(genericConfig.ShutdownInitiatedNotify())
+	ctx := wait.ContextForChannel(genericConfig.DrainedNotify())
 
 	// Authentication.ApplyTo requires already applied OpenAPIConfig and EgressSelector if present
 	if lastErr = s.Authentication.ApplyTo(ctx, &genericConfig.Authentication, genericConfig.SecureServing, genericConfig.EgressSelector, genericConfig.OpenAPIConfig, genericConfig.OpenAPIV3Config, clientgoExternalClient, versionedInformers); lastErr != nil {
