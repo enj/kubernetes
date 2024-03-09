@@ -909,7 +909,7 @@ func TestLoadAuthenticationConfig(t *testing.T) {
 		{
 			name:           "empty file",
 			file:           func() string { return writeTempFile(t, ``) },
-			expectErr:      "empty config file",
+			expectErr:      "empty config data",
 			expectedConfig: nil,
 		},
 		{

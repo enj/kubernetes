@@ -587,6 +587,7 @@ func (o *BuiltInAuthenticationOptions) ToAuthenticationConfig() (kubeauthenticat
 }
 
 // ApplyTo requires already applied OpenAPIConfig and EgressSelector if present.
+// The input context controls the lifecycle of background goroutines started to reload the authentication config file.
 func (o *BuiltInAuthenticationOptions) ApplyTo(ctx context.Context, authInfo *genericapiserver.AuthenticationInfo, secureServing *genericapiserver.SecureServingInfo, egressSelector *egressselector.EgressSelector, openAPIConfig *openapicommon.Config, openAPIV3Config *openapicommon.OpenAPIV3Config, extclient kubernetes.Interface, versionedInformer informers.SharedInformerFactory) error {
 	if o == nil {
 		return nil
@@ -666,19 +667,30 @@ func (o *BuiltInAuthenticationOptions) ApplyTo(ctx context.Context, authInfo *ge
 				mu.Lock()
 				defer mu.Unlock()
 
-				authConfig, authConfigData, err := loadAuthenticationConfig(o.AuthenticationConfigFile)
+				authConfigBytes, err := os.ReadFile(o.AuthenticationConfigFile)
 				if err != nil {
-					klog.ErrorS(err, "failed to load authentication config")
+					klog.ErrorS(err, "failed to read authentication config file")
+					// we do not update the tracker here because this error could eventually resolve as we keep retrying
 					return
 				}
+
+				authConfigData := string(authConfigBytes)
 
 				if authConfigData == trackedAuthenticationConfigData {
 					return
 				}
 
+				authConfig, err := loadAuthenticationConfigFromData(authConfigBytes)
+				if err != nil {
+					klog.ErrorS(err, "failed to load authentication config")
+					// this config is not structurally valid and never will be, update the tracker so we stop retrying
+					trackedAuthenticationConfigData = authConfigData
+					return
+				}
+
 				if err := apiservervalidation.ValidateAuthenticationConfiguration(authConfig, authenticatorConfig.ServiceAccountIssuers).ToAggregate(); err != nil {
 					klog.ErrorS(err, "failed to validate authentication config")
-					// this config is not structurally valid and never will be, update the tracker so we stop retrying
+					// this config is not semantically valid and never will be, update the tracker so we stop retrying
 					trackedAuthenticationConfigData = authConfigData
 					return
 				}
@@ -760,21 +772,31 @@ func loadAuthenticationConfig(configFilePath string) (*apiserver.AuthenticationC
 	if err != nil {
 		return nil, "", err
 	}
+
+	configuration, err := loadAuthenticationConfigFromData(data)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return configuration, string(data), nil
+}
+
+func loadAuthenticationConfigFromData(data []byte) (*apiserver.AuthenticationConfiguration, error) {
 	if len(data) == 0 {
-		return nil, "", fmt.Errorf("empty config file %q", configFilePath)
+		return nil, fmt.Errorf("empty config data")
 	}
 
 	decodedObj, err := runtime.Decode(codecs.UniversalDecoder(), data)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	configuration, ok := decodedObj.(*apiserver.AuthenticationConfiguration)
 	if !ok {
-		return nil, "", fmt.Errorf("expected AuthenticationConfiguration, got %T", decodedObj)
+		return nil, fmt.Errorf("expected AuthenticationConfiguration, got %T", decodedObj)
 	}
 	if configuration == nil { // sanity check, this should never happen but check just in case since we rely on it
-		return nil, "", fmt.Errorf("expected non-nil AuthenticationConfiguration")
+		return nil, fmt.Errorf("expected non-nil AuthenticationConfiguration")
 	}
 
-	return configuration, string(data), nil
+	return configuration, nil
 }
