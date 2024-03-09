@@ -963,9 +963,11 @@ jwt:
 }
 
 func TestStructuredAuthenticationConfigReload(t *testing.T) {
+	const hardCodedTokenCacheTTLAndPollInterval = 10 * time.Second
+
 	origUpdateAuthenticationConfigTimeout := options.UpdateAuthenticationConfigTimeout
 	t.Cleanup(func() { options.UpdateAuthenticationConfigTimeout = origUpdateAuthenticationConfigTimeout })
-	options.UpdateAuthenticationConfigTimeout = 10 * time.Second
+	options.UpdateAuthenticationConfigTimeout = 2 * hardCodedTokenCacheTTLAndPollInterval // needs to be large enough for polling to run multiple times
 
 	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StructuredAuthenticationConfiguration, true)()
 
@@ -1301,15 +1303,13 @@ jwt:
 			err = os.WriteFile(apiServer.ServerOpts.Authentication.AuthenticationConfigFile, []byte(tt.newAuthConfigFn(t, oidcServer.URL(), string(caCert))), 0600)
 			require.NoError(t, err)
 
-			const hardCodedTokenCacheTTL = 10 * time.Second
-
 			if tt.waitAfterConfigSwap {
-				time.Sleep(2 * hardCodedTokenCacheTTL)
+				time.Sleep(options.UpdateAuthenticationConfigTimeout + hardCodedTokenCacheTTLAndPollInterval) // has to be longer than UpdateAuthenticationConfigTimeout
 			}
 
 			if tt.newWantUser != nil {
 				start := time.Now()
-				err = wait.PollUntilContextTimeout(ctx, time.Second, 3*hardCodedTokenCacheTTL, true, func(ctx context.Context) (done bool, err error) {
+				err = wait.PollUntilContextTimeout(ctx, time.Second, 3*hardCodedTokenCacheTTLAndPollInterval, true, func(ctx context.Context) (done bool, err error) {
 					res, err := client.AuthenticationV1().SelfSubjectReviews().Create(ctx, &authenticationv1.SelfSubjectReview{}, metav1.CreateOptions{})
 					if err != nil {
 						if tt.ignoreTransitionErrFn != nil && tt.ignoreTransitionErrFn(err) {
@@ -1319,7 +1319,7 @@ jwt:
 					}
 
 					diff := cmp.Diff(*tt.newWantUser, res.Status.UserInfo)
-					if len(diff) > 0 && time.Since(start) > 2*hardCodedTokenCacheTTL {
+					if len(diff) > 0 && time.Since(start) > 2*hardCodedTokenCacheTTLAndPollInterval {
 						t.Logf("%s saw new user diff:\n%s", t.Name(), diff)
 					}
 
