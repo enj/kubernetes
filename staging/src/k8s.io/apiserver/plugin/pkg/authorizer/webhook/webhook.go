@@ -203,6 +203,9 @@ func (w *WebhookAuthorizer) Authorize(ctx context.Context, attr authorizer.Attri
 			Resource:    attr.GetResource(),
 			Subresource: attr.GetSubresource(),
 			Name:        attr.GetName(),
+
+			LabelSelector: attr.GetLabelSelector(),
+			FieldSelector: attr.GetFieldSelector(),
 		}
 	} else {
 		r.Spec.NonResourceAttributes = &authorizationv1.NonResourceAttributes{

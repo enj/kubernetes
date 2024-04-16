@@ -117,5 +117,8 @@ func GetAuthorizerAttributes(ctx context.Context) (authorizer.Attributes, error)
 	attribs.Namespace = requestInfo.Namespace
 	attribs.Name = requestInfo.Name
 
+	attribs.LabelSelector = requestInfo.LabelSelector
+	attribs.FieldSelector = requestInfo.FieldSelector
+
 	return &attribs, nil
 }

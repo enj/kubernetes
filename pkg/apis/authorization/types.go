@@ -87,6 +87,9 @@ type ResourceAttributes struct {
 	Subresource string
 	// Name is the name of the resource being requested for a "get" or deleted for a "delete". "" (empty) means all.
 	Name string
+
+	LabelSelector map[string]string
+	FieldSelector map[string]string
 }
 
 // NonResourceAttributes includes the authorization attributes available for non-resource requests to the Authorizer interface

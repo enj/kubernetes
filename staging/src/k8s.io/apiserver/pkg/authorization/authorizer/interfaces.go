@@ -62,6 +62,9 @@ type Attributes interface {
 
 	// GetPath returns the path of the request
 	GetPath() string
+
+	GetLabelSelector() map[string]string
+	GetFieldSelector() map[string]string
 }
 
 // Authorizer makes an authorization decision based on information gained by making
@@ -100,6 +103,8 @@ type AttributesRecord struct {
 	Name            string
 	ResourceRequest bool
 	Path            string
+	LabelSelector   map[string]string
+	FieldSelector   map[string]string
 }
 
 func (a AttributesRecord) GetUser() user.Info {
@@ -144,6 +149,14 @@ func (a AttributesRecord) IsResourceRequest() bool {
 
 func (a AttributesRecord) GetPath() string {
 	return a.Path
+}
+
+func (a AttributesRecord) GetLabelSelector() map[string]string {
+	return a.LabelSelector
+}
+
+func (a AttributesRecord) GetFieldSelector() map[string]string {
+	return a.FieldSelector
 }
 
 type Decision int

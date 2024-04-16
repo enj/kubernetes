@@ -26,6 +26,9 @@ import (
 	metainternalversion "k8s.io/apimachinery/pkg/apis/meta/internalversion"
 	metainternalversionscheme "k8s.io/apimachinery/pkg/apis/meta/internalversion/scheme"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	"k8s.io/klog/v2"
@@ -62,6 +65,9 @@ type RequestInfo struct {
 	Name string
 	// Parts are the path parts for the request, always starting with /{resource}/{name}
 	Parts []string
+
+	LabelSelector map[string]string
+	FieldSelector map[string]string
 }
 
 // specialVerbs contains just strings which are used in REST paths for special actions that don't fall under the normal
@@ -79,6 +85,8 @@ var namespaceSubresources = sets.NewString("status", "finalize")
 
 // NamespaceSubResourcesForTest exports namespaceSubresources for testing in pkg/controlplane/master_test.go, so we never drift
 var NamespaceSubResourcesForTest = sets.NewString(namespaceSubresources.List()...)
+
+var verbsThatSupportSelectors = sets.NewString("list", "watch")
 
 type RequestInfoFactory struct {
 	APIPrefixes          sets.String // without leading and trailing slashes
@@ -243,7 +251,65 @@ func (r *RequestInfoFactory) NewRequestInfo(req *http.Request) (*RequestInfo, er
 		requestInfo.Verb = "deletecollection"
 	}
 
+	if verbsThatSupportSelectors.Has(requestInfo.Verb) {
+		opts := metainternalversion.ListOptions{}
+		if err := metainternalversionscheme.ParameterCodec.DecodeParameters(req.URL.Query(), metav1.SchemeGroupVersion, &opts); err == nil {
+			requestInfo.LabelSelector = toSimpleLabelSelector(opts.LabelSelector)
+			requestInfo.FieldSelector = toSimpleFieldSelector(opts.FieldSelector)
+		}
+	}
+
 	return &requestInfo, nil
+}
+
+var equalLabelOperators = sets.New(selection.Equals, selection.DoubleEquals)
+
+func toSimpleLabelSelector(selector labels.Selector) map[string]string {
+	if selector == nil || selector.Empty() {
+		return nil
+	}
+
+	requirements, selectable := selector.Requirements()
+	if !selectable || len(requirements) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(requirements))
+	for _, requirement := range requirements {
+		if !equalLabelOperators.Has(requirement.Operator()) {
+			return nil
+		}
+		vals := requirement.Values()
+		if len(vals) != 1 {
+			return nil
+		}
+		val, ok := vals.PopAny()
+		if !ok {
+			return nil
+		}
+		out[requirement.Key()] = val
+	}
+	return out
+}
+
+func toSimpleFieldSelector(selector fields.Selector) map[string]string {
+	if selector == nil || selector.Empty() {
+		return nil
+	}
+
+	requirements := selector.Requirements()
+	if len(requirements) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(requirements))
+	for _, requirement := range requirements {
+		if !equalLabelOperators.Has(requirement.Operator) {
+			return nil
+		}
+		out[requirement.Field] = requirement.Value
+	}
+	return out
 }
 
 type requestInfoKeyType int
