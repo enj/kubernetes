@@ -37,7 +37,11 @@ spec:
     path: pathValue
     verb: verbValue
   resourceAttributes:
+    fieldSelector:
+      fieldSelectorKey: fieldSelectorValue
     group: groupValue
+    labelSelector:
+      labelSelectorKey: labelSelectorValue
     name: nameValue
     namespace: namespaceValue
     resource: resourceValue

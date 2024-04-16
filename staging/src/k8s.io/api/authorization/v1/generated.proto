@@ -111,6 +111,10 @@ message ResourceAttributes {
   // Name is the name of the resource being requested for a "get" or deleted for a "delete". "" (empty) means all.
   // +optional
   optional string name = 7;
+
+  map<string, string> labelSelector = 8;
+
+  map<string, string> fieldSelector = 9;
 }
 
 // ResourceRule is the list of actions the subject is allowed to perform on resources. The list ordering isn't significant,

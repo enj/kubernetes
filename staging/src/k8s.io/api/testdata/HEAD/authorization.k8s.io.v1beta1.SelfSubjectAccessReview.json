@@ -51,7 +51,13 @@
       "version": "versionValue",
       "resource": "resourceValue",
       "subresource": "subresourceValue",
-      "name": "nameValue"
+      "name": "nameValue",
+      "labelSelector": {
+        "labelSelectorKey": "labelSelectorValue"
+      },
+      "fieldSelector": {
+        "fieldSelectorKey": "fieldSelectorValue"
+      }
     },
     "nonResourceAttributes": {
       "path": "pathValue",
