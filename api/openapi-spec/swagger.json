@@ -3372,9 +3372,21 @@
     "io.k8s.api.authorization.v1.ResourceAttributes": {
       "description": "ResourceAttributes includes the authorization attributes available for resource requests to the Authorizer interface",
       "properties": {
+        "fieldSelector": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
         "group": {
           "description": "Group is the API Group of the Resource.  \"*\" means all.",
           "type": "string"
+        },
+        "labelSelector": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
         },
         "name": {
           "description": "Name is the name of the resource being requested for a \"get\" or deleted for a \"delete\". \"\" (empty) means all.",
@@ -14676,6 +14688,18 @@
           },
           "type": "array",
           "x-kubernetes-list-type": "atomic"
+        },
+        "fieldSelector": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "labelSelector": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
         },
         "nonResourceURLs": {
           "description": "NonResourceURLs is a set of partial urls that a user should have access to.  *s are allowed, but only as the full, final step in the path Since non-resource URLs are not namespaced, this field is only applicable for ClusterRoles referenced from a ClusterRoleBinding. Rules can either apply to API resources (such as \"pods\" or \"secrets\") or non-resource URL paths (such as \"/api\"),  but not both.",

@@ -125,6 +125,10 @@ message PolicyRule {
   // +optional
   // +listType=atomic
   repeated string nonResourceURLs = 6;
+
+  map<string, string> labelSelector = 7;
+
+  map<string, string> fieldSelector = 8;
 }
 
 // Role is a namespaced, logical grouping of PolicyRules that can be referenced as a unit by a RoleBinding.

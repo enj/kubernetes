@@ -11579,6 +11579,16 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             scalar: string
           elementRelationship: atomic
+    - name: fieldSelector
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: labelSelector
+      type:
+        map:
+          elementType:
+            scalar: string
     - name: nonResourceURLs
       type:
         list:
@@ -11742,6 +11752,16 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             scalar: string
           elementRelationship: atomic
+    - name: fieldSelector
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: labelSelector
+      type:
+        map:
+          elementType:
+            scalar: string
     - name: nonResourceURLs
       type:
         list:
@@ -11903,6 +11923,16 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             scalar: string
           elementRelationship: atomic
+    - name: fieldSelector
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: labelSelector
+      type:
+        map:
+          elementType:
+            scalar: string
     - name: nonResourceURLs
       type:
         list:

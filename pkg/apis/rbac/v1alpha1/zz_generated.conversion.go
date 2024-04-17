@@ -323,6 +323,8 @@ func autoConvert_v1alpha1_PolicyRule_To_rbac_PolicyRule(in *v1alpha1.PolicyRule,
 	out.Resources = *(*[]string)(unsafe.Pointer(&in.Resources))
 	out.ResourceNames = *(*[]string)(unsafe.Pointer(&in.ResourceNames))
 	out.NonResourceURLs = *(*[]string)(unsafe.Pointer(&in.NonResourceURLs))
+	out.LabelSelector = *(*map[string]string)(unsafe.Pointer(&in.LabelSelector))
+	out.FieldSelector = *(*map[string]string)(unsafe.Pointer(&in.FieldSelector))
 	return nil
 }
 
@@ -337,6 +339,8 @@ func autoConvert_rbac_PolicyRule_To_v1alpha1_PolicyRule(in *rbac.PolicyRule, out
 	out.Resources = *(*[]string)(unsafe.Pointer(&in.Resources))
 	out.ResourceNames = *(*[]string)(unsafe.Pointer(&in.ResourceNames))
 	out.NonResourceURLs = *(*[]string)(unsafe.Pointer(&in.NonResourceURLs))
+	out.LabelSelector = *(*map[string]string)(unsafe.Pointer(&in.LabelSelector))
+	out.FieldSelector = *(*map[string]string)(unsafe.Pointer(&in.FieldSelector))
 	return nil
 }
 

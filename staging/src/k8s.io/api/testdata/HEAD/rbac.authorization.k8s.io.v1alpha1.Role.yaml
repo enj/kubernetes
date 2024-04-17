@@ -35,6 +35,10 @@ metadata:
 rules:
 - apiGroups:
   - apiGroupsValue
+  fieldSelector:
+    fieldSelectorKey: fieldSelectorValue
+  labelSelector:
+    labelSelectorKey: labelSelectorValue
   nonResourceURLs:
   - nonResourceURLsValue
   resourceNames:

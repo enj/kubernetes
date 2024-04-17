@@ -213,6 +213,20 @@ func (in *PolicyRule) DeepCopyInto(out *PolicyRule) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.LabelSelector != nil {
+		in, out := &in.LabelSelector, &out.LabelSelector
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
+	if in.FieldSelector != nil {
+		in, out := &in.FieldSelector, &out.FieldSelector
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
 	return
 }
 

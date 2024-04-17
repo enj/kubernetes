@@ -59,7 +59,13 @@
       ],
       "nonResourceURLs": [
         "nonResourceURLsValue"
-      ]
+      ],
+      "labelSelector": {
+        "labelSelectorKey": "labelSelectorValue"
+      },
+      "fieldSelector": {
+        "fieldSelectorKey": "fieldSelectorValue"
+      }
     }
   ],
   "aggregationRule": {

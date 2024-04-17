@@ -96,9 +96,23 @@
       "io.k8s.api.authorization.v1.ResourceAttributes": {
         "description": "ResourceAttributes includes the authorization attributes available for resource requests to the Authorizer interface",
         "properties": {
+          "fieldSelector": {
+            "additionalProperties": {
+              "default": "",
+              "type": "string"
+            },
+            "type": "object"
+          },
           "group": {
             "description": "Group is the API Group of the Resource.  \"*\" means all.",
             "type": "string"
+          },
+          "labelSelector": {
+            "additionalProperties": {
+              "default": "",
+              "type": "string"
+            },
+            "type": "object"
           },
           "name": {
             "description": "Name is the name of the resource being requested for a \"get\" or deleted for a \"delete\". \"\" (empty) means all.",

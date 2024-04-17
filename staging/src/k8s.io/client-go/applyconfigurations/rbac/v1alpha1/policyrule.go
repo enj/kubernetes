@@ -21,11 +21,13 @@ package v1alpha1
 // PolicyRuleApplyConfiguration represents an declarative configuration of the PolicyRule type for use
 // with apply.
 type PolicyRuleApplyConfiguration struct {
-	Verbs           []string `json:"verbs,omitempty"`
-	APIGroups       []string `json:"apiGroups,omitempty"`
-	Resources       []string `json:"resources,omitempty"`
-	ResourceNames   []string `json:"resourceNames,omitempty"`
-	NonResourceURLs []string `json:"nonResourceURLs,omitempty"`
+	Verbs           []string          `json:"verbs,omitempty"`
+	APIGroups       []string          `json:"apiGroups,omitempty"`
+	Resources       []string          `json:"resources,omitempty"`
+	ResourceNames   []string          `json:"resourceNames,omitempty"`
+	NonResourceURLs []string          `json:"nonResourceURLs,omitempty"`
+	LabelSelector   map[string]string `json:"labelSelector,omitempty"`
+	FieldSelector   map[string]string `json:"fieldSelector,omitempty"`
 }
 
 // PolicyRuleApplyConfiguration constructs an declarative configuration of the PolicyRule type for use with
@@ -80,6 +82,34 @@ func (b *PolicyRuleApplyConfiguration) WithResourceNames(values ...string) *Poli
 func (b *PolicyRuleApplyConfiguration) WithNonResourceURLs(values ...string) *PolicyRuleApplyConfiguration {
 	for i := range values {
 		b.NonResourceURLs = append(b.NonResourceURLs, values[i])
+	}
+	return b
+}
+
+// WithLabelSelector puts the entries into the LabelSelector field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the LabelSelector field,
+// overwriting an existing map entries in LabelSelector field with the same key.
+func (b *PolicyRuleApplyConfiguration) WithLabelSelector(entries map[string]string) *PolicyRuleApplyConfiguration {
+	if b.LabelSelector == nil && len(entries) > 0 {
+		b.LabelSelector = make(map[string]string, len(entries))
+	}
+	for k, v := range entries {
+		b.LabelSelector[k] = v
+	}
+	return b
+}
+
+// WithFieldSelector puts the entries into the FieldSelector field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the FieldSelector field,
+// overwriting an existing map entries in FieldSelector field with the same key.
+func (b *PolicyRuleApplyConfiguration) WithFieldSelector(entries map[string]string) *PolicyRuleApplyConfiguration {
+	if b.FieldSelector == nil && len(entries) > 0 {
+		b.FieldSelector = make(map[string]string, len(entries))
+	}
+	for k, v := range entries {
+		b.FieldSelector[k] = v
 	}
 	return b
 }
