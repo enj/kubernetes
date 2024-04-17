@@ -102,7 +102,7 @@ func LabelSelectorMatches(rule *rbacv1.PolicyRule, selector map[string]string) b
 		}
 	}
 
-	return false
+	return true
 }
 
 func FieldSelectorMatches(rule *rbacv1.PolicyRule, selector map[string]string) bool {
@@ -116,7 +116,7 @@ func FieldSelectorMatches(rule *rbacv1.PolicyRule, selector map[string]string) b
 		}
 	}
 
-	return false
+	return true
 }
 
 func NonResourceURLMatches(rule *rbacv1.PolicyRule, requestedURL string) bool {
