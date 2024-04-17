@@ -72,6 +72,9 @@ type PolicyRule struct {
 	// +optional
 	// +listType=atomic
 	NonResourceURLs []string `json:"nonResourceURLs,omitempty" protobuf:"bytes,5,rep,name=nonResourceURLs"`
+
+	LabelSelector map[string]string `json:"labelSelector,omitempty" protobuf:"bytes,6,opt,name=labelSelector"`
+	FieldSelector map[string]string `json:"fieldSelector,omitempty" protobuf:"bytes,7,opt,name=fieldSelector"`
 }
 
 // Subject contains a reference to the object or user identities a role binding applies to.  This can either hold a direct API object reference,

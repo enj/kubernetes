@@ -60,6 +60,9 @@ type PolicyRule struct {
 	// Since non-resource URLs are not namespaced, this field is only applicable for ClusterRoles referenced from a ClusterRoleBinding.
 	// Rules can either apply to API resources (such as "pods" or "secrets") or non-resource URL paths (such as "/api"),  but not both.
 	NonResourceURLs []string
+
+	LabelSelector map[string]string
+	FieldSelector map[string]string
 }
 
 // Subject contains a reference to the object or user identities a role binding applies to.  This can either hold a direct API object reference,
