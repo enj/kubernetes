@@ -78,13 +78,14 @@ func (r *REST) Create(ctx context.Context, obj runtime.Object, createValidation 
 		}
 	}
 
-	resourceInfo, nonResourceInfo, incomplete, err := r.ruleResolver.RulesFor(user, namespace)
+	// TODO take allowSelectors as input
+	resourceInfo, nonResourceInfo, incomplete, err := r.ruleResolver.RulesFor(user, namespace, true)
 
 	ret := &authorizationapi.SelfSubjectRulesReview{
 		Status: authorizationapi.SubjectRulesReviewStatus{
 			ResourceRules:    getResourceRules(resourceInfo),
 			NonResourceRules: getNonResourceRules(nonResourceInfo),
-			Incomplete:       incomplete,
+			Incomplete:       incomplete || hasSelectors(resourceInfo),
 		},
 	}
 
@@ -95,6 +96,15 @@ func (r *REST) Create(ctx context.Context, obj runtime.Object, createValidation 
 	return ret, nil
 }
 
+func hasSelectors(infos []authorizer.ResourceRuleInfo) bool {
+	for _, info := range infos {
+		if len(info.GetLabelSelector())+len(info.GetFieldSelector()) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 var _ rest.SingularNameProvider = &REST{}
 
 func (r *REST) GetSingularName() string {
@@ -102,14 +112,21 @@ func (r *REST) GetSingularName() string {
 }
 
 func getResourceRules(infos []authorizer.ResourceRuleInfo) []authorizationapi.ResourceRule {
-	rules := make([]authorizationapi.ResourceRule, len(infos))
-	for i, info := range infos {
-		rules[i] = authorizationapi.ResourceRule{
+	rules := make([]authorizationapi.ResourceRule, 0, len(infos))
+	for _, info := range infos {
+		if len(info.GetLabelSelector())+len(info.GetFieldSelector()) > 0 {
+			continue // skip for now
+		}
+
+		rules = append(rules, authorizationapi.ResourceRule{
 			Verbs:         info.GetVerbs(),
 			APIGroups:     info.GetAPIGroups(),
 			Resources:     info.GetResources(),
 			ResourceNames: info.GetResourceNames(),
-		}
+			// TODO update the API to support:
+			// LabelSelector: info.GetLabelSelector(),
+			// FieldSelector: info.GetFieldSelector(),
+		})
 	}
 	return rules
 }

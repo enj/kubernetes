@@ -65,7 +65,7 @@ func isSimpleResourceRule(rule *rbacv1.PolicyRule) (simpleResource, bool) {
 	resource := simpleResource{}
 
 	// If we have "complex" rule attributes, return early without allocations or expensive comparisons
-	if len(rule.ResourceNames) > 1 || len(rule.NonResourceURLs) > 0 {
+	if len(rule.ResourceNames) > 1 || len(rule.NonResourceURLs) > 0 || len(rule.LabelSelector)+len(rule.FieldSelector) > 0 {
 		return resource, false
 	}
 	// If we have multiple api groups or resources, return early

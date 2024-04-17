@@ -239,7 +239,7 @@ func (pl PolicyList) Authorize(ctx context.Context, a authorizer.Attributes) (au
 }
 
 // RulesFor returns rules for the given user and namespace.
-func (pl PolicyList) RulesFor(user user.Info, namespace string) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
+func (pl PolicyList) RulesFor(user user.Info, namespace string, allowSelectors bool) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
 	var (
 		resourceRules    []authorizer.ResourceRuleInfo
 		nonResourceRules []authorizer.NonResourceRuleInfo

@@ -42,11 +42,11 @@ type AuthorizationRuleResolver interface {
 	// RulesFor returns the list of rules that apply to a given user in a given namespace and error.  If an error is returned, the slice of
 	// PolicyRules may not be complete, but it contains all retrievable rules.  This is done because policy rules are purely additive and policy determinations
 	// can be made on the basis of those rules that are found.
-	RulesFor(user user.Info, namespace string) ([]rbacv1.PolicyRule, error)
+	RulesFor(user user.Info, namespace string, allowSelectors bool) ([]rbacv1.PolicyRule, error)
 
 	// VisitRulesFor invokes visitor() with each rule that applies to a given user in a given namespace, and each error encountered resolving those rules.
 	// If visitor() returns false, visiting is short-circuited.
-	VisitRulesFor(user user.Info, namespace string, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool)
+	VisitRulesFor(user user.Info, namespace string, allowSelectors bool, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, allowSelectors bool, err error) bool)
 }
 
 // ConfirmNoEscalation determines if the roles for a given user in a given namespace encompass the provided role.
@@ -59,7 +59,7 @@ func ConfirmNoEscalation(ctx context.Context, ruleResolver AuthorizationRuleReso
 	}
 	namespace, _ := genericapirequest.NamespaceFrom(ctx)
 
-	ownerRules, err := ruleResolver.RulesFor(user, namespace)
+	ownerRules, err := ruleResolver.RulesFor(user, namespace, false) // for now, skip rules with selectors because they do not cover anything
 	if err != nil {
 		// As per AuthorizationRuleResolver contract, this may return a non fatal error with an incomplete list of policies. Log the error and continue.
 		klog.V(1).Infof("non-fatal error getting local rules for %v: %v", user, err)
@@ -115,9 +115,9 @@ type ClusterRoleBindingLister interface {
 	ListClusterRoleBindings() ([]*rbacv1.ClusterRoleBinding, error)
 }
 
-func (r *DefaultRuleResolver) RulesFor(user user.Info, namespace string) ([]rbacv1.PolicyRule, error) {
+func (r *DefaultRuleResolver) RulesFor(user user.Info, namespace string, allowSelectors bool) ([]rbacv1.PolicyRule, error) {
 	visitor := &ruleAccumulator{}
-	r.VisitRulesFor(user, namespace, visitor.visit)
+	r.VisitRulesFor(user, namespace, allowSelectors, visitor.visit)
 	return visitor.rules, utilerrors.NewAggregate(visitor.errors)
 }
 
@@ -126,9 +126,11 @@ type ruleAccumulator struct {
 	errors []error
 }
 
-func (r *ruleAccumulator) visit(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool {
+func (r *ruleAccumulator) visit(source fmt.Stringer, rule *rbacv1.PolicyRule, allowSelectors bool, err error) bool {
 	if rule != nil {
-		r.rules = append(r.rules, *rule)
+		if allowSelectors || len(rule.LabelSelector)+len(rule.FieldSelector) == 0 {
+			r.rules = append(r.rules, *rule)
+		}
 	}
 	if err != nil {
 		r.errors = append(r.errors, err)
@@ -176,9 +178,9 @@ func (d *roleBindingDescriber) String() string {
 	)
 }
 
-func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool) {
+func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, allowSelectors bool, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, allowSelectors bool, err error) bool) {
 	if clusterRoleBindings, err := r.clusterRoleBindingLister.ListClusterRoleBindings(); err != nil {
-		if !visitor(nil, nil, err) {
+		if !visitor(nil, nil, false, err) {
 			return
 		}
 	} else {
@@ -190,7 +192,7 @@ func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, vi
 			}
 			rules, err := r.GetRoleReferenceRules(clusterRoleBinding.RoleRef, "")
 			if err != nil {
-				if !visitor(nil, nil, err) {
+				if !visitor(nil, nil, false, err) {
 					return
 				}
 				continue
@@ -198,7 +200,7 @@ func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, vi
 			sourceDescriber.binding = clusterRoleBinding
 			sourceDescriber.subject = &clusterRoleBinding.Subjects[subjectIndex]
 			for i := range rules {
-				if !visitor(sourceDescriber, &rules[i], nil) {
+				if !visitor(sourceDescriber, &rules[i], allowSelectors, nil) {
 					return
 				}
 			}
@@ -207,7 +209,7 @@ func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, vi
 
 	if len(namespace) > 0 {
 		if roleBindings, err := r.roleBindingLister.ListRoleBindings(namespace); err != nil {
-			if !visitor(nil, nil, err) {
+			if !visitor(nil, nil, false, err) {
 				return
 			}
 		} else {
@@ -219,7 +221,7 @@ func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, vi
 				}
 				rules, err := r.GetRoleReferenceRules(roleBinding.RoleRef, namespace)
 				if err != nil {
-					if !visitor(nil, nil, err) {
+					if !visitor(nil, nil, false, err) {
 						return
 					}
 					continue
@@ -227,7 +229,7 @@ func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, vi
 				sourceDescriber.binding = roleBinding
 				sourceDescriber.subject = &roleBinding.Subjects[subjectIndex]
 				for i := range rules {
-					if !visitor(sourceDescriber, &rules[i], nil) {
+					if !visitor(sourceDescriber, &rules[i], false, nil) { // for now, even a CR with selectors cannot be used via a role binding
 						return
 					}
 				}

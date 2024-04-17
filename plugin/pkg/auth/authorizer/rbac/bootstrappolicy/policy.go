@@ -125,9 +125,6 @@ func NodeRules() []rbacv1.PolicyRule {
 		// TODO: restrict to the bound node as creator in the NodeRestrictions admission plugin
 		rbacv1helpers.NewRule("create", "update", "patch").Groups(legacyGroup).Resources("events").RuleOrDie(),
 
-		// TODO: restrict to pods scheduled on the bound node once field selectors are supported by list/watch authorization
-		rbacv1helpers.NewRule(Read...).Groups(legacyGroup).Resources("pods").RuleOrDie(),
-
 		// Needed for the node to create/delete mirror pods.
 		// Use the NodeRestriction admission plugin to limit a node to creating/deleting mirror pods bound to itself.
 		rbacv1helpers.NewRule("create", "delete").Groups(legacyGroup).Resources("pods").RuleOrDie(),
@@ -188,6 +185,12 @@ func NodeRules() []rbacv1.PolicyRule {
 	}
 
 	return nodePolicyRules
+}
+
+func NodeRulesWithSelectors(nodeName string) []rbacv1.PolicyRule {
+	return []rbacv1.PolicyRule{
+		rbacv1helpers.NewRule(Read...).Groups(legacyGroup).Resources("pods").FieldSelector("spec.nodeName", nodeName).RuleOrDie(),
+	}
 }
 
 // ClusterRoles returns the cluster roles to bootstrap an API server with
@@ -374,7 +377,7 @@ func ClusterRoles() []rbacv1.ClusterRole {
 		{
 			// a role for nodes to use to have the access they need for running pods
 			ObjectMeta: metav1.ObjectMeta{Name: systemNodeRoleName},
-			Rules:      NodeRules(),
+			Rules:      NodeRules(), // TODO fix that I changed this
 		},
 		{
 			// a role to use for node-problem-detector access.  It does not get bound to default location since

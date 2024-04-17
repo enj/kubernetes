@@ -107,7 +107,7 @@ func (config Config) New(ctx context.Context, serverID string) (authorizer.Autho
 				config.VersionedInformerFactory.Storage().V1().VolumeAttachments(),
 				slices, // Nil check in AddGraphEventHandlers can be removed when always creating this.
 			)
-			r.nodeAuthorizer = node.NewAuthorizer(graph, nodeidentifier.NewDefaultNodeIdentifier(), bootstrappolicy.NodeRules())
+			r.nodeAuthorizer = node.NewAuthorizer(graph, nodeidentifier.NewDefaultNodeIdentifier(), bootstrappolicy.NodeRules(), bootstrappolicy.NodeRulesWithSelectors)
 
 		case authzconfig.AuthorizerType(modes.ModeABAC):
 			var err error

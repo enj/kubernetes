@@ -61,6 +61,8 @@ type NodeAuthorizer struct {
 	identifier nodeidentifier.NodeIdentifier
 	nodeRules  []rbacv1.PolicyRule
 
+	nodeRulesWithSelectors func(nodeName string) []rbacv1.PolicyRule
+
 	// allows overriding for testing
 	features featuregate.FeatureGate
 }
@@ -69,12 +71,14 @@ var _ = authorizer.Authorizer(&NodeAuthorizer{})
 var _ = authorizer.RuleResolver(&NodeAuthorizer{})
 
 // NewAuthorizer returns a new node authorizer
-func NewAuthorizer(graph *Graph, identifier nodeidentifier.NodeIdentifier, rules []rbacv1.PolicyRule) *NodeAuthorizer {
+func NewAuthorizer(graph *Graph, identifier nodeidentifier.NodeIdentifier, rules []rbacv1.PolicyRule, nodeRulesWithSelectors func(nodeName string) []rbacv1.PolicyRule) *NodeAuthorizer {
 	return &NodeAuthorizer{
 		graph:      graph,
 		identifier: identifier,
 		nodeRules:  rules,
 		features:   utilfeature.DefaultFeatureGate,
+
+		nodeRulesWithSelectors: nodeRulesWithSelectors,
 	}
 }
 
@@ -91,7 +95,7 @@ var (
 	csiNodeResource       = storageapi.Resource("csinodes")
 )
 
-func (r *NodeAuthorizer) RulesFor(user user.Info, namespace string) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
+func (r *NodeAuthorizer) RulesFor(user user.Info, namespace string, allowSelectors bool) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
 	if _, isNode := r.identifier.NodeIdentity(user); isNode {
 		// indicate nodes do not have fully enumerated permissions
 		return nil, nil, true, fmt.Errorf("node authorizer does not support user rule resolution")
@@ -142,8 +146,13 @@ func (r *NodeAuthorizer) Authorize(ctx context.Context, attrs authorizer.Attribu
 
 	}
 
+	// handle rules that are custom to each node, note that this could be handled via another case statement above
+	if rbac.RulesAllow(attrs, true, r.nodeRulesWithSelectors(nodeName)...) {
+		return authorizer.DecisionAllow, "", nil
+	}
+
 	// Access to other resources is not subdivided, so just evaluate against the statically defined node rules
-	if rbac.RulesAllow(attrs, r.nodeRules...) {
+	if rbac.RulesAllow(attrs, false, r.nodeRules...) {
 		return authorizer.DecisionAllow, "", nil
 	}
 	return authorizer.DecisionNoOpinion, "", nil
@@ -185,7 +194,7 @@ func (r *NodeAuthorizer) authorizeGet(nodeName string, startingType vertexType, 
 func (r *NodeAuthorizer) authorizeReadNamespacedObject(nodeName string, startingType vertexType, attrs authorizer.Attributes) (authorizer.Decision, string, error) {
 	switch attrs.GetVerb() {
 	case "get", "list", "watch":
-		//ok
+		// ok
 	default:
 		klog.V(2).Infof("NODE DENY: '%s' %#v", nodeName, attrs)
 		return authorizer.DecisionNoOpinion, "can only read resources of this type", nil
@@ -251,7 +260,7 @@ func (r *NodeAuthorizer) authorizeLease(nodeName string, attrs authorizer.Attrib
 	verb := attrs.GetVerb()
 	switch verb {
 	case "get", "create", "update", "patch", "delete":
-		//ok
+		// ok
 	default:
 		klog.V(2).Infof("NODE DENY: '%s' %#v", nodeName, attrs)
 		return authorizer.DecisionNoOpinion, "can only get, create, update, patch, or delete a node lease", nil
@@ -280,7 +289,7 @@ func (r *NodeAuthorizer) authorizeCSINode(nodeName string, attrs authorizer.Attr
 	verb := attrs.GetVerb()
 	switch verb {
 	case "get", "create", "update", "patch", "delete":
-		//ok
+		// ok
 	default:
 		klog.V(2).Infof("NODE DENY: '%s' %#v", nodeName, attrs)
 		return authorizer.DecisionNoOpinion, "can only get, create, update, patch, or delete a CSINode", nil

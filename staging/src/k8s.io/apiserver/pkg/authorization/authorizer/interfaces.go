@@ -83,12 +83,12 @@ func (f AuthorizerFunc) Authorize(ctx context.Context, a Attributes) (Decision, 
 // RuleResolver provides a mechanism for resolving the list of rules that apply to a given user within a namespace.
 type RuleResolver interface {
 	// RulesFor get the list of cluster wide rules, the list of rules in the specific namespace, incomplete status and errors.
-	RulesFor(user user.Info, namespace string) ([]ResourceRuleInfo, []NonResourceRuleInfo, bool, error)
+	RulesFor(user user.Info, namespace string, allowSelectors bool) ([]ResourceRuleInfo, []NonResourceRuleInfo, bool, error)
 }
 
 // RequestAttributesGetter provides a function that extracts Attributes from an http.Request
 type RequestAttributesGetter interface {
-	GetRequestAttributes(user.Info, *http.Request) Attributes
+	GetRequestAttributes(user.Info, *http.Request) Attributes // TODO fix this?  used in kubelet only
 }
 
 // AttributesRecord implements Attributes interface.

@@ -62,11 +62,11 @@ func BreakdownRule(rule rbacv1.PolicyRule) []rbacv1.PolicyRule {
 			for _, verb := range rule.Verbs {
 				if len(rule.ResourceNames) > 0 {
 					for _, resourceName := range rule.ResourceNames {
-						subrules = append(subrules, rbacv1.PolicyRule{APIGroups: []string{group}, Resources: []string{resource}, Verbs: []string{verb}, ResourceNames: []string{resourceName}})
+						subrules = append(subrules, rbacv1.PolicyRule{APIGroups: []string{group}, Resources: []string{resource}, Verbs: []string{verb}, ResourceNames: []string{resourceName}, LabelSelector: rule.LabelSelector, FieldSelector: rule.FieldSelector})
 					}
 
 				} else {
-					subrules = append(subrules, rbacv1.PolicyRule{APIGroups: []string{group}, Resources: []string{resource}, Verbs: []string{verb}})
+					subrules = append(subrules, rbacv1.PolicyRule{APIGroups: []string{group}, Resources: []string{resource}, Verbs: []string{verb}, LabelSelector: rule.LabelSelector, FieldSelector: rule.FieldSelector})
 				}
 
 			}
@@ -156,6 +156,10 @@ func nonResourceURLCovers(ownerPath, subPath string) bool {
 // ruleCovers determines whether the ownerRule (which may have multiple verbs, resources, and resourceNames) covers
 // the subrule (which may only contain at most one verb, resource, and resourceName)
 func ruleCovers(ownerRule, subRule rbacv1.PolicyRule) bool {
+	if len(ownerRule.LabelSelector)+len(ownerRule.FieldSelector) > 0 {
+		return false // for now, rules with selectors cannot cover any other rule
+	}
+
 	verbMatches := has(ownerRule.Verbs, rbacv1.VerbAll) || hasAll(ownerRule.Verbs, subRule.Verbs)
 	groupMatches := has(ownerRule.APIGroups, rbacv1.APIGroupAll) || hasAll(ownerRule.APIGroups, subRule.APIGroups)
 	resourceMatches := resourceCoversAll(ownerRule.Resources, subRule.Resources)

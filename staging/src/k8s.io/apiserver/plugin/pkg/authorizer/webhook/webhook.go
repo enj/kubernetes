@@ -308,7 +308,7 @@ func (w *WebhookAuthorizer) Authorize(ctx context.Context, attr authorizer.Attri
 }
 
 // TODO: need to finish the method to get the rules when using webhook mode
-func (w *WebhookAuthorizer) RulesFor(user user.Info, namespace string) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
+func (w *WebhookAuthorizer) RulesFor(user user.Info, namespace string, allowSelectors bool) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
 	var (
 		resourceRules    []authorizer.ResourceRuleInfo
 		nonResourceRules []authorizer.NonResourceRuleInfo

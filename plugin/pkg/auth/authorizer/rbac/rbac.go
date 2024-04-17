@@ -39,12 +39,12 @@ type RequestToRuleMapper interface {
 	// Any rule returned is still valid, since rules are deny by default.  If you can pass with the rules
 	// supplied, you do not have to fail the request.  If you cannot, you should indicate the error along
 	// with your denial.
-	RulesFor(subject user.Info, namespace string) ([]rbacv1.PolicyRule, error)
+	RulesFor(subject user.Info, namespace string, allowSelectors bool) ([]rbacv1.PolicyRule, error)
 
 	// VisitRulesFor invokes visitor() with each rule that applies to a given user in a given namespace,
 	// and each error encountered resolving those rules. Rule may be nil if err is non-nil.
 	// If visitor() returns false, visiting is short-circuited.
-	VisitRulesFor(user user.Info, namespace string, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool)
+	VisitRulesFor(user user.Info, namespace string, allowSelectors bool, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, allowSelectors bool, err error) bool)
 }
 
 type RBACAuthorizer struct {
@@ -60,8 +60,8 @@ type authorizingVisitor struct {
 	errors  []error
 }
 
-func (v *authorizingVisitor) visit(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool {
-	if rule != nil && RuleAllows(v.requestAttributes, rule) {
+func (v *authorizingVisitor) visit(source fmt.Stringer, rule *rbacv1.PolicyRule, allowSelectors bool, err error) bool {
+	if rule != nil && RuleAllows(v.requestAttributes, rule, allowSelectors) {
 		v.allowed = true
 		v.reason = fmt.Sprintf("RBAC: allowed by %s", source.String())
 		return false
@@ -75,7 +75,7 @@ func (v *authorizingVisitor) visit(source fmt.Stringer, rule *rbacv1.PolicyRule,
 func (r *RBACAuthorizer) Authorize(ctx context.Context, requestAttributes authorizer.Attributes) (authorizer.Decision, string, error) {
 	ruleCheckingVisitor := &authorizingVisitor{requestAttributes: requestAttributes}
 
-	r.authorizationRuleResolver.VisitRulesFor(requestAttributes.GetUser(), requestAttributes.GetNamespace(), ruleCheckingVisitor.visit)
+	r.authorizationRuleResolver.VisitRulesFor(requestAttributes.GetUser(), requestAttributes.GetNamespace(), true, ruleCheckingVisitor.visit)
 	if ruleCheckingVisitor.allowed {
 		return authorizer.DecisionAllow, ruleCheckingVisitor.reason, nil
 	}
@@ -126,13 +126,13 @@ func (r *RBACAuthorizer) Authorize(ctx context.Context, requestAttributes author
 	return authorizer.DecisionNoOpinion, reason, nil
 }
 
-func (r *RBACAuthorizer) RulesFor(user user.Info, namespace string) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
+func (r *RBACAuthorizer) RulesFor(user user.Info, namespace string, allowSelectors bool) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
 	var (
 		resourceRules    []authorizer.ResourceRuleInfo
 		nonResourceRules []authorizer.NonResourceRuleInfo
 	)
 
-	policyRules, err := r.authorizationRuleResolver.RulesFor(user, namespace)
+	policyRules, err := r.authorizationRuleResolver.RulesFor(user, namespace, allowSelectors)
 	for _, policyRule := range policyRules {
 		if len(policyRule.Resources) > 0 {
 			r := authorizer.DefaultResourceRuleInfo{
@@ -165,9 +165,9 @@ func New(roles rbacregistryvalidation.RoleGetter, roleBindings rbacregistryvalid
 	return authorizer
 }
 
-func RulesAllow(requestAttributes authorizer.Attributes, rules ...rbacv1.PolicyRule) bool {
+func RulesAllow(requestAttributes authorizer.Attributes, allowSelectors bool, rules ...rbacv1.PolicyRule) bool {
 	for i := range rules {
-		if RuleAllows(requestAttributes, &rules[i]) {
+		if RuleAllows(requestAttributes, &rules[i], allowSelectors) {
 			return true
 		}
 	}
@@ -175,8 +175,12 @@ func RulesAllow(requestAttributes authorizer.Attributes, rules ...rbacv1.PolicyR
 	return false
 }
 
-func RuleAllows(requestAttributes authorizer.Attributes, rule *rbacv1.PolicyRule) bool {
+func RuleAllows(requestAttributes authorizer.Attributes, rule *rbacv1.PolicyRule, allowSelectors bool) bool {
 	if requestAttributes.IsResourceRequest() {
+		if !allowSelectors && len(rule.LabelSelector)+len(rule.FieldSelector) > 0 {
+			return false // if selectors are not allowed and the rule uses them, fail closed
+		}
+
 		combinedResource := requestAttributes.GetResource()
 		if len(requestAttributes.GetSubresource()) > 0 {
 			combinedResource = requestAttributes.GetResource() + "/" + requestAttributes.GetSubresource()
@@ -185,7 +189,9 @@ func RuleAllows(requestAttributes authorizer.Attributes, rule *rbacv1.PolicyRule
 		return rbacv1helpers.VerbMatches(rule, requestAttributes.GetVerb()) &&
 			rbacv1helpers.APIGroupMatches(rule, requestAttributes.GetAPIGroup()) &&
 			rbacv1helpers.ResourceMatches(rule, combinedResource, requestAttributes.GetSubresource()) &&
-			rbacv1helpers.ResourceNameMatches(rule, requestAttributes.GetName())
+			rbacv1helpers.ResourceNameMatches(rule, requestAttributes.GetName()) &&
+			rbacv1helpers.LabelSelectorMatches(rule, requestAttributes.GetLabelSelector()) &&
+			rbacv1helpers.FieldSelectorMatches(rule, requestAttributes.GetFieldSelector())
 	}
 
 	return rbacv1helpers.VerbMatches(rule, requestAttributes.GetVerb()) &&

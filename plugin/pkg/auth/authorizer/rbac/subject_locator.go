@@ -78,7 +78,7 @@ func (r *SubjectAccessEvaluator) AllowedSubjects(requestAttributes authorizer.At
 				// that does not contain any invalid values
 				errorlist = append(errorlist, err)
 			}
-			if RulesAllow(requestAttributes, rules...) {
+			if RulesAllow(requestAttributes, true, rules...) {
 				subjects = append(subjects, clusterRoleBinding.Subjects...)
 			}
 		}
@@ -97,7 +97,7 @@ func (r *SubjectAccessEvaluator) AllowedSubjects(requestAttributes authorizer.At
 					// that does not contain any invalid values
 					errorlist = append(errorlist, err)
 				}
-				if RulesAllow(requestAttributes, rules...) {
+				if RulesAllow(requestAttributes, false, rules...) {
 					subjects = append(subjects, roleBinding.Subjects...)
 				}
 			}

@@ -91,6 +91,34 @@ func ResourceNameMatches(rule *rbacv1.PolicyRule, requestedName string) bool {
 	return false
 }
 
+func LabelSelectorMatches(rule *rbacv1.PolicyRule, selector map[string]string) bool {
+	if len(rule.LabelSelector) == 0 {
+		return true
+	}
+
+	for k, v := range rule.LabelSelector {
+		if vv, ok := selector[k]; !ok || v != vv {
+			return false
+		}
+	}
+
+	return false
+}
+
+func FieldSelectorMatches(rule *rbacv1.PolicyRule, selector map[string]string) bool {
+	if len(rule.FieldSelector) == 0 {
+		return true
+	}
+
+	for k, v := range rule.FieldSelector {
+		if vv, ok := selector[k]; !ok || v != vv {
+			return false
+		}
+	}
+
+	return false
+}
+
 func NonResourceURLMatches(rule *rbacv1.PolicyRule, requestedURL string) bool {
 	for _, ruleURL := range rule.NonResourceURLs {
 		if ruleURL == rbacv1.NonResourceAll {
@@ -130,6 +158,14 @@ func CompactString(r rbacv1.PolicyRule) string {
 	if len(r.Verbs) > 0 {
 		formatStringParts = append(formatStringParts, "Verbs:%q")
 		formatArgs = append(formatArgs, r.Verbs)
+	}
+	if len(r.LabelSelector) > 0 {
+		formatStringParts = append(formatStringParts, "LabelSelector:%v")
+		formatArgs = append(formatArgs, r.LabelSelector)
+	}
+	if len(r.FieldSelector) > 0 {
+		formatStringParts = append(formatStringParts, "FieldSelector:%v")
+		formatArgs = append(formatArgs, r.FieldSelector)
 	}
 	formatString := "{" + strings.Join(formatStringParts, ", ") + "}"
 	return fmt.Sprintf(formatString, formatArgs...)

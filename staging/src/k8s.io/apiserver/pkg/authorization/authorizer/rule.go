@@ -25,6 +25,9 @@ type ResourceRuleInfo interface {
 	GetResources() []string
 	// GetResourceNames return a white list of names that the rule applies to.
 	GetResourceNames() []string
+
+	GetLabelSelector() map[string]string
+	GetFieldSelector() map[string]string
 }
 
 // DefaultResourceRuleInfo holds information that describes a rule for the resource
@@ -33,6 +36,8 @@ type DefaultResourceRuleInfo struct {
 	APIGroups     []string
 	Resources     []string
 	ResourceNames []string
+	LabelSelector map[string]string
+	FieldSelector map[string]string
 }
 
 func (i *DefaultResourceRuleInfo) GetVerbs() []string {
@@ -49,6 +54,14 @@ func (i *DefaultResourceRuleInfo) GetResources() []string {
 
 func (i *DefaultResourceRuleInfo) GetResourceNames() []string {
 	return i.ResourceNames
+}
+
+func (a *DefaultResourceRuleInfo) GetLabelSelector() map[string]string {
+	return a.LabelSelector
+}
+
+func (a *DefaultResourceRuleInfo) GetFieldSelector() map[string]string {
+	return a.FieldSelector
 }
 
 type NonResourceRuleInfo interface {

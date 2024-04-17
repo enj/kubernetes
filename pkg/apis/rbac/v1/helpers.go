@@ -18,10 +18,9 @@ package v1
 
 import (
 	"fmt"
+	"sort"
 
 	rbacv1 "k8s.io/api/rbac/v1"
-
-	"sort"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -58,6 +57,11 @@ func (r *PolicyRuleBuilder) Names(names ...string) *PolicyRuleBuilder {
 
 func (r *PolicyRuleBuilder) URLs(urls ...string) *PolicyRuleBuilder {
 	r.PolicyRule.NonResourceURLs = append(r.PolicyRule.NonResourceURLs, urls...)
+	return r
+}
+
+func (r *PolicyRuleBuilder) FieldSelector(k, v string) *PolicyRuleBuilder {
+	r.PolicyRule.FieldSelector[k] = v
 	return r
 }
 

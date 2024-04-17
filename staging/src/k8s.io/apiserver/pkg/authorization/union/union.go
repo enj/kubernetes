@@ -77,7 +77,7 @@ func NewRuleResolvers(authorizationHandlers ...authorizer.RuleResolver) authoriz
 }
 
 // RulesFor against a chain of authorizer.RuleResolver objects and returns nil if successful and returns error if unsuccessful
-func (authzHandler unionAuthzRulesHandler) RulesFor(user user.Info, namespace string) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
+func (authzHandler unionAuthzRulesHandler) RulesFor(user user.Info, namespace string, allowSelectors bool) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
 	var (
 		errList              []error
 		resourceRulesList    []authorizer.ResourceRuleInfo
@@ -86,7 +86,7 @@ func (authzHandler unionAuthzRulesHandler) RulesFor(user user.Info, namespace st
 	incompleteStatus := false
 
 	for _, currAuthzHandler := range authzHandler {
-		resourceRules, nonResourceRules, incomplete, err := currAuthzHandler.RulesFor(user, namespace)
+		resourceRules, nonResourceRules, incomplete, err := currAuthzHandler.RulesFor(user, namespace, allowSelectors)
 
 		if incomplete {
 			incompleteStatus = true
