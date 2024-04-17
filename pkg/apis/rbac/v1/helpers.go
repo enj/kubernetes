@@ -21,7 +21,6 @@ import (
 	"sort"
 
 	rbacv1 "k8s.io/api/rbac/v1"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -61,6 +60,9 @@ func (r *PolicyRuleBuilder) URLs(urls ...string) *PolicyRuleBuilder {
 }
 
 func (r *PolicyRuleBuilder) FieldSelector(k, v string) *PolicyRuleBuilder {
+	if r.PolicyRule.FieldSelector == nil {
+		r.PolicyRule.FieldSelector = make(map[string]string)
+	}
 	r.PolicyRule.FieldSelector[k] = v
 	return r
 }
