@@ -31,11 +31,12 @@ import (
 // genGroup produces a file for a group client, e.g. ExtensionsClient for the extension group.
 type genGroup struct {
 	generator.GoGenerator
-	outputPackage string
-	group         string
-	version       string
-	groupGoName   string
-	apiPath       string
+	outputPackage   string
+	group           string
+	version         string
+	groupGoName     string
+	apiPath         string
+	prefersProtobuf bool
 	// types in this group
 	types            []*types.Type
 	imports          namer.ImportTracker
@@ -96,6 +97,7 @@ func (g *genGroup) GenerateType(c *generator.Context, t *types.Type, w io.Writer
 		"Version":                          namer.IC(g.version),
 		"types":                            g.types,
 		"apiPath":                          apiPath(g.group),
+		"prefersProtobuf":                  g.prefersProtobuf,
 		"schemaGroupVersion":               c.Universe.Type(types.Name{Package: "k8s.io/apimachinery/pkg/runtime/schema", Name: "GroupVersion"}),
 		"runtimeAPIVersionInternal":        c.Universe.Variable(types.Name{Package: "k8s.io/apimachinery/pkg/runtime", Name: "APIVersionInternal"}),
 		"restConfig":                       c.Universe.Type(types.Name{Package: "k8s.io/client-go/rest", Name: "Config"}),
@@ -239,6 +241,12 @@ func setConfigDefaults(config *$.restConfig|raw$) error {
 		config.GroupVersion = &gv
 	}
 	config.NegotiatedSerializer = scheme.Codecs
+	$if .prefersProtobuf$
+	if len(config.AcceptContentTypes) == 0 && len(config.ContentType) == 0 {
+		config.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
+		config.ContentType = "application/vnd.kubernetes.protobuf"
+	}
+	$end$
 
 	if config.QPS == 0 {
 		config.QPS = 5
@@ -257,6 +265,12 @@ func setConfigDefaults(config *$.restConfig|raw$) error {
 	config.GroupVersion =  &gv
 	config.APIPath = $.apiPath$
 	config.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
+	$if .prefersProtobuf$
+	if len(config.AcceptContentTypes) == 0 && len(config.ContentType) == 0 {
+		config.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
+		config.ContentType = "application/vnd.kubernetes.protobuf"
+	}
+	$end$
 
 	if config.UserAgent == "" {
 		config.UserAgent = $.restDefaultKubernetesUserAgent|raw$()

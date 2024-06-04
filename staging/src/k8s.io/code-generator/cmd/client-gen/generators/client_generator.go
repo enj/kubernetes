@@ -128,7 +128,7 @@ func DefaultNameSystem() string {
 	return "public"
 }
 
-func targetForGroup(gv clientgentypes.GroupVersion, typeList []*types.Type, clientsetDir, clientsetPkg string, groupPkgName string, groupGoName string, apiPath string, inputPkg string, applyBuilderPkg string, boilerplate []byte) generator.Target {
+func targetForGroup(gv clientgentypes.GroupVersion, typeList []*types.Type, clientsetDir, clientsetPkg string, groupPkgName string, groupGoName string, apiPath string, inputPkg string, applyBuilderPkg string, boilerplate []byte, prefersProtobuf bool) generator.Target {
 	subdir := []string{"typed", strings.ToLower(groupPkgName), strings.ToLower(gv.Version.NonEmpty())}
 	gvDir := filepath.Join(clientsetDir, filepath.Join(subdir...))
 	gvPkg := path.Join(clientsetPkg, path.Join(subdir...))
@@ -176,6 +176,7 @@ func targetForGroup(gv clientgentypes.GroupVersion, typeList []*types.Type, clie
 				version:          gv.Version.String(),
 				groupGoName:      groupGoName,
 				apiPath:          apiPath,
+				prefersProtobuf:  prefersProtobuf,
 				types:            typeList,
 				imports:          generator.NewImportTracker(),
 			})
@@ -424,7 +425,7 @@ func GetTargets(context *generator.Context, args *args.Args) []generator.Target 
 				targetForGroup(
 					gv, orderer.OrderTypes(types), clientsetDir, clientsetPkg,
 					group.PackageName, groupGoNames[gv], args.ClientsetAPIPath,
-					inputPath, args.ApplyConfigurationPackage, boilerplate))
+					inputPath, args.ApplyConfigurationPackage, boilerplate, args.PrefersProtobuf))
 			if args.FakeClient {
 				targetList = append(targetList,
 					fake.TargetForGroup(gv, orderer.OrderTypes(types), clientsetDir, clientsetPkg, group.PackageName, groupGoNames[gv], inputPath, args.ApplyConfigurationPackage, boilerplate))
