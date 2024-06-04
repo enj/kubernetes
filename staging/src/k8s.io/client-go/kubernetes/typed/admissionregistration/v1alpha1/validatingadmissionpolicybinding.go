@@ -69,6 +69,7 @@ func newValidatingAdmissionPolicyBindings(c *AdmissionregistrationV1alpha1Client
 func (c *validatingAdmissionPolicyBindings) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.ValidatingAdmissionPolicyBinding, err error) {
 	result = &v1alpha1.ValidatingAdmissionPolicyBinding{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("validatingadmissionpolicybindings").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
@@ -85,6 +86,7 @@ func (c *validatingAdmissionPolicyBindings) List(ctx context.Context, opts v1.Li
 	}
 	result = &v1alpha1.ValidatingAdmissionPolicyBindingList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("validatingadmissionpolicybindings").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -101,6 +103,7 @@ func (c *validatingAdmissionPolicyBindings) Watch(ctx context.Context, opts v1.L
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Resource("validatingadmissionpolicybindings").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -111,6 +114,7 @@ func (c *validatingAdmissionPolicyBindings) Watch(ctx context.Context, opts v1.L
 func (c *validatingAdmissionPolicyBindings) Create(ctx context.Context, validatingAdmissionPolicyBinding *v1alpha1.ValidatingAdmissionPolicyBinding, opts v1.CreateOptions) (result *v1alpha1.ValidatingAdmissionPolicyBinding, err error) {
 	result = &v1alpha1.ValidatingAdmissionPolicyBinding{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Resource("validatingadmissionpolicybindings").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(validatingAdmissionPolicyBinding).
@@ -123,6 +127,7 @@ func (c *validatingAdmissionPolicyBindings) Create(ctx context.Context, validati
 func (c *validatingAdmissionPolicyBindings) Update(ctx context.Context, validatingAdmissionPolicyBinding *v1alpha1.ValidatingAdmissionPolicyBinding, opts v1.UpdateOptions) (result *v1alpha1.ValidatingAdmissionPolicyBinding, err error) {
 	result = &v1alpha1.ValidatingAdmissionPolicyBinding{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Resource("validatingadmissionpolicybindings").
 		Name(validatingAdmissionPolicyBinding.Name).
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -135,6 +140,7 @@ func (c *validatingAdmissionPolicyBindings) Update(ctx context.Context, validati
 // Delete takes name of the validatingAdmissionPolicyBinding and deletes it. Returns an error if one occurs.
 func (c *validatingAdmissionPolicyBindings) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("validatingadmissionpolicybindings").
 		Name(name).
 		Body(&opts).
@@ -149,6 +155,7 @@ func (c *validatingAdmissionPolicyBindings) DeleteCollection(ctx context.Context
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("validatingadmissionpolicybindings").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -161,6 +168,7 @@ func (c *validatingAdmissionPolicyBindings) DeleteCollection(ctx context.Context
 func (c *validatingAdmissionPolicyBindings) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.ValidatingAdmissionPolicyBinding, err error) {
 	result = &v1alpha1.ValidatingAdmissionPolicyBinding{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Resource("validatingadmissionpolicybindings").
 		Name(name).
 		SubResource(subresources...).
@@ -187,6 +195,7 @@ func (c *validatingAdmissionPolicyBindings) Apply(ctx context.Context, validatin
 	}
 	result = &v1alpha1.ValidatingAdmissionPolicyBinding{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Resource("validatingadmissionpolicybindings").
 		Name(*name).
 		VersionedParams(&patchOpts, scheme.ParameterCodec).

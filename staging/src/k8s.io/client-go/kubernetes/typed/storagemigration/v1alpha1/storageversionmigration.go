@@ -71,6 +71,7 @@ func newStorageVersionMigrations(c *StoragemigrationV1alpha1Client) *storageVers
 func (c *storageVersionMigrations) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.StorageVersionMigration, err error) {
 	result = &v1alpha1.StorageVersionMigration{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("storageversionmigrations").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
@@ -87,6 +88,7 @@ func (c *storageVersionMigrations) List(ctx context.Context, opts v1.ListOptions
 	}
 	result = &v1alpha1.StorageVersionMigrationList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("storageversionmigrations").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -103,6 +105,7 @@ func (c *storageVersionMigrations) Watch(ctx context.Context, opts v1.ListOption
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Resource("storageversionmigrations").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -113,6 +116,7 @@ func (c *storageVersionMigrations) Watch(ctx context.Context, opts v1.ListOption
 func (c *storageVersionMigrations) Create(ctx context.Context, storageVersionMigration *v1alpha1.StorageVersionMigration, opts v1.CreateOptions) (result *v1alpha1.StorageVersionMigration, err error) {
 	result = &v1alpha1.StorageVersionMigration{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Resource("storageversionmigrations").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(storageVersionMigration).
@@ -125,6 +129,7 @@ func (c *storageVersionMigrations) Create(ctx context.Context, storageVersionMig
 func (c *storageVersionMigrations) Update(ctx context.Context, storageVersionMigration *v1alpha1.StorageVersionMigration, opts v1.UpdateOptions) (result *v1alpha1.StorageVersionMigration, err error) {
 	result = &v1alpha1.StorageVersionMigration{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Resource("storageversionmigrations").
 		Name(storageVersionMigration.Name).
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -139,6 +144,7 @@ func (c *storageVersionMigrations) Update(ctx context.Context, storageVersionMig
 func (c *storageVersionMigrations) UpdateStatus(ctx context.Context, storageVersionMigration *v1alpha1.StorageVersionMigration, opts v1.UpdateOptions) (result *v1alpha1.StorageVersionMigration, err error) {
 	result = &v1alpha1.StorageVersionMigration{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Resource("storageversionmigrations").
 		Name(storageVersionMigration.Name).
 		SubResource("status").
@@ -152,6 +158,7 @@ func (c *storageVersionMigrations) UpdateStatus(ctx context.Context, storageVers
 // Delete takes name of the storageVersionMigration and deletes it. Returns an error if one occurs.
 func (c *storageVersionMigrations) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("storageversionmigrations").
 		Name(name).
 		Body(&opts).
@@ -166,6 +173,7 @@ func (c *storageVersionMigrations) DeleteCollection(ctx context.Context, opts v1
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("storageversionmigrations").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -178,6 +186,7 @@ func (c *storageVersionMigrations) DeleteCollection(ctx context.Context, opts v1
 func (c *storageVersionMigrations) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.StorageVersionMigration, err error) {
 	result = &v1alpha1.StorageVersionMigration{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Resource("storageversionmigrations").
 		Name(name).
 		SubResource(subresources...).
@@ -204,6 +213,7 @@ func (c *storageVersionMigrations) Apply(ctx context.Context, storageVersionMigr
 	}
 	result = &v1alpha1.StorageVersionMigration{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Resource("storageversionmigrations").
 		Name(*name).
 		VersionedParams(&patchOpts, scheme.ParameterCodec).
@@ -232,6 +242,7 @@ func (c *storageVersionMigrations) ApplyStatus(ctx context.Context, storageVersi
 
 	result = &v1alpha1.StorageVersionMigration{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Resource("storageversionmigrations").
 		Name(*name).
 		SubResource("status").

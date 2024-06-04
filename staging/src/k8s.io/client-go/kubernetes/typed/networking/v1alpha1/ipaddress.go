@@ -69,6 +69,7 @@ func newIPAddresses(c *NetworkingV1alpha1Client) *iPAddresses {
 func (c *iPAddresses) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.IPAddress, err error) {
 	result = &v1alpha1.IPAddress{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("ipaddresses").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
@@ -85,6 +86,7 @@ func (c *iPAddresses) List(ctx context.Context, opts v1.ListOptions) (result *v1
 	}
 	result = &v1alpha1.IPAddressList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("ipaddresses").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -101,6 +103,7 @@ func (c *iPAddresses) Watch(ctx context.Context, opts v1.ListOptions) (watch.Int
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Resource("ipaddresses").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -111,6 +114,7 @@ func (c *iPAddresses) Watch(ctx context.Context, opts v1.ListOptions) (watch.Int
 func (c *iPAddresses) Create(ctx context.Context, iPAddress *v1alpha1.IPAddress, opts v1.CreateOptions) (result *v1alpha1.IPAddress, err error) {
 	result = &v1alpha1.IPAddress{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Resource("ipaddresses").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(iPAddress).
@@ -123,6 +127,7 @@ func (c *iPAddresses) Create(ctx context.Context, iPAddress *v1alpha1.IPAddress,
 func (c *iPAddresses) Update(ctx context.Context, iPAddress *v1alpha1.IPAddress, opts v1.UpdateOptions) (result *v1alpha1.IPAddress, err error) {
 	result = &v1alpha1.IPAddress{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Resource("ipaddresses").
 		Name(iPAddress.Name).
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -135,6 +140,7 @@ func (c *iPAddresses) Update(ctx context.Context, iPAddress *v1alpha1.IPAddress,
 // Delete takes name of the iPAddress and deletes it. Returns an error if one occurs.
 func (c *iPAddresses) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("ipaddresses").
 		Name(name).
 		Body(&opts).
@@ -149,6 +155,7 @@ func (c *iPAddresses) DeleteCollection(ctx context.Context, opts v1.DeleteOption
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("ipaddresses").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -161,6 +168,7 @@ func (c *iPAddresses) DeleteCollection(ctx context.Context, opts v1.DeleteOption
 func (c *iPAddresses) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.IPAddress, err error) {
 	result = &v1alpha1.IPAddress{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Resource("ipaddresses").
 		Name(name).
 		SubResource(subresources...).
@@ -187,6 +195,7 @@ func (c *iPAddresses) Apply(ctx context.Context, iPAddress *networkingv1alpha1.I
 	}
 	result = &v1alpha1.IPAddress{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Resource("ipaddresses").
 		Name(*name).
 		VersionedParams(&patchOpts, scheme.ParameterCodec).

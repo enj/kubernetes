@@ -69,6 +69,7 @@ func newClusterTrustBundles(c *CertificatesV1alpha1Client) *clusterTrustBundles 
 func (c *clusterTrustBundles) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.ClusterTrustBundle, err error) {
 	result = &v1alpha1.ClusterTrustBundle{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("clustertrustbundles").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
@@ -85,6 +86,7 @@ func (c *clusterTrustBundles) List(ctx context.Context, opts v1.ListOptions) (re
 	}
 	result = &v1alpha1.ClusterTrustBundleList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("clustertrustbundles").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -101,6 +103,7 @@ func (c *clusterTrustBundles) Watch(ctx context.Context, opts v1.ListOptions) (w
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Resource("clustertrustbundles").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -111,6 +114,7 @@ func (c *clusterTrustBundles) Watch(ctx context.Context, opts v1.ListOptions) (w
 func (c *clusterTrustBundles) Create(ctx context.Context, clusterTrustBundle *v1alpha1.ClusterTrustBundle, opts v1.CreateOptions) (result *v1alpha1.ClusterTrustBundle, err error) {
 	result = &v1alpha1.ClusterTrustBundle{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Resource("clustertrustbundles").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(clusterTrustBundle).
@@ -123,6 +127,7 @@ func (c *clusterTrustBundles) Create(ctx context.Context, clusterTrustBundle *v1
 func (c *clusterTrustBundles) Update(ctx context.Context, clusterTrustBundle *v1alpha1.ClusterTrustBundle, opts v1.UpdateOptions) (result *v1alpha1.ClusterTrustBundle, err error) {
 	result = &v1alpha1.ClusterTrustBundle{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Resource("clustertrustbundles").
 		Name(clusterTrustBundle.Name).
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -135,6 +140,7 @@ func (c *clusterTrustBundles) Update(ctx context.Context, clusterTrustBundle *v1
 // Delete takes name of the clusterTrustBundle and deletes it. Returns an error if one occurs.
 func (c *clusterTrustBundles) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("clustertrustbundles").
 		Name(name).
 		Body(&opts).
@@ -149,6 +155,7 @@ func (c *clusterTrustBundles) DeleteCollection(ctx context.Context, opts v1.Dele
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("clustertrustbundles").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -161,6 +168,7 @@ func (c *clusterTrustBundles) DeleteCollection(ctx context.Context, opts v1.Dele
 func (c *clusterTrustBundles) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.ClusterTrustBundle, err error) {
 	result = &v1alpha1.ClusterTrustBundle{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Resource("clustertrustbundles").
 		Name(name).
 		SubResource(subresources...).
@@ -187,6 +195,7 @@ func (c *clusterTrustBundles) Apply(ctx context.Context, clusterTrustBundle *cer
 	}
 	result = &v1alpha1.ClusterTrustBundle{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Resource("clustertrustbundles").
 		Name(*name).
 		VersionedParams(&patchOpts, scheme.ParameterCodec).

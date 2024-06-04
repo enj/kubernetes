@@ -71,6 +71,7 @@ func newPodTemplates(c *CoreV1Client, namespace string) *podTemplates {
 func (c *podTemplates) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.PodTemplate, err error) {
 	result = &v1.PodTemplate{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podtemplates").
 		Name(name).
@@ -88,6 +89,7 @@ func (c *podTemplates) List(ctx context.Context, opts metav1.ListOptions) (resul
 	}
 	result = &v1.PodTemplateList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podtemplates").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -105,6 +107,7 @@ func (c *podTemplates) Watch(ctx context.Context, opts metav1.ListOptions) (watc
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podtemplates").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -116,6 +119,7 @@ func (c *podTemplates) Watch(ctx context.Context, opts metav1.ListOptions) (watc
 func (c *podTemplates) Create(ctx context.Context, podTemplate *v1.PodTemplate, opts metav1.CreateOptions) (result *v1.PodTemplate, err error) {
 	result = &v1.PodTemplate{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podtemplates").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -129,6 +133,7 @@ func (c *podTemplates) Create(ctx context.Context, podTemplate *v1.PodTemplate, 
 func (c *podTemplates) Update(ctx context.Context, podTemplate *v1.PodTemplate, opts metav1.UpdateOptions) (result *v1.PodTemplate, err error) {
 	result = &v1.PodTemplate{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podtemplates").
 		Name(podTemplate.Name).
@@ -142,6 +147,7 @@ func (c *podTemplates) Update(ctx context.Context, podTemplate *v1.PodTemplate, 
 // Delete takes name of the podTemplate and deletes it. Returns an error if one occurs.
 func (c *podTemplates) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podtemplates").
 		Name(name).
@@ -157,6 +163,7 @@ func (c *podTemplates) DeleteCollection(ctx context.Context, opts metav1.DeleteO
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podtemplates").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
@@ -170,6 +177,7 @@ func (c *podTemplates) DeleteCollection(ctx context.Context, opts metav1.DeleteO
 func (c *podTemplates) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.PodTemplate, err error) {
 	result = &v1.PodTemplate{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podtemplates").
 		Name(name).
@@ -197,6 +205,7 @@ func (c *podTemplates) Apply(ctx context.Context, podTemplate *corev1.PodTemplat
 	}
 	result = &v1.PodTemplate{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podtemplates").
 		Name(*name).

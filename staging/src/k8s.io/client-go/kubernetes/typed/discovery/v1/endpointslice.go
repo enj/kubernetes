@@ -71,6 +71,7 @@ func newEndpointSlices(c *DiscoveryV1Client, namespace string) *endpointSlices {
 func (c *endpointSlices) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.EndpointSlice, err error) {
 	result = &v1.EndpointSlice{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("endpointslices").
 		Name(name).
@@ -88,6 +89,7 @@ func (c *endpointSlices) List(ctx context.Context, opts metav1.ListOptions) (res
 	}
 	result = &v1.EndpointSliceList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("endpointslices").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -105,6 +107,7 @@ func (c *endpointSlices) Watch(ctx context.Context, opts metav1.ListOptions) (wa
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("endpointslices").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -116,6 +119,7 @@ func (c *endpointSlices) Watch(ctx context.Context, opts metav1.ListOptions) (wa
 func (c *endpointSlices) Create(ctx context.Context, endpointSlice *v1.EndpointSlice, opts metav1.CreateOptions) (result *v1.EndpointSlice, err error) {
 	result = &v1.EndpointSlice{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("endpointslices").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -129,6 +133,7 @@ func (c *endpointSlices) Create(ctx context.Context, endpointSlice *v1.EndpointS
 func (c *endpointSlices) Update(ctx context.Context, endpointSlice *v1.EndpointSlice, opts metav1.UpdateOptions) (result *v1.EndpointSlice, err error) {
 	result = &v1.EndpointSlice{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("endpointslices").
 		Name(endpointSlice.Name).
@@ -142,6 +147,7 @@ func (c *endpointSlices) Update(ctx context.Context, endpointSlice *v1.EndpointS
 // Delete takes name of the endpointSlice and deletes it. Returns an error if one occurs.
 func (c *endpointSlices) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("endpointslices").
 		Name(name).
@@ -157,6 +163,7 @@ func (c *endpointSlices) DeleteCollection(ctx context.Context, opts metav1.Delet
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("endpointslices").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
@@ -170,6 +177,7 @@ func (c *endpointSlices) DeleteCollection(ctx context.Context, opts metav1.Delet
 func (c *endpointSlices) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.EndpointSlice, err error) {
 	result = &v1.EndpointSlice{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("endpointslices").
 		Name(name).
@@ -197,6 +205,7 @@ func (c *endpointSlices) Apply(ctx context.Context, endpointSlice *discoveryv1.E
 	}
 	result = &v1.EndpointSlice{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("endpointslices").
 		Name(*name).

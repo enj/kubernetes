@@ -71,6 +71,7 @@ func newEvents(c *EventsV1beta1Client, namespace string) *events {
 func (c *events) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1beta1.Event, err error) {
 	result = &v1beta1.Event{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("events").
 		Name(name).
@@ -88,6 +89,7 @@ func (c *events) List(ctx context.Context, opts v1.ListOptions) (result *v1beta1
 	}
 	result = &v1beta1.EventList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("events").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -105,6 +107,7 @@ func (c *events) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interfac
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("events").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -116,6 +119,7 @@ func (c *events) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interfac
 func (c *events) Create(ctx context.Context, event *v1beta1.Event, opts v1.CreateOptions) (result *v1beta1.Event, err error) {
 	result = &v1beta1.Event{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("events").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -129,6 +133,7 @@ func (c *events) Create(ctx context.Context, event *v1beta1.Event, opts v1.Creat
 func (c *events) Update(ctx context.Context, event *v1beta1.Event, opts v1.UpdateOptions) (result *v1beta1.Event, err error) {
 	result = &v1beta1.Event{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("events").
 		Name(event.Name).
@@ -142,6 +147,7 @@ func (c *events) Update(ctx context.Context, event *v1beta1.Event, opts v1.Updat
 // Delete takes name of the event and deletes it. Returns an error if one occurs.
 func (c *events) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("events").
 		Name(name).
@@ -157,6 +163,7 @@ func (c *events) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, li
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("events").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
@@ -170,6 +177,7 @@ func (c *events) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, li
 func (c *events) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1beta1.Event, err error) {
 	result = &v1beta1.Event{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("events").
 		Name(name).
@@ -197,6 +205,7 @@ func (c *events) Apply(ctx context.Context, event *eventsv1beta1.EventApplyConfi
 	}
 	result = &v1beta1.Event{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("events").
 		Name(*name).

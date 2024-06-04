@@ -73,6 +73,7 @@ func newPodSchedulingContexts(c *ResourceV1alpha2Client, namespace string) *podS
 func (c *podSchedulingContexts) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha2.PodSchedulingContext, err error) {
 	result = &v1alpha2.PodSchedulingContext{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podschedulingcontexts").
 		Name(name).
@@ -90,6 +91,7 @@ func (c *podSchedulingContexts) List(ctx context.Context, opts v1.ListOptions) (
 	}
 	result = &v1alpha2.PodSchedulingContextList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podschedulingcontexts").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -107,6 +109,7 @@ func (c *podSchedulingContexts) Watch(ctx context.Context, opts v1.ListOptions) 
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podschedulingcontexts").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -118,6 +121,7 @@ func (c *podSchedulingContexts) Watch(ctx context.Context, opts v1.ListOptions) 
 func (c *podSchedulingContexts) Create(ctx context.Context, podSchedulingContext *v1alpha2.PodSchedulingContext, opts v1.CreateOptions) (result *v1alpha2.PodSchedulingContext, err error) {
 	result = &v1alpha2.PodSchedulingContext{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podschedulingcontexts").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -131,6 +135,7 @@ func (c *podSchedulingContexts) Create(ctx context.Context, podSchedulingContext
 func (c *podSchedulingContexts) Update(ctx context.Context, podSchedulingContext *v1alpha2.PodSchedulingContext, opts v1.UpdateOptions) (result *v1alpha2.PodSchedulingContext, err error) {
 	result = &v1alpha2.PodSchedulingContext{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podschedulingcontexts").
 		Name(podSchedulingContext.Name).
@@ -146,6 +151,7 @@ func (c *podSchedulingContexts) Update(ctx context.Context, podSchedulingContext
 func (c *podSchedulingContexts) UpdateStatus(ctx context.Context, podSchedulingContext *v1alpha2.PodSchedulingContext, opts v1.UpdateOptions) (result *v1alpha2.PodSchedulingContext, err error) {
 	result = &v1alpha2.PodSchedulingContext{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podschedulingcontexts").
 		Name(podSchedulingContext.Name).
@@ -160,6 +166,7 @@ func (c *podSchedulingContexts) UpdateStatus(ctx context.Context, podSchedulingC
 // Delete takes name of the podSchedulingContext and deletes it. Returns an error if one occurs.
 func (c *podSchedulingContexts) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podschedulingcontexts").
 		Name(name).
@@ -175,6 +182,7 @@ func (c *podSchedulingContexts) DeleteCollection(ctx context.Context, opts v1.De
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podschedulingcontexts").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
@@ -188,6 +196,7 @@ func (c *podSchedulingContexts) DeleteCollection(ctx context.Context, opts v1.De
 func (c *podSchedulingContexts) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha2.PodSchedulingContext, err error) {
 	result = &v1alpha2.PodSchedulingContext{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podschedulingcontexts").
 		Name(name).
@@ -215,6 +224,7 @@ func (c *podSchedulingContexts) Apply(ctx context.Context, podSchedulingContext 
 	}
 	result = &v1alpha2.PodSchedulingContext{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podschedulingcontexts").
 		Name(*name).
@@ -244,6 +254,7 @@ func (c *podSchedulingContexts) ApplyStatus(ctx context.Context, podSchedulingCo
 
 	result = &v1alpha2.PodSchedulingContext{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("podschedulingcontexts").
 		Name(*name).

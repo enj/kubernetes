@@ -69,6 +69,7 @@ func newResourceClasses(c *ResourceV1alpha2Client) *resourceClasses {
 func (c *resourceClasses) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha2.ResourceClass, err error) {
 	result = &v1alpha2.ResourceClass{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("resourceclasses").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
@@ -85,6 +86,7 @@ func (c *resourceClasses) List(ctx context.Context, opts v1.ListOptions) (result
 	}
 	result = &v1alpha2.ResourceClassList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("resourceclasses").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -101,6 +103,7 @@ func (c *resourceClasses) Watch(ctx context.Context, opts v1.ListOptions) (watch
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Resource("resourceclasses").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -111,6 +114,7 @@ func (c *resourceClasses) Watch(ctx context.Context, opts v1.ListOptions) (watch
 func (c *resourceClasses) Create(ctx context.Context, resourceClass *v1alpha2.ResourceClass, opts v1.CreateOptions) (result *v1alpha2.ResourceClass, err error) {
 	result = &v1alpha2.ResourceClass{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Resource("resourceclasses").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(resourceClass).
@@ -123,6 +127,7 @@ func (c *resourceClasses) Create(ctx context.Context, resourceClass *v1alpha2.Re
 func (c *resourceClasses) Update(ctx context.Context, resourceClass *v1alpha2.ResourceClass, opts v1.UpdateOptions) (result *v1alpha2.ResourceClass, err error) {
 	result = &v1alpha2.ResourceClass{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Resource("resourceclasses").
 		Name(resourceClass.Name).
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -135,6 +140,7 @@ func (c *resourceClasses) Update(ctx context.Context, resourceClass *v1alpha2.Re
 // Delete takes name of the resourceClass and deletes it. Returns an error if one occurs.
 func (c *resourceClasses) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("resourceclasses").
 		Name(name).
 		Body(&opts).
@@ -149,6 +155,7 @@ func (c *resourceClasses) DeleteCollection(ctx context.Context, opts v1.DeleteOp
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("resourceclasses").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -161,6 +168,7 @@ func (c *resourceClasses) DeleteCollection(ctx context.Context, opts v1.DeleteOp
 func (c *resourceClasses) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha2.ResourceClass, err error) {
 	result = &v1alpha2.ResourceClass{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Resource("resourceclasses").
 		Name(name).
 		SubResource(subresources...).
@@ -187,6 +195,7 @@ func (c *resourceClasses) Apply(ctx context.Context, resourceClass *resourcev1al
 	}
 	result = &v1alpha2.ResourceClass{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Resource("resourceclasses").
 		Name(*name).
 		VersionedParams(&patchOpts, scheme.ParameterCodec).

@@ -71,6 +71,7 @@ func newLeases(c *CoordinationV1Client, namespace string) *leases {
 func (c *leases) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.Lease, err error) {
 	result = &v1.Lease{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("leases").
 		Name(name).
@@ -88,6 +89,7 @@ func (c *leases) List(ctx context.Context, opts metav1.ListOptions) (result *v1.
 	}
 	result = &v1.LeaseList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("leases").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -105,6 +107,7 @@ func (c *leases) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Inte
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("leases").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -116,6 +119,7 @@ func (c *leases) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Inte
 func (c *leases) Create(ctx context.Context, lease *v1.Lease, opts metav1.CreateOptions) (result *v1.Lease, err error) {
 	result = &v1.Lease{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("leases").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -129,6 +133,7 @@ func (c *leases) Create(ctx context.Context, lease *v1.Lease, opts metav1.Create
 func (c *leases) Update(ctx context.Context, lease *v1.Lease, opts metav1.UpdateOptions) (result *v1.Lease, err error) {
 	result = &v1.Lease{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("leases").
 		Name(lease.Name).
@@ -142,6 +147,7 @@ func (c *leases) Update(ctx context.Context, lease *v1.Lease, opts metav1.Update
 // Delete takes name of the lease and deletes it. Returns an error if one occurs.
 func (c *leases) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("leases").
 		Name(name).
@@ -157,6 +163,7 @@ func (c *leases) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("leases").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
@@ -170,6 +177,7 @@ func (c *leases) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions
 func (c *leases) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.Lease, err error) {
 	result = &v1.Lease{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("leases").
 		Name(name).
@@ -197,6 +205,7 @@ func (c *leases) Apply(ctx context.Context, lease *coordinationv1.LeaseApplyConf
 	}
 	result = &v1.Lease{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("leases").
 		Name(*name).

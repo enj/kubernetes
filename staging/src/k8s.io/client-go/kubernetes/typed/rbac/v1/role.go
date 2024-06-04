@@ -71,6 +71,7 @@ func newRoles(c *RbacV1Client, namespace string) *roles {
 func (c *roles) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.Role, err error) {
 	result = &v1.Role{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("roles").
 		Name(name).
@@ -88,6 +89,7 @@ func (c *roles) List(ctx context.Context, opts metav1.ListOptions) (result *v1.R
 	}
 	result = &v1.RoleList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("roles").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -105,6 +107,7 @@ func (c *roles) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Inter
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("roles").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -116,6 +119,7 @@ func (c *roles) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Inter
 func (c *roles) Create(ctx context.Context, role *v1.Role, opts metav1.CreateOptions) (result *v1.Role, err error) {
 	result = &v1.Role{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("roles").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -129,6 +133,7 @@ func (c *roles) Create(ctx context.Context, role *v1.Role, opts metav1.CreateOpt
 func (c *roles) Update(ctx context.Context, role *v1.Role, opts metav1.UpdateOptions) (result *v1.Role, err error) {
 	result = &v1.Role{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("roles").
 		Name(role.Name).
@@ -142,6 +147,7 @@ func (c *roles) Update(ctx context.Context, role *v1.Role, opts metav1.UpdateOpt
 // Delete takes name of the role and deletes it. Returns an error if one occurs.
 func (c *roles) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("roles").
 		Name(name).
@@ -157,6 +163,7 @@ func (c *roles) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions,
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("roles").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
@@ -170,6 +177,7 @@ func (c *roles) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions,
 func (c *roles) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.Role, err error) {
 	result = &v1.Role{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("roles").
 		Name(name).
@@ -197,6 +205,7 @@ func (c *roles) Apply(ctx context.Context, role *rbacv1.RoleApplyConfiguration, 
 	}
 	result = &v1.Role{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("roles").
 		Name(*name).

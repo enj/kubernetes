@@ -57,6 +57,7 @@ func newLocalSubjectAccessReviews(c *AuthorizationV1Client, namespace string) *l
 func (c *localSubjectAccessReviews) Create(ctx context.Context, localSubjectAccessReview *v1.LocalSubjectAccessReview, opts metav1.CreateOptions) (result *v1.LocalSubjectAccessReview, err error) {
 	result = &v1.LocalSubjectAccessReview{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("localsubjectaccessreviews").
 		VersionedParams(&opts, scheme.ParameterCodec).

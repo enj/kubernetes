@@ -69,6 +69,7 @@ func newResourceSlices(c *ResourceV1alpha2Client) *resourceSlices {
 func (c *resourceSlices) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha2.ResourceSlice, err error) {
 	result = &v1alpha2.ResourceSlice{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("resourceslices").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
@@ -85,6 +86,7 @@ func (c *resourceSlices) List(ctx context.Context, opts v1.ListOptions) (result 
 	}
 	result = &v1alpha2.ResourceSliceList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("resourceslices").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -101,6 +103,7 @@ func (c *resourceSlices) Watch(ctx context.Context, opts v1.ListOptions) (watch.
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Resource("resourceslices").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -111,6 +114,7 @@ func (c *resourceSlices) Watch(ctx context.Context, opts v1.ListOptions) (watch.
 func (c *resourceSlices) Create(ctx context.Context, resourceSlice *v1alpha2.ResourceSlice, opts v1.CreateOptions) (result *v1alpha2.ResourceSlice, err error) {
 	result = &v1alpha2.ResourceSlice{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Resource("resourceslices").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(resourceSlice).
@@ -123,6 +127,7 @@ func (c *resourceSlices) Create(ctx context.Context, resourceSlice *v1alpha2.Res
 func (c *resourceSlices) Update(ctx context.Context, resourceSlice *v1alpha2.ResourceSlice, opts v1.UpdateOptions) (result *v1alpha2.ResourceSlice, err error) {
 	result = &v1alpha2.ResourceSlice{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Resource("resourceslices").
 		Name(resourceSlice.Name).
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -135,6 +140,7 @@ func (c *resourceSlices) Update(ctx context.Context, resourceSlice *v1alpha2.Res
 // Delete takes name of the resourceSlice and deletes it. Returns an error if one occurs.
 func (c *resourceSlices) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("resourceslices").
 		Name(name).
 		Body(&opts).
@@ -149,6 +155,7 @@ func (c *resourceSlices) DeleteCollection(ctx context.Context, opts v1.DeleteOpt
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("resourceslices").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -161,6 +168,7 @@ func (c *resourceSlices) DeleteCollection(ctx context.Context, opts v1.DeleteOpt
 func (c *resourceSlices) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha2.ResourceSlice, err error) {
 	result = &v1alpha2.ResourceSlice{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Resource("resourceslices").
 		Name(name).
 		SubResource(subresources...).
@@ -187,6 +195,7 @@ func (c *resourceSlices) Apply(ctx context.Context, resourceSlice *resourcev1alp
 	}
 	result = &v1alpha2.ResourceSlice{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Resource("resourceslices").
 		Name(*name).
 		VersionedParams(&patchOpts, scheme.ParameterCodec).

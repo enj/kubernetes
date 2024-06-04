@@ -69,6 +69,7 @@ func newVolumeAttributesClasses(c *StorageV1alpha1Client) *volumeAttributesClass
 func (c *volumeAttributesClasses) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.VolumeAttributesClass, err error) {
 	result = &v1alpha1.VolumeAttributesClass{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("volumeattributesclasses").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
@@ -85,6 +86,7 @@ func (c *volumeAttributesClasses) List(ctx context.Context, opts v1.ListOptions)
 	}
 	result = &v1alpha1.VolumeAttributesClassList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("volumeattributesclasses").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -101,6 +103,7 @@ func (c *volumeAttributesClasses) Watch(ctx context.Context, opts v1.ListOptions
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Resource("volumeattributesclasses").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -111,6 +114,7 @@ func (c *volumeAttributesClasses) Watch(ctx context.Context, opts v1.ListOptions
 func (c *volumeAttributesClasses) Create(ctx context.Context, volumeAttributesClass *v1alpha1.VolumeAttributesClass, opts v1.CreateOptions) (result *v1alpha1.VolumeAttributesClass, err error) {
 	result = &v1alpha1.VolumeAttributesClass{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Resource("volumeattributesclasses").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(volumeAttributesClass).
@@ -123,6 +127,7 @@ func (c *volumeAttributesClasses) Create(ctx context.Context, volumeAttributesCl
 func (c *volumeAttributesClasses) Update(ctx context.Context, volumeAttributesClass *v1alpha1.VolumeAttributesClass, opts v1.UpdateOptions) (result *v1alpha1.VolumeAttributesClass, err error) {
 	result = &v1alpha1.VolumeAttributesClass{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Resource("volumeattributesclasses").
 		Name(volumeAttributesClass.Name).
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -135,6 +140,7 @@ func (c *volumeAttributesClasses) Update(ctx context.Context, volumeAttributesCl
 // Delete takes name of the volumeAttributesClass and deletes it. Returns an error if one occurs.
 func (c *volumeAttributesClasses) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("volumeattributesclasses").
 		Name(name).
 		Body(&opts).
@@ -149,6 +155,7 @@ func (c *volumeAttributesClasses) DeleteCollection(ctx context.Context, opts v1.
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("volumeattributesclasses").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -161,6 +168,7 @@ func (c *volumeAttributesClasses) DeleteCollection(ctx context.Context, opts v1.
 func (c *volumeAttributesClasses) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.VolumeAttributesClass, err error) {
 	result = &v1alpha1.VolumeAttributesClass{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Resource("volumeattributesclasses").
 		Name(name).
 		SubResource(subresources...).
@@ -187,6 +195,7 @@ func (c *volumeAttributesClasses) Apply(ctx context.Context, volumeAttributesCla
 	}
 	result = &v1alpha1.VolumeAttributesClass{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Resource("volumeattributesclasses").
 		Name(*name).
 		VersionedParams(&patchOpts, scheme.ParameterCodec).

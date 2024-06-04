@@ -71,6 +71,7 @@ func newCSIStorageCapacities(c *StorageV1Client, namespace string) *cSIStorageCa
 func (c *cSIStorageCapacities) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.CSIStorageCapacity, err error) {
 	result = &v1.CSIStorageCapacity{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("csistoragecapacities").
 		Name(name).
@@ -88,6 +89,7 @@ func (c *cSIStorageCapacities) List(ctx context.Context, opts metav1.ListOptions
 	}
 	result = &v1.CSIStorageCapacityList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("csistoragecapacities").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -105,6 +107,7 @@ func (c *cSIStorageCapacities) Watch(ctx context.Context, opts metav1.ListOption
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("csistoragecapacities").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -116,6 +119,7 @@ func (c *cSIStorageCapacities) Watch(ctx context.Context, opts metav1.ListOption
 func (c *cSIStorageCapacities) Create(ctx context.Context, cSIStorageCapacity *v1.CSIStorageCapacity, opts metav1.CreateOptions) (result *v1.CSIStorageCapacity, err error) {
 	result = &v1.CSIStorageCapacity{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("csistoragecapacities").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -129,6 +133,7 @@ func (c *cSIStorageCapacities) Create(ctx context.Context, cSIStorageCapacity *v
 func (c *cSIStorageCapacities) Update(ctx context.Context, cSIStorageCapacity *v1.CSIStorageCapacity, opts metav1.UpdateOptions) (result *v1.CSIStorageCapacity, err error) {
 	result = &v1.CSIStorageCapacity{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("csistoragecapacities").
 		Name(cSIStorageCapacity.Name).
@@ -142,6 +147,7 @@ func (c *cSIStorageCapacities) Update(ctx context.Context, cSIStorageCapacity *v
 // Delete takes name of the cSIStorageCapacity and deletes it. Returns an error if one occurs.
 func (c *cSIStorageCapacities) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("csistoragecapacities").
 		Name(name).
@@ -157,6 +163,7 @@ func (c *cSIStorageCapacities) DeleteCollection(ctx context.Context, opts metav1
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("csistoragecapacities").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
@@ -170,6 +177,7 @@ func (c *cSIStorageCapacities) DeleteCollection(ctx context.Context, opts metav1
 func (c *cSIStorageCapacities) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.CSIStorageCapacity, err error) {
 	result = &v1.CSIStorageCapacity{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("csistoragecapacities").
 		Name(name).
@@ -197,6 +205,7 @@ func (c *cSIStorageCapacities) Apply(ctx context.Context, cSIStorageCapacity *st
 	}
 	result = &v1.CSIStorageCapacity{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("csistoragecapacities").
 		Name(*name).

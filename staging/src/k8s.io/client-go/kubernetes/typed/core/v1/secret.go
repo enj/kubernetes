@@ -71,6 +71,7 @@ func newSecrets(c *CoreV1Client, namespace string) *secrets {
 func (c *secrets) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.Secret, err error) {
 	result = &v1.Secret{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("secrets").
 		Name(name).
@@ -88,6 +89,7 @@ func (c *secrets) List(ctx context.Context, opts metav1.ListOptions) (result *v1
 	}
 	result = &v1.SecretList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("secrets").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -105,6 +107,7 @@ func (c *secrets) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Int
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("secrets").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -116,6 +119,7 @@ func (c *secrets) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Int
 func (c *secrets) Create(ctx context.Context, secret *v1.Secret, opts metav1.CreateOptions) (result *v1.Secret, err error) {
 	result = &v1.Secret{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("secrets").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -129,6 +133,7 @@ func (c *secrets) Create(ctx context.Context, secret *v1.Secret, opts metav1.Cre
 func (c *secrets) Update(ctx context.Context, secret *v1.Secret, opts metav1.UpdateOptions) (result *v1.Secret, err error) {
 	result = &v1.Secret{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("secrets").
 		Name(secret.Name).
@@ -142,6 +147,7 @@ func (c *secrets) Update(ctx context.Context, secret *v1.Secret, opts metav1.Upd
 // Delete takes name of the secret and deletes it. Returns an error if one occurs.
 func (c *secrets) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("secrets").
 		Name(name).
@@ -157,6 +163,7 @@ func (c *secrets) DeleteCollection(ctx context.Context, opts metav1.DeleteOption
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("secrets").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
@@ -170,6 +177,7 @@ func (c *secrets) DeleteCollection(ctx context.Context, opts metav1.DeleteOption
 func (c *secrets) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.Secret, err error) {
 	result = &v1.Secret{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("secrets").
 		Name(name).
@@ -197,6 +205,7 @@ func (c *secrets) Apply(ctx context.Context, secret *corev1.SecretApplyConfigura
 	}
 	result = &v1.Secret{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("secrets").
 		Name(*name).

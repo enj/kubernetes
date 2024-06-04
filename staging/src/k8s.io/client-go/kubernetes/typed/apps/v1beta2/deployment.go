@@ -73,6 +73,7 @@ func newDeployments(c *AppsV1beta2Client, namespace string) *deployments {
 func (c *deployments) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1beta2.Deployment, err error) {
 	result = &v1beta2.Deployment{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("deployments").
 		Name(name).
@@ -90,6 +91,7 @@ func (c *deployments) List(ctx context.Context, opts v1.ListOptions) (result *v1
 	}
 	result = &v1beta2.DeploymentList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("deployments").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -107,6 +109,7 @@ func (c *deployments) Watch(ctx context.Context, opts v1.ListOptions) (watch.Int
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("deployments").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -118,6 +121,7 @@ func (c *deployments) Watch(ctx context.Context, opts v1.ListOptions) (watch.Int
 func (c *deployments) Create(ctx context.Context, deployment *v1beta2.Deployment, opts v1.CreateOptions) (result *v1beta2.Deployment, err error) {
 	result = &v1beta2.Deployment{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("deployments").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -131,6 +135,7 @@ func (c *deployments) Create(ctx context.Context, deployment *v1beta2.Deployment
 func (c *deployments) Update(ctx context.Context, deployment *v1beta2.Deployment, opts v1.UpdateOptions) (result *v1beta2.Deployment, err error) {
 	result = &v1beta2.Deployment{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("deployments").
 		Name(deployment.Name).
@@ -146,6 +151,7 @@ func (c *deployments) Update(ctx context.Context, deployment *v1beta2.Deployment
 func (c *deployments) UpdateStatus(ctx context.Context, deployment *v1beta2.Deployment, opts v1.UpdateOptions) (result *v1beta2.Deployment, err error) {
 	result = &v1beta2.Deployment{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("deployments").
 		Name(deployment.Name).
@@ -160,6 +166,7 @@ func (c *deployments) UpdateStatus(ctx context.Context, deployment *v1beta2.Depl
 // Delete takes name of the deployment and deletes it. Returns an error if one occurs.
 func (c *deployments) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("deployments").
 		Name(name).
@@ -175,6 +182,7 @@ func (c *deployments) DeleteCollection(ctx context.Context, opts v1.DeleteOption
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("deployments").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
@@ -188,6 +196,7 @@ func (c *deployments) DeleteCollection(ctx context.Context, opts v1.DeleteOption
 func (c *deployments) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1beta2.Deployment, err error) {
 	result = &v1beta2.Deployment{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("deployments").
 		Name(name).
@@ -215,6 +224,7 @@ func (c *deployments) Apply(ctx context.Context, deployment *appsv1beta2.Deploym
 	}
 	result = &v1beta2.Deployment{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("deployments").
 		Name(*name).
@@ -244,6 +254,7 @@ func (c *deployments) ApplyStatus(ctx context.Context, deployment *appsv1beta2.D
 
 	result = &v1beta2.Deployment{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("deployments").
 		Name(*name).

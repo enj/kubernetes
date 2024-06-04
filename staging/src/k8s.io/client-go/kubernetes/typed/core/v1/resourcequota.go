@@ -73,6 +73,7 @@ func newResourceQuotas(c *CoreV1Client, namespace string) *resourceQuotas {
 func (c *resourceQuotas) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.ResourceQuota, err error) {
 	result = &v1.ResourceQuota{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourcequotas").
 		Name(name).
@@ -90,6 +91,7 @@ func (c *resourceQuotas) List(ctx context.Context, opts metav1.ListOptions) (res
 	}
 	result = &v1.ResourceQuotaList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourcequotas").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -107,6 +109,7 @@ func (c *resourceQuotas) Watch(ctx context.Context, opts metav1.ListOptions) (wa
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourcequotas").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -118,6 +121,7 @@ func (c *resourceQuotas) Watch(ctx context.Context, opts metav1.ListOptions) (wa
 func (c *resourceQuotas) Create(ctx context.Context, resourceQuota *v1.ResourceQuota, opts metav1.CreateOptions) (result *v1.ResourceQuota, err error) {
 	result = &v1.ResourceQuota{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourcequotas").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -131,6 +135,7 @@ func (c *resourceQuotas) Create(ctx context.Context, resourceQuota *v1.ResourceQ
 func (c *resourceQuotas) Update(ctx context.Context, resourceQuota *v1.ResourceQuota, opts metav1.UpdateOptions) (result *v1.ResourceQuota, err error) {
 	result = &v1.ResourceQuota{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourcequotas").
 		Name(resourceQuota.Name).
@@ -146,6 +151,7 @@ func (c *resourceQuotas) Update(ctx context.Context, resourceQuota *v1.ResourceQ
 func (c *resourceQuotas) UpdateStatus(ctx context.Context, resourceQuota *v1.ResourceQuota, opts metav1.UpdateOptions) (result *v1.ResourceQuota, err error) {
 	result = &v1.ResourceQuota{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourcequotas").
 		Name(resourceQuota.Name).
@@ -160,6 +166,7 @@ func (c *resourceQuotas) UpdateStatus(ctx context.Context, resourceQuota *v1.Res
 // Delete takes name of the resourceQuota and deletes it. Returns an error if one occurs.
 func (c *resourceQuotas) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourcequotas").
 		Name(name).
@@ -175,6 +182,7 @@ func (c *resourceQuotas) DeleteCollection(ctx context.Context, opts metav1.Delet
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourcequotas").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
@@ -188,6 +196,7 @@ func (c *resourceQuotas) DeleteCollection(ctx context.Context, opts metav1.Delet
 func (c *resourceQuotas) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.ResourceQuota, err error) {
 	result = &v1.ResourceQuota{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourcequotas").
 		Name(name).
@@ -215,6 +224,7 @@ func (c *resourceQuotas) Apply(ctx context.Context, resourceQuota *corev1.Resour
 	}
 	result = &v1.ResourceQuota{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourcequotas").
 		Name(*name).
@@ -244,6 +254,7 @@ func (c *resourceQuotas) ApplyStatus(ctx context.Context, resourceQuota *corev1.
 
 	result = &v1.ResourceQuota{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourcequotas").
 		Name(*name).
