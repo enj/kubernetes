@@ -31,6 +31,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -51,27 +52,22 @@ import (
 	endpointsdiscovery "k8s.io/apiserver/pkg/endpoints/discovery"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/client-go/discovery"
-	cacheddiscovery "k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/metadata"
-	"k8s.io/client-go/metadata/metadatainformer"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/restmapper"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/cert"
 	"k8s.io/client-go/util/keyutil"
 	utiltesting "k8s.io/client-go/util/testing"
-	"k8s.io/controller-manager/pkg/informerfactory"
 	kubeapiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
-	"k8s.io/kubernetes/cmd/kube-controller-manager/names"
-	"k8s.io/kubernetes/pkg/controller/garbagecollector"
+	kubecontrollermanagertesting "k8s.io/kubernetes/cmd/kube-controller-manager/app/testing"
 	"k8s.io/kubernetes/pkg/controller/storageversionmigrator"
 	"k8s.io/kubernetes/test/images/agnhost/crd-conversion-webhook/converter"
 	"k8s.io/kubernetes/test/integration"
 	"k8s.io/kubernetes/test/integration/etcd"
 	"k8s.io/kubernetes/test/integration/framework"
 	"k8s.io/kubernetes/test/utils"
+	"k8s.io/kubernetes/test/utils/kubeconfig"
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 )
@@ -272,81 +268,31 @@ func svmSetup(ctx context.Context, t *testing.T) *svmTest {
 		"--audit-log-version", "audit.k8s.io/v1",
 		"--audit-log-mode", "blocking",
 		"--audit-log-path", logFile.Name(),
+		"--authorization-mode=RBAC",
 	}
 	storageConfig := framework.SharedEtcd()
 	server := kubeapiservertesting.StartTestServerOrDie(t, nil, apiServerFlags, storageConfig)
+
+	kubeConfigFile := createKubeConfigFileForRestConfig(t, server.ClientConfig)
+
+	kcm := kubecontrollermanagertesting.StartTestServerOrDie(ctx, []string{
+		"--kubeconfig=" + kubeConfigFile,
+		"--controllers=garbagecollector,svm", // these are the only controllers needed for this test
+		"--leader-elect=false",               // KCM leader election calls os.Exit when it ends, so it is easier to just turn it off altogether
+	})
 
 	clientSet, err := clientset.NewForConfig(server.ClientConfig)
 	if err != nil {
 		t.Fatalf("error in create clientset: %v", err)
 	}
-
-	discoveryClient := cacheddiscovery.NewMemCacheClient(clientSet.Discovery())
 	rvDiscoveryClient, err := discovery.NewDiscoveryClientForConfig(server.ClientConfig)
 	if err != nil {
 		t.Fatalf("failed to create discovery client: %v", err)
-	}
-	restMapper := restmapper.NewDeferredDiscoveryRESTMapper(discoveryClient)
-	restMapper.Reset()
-	metadataClient, err := metadata.NewForConfig(server.ClientConfig)
-	if err != nil {
-		t.Fatalf("failed to create metadataClient: %v", err)
 	}
 	dynamicClient, err := dynamic.NewForConfig(server.ClientConfig)
 	if err != nil {
 		t.Fatalf("error in create dynamic client: %v", err)
 	}
-	sharedInformers := informers.NewSharedInformerFactory(clientSet, 0)
-	metadataInformers := metadatainformer.NewSharedInformerFactory(metadataClient, 0)
-	alwaysStarted := make(chan struct{})
-	close(alwaysStarted)
-
-	gc, err := garbagecollector.NewGarbageCollector(
-		ctx,
-		clientSet,
-		metadataClient,
-		restMapper,
-		garbagecollector.DefaultIgnoredResources(),
-		informerfactory.NewInformerFactory(sharedInformers, metadataInformers),
-		alwaysStarted,
-	)
-	if err != nil {
-		t.Fatalf("error while creating garbage collector: %v", err)
-
-	}
-	startGC := func() {
-		syncPeriod := 5 * time.Second
-		go wait.Until(func() {
-			restMapper.Reset()
-		}, syncPeriod, ctx.Done())
-		go gc.Run(ctx, 1)
-		go gc.Sync(ctx, clientSet.Discovery(), syncPeriod)
-	}
-
-	svmController := storageversionmigrator.NewSVMController(
-		ctx,
-		clientSet,
-		dynamicClient,
-		sharedInformers.Storagemigration().V1alpha1().StorageVersionMigrations(),
-		names.StorageVersionMigratorController,
-		restMapper,
-		gc.GetDependencyGraphBuilder(),
-	)
-
-	rvController := storageversionmigrator.NewResourceVersionController(
-		ctx,
-		clientSet,
-		rvDiscoveryClient,
-		metadataClient,
-		sharedInformers.Storagemigration().V1alpha1().StorageVersionMigrations(),
-		restMapper,
-	)
-
-	// Start informer and controllers
-	sharedInformers.Start(ctx.Done())
-	startGC()
-	go svmController.Run(ctx)
-	go rvController.Run(ctx)
 
 	svmTest := &svmTest{
 		storageConfig:               storageConfig,
@@ -361,6 +307,7 @@ func svmSetup(ctx context.Context, t *testing.T) *svmTest {
 	}
 
 	t.Cleanup(func() {
+		kcm.TearDownFn()
 		server.TearDownFn()
 		utiltesting.CloseAndRemove(t, svmTest.logFile)
 		utiltesting.CloseAndRemove(t, svmTest.policyFile)
@@ -371,6 +318,18 @@ func svmSetup(ctx context.Context, t *testing.T) *svmTest {
 	})
 
 	return svmTest
+}
+
+func createKubeConfigFileForRestConfig(t *testing.T, restConfig *rest.Config) string {
+	t.Helper()
+
+	clientConfig := kubeconfig.CreateKubeConfig(restConfig)
+
+	kubeConfigFile := filepath.Join(t.TempDir(), "kubeconfig.yaml")
+	if err := clientcmd.WriteToFile(*clientConfig, kubeConfigFile); err != nil {
+		t.Fatal(err)
+	}
+	return kubeConfigFile
 }
 
 func createEncryptionConfig(t *testing.T, encryptionConfig string) (
@@ -706,22 +665,25 @@ func (svm *svmTest) createCRD(
 				Plural:   pluralName,
 				Singular: name,
 			},
-			Scope:    apiextensionsv1.NamespaceScoped,
-			Versions: crdVersions,
-			Conversion: &apiextensionsv1.CustomResourceConversion{
-				Strategy: apiextensionsv1.WebhookConverter,
-				Webhook: &apiextensionsv1.WebhookConversion{
-					ClientConfig: &apiextensionsv1.WebhookClientConfig{
-						CABundle: certCtx.signingCert,
-						URL: ptr.To(
-							fmt.Sprintf("https://127.0.0.1:%d/%s", servicePort, webhookHandler),
-						),
-					},
-					ConversionReviewVersions: []string{"v1", "v2"},
-				},
-			},
+			Scope:                 apiextensionsv1.NamespaceScoped,
+			Versions:              crdVersions,
 			PreserveUnknownFields: false,
 		},
+	}
+
+	if certCtx != nil {
+		crd.Spec.Conversion = &apiextensionsv1.CustomResourceConversion{
+			Strategy: apiextensionsv1.WebhookConverter,
+			Webhook: &apiextensionsv1.WebhookConversion{
+				ClientConfig: &apiextensionsv1.WebhookClientConfig{
+					CABundle: certCtx.signingCert,
+					URL: ptr.To(
+						fmt.Sprintf("https://127.0.0.1:%d/%s", servicePort, webhookHandler),
+					),
+				},
+				ConversionReviewVersions: []string{"v1", "v2"},
+			},
+		}
 	}
 
 	apiextensionsclient, err := apiextensionsclientset.NewForConfig(svm.clientConfig)
@@ -809,7 +771,12 @@ func (svm *svmTest) waitForCRDUpdate(
 	}
 }
 
-func (svm *svmTest) createCR(ctx context.Context, t *testing.T, crName, version string) *unstructured.Unstructured {
+type testingT interface {
+	Helper()
+	Fatalf(format string, args ...any)
+}
+
+func (svm *svmTest) createCR(ctx context.Context, t testingT, crName, version string) *unstructured.Unstructured {
 	t.Helper()
 
 	crdResource := schema.GroupVersionResource{
@@ -840,18 +807,22 @@ func (svm *svmTest) createCR(ctx context.Context, t *testing.T, crName, version 
 func (svm *svmTest) getCR(ctx context.Context, t *testing.T, crName, version string) *unstructured.Unstructured {
 	t.Helper()
 
+	cr, err := svm.getCRWithErr(ctx, crName, version)
+	if err != nil {
+		t.Fatalf("Failed to get CR: %v", err)
+	}
+
+	return cr
+}
+
+func (svm *svmTest) getCRWithErr(ctx context.Context, crName, version string) (*unstructured.Unstructured, error) {
 	crdResource := schema.GroupVersionResource{
 		Group:    crdGroup,
 		Version:  version,
 		Resource: crdName + "s",
 	}
 
-	cr, err := svm.dynamicClient.Resource(crdResource).Namespace(defaultNamespace).Get(ctx, crName, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("Failed to get CR: %v", err)
-	}
-
-	return cr
+	return svm.dynamicClient.Resource(crdResource).Namespace(defaultNamespace).Get(ctx, crName, metav1.GetOptions{})
 }
 
 func (svm *svmTest) listCR(ctx context.Context, t *testing.T, version string) error {
@@ -868,7 +839,7 @@ func (svm *svmTest) listCR(ctx context.Context, t *testing.T, version string) er
 	return err
 }
 
-func (svm *svmTest) deleteCR(ctx context.Context, t *testing.T, name, version string) {
+func (svm *svmTest) deleteCR(ctx context.Context, t testingT, name, version string) {
 	t.Helper()
 	crdResource := schema.GroupVersionResource{
 		Group:    crdGroup,
@@ -883,7 +854,9 @@ func (svm *svmTest) deleteCR(ctx context.Context, t *testing.T, name, version st
 
 func (svm *svmTest) createConversionWebhook(ctx context.Context, t *testing.T, certCtx *certContext) context.CancelFunc {
 	t.Helper()
-	http.HandleFunc(fmt.Sprintf("/%s", webhookHandler), converter.ServeExampleConvert)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/%s", webhookHandler), converter.ServeExampleConvert)
 
 	block, _ := pem.Decode(certCtx.key)
 	if block == nil {
@@ -904,7 +877,8 @@ func (svm *svmTest) createConversionWebhook(ctx context.Context, t *testing.T, c
 	}
 
 	server := &http.Server{
-		Addr: fmt.Sprintf("127.0.0.1:%d", servicePort),
+		Addr:    fmt.Sprintf("127.0.0.1:%d", servicePort),
+		Handler: mux,
 		TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{
 				{
@@ -1030,28 +1004,44 @@ func (svm *svmTest) isCRStoredAtVersion(t *testing.T, version, crName string) bo
 	return obj.GetAPIVersion() == fmt.Sprintf("%s/%s", crdGroup, version)
 }
 
-func (svm *svmTest) isCRDMigrated(ctx context.Context, t *testing.T, crdSVMName string) bool {
+func (svm *svmTest) isCRDMigrated(ctx context.Context, t *testing.T, crdSVMName, triggerCRName string) bool {
 	t.Helper()
+
+	triggerCR := svm.createCR(ctx, t, triggerCRName, "v1")
+	svm.deleteCR(ctx, t, triggerCR.GetName(), "v1")
 
 	err := wait.PollUntilContextTimeout(
 		ctx,
 		500*time.Millisecond,
-		1*time.Minute,
+		5*time.Minute,
 		true,
 		func(ctx context.Context) (bool, error) {
-			triggerCR := svm.createCR(ctx, t, "triggercr", "v1")
-			svm.deleteCR(ctx, t, triggerCR.GetName(), "v1")
 			svmResource, err := svm.getSVM(ctx, t, crdSVMName)
 			if err != nil {
 				t.Fatalf("Failed to get SVM resource: %v", err)
 			}
+
+			if storageversionmigrator.IsConditionTrue(svmResource, svmv1alpha1.MigrationFailed) {
+				t.Logf("%q SVM has failed migration, %#v", crdSVMName, svmResource.Status.Conditions)
+				return false, fmt.Errorf("SVM has failed migration")
+			}
+
 			if svmResource.Status.ResourceVersion == "" {
+				t.Logf("%q SVM has no resourceVersion", crdSVMName)
 				return false, nil
 			}
 
 			if storageversionmigrator.IsConditionTrue(svmResource, svmv1alpha1.MigrationSucceeded) {
+				t.Logf("%q SVM has completed migration", crdSVMName)
 				return true, nil
 			}
+
+			if storageversionmigrator.IsConditionTrue(svmResource, svmv1alpha1.MigrationRunning) {
+				t.Logf("%q SVM migration is running, %#v", crdSVMName, svmResource.Status.Conditions)
+				return false, nil
+			}
+
+			t.Logf("%q SVM has not started migration, %#v", crdSVMName, svmResource.Status.Conditions)
 
 			return false, nil
 		},
@@ -1065,7 +1055,7 @@ type versions struct {
 	isRVUpdated bool
 }
 
-func (svm *svmTest) validateRVAndGeneration(ctx context.Context, t *testing.T, crVersions map[string]versions) {
+func (svm *svmTest) validateRVAndGeneration(ctx context.Context, t *testing.T, crVersions map[string]versions, getCRVersion string) {
 	t.Helper()
 
 	for crName, version := range crVersions {
@@ -1083,12 +1073,53 @@ func (svm *svmTest) validateRVAndGeneration(ctx context.Context, t *testing.T, c
 		}
 
 		// validate resourceVersion and generation
-		crVersion := svm.getCR(ctx, t, crName, "v2").GetResourceVersion()
-		if version.isRVUpdated && crVersion == version.rv {
+		crVersion := svm.getCR(ctx, t, crName, getCRVersion).GetResourceVersion()
+		isRVUnchanged := crVersion == version.rv
+		if version.isRVUpdated && isRVUnchanged {
 			t.Fatalf("ResourceVersion of CR %s should not be equal. Expected: %s, Got: %s", crName, version.rv, crVersion)
+		}
+		if !version.isRVUpdated && !isRVUnchanged {
+			t.Fatalf("ResourceVersion of CR %s should be equal. Expected: %s, Got: %s", crName, version.rv, crVersion)
 		}
 		if obj.GetGeneration() != version.generation {
 			t.Fatalf("Generation of CR %s should be equal. Expected: %d, Got: %d", crName, version.generation, obj.GetGeneration())
 		}
 	}
 }
+
+func (svm *svmTest) createChaos(t *testing.T) {
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(context.Background())
+
+	noFailT := ignoreFailures{} // these create and delete requests are not coordinated with the rest of the test and can fail
+
+	const workers = 10
+	wg.Add(workers)
+	for i := range workers {
+		i := i
+		go func() {
+			defer wg.Done()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				_ = svm.createCR(ctx, noFailT, "chaos-cr-"+strconv.Itoa(i), "v1")
+				svm.deleteCR(ctx, noFailT, "chaos-cr-"+strconv.Itoa(i), "v1")
+			}
+		}()
+	}
+
+	t.Cleanup(func() {
+		cancel()
+		wg.Wait()
+	})
+}
+
+type ignoreFailures struct{}
+
+func (ignoreFailures) Helper()                           {}
+func (ignoreFailures) Fatalf(format string, args ...any) {}
