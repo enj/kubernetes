@@ -809,7 +809,12 @@ func (svm *svmTest) waitForCRDUpdate(
 	}
 }
 
-func (svm *svmTest) createCR(ctx context.Context, t *testing.T, crName, version string) *unstructured.Unstructured {
+type testingT interface {
+	Helper()
+	Fatalf(format string, args ...any)
+}
+
+func (svm *svmTest) createCR(ctx context.Context, t testingT, crName, version string) *unstructured.Unstructured {
 	t.Helper()
 
 	crdResource := schema.GroupVersionResource{
@@ -868,7 +873,7 @@ func (svm *svmTest) listCR(ctx context.Context, t *testing.T, version string) er
 	return err
 }
 
-func (svm *svmTest) deleteCR(ctx context.Context, t *testing.T, name, version string) {
+func (svm *svmTest) deleteCR(ctx context.Context, t testingT, name, version string) {
 	t.Helper()
 	crdResource := schema.GroupVersionResource{
 		Group:    crdGroup,
@@ -883,7 +888,9 @@ func (svm *svmTest) deleteCR(ctx context.Context, t *testing.T, name, version st
 
 func (svm *svmTest) createConversionWebhook(ctx context.Context, t *testing.T, certCtx *certContext) context.CancelFunc {
 	t.Helper()
-	http.HandleFunc(fmt.Sprintf("/%s", webhookHandler), converter.ServeExampleConvert)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/%s", webhookHandler), converter.ServeExampleConvert)
 
 	block, _ := pem.Decode(certCtx.key)
 	if block == nil {
@@ -904,7 +911,8 @@ func (svm *svmTest) createConversionWebhook(ctx context.Context, t *testing.T, c
 	}
 
 	server := &http.Server{
-		Addr: fmt.Sprintf("127.0.0.1:%d", servicePort),
+		Addr:    fmt.Sprintf("127.0.0.1:%d", servicePort),
+		Handler: mux,
 		TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{
 				{
@@ -1033,25 +1041,41 @@ func (svm *svmTest) isCRStoredAtVersion(t *testing.T, version, crName string) bo
 func (svm *svmTest) isCRDMigrated(ctx context.Context, t *testing.T, crdSVMName string) bool {
 	t.Helper()
 
+	triggerCR := svm.createCR(ctx, t, "triggercr", "v1")
+	svm.deleteCR(ctx, t, triggerCR.GetName(), "v1")
+
 	err := wait.PollUntilContextTimeout(
 		ctx,
 		500*time.Millisecond,
 		1*time.Minute,
 		true,
 		func(ctx context.Context) (bool, error) {
-			triggerCR := svm.createCR(ctx, t, "triggercr", "v1")
-			svm.deleteCR(ctx, t, triggerCR.GetName(), "v1")
 			svmResource, err := svm.getSVM(ctx, t, crdSVMName)
 			if err != nil {
 				t.Fatalf("Failed to get SVM resource: %v", err)
 			}
+
+			if storageversionmigrator.IsConditionTrue(svmResource, svmv1alpha1.MigrationFailed) {
+				t.Logf("%q SVM has failed migration, %#v", crdSVMName, svmResource.Status.Conditions)
+				return false, fmt.Errorf("SVM has failed migration")
+			}
+
 			if svmResource.Status.ResourceVersion == "" {
+				t.Logf("%q SVM has no resourceVersion", crdSVMName)
 				return false, nil
 			}
 
 			if storageversionmigrator.IsConditionTrue(svmResource, svmv1alpha1.MigrationSucceeded) {
+				t.Logf("%q SVM has completed migration", crdSVMName)
 				return true, nil
 			}
+
+			if storageversionmigrator.IsConditionTrue(svmResource, svmv1alpha1.MigrationRunning) {
+				t.Logf("%q SVM migration is running, %#v", crdSVMName, svmResource.Status.Conditions)
+				return false, nil
+			}
+
+			t.Logf("%q SVM has not started migration, %#v", crdSVMName, svmResource.Status.Conditions)
 
 			return false, nil
 		},

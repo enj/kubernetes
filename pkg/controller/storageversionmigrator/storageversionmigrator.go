@@ -204,27 +204,33 @@ func (svmc *SVMController) sync(ctx context.Context, key string) error {
 	}
 	gvr := getGVRFromResource(toBeProcessedSVM)
 
-	resourceMonitor, err := svmc.dependencyGraphBuilder.GetMonitor(ctx, gvr)
+	// TODO comment
+	monCtx, monCtxCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer monCtxCancel()
+	resourceMonitor, errMonitor := svmc.dependencyGraphBuilder.GetMonitor(monCtx, gvr)
 	if resourceMonitor != nil {
-		if err != nil {
+		if errMonitor != nil {
 			// non nil monitor indicates that error is due to resource not being synced
-			return fmt.Errorf("dependency graph is not synced, requeuing to attempt again")
+			return fmt.Errorf("dependency graph is not synced, requeuing to attempt again: %w", errMonitor)
 		}
 	} else {
+		logger.V(4).Error(errMonitor, "resource does not exist in GC", "gvr", gvr.String())
+
+		// our GC cache could be missing a recently created custom resource, so give it some time to catch up
+		if toBeProcessedSVM.CreationTimestamp.Add(time.Minute).After(time.Now()) {
+			return fmt.Errorf("resource does not exist in GC, requeuing to attempt again: %w", errMonitor)
+		}
+
 		// we can't migrate a resource that doesn't exist in the GC
-		_, err = svmc.kubeClient.StoragemigrationV1alpha1().
+		_, errStatus := svmc.kubeClient.StoragemigrationV1alpha1().
 			StorageVersionMigrations().
 			UpdateStatus(
 				ctx,
-				setStatusConditions(toBeProcessedSVM, svmv1alpha1.MigrationFailed, migrationFailedStatusReason),
+				setStatusConditions(toBeProcessedSVM, svmv1alpha1.MigrationFailed, migrationFailedStatusReason, "resource does not exist in GC"),
 				metav1.UpdateOptions{},
 			)
-		if err != nil {
-			return err
-		}
-		logger.V(4).Error(fmt.Errorf("error migrating the resource"), "resource does not exist in GC", "gvr", gvr.String())
 
-		return nil
+		return errStatus
 	}
 
 	gcListResourceVersion, err := convertResourceVersionToInt(resourceMonitor.Controller.LastSyncResourceVersion())
@@ -244,7 +250,7 @@ func (svmc *SVMController) sync(ctx context.Context, key string) error {
 		StorageVersionMigrations().
 		UpdateStatus(
 			ctx,
-			setStatusConditions(toBeProcessedSVM, svmv1alpha1.MigrationRunning, migrationRunningStatusReason),
+			setStatusConditions(toBeProcessedSVM, svmv1alpha1.MigrationRunning, migrationRunningStatusReason, ""),
 			metav1.UpdateOptions{},
 		)
 	if err != nil {
@@ -255,60 +261,70 @@ func (svmc *SVMController) sync(ctx context.Context, key string) error {
 	if err != nil {
 		return err
 	}
-	typeMeta := metav1.TypeMeta{}
-	typeMeta.APIVersion, typeMeta.Kind = gvk.ToAPIVersionAndKind()
-	data, err := json.Marshal(typeMeta)
-	if err != nil {
-		return err
-	}
 
 	// ToDo: implement a mechanism to resume migration from the last migrated resource in case of a failure
 	// process storage migration
-	for _, gvrKey := range resourceMonitor.Store.ListKeys() {
-		namespace, name, err := cache.SplitMetaNamespaceKey(gvrKey)
+	for _, obj := range resourceMonitor.Store.List() {
+		accessor, err := meta.Accessor(obj)
 		if err != nil {
 			return err
 		}
 
-		_, err = svmc.dynamicClient.Resource(gvr).
-			Namespace(namespace).
+		typeMeta := typeMetaNameRV{}
+		typeMeta.APIVersion, typeMeta.Kind = gvk.ToAPIVersionAndKind()
+		typeMeta.Name = accessor.GetName() // set name so that API server proceeds to RV check during the deleted case.  // TODO more details
+		// set RV so if the object gets deleted, we get a conflict instead of trying to create it.
+		// recreated objects will also result in a conflict, which is the desired behavior.
+		typeMeta.ResourceVersion = accessor.GetResourceVersion()
+		data, err := json.Marshal(typeMeta)
+		if err != nil {
+			return err
+		}
+
+		_, errPatch := svmc.dynamicClient.Resource(gvr).
+			Namespace(accessor.GetNamespace()).
 			Patch(ctx,
-				name,
+				accessor.GetName(),
 				types.ApplyPatchType,
 				data,
 				metav1.PatchOptions{
 					FieldManager: svmc.controllerName,
 				},
 			)
-		if err != nil {
-			// in case of NotFound or Conflict, we can stop processing migration for that resource
-			if apierrors.IsNotFound(err) || apierrors.IsConflict(err) {
-				continue
-			}
 
-			_, err = svmc.kubeClient.StoragemigrationV1alpha1().
+		// in case of conflict, we can stop processing migration for that resource because it has either been
+		// - updated, meaning that migration has already been performed
+		// - deleted, meaning that migration is not needed
+		// - deleted and recreated, meaning that migration has already been performed
+		if apierrors.IsConflict(errPatch) {
+			continue
+		}
+
+		if errPatch != nil {
+			logger.V(4).Error(errPatch, "Failed to migrate the resource", "namespace", accessor.GetNamespace(), "name", accessor.GetName(), "gvr", gvr.String(), "reason", apierrors.ReasonForError(errPatch))
+
+			_, errStatus := svmc.kubeClient.StoragemigrationV1alpha1().
 				StorageVersionMigrations().
 				UpdateStatus(
 					ctx,
-					setStatusConditions(toBeProcessedSVM, svmv1alpha1.MigrationFailed, migrationFailedStatusReason),
+					setStatusConditions(toBeProcessedSVM, svmv1alpha1.MigrationFailed, migrationFailedStatusReason, "patch returned non-conflict error"),
 					metav1.UpdateOptions{},
 				)
-			if err != nil {
-				return err
+			if errStatus != nil {
+				return errStatus
 			}
-			logger.V(4).Error(err, "Failed to migrate the resource", "name", gvrKey, "gvr", gvr.String(), "reason", apierrors.ReasonForError(err))
 
 			return nil
 			// Todo: add retry for scenarios where API server returns rate limiting error
 		}
-		logger.V(4).Info("Successfully migrated the resource", "name", gvrKey, "gvr", gvr.String())
+		logger.V(4).Info("Successfully migrated the resource", "namespace", accessor.GetNamespace(), "name", accessor.GetName(), "gvr", gvr.String())
 	}
 
 	_, err = svmc.kubeClient.StoragemigrationV1alpha1().
 		StorageVersionMigrations().
 		UpdateStatus(
 			ctx,
-			setStatusConditions(toBeProcessedSVM, svmv1alpha1.MigrationSucceeded, migrationSuccessStatusReason),
+			setStatusConditions(toBeProcessedSVM, svmv1alpha1.MigrationSucceeded, migrationSuccessStatusReason, ""),
 			metav1.UpdateOptions{},
 		)
 	if err != nil {
@@ -317,4 +333,14 @@ func (svmc *SVMController) sync(ctx context.Context, key string) error {
 
 	logger.V(4).Info("Finished syncing svm resource", "key", key, "gvr", gvr.String(), "elapsed", time.Since(startTime))
 	return nil
+}
+
+type typeMetaNameRV struct {
+	metav1.TypeMeta      `json:",inline"`
+	objectMetaNameRVOnly `json:"metadata,omitempty"`
+}
+
+type objectMetaNameRVOnly struct {
+	Name            string `json:"name,omitempty"`
+	ResourceVersion string `json:"resourceVersion,omitempty"`
 }
