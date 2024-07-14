@@ -31,6 +31,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1116,3 +1117,40 @@ func (svm *svmTest) validateRVAndGeneration(ctx context.Context, t *testing.T, c
 		}
 	}
 }
+
+func (svm *svmTest) createChaos(ctx context.Context) func() {
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(ctx)
+
+	t := ignoreFailures{} // these create and delete requests are not coordinated with the rest of the test and can fail
+
+	const workers = 10
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				_ = svm.createCR(ctx, t, "chaos-cr-"+strconv.Itoa(i), "v1")
+				svm.deleteCR(ctx, t, "chaos-cr-"+strconv.Itoa(i), "v1")
+			}
+		}()
+	}
+
+	return func() {
+		cancel()
+		wg.Wait()
+	}
+}
+
+type ignoreFailures struct{}
+
+func (ignoreFailures) Helper()                           {}
+func (ignoreFailures) Fatalf(format string, args ...any) {}

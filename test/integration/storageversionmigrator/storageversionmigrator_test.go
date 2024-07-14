@@ -19,8 +19,6 @@ package storageversionmigrator
 import (
 	"bytes"
 	"context"
-	"strconv"
-	"sync"
 	"testing"
 	"time"
 
@@ -169,9 +167,7 @@ func TestStorageVersionMigrationWithCRD(t *testing.T) {
 	crd := svmTest.createCRD(t, crdName, crdGroup, certCtx, v1CRDVersion)
 
 	// simulate monkeys creating and deleting CRs
-	var chaosWG sync.WaitGroup
-	chaosCtx, chaosCtxCancel := context.WithCancel(ctx)
-	createChaos(chaosCtx, &chaosWG, svmTest)
+	endChaos := svmTest.createChaos(ctx)
 
 	// create CR
 	cr1 := svmTest.createCR(ctx, t, "cr1", "v1")
@@ -249,8 +245,7 @@ func TestStorageVersionMigrationWithCRD(t *testing.T) {
 		t.Fatalf("CRD not migrated")
 	}
 
-	chaosCtxCancel()
-	chaosWG.Wait()
+	endChaos()
 
 	// assert all the CRs are stored in the etcd at correct version
 	if ok := svmTest.isCRStoredAtVersion(t, "v2", cr1.GetName()); !ok {
@@ -278,32 +273,3 @@ func TestStorageVersionMigrationWithCRD(t *testing.T) {
 		t.Fatalf("Failed to list CRs at version v2: %v", err)
 	}
 }
-
-func createChaos(ctx context.Context, wg *sync.WaitGroup, test *svmTest) {
-	t := ignoreFailures{} // these create and delete requests are not coordinated with the rest of the test and can fail
-
-	const workers = 10
-	wg.Add(workers)
-	for i := 0; i < workers; i++ {
-		i := i
-		go func() {
-			defer wg.Done()
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-
-				_ = test.createCR(ctx, t, "chaos-cr-"+strconv.Itoa(i), "v1")
-				test.deleteCR(ctx, t, "chaos-cr-"+strconv.Itoa(i), "v1")
-			}
-		}()
-	}
-}
-
-type ignoreFailures struct{}
-
-func (ignoreFailures) Helper()                           {}
-func (ignoreFailures) Fatalf(format string, args ...any) {}
