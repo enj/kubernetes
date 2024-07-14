@@ -1118,11 +1118,11 @@ func (svm *svmTest) validateRVAndGeneration(ctx context.Context, t *testing.T, c
 	}
 }
 
-func (svm *svmTest) createChaos(ctx context.Context) func() {
+func (svm *svmTest) createChaos(t *testing.T) {
 	var wg sync.WaitGroup
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(context.Background())
 
-	t := ignoreFailures{} // these create and delete requests are not coordinated with the rest of the test and can fail
+	noFailT := ignoreFailures{} // these create and delete requests are not coordinated with the rest of the test and can fail
 
 	const workers = 10
 	wg.Add(workers)
@@ -1138,16 +1138,16 @@ func (svm *svmTest) createChaos(ctx context.Context) func() {
 				default:
 				}
 
-				_ = svm.createCR(ctx, t, "chaos-cr-"+strconv.Itoa(i), "v1")
-				svm.deleteCR(ctx, t, "chaos-cr-"+strconv.Itoa(i), "v1")
+				_ = svm.createCR(ctx, noFailT, "chaos-cr-"+strconv.Itoa(i), "v1")
+				svm.deleteCR(ctx, noFailT, "chaos-cr-"+strconv.Itoa(i), "v1")
 			}
 		}()
 	}
 
-	return func() {
+	t.Cleanup(func() {
 		cancel()
 		wg.Wait()
-	}
+	})
 }
 
 type ignoreFailures struct{}
