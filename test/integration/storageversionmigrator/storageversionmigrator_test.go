@@ -154,9 +154,6 @@ func TestStorageVersionMigrationWithCRD(t *testing.T) {
 	etcd3watcher.TestOnlySetFatalOnDecodeError(false)
 	defer etcd3watcher.TestOnlySetFatalOnDecodeError(true)
 
-	// simulate monkeys creating and deleting CRs
-	svmTest.createChaos(t)
-
 	_, ctx := ktesting.NewTestContext(t)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -165,6 +162,9 @@ func TestStorageVersionMigrationWithCRD(t *testing.T) {
 
 	svmTest := svmSetup(ctx, t)
 	certCtx := svmTest.setupServerCert(t)
+
+	// simulate monkeys creating and deleting CRs
+	svmTest.createChaos(t)
 
 	// create CRD with v1 serving and storage
 	crd := svmTest.createCRD(t, crdName, crdGroup, certCtx, v1CRDVersion)
