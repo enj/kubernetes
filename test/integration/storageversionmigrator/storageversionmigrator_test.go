@@ -22,17 +22,19 @@ import (
 	"testing"
 	"time"
 
-	etcd3watcher "k8s.io/apiserver/pkg/storage/etcd3"
-	"k8s.io/klog/v2/ktesting"
+	"go.uber.org/goleak"
 
 	svmv1alpha1 "k8s.io/api/storagemigration/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	encryptionconfigcontroller "k8s.io/apiserver/pkg/server/options/encryptionconfig/controller"
+	etcd3watcher "k8s.io/apiserver/pkg/storage/etcd3"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	clientgofeaturegate "k8s.io/client-go/features"
 	"k8s.io/component-base/featuregate"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
+	"k8s.io/klog/v2/ktesting"
 	"k8s.io/kubernetes/pkg/features"
+	"k8s.io/kubernetes/test/integration/framework"
 )
 
 // TestStorageVersionMigration is an integration test that verifies storage version migration works.
@@ -152,7 +154,12 @@ func TestStorageVersionMigrationWithCRD(t *testing.T) {
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, featuregate.Feature(clientgofeaturegate.InformerResourceVersion), true)
 	// decode errors are expected when using conversation webhooks
 	etcd3watcher.TestOnlySetFatalOnDecodeError(false)
-	defer etcd3watcher.TestOnlySetFatalOnDecodeError(true)
+	t.Cleanup(func() { etcd3watcher.TestOnlySetFatalOnDecodeError(true) })
+	framework.GoleakCheck(t, // block test clean up and let any lingering watches complete before making decode errors fatal again
+		goleak.IgnoreTopFunction("k8s.io/kubernetes/vendor/gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
+		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
+		goleak.IgnoreTopFunction("github.com/moby/spdystream.(*Connection).shutdown"),
+	)
 
 	_, ctx := ktesting.NewTestContext(t)
 	ctx, cancel := context.WithCancel(ctx)
