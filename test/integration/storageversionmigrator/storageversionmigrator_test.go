@@ -25,6 +25,7 @@ import (
 	"go.uber.org/goleak"
 
 	svmv1alpha1 "k8s.io/api/storagemigration/v1alpha1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	encryptionconfigcontroller "k8s.io/apiserver/pkg/server/options/encryptionconfig/controller"
 	etcd3watcher "k8s.io/apiserver/pkg/storage/etcd3"
@@ -252,6 +253,11 @@ func TestStorageVersionMigrationWithCRD(t *testing.T) {
 		t.Fatalf("CRD not migrated")
 	}
 
+	triggerCR, errTrigger := svmTest.getCRWithErr(ctx, "triggercr", "v1")
+	if !errors.IsNotFound(errTrigger) {
+		t.Errorf("trigger CR was recreated by SVM controller: cr=%#v err=%v", triggerCR, err)
+	}
+
 	// assert all the CRs are stored in the etcd at correct version
 	if ok := svmTest.isCRStoredAtVersion(t, "v2", cr1.GetName()); !ok {
 		t.Fatalf("CR not stored at version v2")
@@ -274,7 +280,7 @@ func TestStorageVersionMigrationWithCRD(t *testing.T) {
 	svmTest.validateRVAndGeneration(ctx, t, crVersions)
 
 	// assert v2 CRs can be listed
-	if err := svmTest.listCR(ctx, t, "v2"); err != nil { // TODO how do we test if something deleted was not recreated?
+	if err := svmTest.listCR(ctx, t, "v2"); err != nil {
 		t.Fatalf("Failed to list CRs at version v2: %v", err)
 	}
 }
