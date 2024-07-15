@@ -63,10 +63,14 @@ import (
 	"k8s.io/client-go/util/cert"
 	"k8s.io/client-go/util/keyutil"
 	utiltesting "k8s.io/client-go/util/testing"
+	"k8s.io/controller-manager/pkg/clientbuilder"
 	"k8s.io/controller-manager/pkg/informerfactory"
 	kubeapiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
+	"k8s.io/kubernetes/cmd/kube-controller-manager/app"
 	"k8s.io/kubernetes/cmd/kube-controller-manager/names"
+	kubectrlmgrconfig "k8s.io/kubernetes/pkg/controller/apis/config"
 	"k8s.io/kubernetes/pkg/controller/garbagecollector"
+	garbagecollectorconfig "k8s.io/kubernetes/pkg/controller/garbagecollector/config"
 	"k8s.io/kubernetes/pkg/controller/storageversionmigrator"
 	"k8s.io/kubernetes/test/images/agnhost/crd-conversion-webhook/converter"
 	"k8s.io/kubernetes/test/integration"
@@ -273,6 +277,7 @@ func svmSetup(ctx context.Context, t *testing.T) *svmTest {
 		"--audit-log-version", "audit.k8s.io/v1",
 		"--audit-log-mode", "blocking",
 		"--audit-log-path", logFile.Name(),
+		"--authorization-mode=RBAC",
 	}
 	storageConfig := framework.SharedEtcd()
 	server := kubeapiservertesting.StartTestServerOrDie(t, nil, apiServerFlags, storageConfig)
@@ -281,6 +286,14 @@ func svmSetup(ctx context.Context, t *testing.T) *svmTest {
 	if err != nil {
 		t.Fatalf("error in create clientset: %v", err)
 	}
+
+	clientBuilder := clientbuilder.NewDynamicClientBuilder(
+		rest.AnonymousClientConfig(server.ClientConfig),
+		clientSet.CoreV1(),
+		metav1.NamespaceSystem,
+	)
+
+	// CHECK HERE
 
 	discoveryClient := cacheddiscovery.NewMemCacheClient(clientSet.Discovery())
 	rvDiscoveryClient, err := discovery.NewDiscoveryClientForConfig(server.ClientConfig)
@@ -324,30 +337,33 @@ func svmSetup(ctx context.Context, t *testing.T) *svmTest {
 		go gc.Sync(ctx, clientSet.Discovery(), syncPeriod)
 	}
 
-	svmController := storageversionmigrator.NewSVMController(
-		ctx,
-		clientSet,
-		dynamicClient,
-		sharedInformers.Storagemigration().V1alpha1().StorageVersionMigrations(),
-		names.StorageVersionMigratorController,
-		restMapper,
-		gc.GetDependencyGraphBuilder(),
-	)
+	// END HERE
 
-	rvController := storageversionmigrator.NewResourceVersionController(
-		ctx,
-		clientSet,
-		rvDiscoveryClient,
-		metadataClient,
-		sharedInformers.Storagemigration().V1alpha1().StorageVersionMigrations(),
-		restMapper,
-	)
+	svmInit := app.NewControllerDescriptors()[names.StorageVersionMigratorController].GetInitFunc()
+
+	cc := app.ControllerContext{
+		ClientBuilder:   clientBuilder,
+		InformerFactory: sharedInformers,
+		ComponentConfig: kubectrlmgrconfig.KubeControllerManagerConfiguration{
+			GarbageCollectorController: garbagecollectorconfig.GarbageCollectorControllerConfiguration{
+				EnableGarbageCollector: true,
+			},
+		},
+		RESTMapper:   restMapper,
+		GraphBuilder: gc.GetDependencyGraphBuilder(),
+	}
+
+	svmController, enabled, err := svmInit(ctx, cc, names.StorageVersionMigratorController)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled || svmController == nil {
+		t.Fatalf("failed to initialize storage version migrator controller")
+	}
 
 	// Start informer and controllers
 	sharedInformers.Start(ctx.Done())
 	startGC()
-	go svmController.Run(ctx)
-	go rvController.Run(ctx)
 
 	svmTest := &svmTest{
 		storageConfig:               storageConfig,
