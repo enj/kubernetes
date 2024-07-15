@@ -313,11 +313,8 @@ func (svmc *SVMController) sync(ctx context.Context, key string) error {
 					setStatusConditions(toBeProcessedSVM, svmv1alpha1.MigrationFailed, migrationFailedStatusReason, "patch returned non-conflict error"),
 					metav1.UpdateOptions{},
 				)
-			if errStatus != nil {
-				return errStatus
-			}
 
-			return nil
+			return errStatus
 			// Todo: add retry for scenarios where API server returns rate limiting error
 		}
 		logger.V(4).Info("Successfully migrated the resource", "namespace", accessor.GetNamespace(), "name", accessor.GetName(), "gvr", gvr.String())
