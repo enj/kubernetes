@@ -277,8 +277,8 @@ func svmSetup(ctx context.Context, t *testing.T) *svmTest {
 
 	kcm := kubecontrollermanagertesting.StartTestServerOrDie(ctx, []string{
 		"--kubeconfig=" + kubeConfigFile,
-		"--controllers=garbagecollector,svm",
-		"--leader-elect=false",
+		"--controllers=garbagecollector,svm", // these are the only controllers needed for this test
+		"--leader-elect=false",               // KCM leader election calls os.Exit when it ends, so it is easier to just turn it off altogether
 	})
 
 	clientSet, err := clientset.NewForConfig(server.ClientConfig)
