@@ -216,6 +216,7 @@ func (svmc *SVMController) sync(ctx context.Context, key string) error {
 		logger.V(4).Error(errMonitor, "resource does not exist in GC", "gvr", gvr.String())
 
 		// our GC cache could be missing a recently created custom resource, so give it some time to catch up
+		// we resync discovery every 30 seconds so twice that should be sufficient
 		if toBeProcessedSVM.CreationTimestamp.Add(time.Minute).After(time.Now()) {
 			return fmt.Errorf("resource does not exist in GC, requeuing to attempt again: %w", errMonitor)
 		}
