@@ -273,7 +273,7 @@ func svmSetup(ctx context.Context, t *testing.T) *svmTest {
 	storageConfig := framework.SharedEtcd()
 	server := kubeapiservertesting.StartTestServerOrDie(t, nil, apiServerFlags, storageConfig)
 
-	kubeConfigFile := createKubeconfigFileForRestConfig(t, server.ClientConfig)
+	kubeConfigFile := createKubeConfigFileForRestConfig(t, server.ClientConfig)
 
 	kcm := kubecontrollermanagertesting.StartTestServerOrDie(ctx, []string{
 		"--kubeconfig=" + kubeConfigFile,
@@ -320,7 +320,7 @@ func svmSetup(ctx context.Context, t *testing.T) *svmTest {
 	return svmTest
 }
 
-func createKubeconfigFileForRestConfig(t *testing.T, restConfig *rest.Config) string {
+func createKubeConfigFileForRestConfig(t *testing.T, restConfig *rest.Config) string {
 	t.Helper()
 
 	clusters := make(map[string]*clientcmdapi.Cluster)
