@@ -56,7 +56,6 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/util/cert"
 	"k8s.io/client-go/util/keyutil"
 	utiltesting "k8s.io/client-go/util/testing"
@@ -68,6 +67,7 @@ import (
 	"k8s.io/kubernetes/test/integration/etcd"
 	"k8s.io/kubernetes/test/integration/framework"
 	"k8s.io/kubernetes/test/utils"
+	"k8s.io/kubernetes/test/utils/kubeconfig"
 	utilnet "k8s.io/utils/net"
 	"k8s.io/utils/ptr"
 )
@@ -323,34 +323,10 @@ func svmSetup(ctx context.Context, t *testing.T) *svmTest {
 func createKubeConfigFileForRestConfig(t *testing.T, restConfig *rest.Config) string {
 	t.Helper()
 
-	clusters := make(map[string]*clientcmdapi.Cluster)
-	clusters["default-cluster"] = &clientcmdapi.Cluster{
-		Server:                   restConfig.Host,
-		TLSServerName:            restConfig.ServerName,
-		CertificateAuthorityData: restConfig.CAData,
-	}
-	contexts := make(map[string]*clientcmdapi.Context)
-	contexts["default-context"] = &clientcmdapi.Context{
-		Cluster:  "default-cluster",
-		AuthInfo: "default-user",
-	}
-	authinfos := make(map[string]*clientcmdapi.AuthInfo)
-	authinfos["default-user"] = &clientcmdapi.AuthInfo{
-		ClientCertificateData: restConfig.CertData,
-		ClientKeyData:         restConfig.KeyData,
-		Token:                 restConfig.BearerToken,
-	}
-	clientConfig := clientcmdapi.Config{
-		Kind:           "Config",
-		APIVersion:     "v1",
-		Clusters:       clusters,
-		Contexts:       contexts,
-		CurrentContext: "default-context",
-		AuthInfos:      authinfos,
-	}
+	clientConfig := kubeconfig.CreateKubeConfig(restConfig)
 
 	kubeConfigFile := filepath.Join(t.TempDir(), "kubeconfig.yaml")
-	if err := clientcmd.WriteToFile(clientConfig, kubeConfigFile); err != nil {
+	if err := clientcmd.WriteToFile(*clientConfig, kubeConfigFile); err != nil {
 		t.Fatal(err)
 	}
 	return kubeConfigFile
