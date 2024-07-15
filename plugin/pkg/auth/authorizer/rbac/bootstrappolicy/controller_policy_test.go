@@ -22,8 +22,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/apiserver/pkg/util/feature"
-	featuregatetesting "k8s.io/component-base/featuregate/testing"
 )
 
 // rolesWithAllowStar are the controller roles which are allowed to contain a *.  These are
@@ -36,7 +34,6 @@ var rolesWithAllowStar = sets.NewString(
 	saRolePrefix+"horizontal-pod-autoscaler",
 	saRolePrefix+"clusterrole-aggregation-controller",
 	saRolePrefix+"disruption-controller",
-	saRolePrefix+"storage-version-migrator-controller",
 )
 
 // TestNoStarsForControllers confirms that no controller role has star verbs, groups,
@@ -44,9 +41,6 @@ var rolesWithAllowStar = sets.NewString(
 // delete anything, and HPA, which has the power to read metrics associated
 // with any object.
 func TestNoStarsForControllers(t *testing.T) {
-	featuregatetesting.SetFeatureGateDuringTest(t, feature.DefaultFeatureGate, "AllAlpha", true)
-	featuregatetesting.SetFeatureGateDuringTest(t, feature.DefaultFeatureGate, "AllBeta", true)
-
 	for _, role := range ControllerRoles() {
 		if rolesWithAllowStar.Has(role.Name) {
 			continue
@@ -73,9 +67,6 @@ func TestNoStarsForControllers(t *testing.T) {
 }
 
 func TestControllerRoleLabel(t *testing.T) {
-	featuregatetesting.SetFeatureGateDuringTest(t, feature.DefaultFeatureGate, "AllAlpha", true)
-	featuregatetesting.SetFeatureGateDuringTest(t, feature.DefaultFeatureGate, "AllBeta", true)
-
 	roles := ControllerRoles()
 	for i := range roles {
 		role := roles[i]
