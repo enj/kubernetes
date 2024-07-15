@@ -204,8 +204,7 @@ func (svmc *SVMController) sync(ctx context.Context, key string) error {
 	}
 	gvr := getGVRFromResource(toBeProcessedSVM)
 
-	// TODO comment
-	monCtx, monCtxCancel := context.WithTimeout(ctx, 10*time.Second)
+	monCtx, monCtxCancel := context.WithTimeout(ctx, 10*time.Second) // prevent unsynced monitor from blocking forever
 	defer monCtxCancel()
 	resourceMonitor, errMonitor := svmc.dependencyGraphBuilder.GetMonitor(monCtx, gvr)
 	if resourceMonitor != nil {
@@ -272,7 +271,11 @@ func (svmc *SVMController) sync(ctx context.Context, key string) error {
 
 		typeMeta := typeMetaNameRV{}
 		typeMeta.APIVersion, typeMeta.Kind = gvk.ToAPIVersionAndKind()
-		typeMeta.Name = accessor.GetName() // set name so that API server proceeds to RV check during the deleted case.  // TODO more details
+		// set name so that API server proceeds to RV check when the migrated resource has been deleted.
+		// the api server treats this flow as a create call, and merges an empty object into this input,
+		// which results in an object that no name.  we specify the name to skip that error case, and we
+		// know the create request will always fail because we always set the resource version below.
+		typeMeta.Name = accessor.GetName()
 		// set RV so if the object gets deleted, we get a conflict instead of trying to create it.
 		// recreated objects will also result in a conflict, which is the desired behavior.
 		typeMeta.ResourceVersion = accessor.GetResourceVersion()
