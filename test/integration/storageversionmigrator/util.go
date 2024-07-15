@@ -665,22 +665,25 @@ func (svm *svmTest) createCRD(
 				Plural:   pluralName,
 				Singular: name,
 			},
-			Scope:    apiextensionsv1.NamespaceScoped,
-			Versions: crdVersions,
-			Conversion: &apiextensionsv1.CustomResourceConversion{
-				Strategy: apiextensionsv1.WebhookConverter,
-				Webhook: &apiextensionsv1.WebhookConversion{
-					ClientConfig: &apiextensionsv1.WebhookClientConfig{
-						CABundle: certCtx.signingCert,
-						URL: ptr.To(
-							fmt.Sprintf("https://127.0.0.1:%d/%s", servicePort, webhookHandler),
-						),
-					},
-					ConversionReviewVersions: []string{"v1", "v2"},
-				},
-			},
+			Scope:                 apiextensionsv1.NamespaceScoped,
+			Versions:              crdVersions,
 			PreserveUnknownFields: false,
 		},
+	}
+
+	if certCtx != nil {
+		crd.Spec.Conversion = &apiextensionsv1.CustomResourceConversion{
+			Strategy: apiextensionsv1.WebhookConverter,
+			Webhook: &apiextensionsv1.WebhookConversion{
+				ClientConfig: &apiextensionsv1.WebhookClientConfig{
+					CABundle: certCtx.signingCert,
+					URL: ptr.To(
+						fmt.Sprintf("https://127.0.0.1:%d/%s", servicePort, webhookHandler),
+					),
+				},
+				ConversionReviewVersions: []string{"v1", "v2"},
+			},
+		}
 	}
 
 	apiextensionsclient, err := apiextensionsclientset.NewForConfig(svm.clientConfig)
@@ -1001,16 +1004,16 @@ func (svm *svmTest) isCRStoredAtVersion(t *testing.T, version, crName string) bo
 	return obj.GetAPIVersion() == fmt.Sprintf("%s/%s", crdGroup, version)
 }
 
-func (svm *svmTest) isCRDMigrated(ctx context.Context, t *testing.T, crdSVMName string) bool {
+func (svm *svmTest) isCRDMigrated(ctx context.Context, t *testing.T, crdSVMName, triggerCRName string) bool {
 	t.Helper()
 
-	triggerCR := svm.createCR(ctx, t, "triggercr", "v1")
+	triggerCR := svm.createCR(ctx, t, triggerCRName, "v1")
 	svm.deleteCR(ctx, t, triggerCR.GetName(), "v1")
 
 	err := wait.PollUntilContextTimeout(
 		ctx,
 		500*time.Millisecond,
-		1*time.Minute,
+		5*time.Minute,
 		true,
 		func(ctx context.Context) (bool, error) {
 			svmResource, err := svm.getSVM(ctx, t, crdSVMName)
@@ -1052,7 +1055,7 @@ type versions struct {
 	isRVUpdated bool
 }
 
-func (svm *svmTest) validateRVAndGeneration(ctx context.Context, t *testing.T, crVersions map[string]versions) {
+func (svm *svmTest) validateRVAndGeneration(ctx context.Context, t *testing.T, crVersions map[string]versions, getCRVersion string) {
 	t.Helper()
 
 	for crName, version := range crVersions {
@@ -1070,9 +1073,13 @@ func (svm *svmTest) validateRVAndGeneration(ctx context.Context, t *testing.T, c
 		}
 
 		// validate resourceVersion and generation
-		crVersion := svm.getCR(ctx, t, crName, "v2").GetResourceVersion()
-		if version.isRVUpdated && crVersion == version.rv {
+		crVersion := svm.getCR(ctx, t, crName, getCRVersion).GetResourceVersion()
+		isRVUnchanged := crVersion == version.rv
+		if version.isRVUpdated && isRVUnchanged {
 			t.Fatalf("ResourceVersion of CR %s should not be equal. Expected: %s, Got: %s", crName, version.rv, crVersion)
+		}
+		if !version.isRVUpdated && !isRVUnchanged {
+			t.Fatalf("ResourceVersion of CR %s should be equal. Expected: %s, Got: %s", crName, version.rv, crVersion)
 		}
 		if obj.GetGeneration() != version.generation {
 			t.Fatalf("Generation of CR %s should be equal. Expected: %d, Got: %d", crName, version.generation, obj.GetGeneration())

@@ -19,6 +19,8 @@ package storageversionmigrator
 import (
 	"bytes"
 	"context"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -249,7 +251,7 @@ func TestStorageVersionMigrationWithCRD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create SVM resource: %v", err)
 	}
-	if ok := svmTest.isCRDMigrated(ctx, t, svm.Name); !ok {
+	if ok := svmTest.isCRDMigrated(ctx, t, svm.Name, "triggercr"); !ok {
 		t.Fatalf("CRD not migrated")
 	}
 
@@ -277,10 +279,72 @@ func TestStorageVersionMigrationWithCRD(t *testing.T) {
 	shutdownServer()
 
 	// assert RV and Generations of CRs
-	svmTest.validateRVAndGeneration(ctx, t, crVersions)
+	svmTest.validateRVAndGeneration(ctx, t, crVersions, "v2")
 
 	// assert v2 CRs can be listed
 	if err := svmTest.listCR(ctx, t, "v2"); err != nil {
 		t.Fatalf("Failed to list CRs at version v2: %v", err)
 	}
+}
+
+func TestStorageVersionMigrationDuringChaos(t *testing.T) {
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StorageVersionMigrator, true)
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, featuregate.Feature(clientgofeaturegate.InformerResourceVersion), true)
+
+	_, ctx := ktesting.NewTestContext(t)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	crVersions := make(map[string]versions)
+
+	svmTest := svmSetup(ctx, t)
+
+	svmTest.createChaos(t)
+
+	crd := svmTest.createCRD(t, crdName, crdGroup, nil, v1CRDVersion)
+
+	for i := range 1_000 {
+		cr := svmTest.createCR(ctx, t, "created-cr-"+strconv.Itoa(i), "v1")
+		crVersions[cr.GetName()] = versions{
+			generation:  cr.GetGeneration(),
+			rv:          cr.GetResourceVersion(),
+			isRVUpdated: false, // none of these CRs should change due to migrations
+		}
+	}
+
+	var wg sync.WaitGroup
+	const migrations = 20 // more than the total workers of SVM
+	wg.Add(migrations)
+	for i := 0; i < migrations; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+
+			svm, err := svmTest.createSVMResource(
+				ctx, t, "chaos-svm-"+strconv.Itoa(i),
+				svmv1alpha1.GroupVersionResource{
+					Group:    crd.Spec.Group,
+					Version:  "v1",
+					Resource: crd.Spec.Names.Plural,
+				},
+			)
+			if err != nil {
+				t.Errorf("Failed to create SVM resource: %v", err)
+				return
+			}
+			triggerCRName := "chaos-trigger-" + strconv.Itoa(i)
+			if ok := svmTest.isCRDMigrated(ctx, t, svm.Name, triggerCRName); !ok {
+				t.Errorf("CRD not migrated")
+				return
+			}
+			triggerCR, errTrigger := svmTest.getCRWithErr(ctx, triggerCRName, "v1")
+			if !errors.IsNotFound(errTrigger) {
+				t.Errorf("trigger CR was recreated by SVM controller: cr=%#v err=%v", triggerCR, err)
+				return
+			}
+		}()
+	}
+	wg.Wait()
+
+	svmTest.validateRVAndGeneration(ctx, t, crVersions, "v1")
 }
