@@ -52,25 +52,16 @@ import (
 	endpointsdiscovery "k8s.io/apiserver/pkg/endpoints/discovery"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	"k8s.io/client-go/discovery"
-	cacheddiscovery "k8s.io/client-go/discovery/cached/memory"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/metadata"
-	"k8s.io/client-go/metadata/metadatainformer"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/restmapper"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/util/cert"
 	"k8s.io/client-go/util/keyutil"
 	utiltesting "k8s.io/client-go/util/testing"
-	"k8s.io/controller-manager/pkg/clientbuilder"
-	"k8s.io/controller-manager/pkg/informerfactory"
 	kubeapiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
-	"k8s.io/kubernetes/cmd/kube-controller-manager/app"
-	"k8s.io/kubernetes/cmd/kube-controller-manager/names"
-	kubectrlmgrconfig "k8s.io/kubernetes/pkg/controller/apis/config"
-	"k8s.io/kubernetes/pkg/controller/garbagecollector"
-	garbagecollectorconfig "k8s.io/kubernetes/pkg/controller/garbagecollector/config"
+	kubecontrollermanagertesting "k8s.io/kubernetes/cmd/kube-controller-manager/app/testing"
 	"k8s.io/kubernetes/pkg/controller/storageversionmigrator"
 	"k8s.io/kubernetes/test/images/agnhost/crd-conversion-webhook/converter"
 	"k8s.io/kubernetes/test/integration"
@@ -282,88 +273,26 @@ func svmSetup(ctx context.Context, t *testing.T) *svmTest {
 	storageConfig := framework.SharedEtcd()
 	server := kubeapiservertesting.StartTestServerOrDie(t, nil, apiServerFlags, storageConfig)
 
+	kubeConfigFile := createKubeconfigFileForRestConfig(t, server.ClientConfig)
+
+	kcm := kubecontrollermanagertesting.StartTestServerOrDie(ctx, []string{
+		"--kubeconfig=" + kubeConfigFile,
+		"--controllers=garbagecollector,svm",
+		"--leader-elect=false",
+	})
+
 	clientSet, err := clientset.NewForConfig(server.ClientConfig)
 	if err != nil {
 		t.Fatalf("error in create clientset: %v", err)
 	}
-
-	clientBuilder := clientbuilder.NewDynamicClientBuilder(
-		rest.AnonymousClientConfig(server.ClientConfig),
-		clientSet.CoreV1(),
-		metav1.NamespaceSystem,
-	)
-
-	// CHECK HERE
-
-	discoveryClient := cacheddiscovery.NewMemCacheClient(clientSet.Discovery())
 	rvDiscoveryClient, err := discovery.NewDiscoveryClientForConfig(server.ClientConfig)
 	if err != nil {
 		t.Fatalf("failed to create discovery client: %v", err)
-	}
-	restMapper := restmapper.NewDeferredDiscoveryRESTMapper(discoveryClient)
-	restMapper.Reset()
-	metadataClient, err := metadata.NewForConfig(server.ClientConfig)
-	if err != nil {
-		t.Fatalf("failed to create metadataClient: %v", err)
 	}
 	dynamicClient, err := dynamic.NewForConfig(server.ClientConfig)
 	if err != nil {
 		t.Fatalf("error in create dynamic client: %v", err)
 	}
-	sharedInformers := informers.NewSharedInformerFactory(clientSet, 0)
-	metadataInformers := metadatainformer.NewSharedInformerFactory(metadataClient, 0)
-	alwaysStarted := make(chan struct{})
-	close(alwaysStarted)
-
-	gc, err := garbagecollector.NewGarbageCollector(
-		ctx,
-		clientSet,
-		metadataClient,
-		restMapper,
-		garbagecollector.DefaultIgnoredResources(),
-		informerfactory.NewInformerFactory(sharedInformers, metadataInformers),
-		alwaysStarted,
-	)
-	if err != nil {
-		t.Fatalf("error while creating garbage collector: %v", err)
-
-	}
-	startGC := func() {
-		syncPeriod := 5 * time.Second
-		go wait.Until(func() {
-			restMapper.Reset()
-		}, syncPeriod, ctx.Done())
-		go gc.Run(ctx, 1)
-		go gc.Sync(ctx, clientSet.Discovery(), syncPeriod)
-	}
-
-	// END HERE
-
-	svmInit := app.NewControllerDescriptors()[names.StorageVersionMigratorController].GetInitFunc()
-
-	cc := app.ControllerContext{
-		ClientBuilder:   clientBuilder,
-		InformerFactory: sharedInformers,
-		ComponentConfig: kubectrlmgrconfig.KubeControllerManagerConfiguration{
-			GarbageCollectorController: garbagecollectorconfig.GarbageCollectorControllerConfiguration{
-				EnableGarbageCollector: true,
-			},
-		},
-		RESTMapper:   restMapper,
-		GraphBuilder: gc.GetDependencyGraphBuilder(),
-	}
-
-	svmController, enabled, err := svmInit(ctx, cc, names.StorageVersionMigratorController)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !enabled || svmController == nil {
-		t.Fatalf("failed to initialize storage version migrator controller")
-	}
-
-	// Start informer and controllers
-	sharedInformers.Start(ctx.Done())
-	startGC()
 
 	svmTest := &svmTest{
 		storageConfig:               storageConfig,
@@ -379,6 +308,7 @@ func svmSetup(ctx context.Context, t *testing.T) *svmTest {
 
 	t.Cleanup(func() {
 		server.TearDownFn()
+		kcm.TearDownFn()
 		utiltesting.CloseAndRemove(t, svmTest.logFile)
 		utiltesting.CloseAndRemove(t, svmTest.policyFile)
 		err = os.RemoveAll(svmTest.filePathForEncryptionConfig)
@@ -388,6 +318,42 @@ func svmSetup(ctx context.Context, t *testing.T) *svmTest {
 	})
 
 	return svmTest
+}
+
+func createKubeconfigFileForRestConfig(t *testing.T, restConfig *rest.Config) string {
+	t.Helper()
+
+	clusters := make(map[string]*clientcmdapi.Cluster)
+	clusters["default-cluster"] = &clientcmdapi.Cluster{
+		Server:                   restConfig.Host,
+		TLSServerName:            restConfig.ServerName,
+		CertificateAuthorityData: restConfig.CAData,
+	}
+	contexts := make(map[string]*clientcmdapi.Context)
+	contexts["default-context"] = &clientcmdapi.Context{
+		Cluster:  "default-cluster",
+		AuthInfo: "default-user",
+	}
+	authinfos := make(map[string]*clientcmdapi.AuthInfo)
+	authinfos["default-user"] = &clientcmdapi.AuthInfo{
+		ClientCertificateData: restConfig.CertData,
+		ClientKeyData:         restConfig.KeyData,
+		Token:                 restConfig.BearerToken,
+	}
+	clientConfig := clientcmdapi.Config{
+		Kind:           "Config",
+		APIVersion:     "v1",
+		Clusters:       clusters,
+		Contexts:       contexts,
+		CurrentContext: "default-context",
+		AuthInfos:      authinfos,
+	}
+
+	kubeConfigFile := filepath.Join(t.TempDir(), "kubeconfig.yaml")
+	if err := clientcmd.WriteToFile(clientConfig, kubeConfigFile); err != nil {
+		t.Fatal(err)
+	}
+	return kubeConfigFile
 }
 
 func createEncryptionConfig(t *testing.T, encryptionConfig string) (
