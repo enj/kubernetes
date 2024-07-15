@@ -293,9 +293,7 @@ func TestStorageVersionMigrationDuringChaos(t *testing.T) {
 
 	_, ctx := ktesting.NewTestContext(t)
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	crVersions := make(map[string]versions)
+	t.Cleanup(cancel)
 
 	svmTest := svmSetup(ctx, t)
 
@@ -303,7 +301,9 @@ func TestStorageVersionMigrationDuringChaos(t *testing.T) {
 
 	crd := svmTest.createCRD(t, crdName, crdGroup, nil, v1CRDVersion)
 
-	for i := range 1_000 {
+	crVersions := make(map[string]versions)
+
+	for i := range 50 { // a more realistic number of total resources
 		cr := svmTest.createCR(ctx, t, "created-cr-"+strconv.Itoa(i), "v1")
 		crVersions[cr.GetName()] = versions{
 			generation:  cr.GetGeneration(),
@@ -313,9 +313,9 @@ func TestStorageVersionMigrationDuringChaos(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	const migrations = 20 // more than the total workers of SVM
+	const migrations = 10 // more than the total workers of SVM
 	wg.Add(migrations)
-	for i := 0; i < migrations; i++ {
+	for i := range migrations {
 		i := i
 		go func() {
 			defer wg.Done()

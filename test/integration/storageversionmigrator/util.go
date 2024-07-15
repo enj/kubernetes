@@ -307,8 +307,8 @@ func svmSetup(ctx context.Context, t *testing.T) *svmTest {
 	}
 
 	t.Cleanup(func() {
-		server.TearDownFn()
 		kcm.TearDownFn()
+		server.TearDownFn()
 		utiltesting.CloseAndRemove(t, svmTest.logFile)
 		utiltesting.CloseAndRemove(t, svmTest.policyFile)
 		err = os.RemoveAll(svmTest.filePathForEncryptionConfig)
@@ -1095,7 +1095,7 @@ func (svm *svmTest) createChaos(t *testing.T) {
 
 	const workers = 10
 	wg.Add(workers)
-	for i := 0; i < workers; i++ {
+	for i := range workers {
 		i := i
 		go func() {
 			defer wg.Done()
