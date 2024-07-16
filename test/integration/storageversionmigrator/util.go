@@ -1007,8 +1007,7 @@ func (svm *svmTest) isCRStoredAtVersion(t *testing.T, version, crName string) bo
 func (svm *svmTest) isCRDMigrated(ctx context.Context, t *testing.T, crdSVMName, triggerCRName string) bool {
 	t.Helper()
 
-	triggerCR := svm.createCR(ctx, t, triggerCRName, "v1")
-	svm.deleteCR(ctx, t, triggerCR.GetName(), "v1")
+	var triggerOnce sync.Once
 
 	err := wait.PollUntilContextTimeout(
 		ctx,
@@ -1042,6 +1041,15 @@ func (svm *svmTest) isCRDMigrated(ctx context.Context, t *testing.T, crdSVMName,
 			}
 
 			t.Logf("%q SVM has not started migration, %#v", crdSVMName, svmResource.Status.Conditions)
+
+			// at this point we know that the RV has been set on the SVM resource,
+			// and we need to make sure that the GC list RV has caught up to that without waiting for a watch bookmark.
+			// we cannot trigger this any earlier as the rest mapper of the RV controller can be delayed
+			// and thus may not have observed the new CRD yet.  we only need to do this once.
+			triggerOnce.Do(func() {
+				triggerCR := svm.createCR(ctx, t, triggerCRName, "v1")
+				svm.deleteCR(ctx, t, triggerCR.GetName(), "v1")
+			})
 
 			return false, nil
 		},
