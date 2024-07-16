@@ -29,6 +29,7 @@ import (
 	svmv1alpha1 "k8s.io/api/storagemigration/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	genericfeatures "k8s.io/apiserver/pkg/features"
 	encryptionconfigcontroller "k8s.io/apiserver/pkg/server/options/encryptionconfig/controller"
 	etcd3watcher "k8s.io/apiserver/pkg/storage/etcd3"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -154,6 +155,7 @@ func TestStorageVersionMigration(t *testing.T) {
 // 11. Verify the list of CRs at v2 works
 func TestStorageVersionMigrationWithCRD(t *testing.T) {
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StorageVersionMigrator, true)
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.ConsistentListFromCache, false)
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, featuregate.Feature(clientgofeaturegate.InformerResourceVersion), true)
 	// decode errors are expected when using conversation webhooks
 	etcd3watcher.TestOnlySetFatalOnDecodeError(false)
