@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -855,8 +856,19 @@ func (svm *svmTest) deleteCR(ctx context.Context, t testingT, name, version stri
 func (svm *svmTest) createConversionWebhook(ctx context.Context, t *testing.T, certCtx *certContext) context.CancelFunc {
 	t.Helper()
 
+	var lastTime atomic.Pointer[time.Time]
+	lastTime.Store(ptr.To(time.Now()))
+	var inflight atomic.Int64
 	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/%s", webhookHandler), converter.ServeExampleConvert)
+	mux.HandleFunc(fmt.Sprintf("/%s", webhookHandler), func(w http.ResponseWriter, r *http.Request) {
+		lastTime.Store(ptr.To(time.Now()))
+		inflight.Add(1)
+		defer func() {
+			lastTime.Store(ptr.To(time.Now()))
+			inflight.Add(-1)
+		}()
+		converter.ServeExampleConvert(w, r)
+	})
 
 	block, _ := pem.Decode(certCtx.key)
 	if block == nil {
@@ -896,16 +908,28 @@ func (svm *svmTest) createConversionWebhook(ctx context.Context, t *testing.T, c
 
 	}()
 
+	doneChan := make(chan struct{})
 	serverCtx, cancel := context.WithCancel(ctx)
 	go func(ctx context.Context, t *testing.T) {
 		<-ctx.Done()
+		_ = wait.PollUntilContextTimeout(context.Background(), time.Second, 5*time.Minute, true, func(ctx context.Context) (done bool, err error) {
+			lastReq := *lastTime.Load()
+			t.Logf("crd webhook shutdown last req: %v", lastReq)
+			return time.Since(lastReq) > 10*time.Second && inflight.Load() == 0, nil
+		})
+		tc, tcc := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer tcc()
 		// Context was cancelled, shutdown the server
-		if err := server.Shutdown(context.Background()); err != nil {
+		if err := server.Shutdown(tc); err != nil {
 			t.Logf("Failed to shutdown server: %v", err)
 		}
+		close(doneChan)
 	}(serverCtx, t)
 
-	return cancel
+	return func() {
+		cancel()
+		<-doneChan
+	}
 }
 
 type certContext struct {
