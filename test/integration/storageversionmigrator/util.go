@@ -853,7 +853,7 @@ func (svm *svmTest) deleteCR(ctx context.Context, t testingT, name, version stri
 	}
 }
 
-func (svm *svmTest) createConversionWebhook(ctx context.Context, t *testing.T, certCtx *certContext) context.CancelFunc {
+func (svm *svmTest) createConversionWebhook(ctx context.Context, t *testing.T, certCtx *certContext) func() {
 	t.Helper()
 
 	var lastTime atomic.Pointer[time.Time]
@@ -914,7 +914,7 @@ func (svm *svmTest) createConversionWebhook(ctx context.Context, t *testing.T, c
 		<-ctx.Done()
 		_ = wait.PollUntilContextTimeout(context.Background(), time.Second, 5*time.Minute, true, func(ctx context.Context) (done bool, err error) {
 			lastReq := *lastTime.Load()
-			t.Logf("crd webhook shutdown last req: %v", lastReq)
+			t.Logf("crd webhook shutdown last req: %v, now=%s, inflight=%d", lastReq, time.Now().String(), inflight.Load())
 			return time.Since(lastReq) > 10*time.Second && inflight.Load() == 0, nil
 		})
 		tc, tcc := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -1111,9 +1111,9 @@ func (svm *svmTest) validateRVAndGeneration(ctx context.Context, t *testing.T, c
 	}
 }
 
-func (svm *svmTest) createChaos(t *testing.T) {
+func (svm *svmTest) createChaos(ctx context.Context, t *testing.T) func() {
 	var wg sync.WaitGroup
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 
 	noFailT := ignoreFailures{} // these create and delete requests are not coordinated with the rest of the test and can fail
 
@@ -1137,10 +1137,14 @@ func (svm *svmTest) createChaos(t *testing.T) {
 		}()
 	}
 
-	t.Cleanup(func() {
+	cleanup := func() {
 		cancel()
 		wg.Wait()
-	})
+	}
+
+	t.Cleanup(cleanup) // always clean up at the end of the test
+
+	return cleanup // allow caller to force early clean up
 }
 
 type ignoreFailures struct{}
