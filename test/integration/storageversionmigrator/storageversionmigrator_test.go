@@ -295,6 +295,15 @@ func TestStorageVersionMigrationDuringChaos(t *testing.T) {
 	ctx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
 
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Minute):
+			panic("timed out waiting for CRs to be migrated")
+		}
+	}()
+
 	svmTest := svmSetup(ctx, t)
 
 	svmTest.createChaos(t)
