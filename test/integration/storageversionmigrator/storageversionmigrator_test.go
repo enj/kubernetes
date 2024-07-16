@@ -291,6 +291,7 @@ func TestStorageVersionMigrationWithCRD(t *testing.T) {
 
 func TestStorageVersionMigrationDuringChaos(t *testing.T) {
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StorageVersionMigrator, true)
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.ConsistentListFromCache, false)
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, featuregate.Feature(clientgofeaturegate.InformerResourceVersion), true)
 
 	_, ctx := ktesting.NewTestContext(t)
