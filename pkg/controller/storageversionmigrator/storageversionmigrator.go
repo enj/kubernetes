@@ -270,16 +270,15 @@ func (svmc *SVMController) sync(ctx context.Context, key string) error {
 			return err
 		}
 
-		typeMeta := typeMetaNameUIDRV{}
+		typeMeta := typeMetaUIDRV{}
 		typeMeta.APIVersion, typeMeta.Kind = gvk.ToAPIVersionAndKind()
-		// set name so that API server proceeds to RV check when the migrated resource has been deleted.
-		// the api server treats this flow as a create call, and merges an empty object into this input,
-		// which results in an object that no name.  we specify the name to skip that error case, and we
-		// know the create request will always fail because we always set the resource version below.
-		typeMeta.Name = accessor.GetName()
-		// set RV so if the object gets deleted, we get a conflict instead of trying to create it.
-		// recreated objects will also result in a conflict, which is the desired behavior.
-		typeMeta.UID = accessor.GetUID() // TODO comment, and fix RV comments
+		// set UID so that when a resource gets deleted, we get an "uid mismatch"
+		// conflict error instead of trying to create it.
+		typeMeta.UID = accessor.GetUID()
+		// set RV so that when a resources gets updated or deleted+recreated, we get an "object has been modified"
+		// conflict error.  we do not actually need to do anything special for the updated case because if RV
+		// was not set, it would just result in no-op request.  but for the deleted+recreated case, if RV is
+		// not set but UID is set, we would get an immutable field validation error.  hence we must set both.
 		typeMeta.ResourceVersion = accessor.GetResourceVersion()
 		data, err := json.Marshal(typeMeta)
 		if err != nil {
@@ -337,13 +336,12 @@ func (svmc *SVMController) sync(ctx context.Context, key string) error {
 	return nil
 }
 
-type typeMetaNameUIDRV struct {
-	metav1.TypeMeta         `json:",inline"`
-	objectMetaNameUIDRVOnly `json:"metadata,omitempty"`
+type typeMetaUIDRV struct {
+	metav1.TypeMeta     `json:",inline"`
+	objectMetaUIDRVOnly `json:"metadata,omitempty"`
 }
 
-type objectMetaNameUIDRVOnly struct {
-	Name            string    `json:"name,omitempty"`
+type objectMetaUIDRVOnly struct {
 	UID             types.UID `json:"uid,omitempty"`
 	ResourceVersion string    `json:"resourceVersion,omitempty"`
 }
