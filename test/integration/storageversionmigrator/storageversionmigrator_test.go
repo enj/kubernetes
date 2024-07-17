@@ -56,7 +56,7 @@ func TestStorageVersionMigration(t *testing.T) {
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, featuregate.Feature(clientgofeaturegate.InformerResourceVersion), true)
 
 	// this makes the test super responsive. It's set to a default of 1 minute.
-	encryptionconfigcontroller.EncryptionConfigFileChangePollDuration = time.Millisecond
+	encryptionconfigcontroller.EncryptionConfigFileChangePollDuration = time.Second
 
 	_, ctx := ktesting.NewTestContext(t)
 	ctx, cancel := context.WithCancel(ctx)

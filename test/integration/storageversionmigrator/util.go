@@ -277,8 +277,9 @@ func svmSetup(ctx context.Context, t *testing.T) *svmTest {
 
 	kcm := kubecontrollermanagertesting.StartTestServerOrDie(ctx, []string{
 		"--kubeconfig=" + kubeConfigFile,
-		"--controllers=garbagecollector,svm", // these are the only controllers needed for this test
-		"--leader-elect=false",               // KCM leader election calls os.Exit when it ends, so it is easier to just turn it off altogether
+		"--controllers=garbagecollector,svm",     // these are the only controllers needed for this test
+		"--use-service-account-credentials=true", // exercise RBAC of SVM controller
+		"--leader-elect=false",                   // KCM leader election calls os.Exit when it ends, so it is easier to just turn it off altogether
 	})
 
 	clientSet, err := clientset.NewForConfig(server.ClientConfig)
@@ -565,82 +566,133 @@ func (svm *svmTest) waitForResourceMigration(
 ) bool {
 	t.Helper()
 
-	var isMigrated bool
+	var triggerOnce sync.Once
+
 	err := wait.PollUntilContextTimeout(
 		ctx,
 		500*time.Millisecond,
-		wait.ForeverTestTimeout,
+		5*time.Minute,
 		true,
 		func(ctx context.Context) (bool, error) {
 			svmResource, err := svm.getSVM(ctx, t, svmName)
 			if err != nil {
 				t.Fatalf("Failed to get SVM resource: %v", err)
 			}
+
+			if storageversionmigrator.IsConditionTrue(svmResource, svmv1alpha1.MigrationFailed) {
+				t.Logf("%q SVM has failed migration, %#v", svmName, svmResource.Status.Conditions)
+				return false, fmt.Errorf("SVM has failed migration")
+			}
+
 			if svmResource.Status.ResourceVersion == "" {
+				t.Logf("%q SVM has no resourceVersion", svmName)
 				return false, nil
 			}
 
 			if storageversionmigrator.IsConditionTrue(svmResource, svmv1alpha1.MigrationSucceeded) {
-				isMigrated = true
+				t.Logf("%q SVM has completed migration", svmName)
+				return true, nil
 			}
+
+			if storageversionmigrator.IsConditionTrue(svmResource, svmv1alpha1.MigrationRunning) {
+				t.Logf("%q SVM migration is running, %#v", svmName, svmResource.Status.Conditions)
+				return false, nil
+			}
+
+			t.Logf("%q SVM has not started migration, %#v", svmName, svmResource.Status.Conditions)
 
 			// We utilize the LastSyncResourceVersion of the Garbage Collector (GC) to ensure that the cache is up-to-date before proceeding with the migration.
 			// However, in a quiet cluster, the GC may not be updated unless there is some activity or the watch receives a bookmark event after every 10 minutes.
 			// To expedite the update of the GC cache, we create a dummy secret and then promptly delete it.
 			// This action forces the GC to refresh its cache, enabling us to proceed with the migration.
-			_, err = svm.createSecret(ctx, t, triggerSecretName, defaultNamespace)
-			if err != nil {
-				t.Fatalf("Failed to create secret: %v", err)
-			}
-			err = svm.client.CoreV1().Secrets(defaultNamespace).Delete(ctx, triggerSecretName, metav1.DeleteOptions{})
-			if err != nil {
-				t.Fatalf("Failed to delete secret: %v", err)
-			}
-
-			stream, err := os.Open(svm.logFile.Name())
-			if err != nil {
-				t.Fatalf("Failed to open audit log file: %v", err)
-			}
-			defer func() {
-				if err := stream.Close(); err != nil {
-					t.Errorf("error	while closing audit log file: %v", err)
+			// At this point we know that the RV has been set on the SVM resource, so the trigger will always have a higher RV.
+			// We only need to do this once.
+			triggerOnce.Do(func() {
+				_, err = svm.createSecret(ctx, t, triggerSecretName, defaultNamespace)
+				if err != nil {
+					t.Fatalf("Failed to create secret: %v", err)
 				}
-			}()
+				err = svm.client.CoreV1().Secrets(defaultNamespace).Delete(ctx, triggerSecretName, metav1.DeleteOptions{})
+				if err != nil {
+					t.Fatalf("Failed to delete secret: %v", err)
+				}
+			})
 
-			missingReport, err := utils.CheckAuditLines(
-				stream,
-				[]utils.AuditEvent{
-					{
-						Level:             auditinternal.LevelMetadata,
-						Stage:             auditinternal.StageResponseComplete,
-						RequestURI:        fmt.Sprintf("/api/v1/namespaces/%s/secrets/%s?fieldManager=storage-version-migrator-controller", defaultNamespace, name),
-						Verb:              "patch",
-						Code:              200,
-						User:              "system:apiserver",
-						Resource:          "secrets",
-						Namespace:         "default",
-						AuthorizeDecision: "allow",
-						RequestObject:     false,
-						ResponseObject:    false,
-					},
-				},
-				auditv1.SchemeGroupVersion,
-			)
-			if err != nil {
-				t.Fatalf("Failed to check audit log: %v", err)
-			}
-			if (len(missingReport.MissingEvents) != 0) && (expectedEvents < missingReport.NumEventsChecked) {
-				isMigrated = false
-			}
-
-			return isMigrated, nil
+			return false, nil
 		},
 	)
 	if err != nil {
+		t.Logf("Failed to wait for resource migration for SVM %q with secret %q: %v", svmName, name, err)
 		return false
 	}
 
-	return isMigrated
+	err = wait.PollUntilContextTimeout(
+		ctx,
+		500*time.Millisecond,
+		wait.ForeverTestTimeout,
+		true,
+		func(_ context.Context) (bool, error) {
+			want := utils.AuditEvent{
+				Level:             auditinternal.LevelMetadata,
+				Stage:             auditinternal.StageResponseComplete,
+				RequestURI:        fmt.Sprintf("/api/v1/namespaces/%s/secrets/%s?fieldManager=storage-version-migrator-controller", defaultNamespace, name),
+				Verb:              "patch",
+				Code:              200,
+				User:              "system:serviceaccount:kube-system:storage-version-migrator-controller",
+				Resource:          "secrets",
+				Namespace:         "default",
+				AuthorizeDecision: "allow",
+				RequestObject:     false,
+				ResponseObject:    false,
+			}
+
+			if seen := svm.countMatchingAuditEvents(t, want); expectedEvents > seen {
+				t.Logf("audit log did not contain %d expected audit events, only has %d", expectedEvents, seen)
+				return false, nil
+			}
+
+			return true, nil
+		},
+	)
+	if err != nil {
+		t.Logf("Failed to wait for audit logs events for SVM %q with secret %q: %v", svmName, name, err)
+		return false
+	}
+
+	return true
+}
+
+func (svm *svmTest) countMatchingAuditEvents(t *testing.T, want utils.AuditEvent) int {
+	t.Helper()
+
+	var seen int
+	for _, event := range svm.getAuditEvents(t) {
+		if reflect.DeepEqual(event, want) {
+			seen++
+		}
+	}
+	return seen
+}
+
+func (svm *svmTest) getAuditEvents(t *testing.T) []utils.AuditEvent {
+	t.Helper()
+
+	stream, err := os.Open(svm.logFile.Name())
+	if err != nil {
+		t.Fatalf("Failed to open audit log file: %v", err)
+	}
+	defer func() {
+		if err := stream.Close(); err != nil {
+			t.Errorf("error while closing audit log file: %v", err)
+		}
+	}()
+
+	missingReport, err := utils.CheckAuditLines(stream, nil, auditv1.SchemeGroupVersion)
+	if err != nil {
+		t.Fatalf("Failed to check audit log: %v", err)
+	}
+
+	return missingReport.AllEvents
 }
 
 func (svm *svmTest) createCRD(
