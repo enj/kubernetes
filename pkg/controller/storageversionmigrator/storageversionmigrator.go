@@ -279,6 +279,7 @@ func (svmc *SVMController) sync(ctx context.Context, key string) error {
 		typeMeta.Name = accessor.GetName()
 		// set RV so if the object gets deleted, we get a conflict instead of trying to create it.
 		// recreated objects will also result in a conflict, which is the desired behavior.
+		typeMeta.UID = accessor.GetUID() // TODO comment, and fix RV comments
 		typeMeta.ResourceVersion = accessor.GetResourceVersion()
 		data, err := json.Marshal(typeMeta)
 		if err != nil {
@@ -342,6 +343,7 @@ type typeMetaNameRV struct {
 }
 
 type objectMetaNameRVOnly struct {
-	Name            string `json:"name,omitempty"`
-	ResourceVersion string `json:"resourceVersion,omitempty"`
+	Name            string    `json:"name,omitempty"`
+	UID             types.UID `json:"uid,omitempty"`
+	ResourceVersion string    `json:"resourceVersion,omitempty"`
 }
