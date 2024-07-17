@@ -270,7 +270,7 @@ func (svmc *SVMController) sync(ctx context.Context, key string) error {
 			return err
 		}
 
-		typeMeta := typeMetaNameRV{}
+		typeMeta := typeMetaNameUIDRV{}
 		typeMeta.APIVersion, typeMeta.Kind = gvk.ToAPIVersionAndKind()
 		// set name so that API server proceeds to RV check when the migrated resource has been deleted.
 		// the api server treats this flow as a create call, and merges an empty object into this input,
@@ -337,12 +337,12 @@ func (svmc *SVMController) sync(ctx context.Context, key string) error {
 	return nil
 }
 
-type typeMetaNameRV struct {
-	metav1.TypeMeta      `json:",inline"`
-	objectMetaNameRVOnly `json:"metadata,omitempty"`
+type typeMetaNameUIDRV struct {
+	metav1.TypeMeta         `json:",inline"`
+	objectMetaNameUIDRVOnly `json:"metadata,omitempty"`
 }
 
-type objectMetaNameRVOnly struct {
+type objectMetaNameUIDRVOnly struct {
 	Name            string    `json:"name,omitempty"`
 	UID             types.UID `json:"uid,omitempty"`
 	ResourceVersion string    `json:"resourceVersion,omitempty"`
