@@ -46,6 +46,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured/unstructuredscheme"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	auditinternal "k8s.io/apiserver/pkg/apis/audit"
 	auditv1 "k8s.io/apiserver/pkg/apis/audit/v1"
@@ -103,6 +104,11 @@ rules:
     - group: ""
       resources: ["secrets"]
     verbs: ["patch"]
+  - level: Metadata
+    resources:
+    - group: "stable.example.com"
+      resources: ["testcrds"]
+    users: ["system:serviceaccount:kube-system:storage-version-migrator-controller"]
 `,
 		"initialEncryptionConfig": `
 kind: EncryptionConfiguration
@@ -308,6 +314,18 @@ func svmSetup(ctx context.Context, t *testing.T) *svmTest {
 	}
 
 	t.Cleanup(func() {
+		var validCodes = sets.New[int32](http.StatusOK, http.StatusConflict) // make sure SVM controller never creates
+		_ = svmTest.countMatchingAuditEvents(t, func(event utils.AuditEvent) bool {
+			if event.User != "system:serviceaccount:kube-system:storage-version-migrator-controller" {
+				return false
+			}
+			if !validCodes.Has(event.Code) {
+				t.Errorf("svm controller had invalid response code for event: %#v", event)
+				return true
+			}
+			return false
+		})
+
 		kcm.TearDownFn()
 		server.TearDownFn()
 		utiltesting.CloseAndRemove(t, svmTest.logFile)
@@ -637,7 +655,7 @@ func (svm *svmTest) waitForResourceMigration(
 				Stage:             auditinternal.StageResponseComplete,
 				RequestURI:        fmt.Sprintf("/api/v1/namespaces/%s/secrets/%s?fieldManager=storage-version-migrator-controller", defaultNamespace, name),
 				Verb:              "patch",
-				Code:              200,
+				Code:              http.StatusOK,
 				User:              "system:serviceaccount:kube-system:storage-version-migrator-controller",
 				Resource:          "secrets",
 				Namespace:         "default",
@@ -646,7 +664,7 @@ func (svm *svmTest) waitForResourceMigration(
 				ResponseObject:    false,
 			}
 
-			if seen := svm.countMatchingAuditEvents(t, want); expectedEvents > seen {
+			if seen := svm.countMatchingAuditEvents(t, func(event utils.AuditEvent) bool { return reflect.DeepEqual(event, want) }); expectedEvents > seen {
 				t.Logf("audit log did not contain %d expected audit events, only has %d", expectedEvents, seen)
 				return false, nil
 			}
@@ -662,12 +680,12 @@ func (svm *svmTest) waitForResourceMigration(
 	return true
 }
 
-func (svm *svmTest) countMatchingAuditEvents(t *testing.T, want utils.AuditEvent) int {
+func (svm *svmTest) countMatchingAuditEvents(t *testing.T, f func(utils.AuditEvent) bool) int {
 	t.Helper()
 
 	var seen int
 	for _, event := range svm.getAuditEvents(t) {
-		if reflect.DeepEqual(event, want) {
+		if f(event) {
 			seen++
 		}
 	}
