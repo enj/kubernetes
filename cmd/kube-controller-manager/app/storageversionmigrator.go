@@ -55,6 +55,9 @@ func startSVMController(
 	}
 
 	config := controllerContext.ClientBuilder.ConfigOrDie(controllerName)
+	config.QPS *= 20
+	config.Burst *= 100
+
 	client := controllerContext.ClientBuilder.ClientOrDie(controllerName)
 	informer := controllerContext.InformerFactory.Storagemigration().V1alpha1().StorageVersionMigrations()
 
