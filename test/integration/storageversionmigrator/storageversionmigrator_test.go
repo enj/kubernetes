@@ -175,7 +175,7 @@ func TestStorageVersionMigrationWithCRD(t *testing.T) {
 	certCtx := svmTest.setupServerCert(t)
 
 	// simulate monkeys creating and deleting CRs
-	svmTest.createChaos(t)
+	svmTest.createChaos(ctx, t)
 
 	// create CRD with v1 serving and storage
 	crd := svmTest.createCRD(t, crdName, crdGroup, certCtx, v1CRDVersion)
@@ -283,6 +283,12 @@ func TestStorageVersionMigrationWithCRD(t *testing.T) {
 	}
 }
 
+// TestStorageVersionMigrationDuringChaos serves as a stress test for the SVM controller.
+// It creates a CRD and a reasonable number of static instances for that resource.
+// It also continuously creates and deletes instances of that resource.
+// During all of this, it attempts to perform multiple parallel migrations of the resource.
+// It asserts that all migrations are successful and that none of the static instances
+// were changed after they were initially created (as the migrations must be a no-op).
 func TestStorageVersionMigrationDuringChaos(t *testing.T) {
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StorageVersionMigrator, true)
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.ConsistentListFromCache, false)
@@ -294,7 +300,7 @@ func TestStorageVersionMigrationDuringChaos(t *testing.T) {
 
 	svmTest := svmSetup(ctx, t)
 
-	svmTest.createChaos(t)
+	svmTest.createChaos(ctx, t)
 
 	crd := svmTest.createCRD(t, crdName, crdGroup, nil, v1CRDVersion)
 

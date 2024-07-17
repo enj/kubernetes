@@ -1161,9 +1161,9 @@ func (svm *svmTest) validateRVAndGeneration(ctx context.Context, t *testing.T, c
 	}
 }
 
-func (svm *svmTest) createChaos(t *testing.T) {
+func (svm *svmTest) createChaos(ctx context.Context, t *testing.T) {
 	var wg sync.WaitGroup
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 
 	noFailT := ignoreFailures{} // these create and delete requests are not coordinated with the rest of the test and can fail
 

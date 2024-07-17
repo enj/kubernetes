@@ -204,7 +204,9 @@ func (svmc *SVMController) sync(ctx context.Context, key string) error {
 	}
 	gvr := getGVRFromResource(toBeProcessedSVM)
 
-	monCtx, monCtxCancel := context.WithTimeout(ctx, 10*time.Second) // prevent unsynced monitor from blocking forever
+	// prevent unsynced monitor from blocking forever
+	// use a short timeout so that we can fail quickly and possibly handle other migrations while this monitor gets ready.
+	monCtx, monCtxCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer monCtxCancel()
 	resourceMonitor, errMonitor := svmc.dependencyGraphBuilder.GetMonitor(monCtx, gvr)
 	if resourceMonitor != nil {
@@ -226,7 +228,7 @@ func (svmc *SVMController) sync(ctx context.Context, key string) error {
 			StorageVersionMigrations().
 			UpdateStatus(
 				ctx,
-				setStatusConditions(toBeProcessedSVM, svmv1alpha1.MigrationFailed, migrationFailedStatusReason, "resource does not exist in GC"),
+				setStatusConditions(toBeProcessedSVM, svmv1alpha1.MigrationFailed, migrationFailedStatusReason, "resource not found"),
 				metav1.UpdateOptions{},
 			)
 
@@ -311,7 +313,7 @@ func (svmc *SVMController) sync(ctx context.Context, key string) error {
 				StorageVersionMigrations().
 				UpdateStatus(
 					ctx,
-					setStatusConditions(toBeProcessedSVM, svmv1alpha1.MigrationFailed, migrationFailedStatusReason, "patch returned non-conflict error"),
+					setStatusConditions(toBeProcessedSVM, svmv1alpha1.MigrationFailed, migrationFailedStatusReason, "migration encountered unhandled error"),
 					metav1.UpdateOptions{},
 				)
 
