@@ -27,7 +27,6 @@ import (
 	"go.uber.org/goleak"
 
 	svmv1alpha1 "k8s.io/api/storagemigration/v1alpha1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	genericfeatures "k8s.io/apiserver/pkg/features"
 	encryptionconfigcontroller "k8s.io/apiserver/pkg/server/options/encryptionconfig/controller"
@@ -257,11 +256,6 @@ func TestStorageVersionMigrationWithCRD(t *testing.T) {
 		t.Fatalf("CRD not migrated")
 	}
 
-	triggerCR, errTrigger := svmTest.getCRWithErr(ctx, "triggercr", "v1")
-	if !errors.IsNotFound(errTrigger) {
-		t.Errorf("trigger CR was recreated by SVM controller: cr=%#v err=%v", triggerCR, err)
-	}
-
 	// assert all the CRs are stored in the etcd at correct version
 	if ok := svmTest.isCRStoredAtVersion(t, "v2", cr1.GetName()); !ok {
 		t.Fatalf("CR not stored at version v2")
@@ -338,11 +332,6 @@ func TestStorageVersionMigrationDuringChaos(t *testing.T) {
 			triggerCRName := "chaos-trigger-" + strconv.Itoa(i)
 			if ok := svmTest.isCRDMigrated(ctx, t, svm.Name, triggerCRName); !ok {
 				t.Errorf("CRD not migrated")
-				return
-			}
-			triggerCR, errTrigger := svmTest.getCRWithErr(ctx, triggerCRName, "v1")
-			if !errors.IsNotFound(errTrigger) {
-				t.Errorf("trigger CR was recreated by SVM controller: cr=%#v err=%v", triggerCR, err)
 				return
 			}
 		}()

@@ -877,22 +877,18 @@ func (svm *svmTest) createCR(ctx context.Context, t testingT, crName, version st
 func (svm *svmTest) getCR(ctx context.Context, t *testing.T, crName, version string) *unstructured.Unstructured {
 	t.Helper()
 
-	cr, err := svm.getCRWithErr(ctx, crName, version)
-	if err != nil {
-		t.Fatalf("Failed to get CR: %v", err)
-	}
-
-	return cr
-}
-
-func (svm *svmTest) getCRWithErr(ctx context.Context, crName, version string) (*unstructured.Unstructured, error) {
 	crdResource := schema.GroupVersionResource{
 		Group:    crdGroup,
 		Version:  version,
 		Resource: crdName + "s",
 	}
 
-	return svm.dynamicClient.Resource(crdResource).Namespace(defaultNamespace).Get(ctx, crName, metav1.GetOptions{})
+	cr, err := svm.dynamicClient.Resource(crdResource).Namespace(defaultNamespace).Get(ctx, crName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get CR: %v", err)
+	}
+
+	return cr
 }
 
 func (svm *svmTest) listCR(ctx context.Context, t *testing.T, version string) error {
