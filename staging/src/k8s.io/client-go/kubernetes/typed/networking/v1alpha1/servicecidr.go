@@ -71,6 +71,7 @@ func newServiceCIDRs(c *NetworkingV1alpha1Client) *serviceCIDRs {
 func (c *serviceCIDRs) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha1.ServiceCIDR, err error) {
 	result = &v1alpha1.ServiceCIDR{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("servicecidrs").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
@@ -87,6 +88,7 @@ func (c *serviceCIDRs) List(ctx context.Context, opts v1.ListOptions) (result *v
 	}
 	result = &v1alpha1.ServiceCIDRList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("servicecidrs").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -103,6 +105,7 @@ func (c *serviceCIDRs) Watch(ctx context.Context, opts v1.ListOptions) (watch.In
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Resource("servicecidrs").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -113,6 +116,7 @@ func (c *serviceCIDRs) Watch(ctx context.Context, opts v1.ListOptions) (watch.In
 func (c *serviceCIDRs) Create(ctx context.Context, serviceCIDR *v1alpha1.ServiceCIDR, opts v1.CreateOptions) (result *v1alpha1.ServiceCIDR, err error) {
 	result = &v1alpha1.ServiceCIDR{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Resource("servicecidrs").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(serviceCIDR).
@@ -125,6 +129,7 @@ func (c *serviceCIDRs) Create(ctx context.Context, serviceCIDR *v1alpha1.Service
 func (c *serviceCIDRs) Update(ctx context.Context, serviceCIDR *v1alpha1.ServiceCIDR, opts v1.UpdateOptions) (result *v1alpha1.ServiceCIDR, err error) {
 	result = &v1alpha1.ServiceCIDR{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Resource("servicecidrs").
 		Name(serviceCIDR.Name).
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -139,6 +144,7 @@ func (c *serviceCIDRs) Update(ctx context.Context, serviceCIDR *v1alpha1.Service
 func (c *serviceCIDRs) UpdateStatus(ctx context.Context, serviceCIDR *v1alpha1.ServiceCIDR, opts v1.UpdateOptions) (result *v1alpha1.ServiceCIDR, err error) {
 	result = &v1alpha1.ServiceCIDR{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Resource("servicecidrs").
 		Name(serviceCIDR.Name).
 		SubResource("status").
@@ -152,6 +158,7 @@ func (c *serviceCIDRs) UpdateStatus(ctx context.Context, serviceCIDR *v1alpha1.S
 // Delete takes name of the serviceCIDR and deletes it. Returns an error if one occurs.
 func (c *serviceCIDRs) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("servicecidrs").
 		Name(name).
 		Body(&opts).
@@ -166,6 +173,7 @@ func (c *serviceCIDRs) DeleteCollection(ctx context.Context, opts v1.DeleteOptio
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("servicecidrs").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -178,6 +186,7 @@ func (c *serviceCIDRs) DeleteCollection(ctx context.Context, opts v1.DeleteOptio
 func (c *serviceCIDRs) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha1.ServiceCIDR, err error) {
 	result = &v1alpha1.ServiceCIDR{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Resource("servicecidrs").
 		Name(name).
 		SubResource(subresources...).
@@ -204,6 +213,7 @@ func (c *serviceCIDRs) Apply(ctx context.Context, serviceCIDR *networkingv1alpha
 	}
 	result = &v1alpha1.ServiceCIDR{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Resource("servicecidrs").
 		Name(*name).
 		VersionedParams(&patchOpts, scheme.ParameterCodec).
@@ -232,6 +242,7 @@ func (c *serviceCIDRs) ApplyStatus(ctx context.Context, serviceCIDR *networkingv
 
 	result = &v1alpha1.ServiceCIDR{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Resource("servicecidrs").
 		Name(*name).
 		SubResource("status").

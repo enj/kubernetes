@@ -71,6 +71,7 @@ func newResourceClassParameters(c *ResourceV1alpha2Client, namespace string) *re
 func (c *resourceClassParameters) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha2.ResourceClassParameters, err error) {
 	result = &v1alpha2.ResourceClassParameters{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclassparameters").
 		Name(name).
@@ -88,6 +89,7 @@ func (c *resourceClassParameters) List(ctx context.Context, opts v1.ListOptions)
 	}
 	result = &v1alpha2.ResourceClassParametersList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclassparameters").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -105,6 +107,7 @@ func (c *resourceClassParameters) Watch(ctx context.Context, opts v1.ListOptions
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclassparameters").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -116,6 +119,7 @@ func (c *resourceClassParameters) Watch(ctx context.Context, opts v1.ListOptions
 func (c *resourceClassParameters) Create(ctx context.Context, resourceClassParameters *v1alpha2.ResourceClassParameters, opts v1.CreateOptions) (result *v1alpha2.ResourceClassParameters, err error) {
 	result = &v1alpha2.ResourceClassParameters{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclassparameters").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -129,6 +133,7 @@ func (c *resourceClassParameters) Create(ctx context.Context, resourceClassParam
 func (c *resourceClassParameters) Update(ctx context.Context, resourceClassParameters *v1alpha2.ResourceClassParameters, opts v1.UpdateOptions) (result *v1alpha2.ResourceClassParameters, err error) {
 	result = &v1alpha2.ResourceClassParameters{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclassparameters").
 		Name(resourceClassParameters.Name).
@@ -142,6 +147,7 @@ func (c *resourceClassParameters) Update(ctx context.Context, resourceClassParam
 // Delete takes name of the resourceClassParameters and deletes it. Returns an error if one occurs.
 func (c *resourceClassParameters) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclassparameters").
 		Name(name).
@@ -157,6 +163,7 @@ func (c *resourceClassParameters) DeleteCollection(ctx context.Context, opts v1.
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclassparameters").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
@@ -170,6 +177,7 @@ func (c *resourceClassParameters) DeleteCollection(ctx context.Context, opts v1.
 func (c *resourceClassParameters) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha2.ResourceClassParameters, err error) {
 	result = &v1alpha2.ResourceClassParameters{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclassparameters").
 		Name(name).
@@ -197,6 +205,7 @@ func (c *resourceClassParameters) Apply(ctx context.Context, resourceClassParame
 	}
 	result = &v1alpha2.ResourceClassParameters{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclassparameters").
 		Name(*name).

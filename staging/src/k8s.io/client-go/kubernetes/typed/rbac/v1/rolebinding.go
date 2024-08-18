@@ -71,6 +71,7 @@ func newRoleBindings(c *RbacV1Client, namespace string) *roleBindings {
 func (c *roleBindings) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.RoleBinding, err error) {
 	result = &v1.RoleBinding{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("rolebindings").
 		Name(name).
@@ -88,6 +89,7 @@ func (c *roleBindings) List(ctx context.Context, opts metav1.ListOptions) (resul
 	}
 	result = &v1.RoleBindingList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("rolebindings").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -105,6 +107,7 @@ func (c *roleBindings) Watch(ctx context.Context, opts metav1.ListOptions) (watc
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("rolebindings").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -116,6 +119,7 @@ func (c *roleBindings) Watch(ctx context.Context, opts metav1.ListOptions) (watc
 func (c *roleBindings) Create(ctx context.Context, roleBinding *v1.RoleBinding, opts metav1.CreateOptions) (result *v1.RoleBinding, err error) {
 	result = &v1.RoleBinding{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("rolebindings").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -129,6 +133,7 @@ func (c *roleBindings) Create(ctx context.Context, roleBinding *v1.RoleBinding, 
 func (c *roleBindings) Update(ctx context.Context, roleBinding *v1.RoleBinding, opts metav1.UpdateOptions) (result *v1.RoleBinding, err error) {
 	result = &v1.RoleBinding{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("rolebindings").
 		Name(roleBinding.Name).
@@ -142,6 +147,7 @@ func (c *roleBindings) Update(ctx context.Context, roleBinding *v1.RoleBinding, 
 // Delete takes name of the roleBinding and deletes it. Returns an error if one occurs.
 func (c *roleBindings) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("rolebindings").
 		Name(name).
@@ -157,6 +163,7 @@ func (c *roleBindings) DeleteCollection(ctx context.Context, opts metav1.DeleteO
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("rolebindings").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
@@ -170,6 +177,7 @@ func (c *roleBindings) DeleteCollection(ctx context.Context, opts metav1.DeleteO
 func (c *roleBindings) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.RoleBinding, err error) {
 	result = &v1.RoleBinding{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("rolebindings").
 		Name(name).
@@ -197,6 +205,7 @@ func (c *roleBindings) Apply(ctx context.Context, roleBinding *rbacv1.RoleBindin
 	}
 	result = &v1.RoleBinding{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("rolebindings").
 		Name(*name).

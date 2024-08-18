@@ -55,6 +55,7 @@ func newSelfSubjectAccessReviews(c *AuthorizationV1beta1Client) *selfSubjectAcce
 func (c *selfSubjectAccessReviews) Create(ctx context.Context, selfSubjectAccessReview *v1beta1.SelfSubjectAccessReview, opts v1.CreateOptions) (result *v1beta1.SelfSubjectAccessReview, err error) {
 	result = &v1beta1.SelfSubjectAccessReview{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Resource("selfsubjectaccessreviews").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(selfSubjectAccessReview).

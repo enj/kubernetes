@@ -71,6 +71,7 @@ func newCustomResourceDefinitions(c *ApiextensionsV1Client) *customResourceDefin
 func (c *customResourceDefinitions) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.CustomResourceDefinition, err error) {
 	result = &v1.CustomResourceDefinition{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("customresourcedefinitions").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
@@ -87,6 +88,7 @@ func (c *customResourceDefinitions) List(ctx context.Context, opts metav1.ListOp
 	}
 	result = &v1.CustomResourceDefinitionList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("customresourcedefinitions").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -103,6 +105,7 @@ func (c *customResourceDefinitions) Watch(ctx context.Context, opts metav1.ListO
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Resource("customresourcedefinitions").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -113,6 +116,7 @@ func (c *customResourceDefinitions) Watch(ctx context.Context, opts metav1.ListO
 func (c *customResourceDefinitions) Create(ctx context.Context, customResourceDefinition *v1.CustomResourceDefinition, opts metav1.CreateOptions) (result *v1.CustomResourceDefinition, err error) {
 	result = &v1.CustomResourceDefinition{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Resource("customresourcedefinitions").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(customResourceDefinition).
@@ -125,6 +129,7 @@ func (c *customResourceDefinitions) Create(ctx context.Context, customResourceDe
 func (c *customResourceDefinitions) Update(ctx context.Context, customResourceDefinition *v1.CustomResourceDefinition, opts metav1.UpdateOptions) (result *v1.CustomResourceDefinition, err error) {
 	result = &v1.CustomResourceDefinition{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Resource("customresourcedefinitions").
 		Name(customResourceDefinition.Name).
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -139,6 +144,7 @@ func (c *customResourceDefinitions) Update(ctx context.Context, customResourceDe
 func (c *customResourceDefinitions) UpdateStatus(ctx context.Context, customResourceDefinition *v1.CustomResourceDefinition, opts metav1.UpdateOptions) (result *v1.CustomResourceDefinition, err error) {
 	result = &v1.CustomResourceDefinition{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Resource("customresourcedefinitions").
 		Name(customResourceDefinition.Name).
 		SubResource("status").
@@ -152,6 +158,7 @@ func (c *customResourceDefinitions) UpdateStatus(ctx context.Context, customReso
 // Delete takes name of the customResourceDefinition and deletes it. Returns an error if one occurs.
 func (c *customResourceDefinitions) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("customresourcedefinitions").
 		Name(name).
 		Body(&opts).
@@ -166,6 +173,7 @@ func (c *customResourceDefinitions) DeleteCollection(ctx context.Context, opts m
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("customresourcedefinitions").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -178,6 +186,7 @@ func (c *customResourceDefinitions) DeleteCollection(ctx context.Context, opts m
 func (c *customResourceDefinitions) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.CustomResourceDefinition, err error) {
 	result = &v1.CustomResourceDefinition{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Resource("customresourcedefinitions").
 		Name(name).
 		SubResource(subresources...).
@@ -204,6 +213,7 @@ func (c *customResourceDefinitions) Apply(ctx context.Context, customResourceDef
 	}
 	result = &v1.CustomResourceDefinition{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Resource("customresourcedefinitions").
 		Name(*name).
 		VersionedParams(&patchOpts, scheme.ParameterCodec).
@@ -232,6 +242,7 @@ func (c *customResourceDefinitions) ApplyStatus(ctx context.Context, customResou
 
 	result = &v1.CustomResourceDefinition{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Resource("customresourcedefinitions").
 		Name(*name).
 		SubResource("status").

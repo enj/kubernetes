@@ -55,6 +55,7 @@ func newSelfSubjectReviews(c *AuthenticationV1Client) *selfSubjectReviews {
 func (c *selfSubjectReviews) Create(ctx context.Context, selfSubjectReview *v1.SelfSubjectReview, opts metav1.CreateOptions) (result *v1.SelfSubjectReview, err error) {
 	result = &v1.SelfSubjectReview{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Resource("selfsubjectreviews").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(selfSubjectReview).

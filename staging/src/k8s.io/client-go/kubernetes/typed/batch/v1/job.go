@@ -73,6 +73,7 @@ func newJobs(c *BatchV1Client, namespace string) *jobs {
 func (c *jobs) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.Job, err error) {
 	result = &v1.Job{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("jobs").
 		Name(name).
@@ -90,6 +91,7 @@ func (c *jobs) List(ctx context.Context, opts metav1.ListOptions) (result *v1.Jo
 	}
 	result = &v1.JobList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("jobs").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -107,6 +109,7 @@ func (c *jobs) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interf
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("jobs").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -118,6 +121,7 @@ func (c *jobs) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interf
 func (c *jobs) Create(ctx context.Context, job *v1.Job, opts metav1.CreateOptions) (result *v1.Job, err error) {
 	result = &v1.Job{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("jobs").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -131,6 +135,7 @@ func (c *jobs) Create(ctx context.Context, job *v1.Job, opts metav1.CreateOption
 func (c *jobs) Update(ctx context.Context, job *v1.Job, opts metav1.UpdateOptions) (result *v1.Job, err error) {
 	result = &v1.Job{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("jobs").
 		Name(job.Name).
@@ -146,6 +151,7 @@ func (c *jobs) Update(ctx context.Context, job *v1.Job, opts metav1.UpdateOption
 func (c *jobs) UpdateStatus(ctx context.Context, job *v1.Job, opts metav1.UpdateOptions) (result *v1.Job, err error) {
 	result = &v1.Job{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("jobs").
 		Name(job.Name).
@@ -160,6 +166,7 @@ func (c *jobs) UpdateStatus(ctx context.Context, job *v1.Job, opts metav1.Update
 // Delete takes name of the job and deletes it. Returns an error if one occurs.
 func (c *jobs) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("jobs").
 		Name(name).
@@ -175,6 +182,7 @@ func (c *jobs) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, 
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("jobs").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
@@ -188,6 +196,7 @@ func (c *jobs) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, 
 func (c *jobs) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.Job, err error) {
 	result = &v1.Job{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("jobs").
 		Name(name).
@@ -215,6 +224,7 @@ func (c *jobs) Apply(ctx context.Context, job *batchv1.JobApplyConfiguration, op
 	}
 	result = &v1.Job{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("jobs").
 		Name(*name).
@@ -244,6 +254,7 @@ func (c *jobs) ApplyStatus(ctx context.Context, job *batchv1.JobApplyConfigurati
 
 	result = &v1.Job{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("jobs").
 		Name(*name).

@@ -71,6 +71,7 @@ func newFlowSchemas(c *FlowcontrolV1Client) *flowSchemas {
 func (c *flowSchemas) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.FlowSchema, err error) {
 	result = &v1.FlowSchema{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("flowschemas").
 		Name(name).
 		VersionedParams(&options, scheme.ParameterCodec).
@@ -87,6 +88,7 @@ func (c *flowSchemas) List(ctx context.Context, opts metav1.ListOptions) (result
 	}
 	result = &v1.FlowSchemaList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Resource("flowschemas").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -103,6 +105,7 @@ func (c *flowSchemas) Watch(ctx context.Context, opts metav1.ListOptions) (watch
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Resource("flowschemas").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -113,6 +116,7 @@ func (c *flowSchemas) Watch(ctx context.Context, opts metav1.ListOptions) (watch
 func (c *flowSchemas) Create(ctx context.Context, flowSchema *v1.FlowSchema, opts metav1.CreateOptions) (result *v1.FlowSchema, err error) {
 	result = &v1.FlowSchema{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Resource("flowschemas").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Body(flowSchema).
@@ -125,6 +129,7 @@ func (c *flowSchemas) Create(ctx context.Context, flowSchema *v1.FlowSchema, opt
 func (c *flowSchemas) Update(ctx context.Context, flowSchema *v1.FlowSchema, opts metav1.UpdateOptions) (result *v1.FlowSchema, err error) {
 	result = &v1.FlowSchema{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Resource("flowschemas").
 		Name(flowSchema.Name).
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -139,6 +144,7 @@ func (c *flowSchemas) Update(ctx context.Context, flowSchema *v1.FlowSchema, opt
 func (c *flowSchemas) UpdateStatus(ctx context.Context, flowSchema *v1.FlowSchema, opts metav1.UpdateOptions) (result *v1.FlowSchema, err error) {
 	result = &v1.FlowSchema{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Resource("flowschemas").
 		Name(flowSchema.Name).
 		SubResource("status").
@@ -152,6 +158,7 @@ func (c *flowSchemas) UpdateStatus(ctx context.Context, flowSchema *v1.FlowSchem
 // Delete takes name of the flowSchema and deletes it. Returns an error if one occurs.
 func (c *flowSchemas) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("flowschemas").
 		Name(name).
 		Body(&opts).
@@ -166,6 +173,7 @@ func (c *flowSchemas) DeleteCollection(ctx context.Context, opts metav1.DeleteOp
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Resource("flowschemas").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
 		Timeout(timeout).
@@ -178,6 +186,7 @@ func (c *flowSchemas) DeleteCollection(ctx context.Context, opts metav1.DeleteOp
 func (c *flowSchemas) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.FlowSchema, err error) {
 	result = &v1.FlowSchema{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Resource("flowschemas").
 		Name(name).
 		SubResource(subresources...).
@@ -204,6 +213,7 @@ func (c *flowSchemas) Apply(ctx context.Context, flowSchema *flowcontrolv1.FlowS
 	}
 	result = &v1.FlowSchema{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Resource("flowschemas").
 		Name(*name).
 		VersionedParams(&patchOpts, scheme.ParameterCodec).
@@ -232,6 +242,7 @@ func (c *flowSchemas) ApplyStatus(ctx context.Context, flowSchema *flowcontrolv1
 
 	result = &v1.FlowSchema{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Resource("flowschemas").
 		Name(*name).
 		SubResource("status").

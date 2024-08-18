@@ -165,11 +165,6 @@ func setConfigDefaults(config *rest.Config) error {
 	config.APIPath = "/api"
 	config.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
 
-	if len(config.AcceptContentTypes) == 0 && len(config.ContentType) == 0 {
-		config.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
-		config.ContentType = "application/vnd.kubernetes.protobuf"
-	}
-
 	if config.UserAgent == "" {
 		config.UserAgent = rest.DefaultKubernetesUserAgent()
 	}

@@ -61,6 +61,7 @@ func newPodMetricses(c *MetricsV1beta1Client, namespace string) *podMetricses {
 func (c *podMetricses) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1beta1.PodMetrics, err error) {
 	result = &v1beta1.PodMetrics{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("pods").
 		Name(name).
@@ -78,6 +79,7 @@ func (c *podMetricses) List(ctx context.Context, opts v1.ListOptions) (result *v
 	}
 	result = &v1beta1.PodMetricsList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("pods").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -95,6 +97,7 @@ func (c *podMetricses) Watch(ctx context.Context, opts v1.ListOptions) (watch.In
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("pods").
 		VersionedParams(&opts, scheme.ParameterCodec).

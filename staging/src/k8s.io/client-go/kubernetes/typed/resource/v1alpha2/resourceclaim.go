@@ -73,6 +73,7 @@ func newResourceClaims(c *ResourceV1alpha2Client, namespace string) *resourceCla
 func (c *resourceClaims) Get(ctx context.Context, name string, options v1.GetOptions) (result *v1alpha2.ResourceClaim, err error) {
 	result = &v1alpha2.ResourceClaim{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclaims").
 		Name(name).
@@ -90,6 +91,7 @@ func (c *resourceClaims) List(ctx context.Context, opts v1.ListOptions) (result 
 	}
 	result = &v1alpha2.ResourceClaimList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclaims").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -107,6 +109,7 @@ func (c *resourceClaims) Watch(ctx context.Context, opts v1.ListOptions) (watch.
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclaims").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -118,6 +121,7 @@ func (c *resourceClaims) Watch(ctx context.Context, opts v1.ListOptions) (watch.
 func (c *resourceClaims) Create(ctx context.Context, resourceClaim *v1alpha2.ResourceClaim, opts v1.CreateOptions) (result *v1alpha2.ResourceClaim, err error) {
 	result = &v1alpha2.ResourceClaim{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclaims").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -131,6 +135,7 @@ func (c *resourceClaims) Create(ctx context.Context, resourceClaim *v1alpha2.Res
 func (c *resourceClaims) Update(ctx context.Context, resourceClaim *v1alpha2.ResourceClaim, opts v1.UpdateOptions) (result *v1alpha2.ResourceClaim, err error) {
 	result = &v1alpha2.ResourceClaim{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclaims").
 		Name(resourceClaim.Name).
@@ -146,6 +151,7 @@ func (c *resourceClaims) Update(ctx context.Context, resourceClaim *v1alpha2.Res
 func (c *resourceClaims) UpdateStatus(ctx context.Context, resourceClaim *v1alpha2.ResourceClaim, opts v1.UpdateOptions) (result *v1alpha2.ResourceClaim, err error) {
 	result = &v1alpha2.ResourceClaim{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclaims").
 		Name(resourceClaim.Name).
@@ -160,6 +166,7 @@ func (c *resourceClaims) UpdateStatus(ctx context.Context, resourceClaim *v1alph
 // Delete takes name of the resourceClaim and deletes it. Returns an error if one occurs.
 func (c *resourceClaims) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclaims").
 		Name(name).
@@ -175,6 +182,7 @@ func (c *resourceClaims) DeleteCollection(ctx context.Context, opts v1.DeleteOpt
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclaims").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
@@ -188,6 +196,7 @@ func (c *resourceClaims) DeleteCollection(ctx context.Context, opts v1.DeleteOpt
 func (c *resourceClaims) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v1alpha2.ResourceClaim, err error) {
 	result = &v1alpha2.ResourceClaim{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclaims").
 		Name(name).
@@ -215,6 +224,7 @@ func (c *resourceClaims) Apply(ctx context.Context, resourceClaim *resourcev1alp
 	}
 	result = &v1alpha2.ResourceClaim{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclaims").
 		Name(*name).
@@ -244,6 +254,7 @@ func (c *resourceClaims) ApplyStatus(ctx context.Context, resourceClaim *resourc
 
 	result = &v1alpha2.ResourceClaim{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("resourceclaims").
 		Name(*name).

@@ -73,6 +73,7 @@ func newHorizontalPodAutoscalers(c *AutoscalingV2Client, namespace string) *hori
 func (c *horizontalPodAutoscalers) Get(ctx context.Context, name string, options v1.GetOptions) (result *v2.HorizontalPodAutoscaler, err error) {
 	result = &v2.HorizontalPodAutoscaler{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("horizontalpodautoscalers").
 		Name(name).
@@ -90,6 +91,7 @@ func (c *horizontalPodAutoscalers) List(ctx context.Context, opts v1.ListOptions
 	}
 	result = &v2.HorizontalPodAutoscalerList{}
 	err = c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("horizontalpodautoscalers").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -107,6 +109,7 @@ func (c *horizontalPodAutoscalers) Watch(ctx context.Context, opts v1.ListOption
 	}
 	opts.Watch = true
 	return c.client.Get().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("horizontalpodautoscalers").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -118,6 +121,7 @@ func (c *horizontalPodAutoscalers) Watch(ctx context.Context, opts v1.ListOption
 func (c *horizontalPodAutoscalers) Create(ctx context.Context, horizontalPodAutoscaler *v2.HorizontalPodAutoscaler, opts v1.CreateOptions) (result *v2.HorizontalPodAutoscaler, err error) {
 	result = &v2.HorizontalPodAutoscaler{}
 	err = c.client.Post().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("horizontalpodautoscalers").
 		VersionedParams(&opts, scheme.ParameterCodec).
@@ -131,6 +135,7 @@ func (c *horizontalPodAutoscalers) Create(ctx context.Context, horizontalPodAuto
 func (c *horizontalPodAutoscalers) Update(ctx context.Context, horizontalPodAutoscaler *v2.HorizontalPodAutoscaler, opts v1.UpdateOptions) (result *v2.HorizontalPodAutoscaler, err error) {
 	result = &v2.HorizontalPodAutoscaler{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("horizontalpodautoscalers").
 		Name(horizontalPodAutoscaler.Name).
@@ -146,6 +151,7 @@ func (c *horizontalPodAutoscalers) Update(ctx context.Context, horizontalPodAuto
 func (c *horizontalPodAutoscalers) UpdateStatus(ctx context.Context, horizontalPodAutoscaler *v2.HorizontalPodAutoscaler, opts v1.UpdateOptions) (result *v2.HorizontalPodAutoscaler, err error) {
 	result = &v2.HorizontalPodAutoscaler{}
 	err = c.client.Put().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("horizontalpodautoscalers").
 		Name(horizontalPodAutoscaler.Name).
@@ -160,6 +166,7 @@ func (c *horizontalPodAutoscalers) UpdateStatus(ctx context.Context, horizontalP
 // Delete takes name of the horizontalPodAutoscaler and deletes it. Returns an error if one occurs.
 func (c *horizontalPodAutoscalers) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("horizontalpodautoscalers").
 		Name(name).
@@ -175,6 +182,7 @@ func (c *horizontalPodAutoscalers) DeleteCollection(ctx context.Context, opts v1
 		timeout = time.Duration(*listOpts.TimeoutSeconds) * time.Second
 	}
 	return c.client.Delete().
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("horizontalpodautoscalers").
 		VersionedParams(&listOpts, scheme.ParameterCodec).
@@ -188,6 +196,7 @@ func (c *horizontalPodAutoscalers) DeleteCollection(ctx context.Context, opts v1
 func (c *horizontalPodAutoscalers) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *v2.HorizontalPodAutoscaler, err error) {
 	result = &v2.HorizontalPodAutoscaler{}
 	err = c.client.Patch(pt).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("horizontalpodautoscalers").
 		Name(name).
@@ -215,6 +224,7 @@ func (c *horizontalPodAutoscalers) Apply(ctx context.Context, horizontalPodAutos
 	}
 	result = &v2.HorizontalPodAutoscaler{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("horizontalpodautoscalers").
 		Name(*name).
@@ -244,6 +254,7 @@ func (c *horizontalPodAutoscalers) ApplyStatus(ctx context.Context, horizontalPo
 
 	result = &v2.HorizontalPodAutoscaler{}
 	err = c.client.Patch(types.ApplyPatchType).
+		UseProtobufAsDefault().
 		Namespace(c.ns).
 		Resource("horizontalpodautoscalers").
 		Name(*name).
