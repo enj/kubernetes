@@ -170,6 +170,9 @@ func NewRequest(c *RESTClient) *Request {
 		maxRetries:     10,
 		retryFn:        defaultRequestRetryFn,
 		warningHandler: c.warningHandler,
+
+		contentConfig:     contentConfig,
+		contentTypeNotSet: contentTypeNotSet,
 	}
 
 	switch {
