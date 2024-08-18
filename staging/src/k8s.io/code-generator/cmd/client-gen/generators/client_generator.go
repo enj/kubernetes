@@ -160,6 +160,7 @@ func targetForGroup(gv clientgentypes.GroupVersion, typeList []*types.Type, clie
 					group:                     gv.Group.NonEmpty(),
 					version:                   gv.Version.String(),
 					groupGoName:               groupGoName,
+					prefersProtobuf:           prefersProtobuf,
 					typeToMatch:               t,
 					imports:                   generator.NewImportTracker(),
 				})
@@ -176,7 +177,6 @@ func targetForGroup(gv clientgentypes.GroupVersion, typeList []*types.Type, clie
 				version:          gv.Version.String(),
 				groupGoName:      groupGoName,
 				apiPath:          apiPath,
-				prefersProtobuf:  prefersProtobuf,
 				types:            typeList,
 				imports:          generator.NewImportTracker(),
 			})
