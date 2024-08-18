@@ -30,7 +30,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	apitesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
@@ -208,7 +207,7 @@ func setupWithOptions(t *testing.T, instanceOptions *apitesting.TestServerInstan
 
 	result := apitesting.StartTestServerOrDie(t, instanceOptions, flags, framework.SharedEtcd())
 	result.ClientConfig.AcceptContentTypes = ""
-	result.ClientConfig.ContentType = runtime.ContentTypeJSON
+	result.ClientConfig.ContentType = ""
 	result.ClientConfig.NegotiatedSerializer = nil
 	clientSet, err := kubernetes.NewForConfig(result.ClientConfig)
 	if err != nil {
