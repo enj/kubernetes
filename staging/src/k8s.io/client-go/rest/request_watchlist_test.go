@@ -203,11 +203,10 @@ func TestWatchListSuccess(t *testing.T) {
 			ctx := context.Background()
 			fakeWatcher := watch.NewFake()
 			target := &Request{
-				c: &RESTClient{
-					content: ClientContentConfig{
-						GroupVersion: scenario.gv,
-					},
+				contentConfig: ClientContentConfig{
+					GroupVersion: scenario.gv,
 				},
+				c: &RESTClient{},
 			}
 
 			go func(watchEvents []watch.Event) {
