@@ -480,8 +480,9 @@ var newStruct = []string{
 				c.RESTClient(),
 				$.schemeParameterCodec|raw$,
 				namespace,
-				func() *$.resultType|raw$ { return &$.resultType|raw${} }),
+				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				$.prefersProtobuf$,
+			)
 		}
 	}
 	`,
@@ -494,8 +495,9 @@ var newStruct = []string{
 				c.RESTClient(),
 				$.schemeParameterCodec|raw$,
 				namespace,
-				func() *$.resultType|raw$ { return &$.resultType|raw${} }),
+				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				$.prefersProtobuf$,
+			)
 		}
 	}
 	`,
@@ -509,8 +511,9 @@ var newStruct = []string{
 				$.schemeParameterCodec|raw$,
 				namespace,
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
-				func() *$.resultType|raw$List { return &$.resultType|raw$List{} }),
+				func() *$.resultType|raw$List { return &$.resultType|raw$List{} },
 				$.prefersProtobuf$,
+			)
 		}
 	}
 	`,
@@ -524,8 +527,9 @@ var newStruct = []string{
 				$.schemeParameterCodec|raw$,
 				namespace,
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
-				func() *$.resultType|raw$List { return &$.resultType|raw$List{} }),
+				func() *$.resultType|raw$List { return &$.resultType|raw$List{} },
 				$.prefersProtobuf$,
+			)
 		}
 	}
 	`,
@@ -538,8 +542,9 @@ var newStruct = []string{
 				c.RESTClient(),
 				$.schemeParameterCodec|raw$,
 				"",
-				func() *$.resultType|raw$ { return &$.resultType|raw${} }),
+				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				$.prefersProtobuf$,
+			)
 		}
 	}
 	`,
@@ -552,8 +557,9 @@ var newStruct = []string{
 				c.RESTClient(),
 				$.schemeParameterCodec|raw$,
 				"",
-				func() *$.resultType|raw$ { return &$.resultType|raw${} }),
+				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				$.prefersProtobuf$,
+			)
 		}
 	}
 	`,
@@ -567,8 +573,9 @@ var newStruct = []string{
 				$.schemeParameterCodec|raw$,
 				"",
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
-				func() *$.resultType|raw$List { return &$.resultType|raw$List{} }),
+				func() *$.resultType|raw$List { return &$.resultType|raw$List{} },
 				$.prefersProtobuf$,
+			)
 		}
 	}
 	`,
@@ -582,8 +589,9 @@ var newStruct = []string{
 				$.schemeParameterCodec|raw$,
 				"",
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
-				func() *$.resultType|raw$List { return &$.resultType|raw$List{} }),
+				func() *$.resultType|raw$List { return &$.resultType|raw$List{} },
 				$.prefersProtobuf$,
+			)
 		}
 	}
 	`,
