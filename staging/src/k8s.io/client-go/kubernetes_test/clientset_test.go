@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -168,7 +169,10 @@ func TestClientContentType(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Uint64
 			ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+
 				if got, want := r.URL.Path, tc.expectedPath; got != want {
 					t.Errorf("unexpected path, got=%q, want=%q", got, want)
 				}
@@ -201,6 +205,10 @@ func TestClientContentType(t *testing.T) {
 			}
 
 			tc.createFunc(t, config)
+
+			if calls.Load() != 1 {
+				t.Errorf("unexpected handler call count: %d", calls.Load())
+			}
 		})
 	}
 }
