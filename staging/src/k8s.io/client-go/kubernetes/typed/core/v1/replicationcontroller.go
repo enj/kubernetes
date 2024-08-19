@@ -72,7 +72,9 @@ func newReplicationControllers(c *CoreV1Client, namespace string) *replicationCo
 			scheme.ParameterCodec,
 			namespace,
 			func() *v1.ReplicationController { return &v1.ReplicationController{} },
-			func() *v1.ReplicationControllerList { return &v1.ReplicationControllerList{} }),
+			func() *v1.ReplicationControllerList { return &v1.ReplicationControllerList{} },
+			true,
+		),
 	}
 }
 

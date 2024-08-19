@@ -74,7 +74,9 @@ func newStatefulSets(c *AppsV1beta2Client, namespace string) *statefulSets {
 			scheme.ParameterCodec,
 			namespace,
 			func() *v1beta2.StatefulSet { return &v1beta2.StatefulSet{} },
-			func() *v1beta2.StatefulSetList { return &v1beta2.StatefulSetList{} }),
+			func() *v1beta2.StatefulSetList { return &v1beta2.StatefulSetList{} },
+			true,
+		),
 	}
 }
 

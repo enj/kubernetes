@@ -74,7 +74,9 @@ func newReplicaSets(c *ExtensionsV1beta1Client, namespace string) *replicaSets {
 			scheme.ParameterCodec,
 			namespace,
 			func() *v1beta1.ReplicaSet { return &v1beta1.ReplicaSet{} },
-			func() *v1beta1.ReplicaSetList { return &v1beta1.ReplicaSetList{} }),
+			func() *v1beta1.ReplicaSetList { return &v1beta1.ReplicaSetList{} },
+			true,
+		),
 	}
 }
 

@@ -70,7 +70,9 @@ func newPods(c *CoreV1Client, namespace string) *pods {
 			scheme.ParameterCodec,
 			namespace,
 			func() *v1.Pod { return &v1.Pod{} },
-			func() *v1.PodList { return &v1.PodList{} }),
+			func() *v1.PodList { return &v1.PodList{} },
+			true,
+		),
 	}
 }
 

@@ -52,6 +52,8 @@ func newTokenReviews(c *AuthenticationV1Client) *tokenReviews {
 			c.RESTClient(),
 			scheme.ParameterCodec,
 			"",
-			func() *v1.TokenReview { return &v1.TokenReview{} }),
+			func() *v1.TokenReview { return &v1.TokenReview{} },
+			true,
+		),
 	}
 }

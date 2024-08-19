@@ -74,7 +74,9 @@ func newDeployments(c *ExtensionsV1beta1Client, namespace string) *deployments {
 			scheme.ParameterCodec,
 			namespace,
 			func() *v1beta1.Deployment { return &v1beta1.Deployment{} },
-			func() *v1beta1.DeploymentList { return &v1beta1.DeploymentList{} }),
+			func() *v1beta1.DeploymentList { return &v1beta1.DeploymentList{} },
+			true,
+		),
 	}
 }
 

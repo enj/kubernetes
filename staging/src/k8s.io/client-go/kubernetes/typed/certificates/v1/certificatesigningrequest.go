@@ -70,7 +70,9 @@ func newCertificateSigningRequests(c *CertificatesV1Client) *certificateSigningR
 			scheme.ParameterCodec,
 			"",
 			func() *v1.CertificateSigningRequest { return &v1.CertificateSigningRequest{} },
-			func() *v1.CertificateSigningRequestList { return &v1.CertificateSigningRequestList{} }),
+			func() *v1.CertificateSigningRequestList { return &v1.CertificateSigningRequestList{} },
+			true,
+		),
 	}
 }
 

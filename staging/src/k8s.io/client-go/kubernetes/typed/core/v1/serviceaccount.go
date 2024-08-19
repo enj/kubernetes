@@ -67,7 +67,9 @@ func newServiceAccounts(c *CoreV1Client, namespace string) *serviceAccounts {
 			scheme.ParameterCodec,
 			namespace,
 			func() *v1.ServiceAccount { return &v1.ServiceAccount{} },
-			func() *v1.ServiceAccountList { return &v1.ServiceAccountList{} }),
+			func() *v1.ServiceAccountList { return &v1.ServiceAccountList{} },
+			true,
+		),
 	}
 }
 
