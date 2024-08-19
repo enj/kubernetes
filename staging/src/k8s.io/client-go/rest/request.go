@@ -189,6 +189,13 @@ func NewRequestWithClient(base *url.URL, versionedAPIPath string, content Client
 	})
 }
 
+func (r *Request) UseProtobufAsDefaultIfPreferred(prefersProtobuf bool) *Request {
+	if prefersProtobuf {
+		return r.UseProtobufAsDefault()
+	}
+	return r
+}
+
 func (r *Request) UseProtobufAsDefault() *Request {
 	if r.contentTypeNotSet && len(r.contentConfig.AcceptContentTypes) == 0 {
 		r.contentConfig.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
