@@ -26,6 +26,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	corev1 "k8s.io/api/core/v1"
 	crv1 "k8s.io/apiextensions-apiserver/examples/client-go/pkg/apis/cr/v1"
 	crv1client "k8s.io/apiextensions-apiserver/examples/client-go/pkg/client/clientset/versioned"
@@ -43,6 +44,19 @@ func TestClientContentType(t *testing.T) {
 
 		_, err = client.CoreV1().Pods("panda").
 			Create(context.TODO(), &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "snorlax"}}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	updateScaleFunc := func(t *testing.T, config *rest.Config) {
+		client, err := kubernetes.NewForConfig(config)
+		if err != nil {
+			t.Fatalf("failed to create REST client: %v", err)
+		}
+
+		_, err = client.AppsV1().Deployments("panda").
+			UpdateScale(context.TODO(), "snorlax", &autoscalingv1.Scale{ObjectMeta: metav1.ObjectMeta{Name: "snorlax"}}, metav1.UpdateOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -86,6 +100,23 @@ func TestClientContentType(t *testing.T) {
 			expectedPath:      "/api/v1/namespaces/panda/pods",
 			expectContentType: "application/json",
 			expectBody: `{"kind":"Pod","apiVersion":"v1","metadata":{"name":"snorlax","creationTimestamp":null},"spec":{"containers":null},"status":{}}
+`,
+		},
+		{
+			name:              "default update scale",
+			createFunc:        updateScaleFunc,
+			contentType:       "",
+			expectedPath:      "/apis/apps/v1/namespaces/panda/deployments/snorlax/scale",
+			expectContentType: "application/vnd.kubernetes.protobuf",
+			expectBody:        "k8s\u0000\n\u0017\n\u000Eautoscaling/v1\u0012\u0005Scale\u0012#\n\u0017\n\asnorlax\u0012\u0000\u001A\u0000\"\u0000*\u00002\u00008\u0000B\u0000\u0012\u0002\b\u0000\u001A\u0004\b\u0000\u0012\u0000\u001A\u0000\"\u0000",
+		},
+		{
+			name:              "json update scale",
+			createFunc:        updateScaleFunc,
+			contentType:       "application/json",
+			expectedPath:      "/apis/apps/v1/namespaces/panda/deployments/snorlax/scale",
+			expectContentType: "application/json",
+			expectBody: `{"kind":"Scale","apiVersion":"autoscaling/v1","metadata":{"name":"snorlax","creationTimestamp":null},"spec":{},"status":{"replicas":0}}
 `,
 		},
 		{
