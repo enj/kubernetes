@@ -482,7 +482,7 @@ var newStruct = []string{
 				namespace,
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				$.prefersProtobuf$,
-			)
+			),
 		}
 	}
 	`,
@@ -497,7 +497,7 @@ var newStruct = []string{
 				namespace,
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				$.prefersProtobuf$,
-			)
+			),
 		}
 	}
 	`,
@@ -513,7 +513,7 @@ var newStruct = []string{
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				func() *$.resultType|raw$List { return &$.resultType|raw$List{} },
 				$.prefersProtobuf$,
-			)
+			),
 		}
 	}
 	`,
@@ -529,7 +529,7 @@ var newStruct = []string{
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				func() *$.resultType|raw$List { return &$.resultType|raw$List{} },
 				$.prefersProtobuf$,
-			)
+			),
 		}
 	}
 	`,
@@ -544,7 +544,7 @@ var newStruct = []string{
 				"",
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				$.prefersProtobuf$,
-			)
+			),
 		}
 	}
 	`,
@@ -559,7 +559,7 @@ var newStruct = []string{
 				"",
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				$.prefersProtobuf$,
-			)
+			),
 		}
 	}
 	`,
@@ -575,7 +575,7 @@ var newStruct = []string{
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				func() *$.resultType|raw$List { return &$.resultType|raw$List{} },
 				$.prefersProtobuf$,
-			)
+			),
 		}
 	}
 	`,
@@ -591,7 +591,7 @@ var newStruct = []string{
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				func() *$.resultType|raw$List { return &$.resultType|raw$List{} },
 				$.prefersProtobuf$,
-			)
+			),
 		}
 	}
 	`,
