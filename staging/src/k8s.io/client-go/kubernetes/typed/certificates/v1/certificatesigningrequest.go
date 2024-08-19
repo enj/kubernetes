@@ -78,6 +78,7 @@ func newCertificateSigningRequests(c *CertificatesV1Client) *certificateSigningR
 func (c *certificateSigningRequests) UpdateApproval(ctx context.Context, certificateSigningRequestName string, certificateSigningRequest *v1.CertificateSigningRequest, opts metav1.UpdateOptions) (result *v1.CertificateSigningRequest, err error) {
 	result = &v1.CertificateSigningRequest{}
 	err = c.GetClient().Put().
+		UseProtobufAsDefault().
 		Resource("certificatesigningrequests").
 		Name(certificateSigningRequestName).
 		SubResource("approval").

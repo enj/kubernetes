@@ -78,6 +78,7 @@ func newPods(c *CoreV1Client, namespace string) *pods {
 func (c *pods) UpdateEphemeralContainers(ctx context.Context, podName string, pod *v1.Pod, opts metav1.UpdateOptions) (result *v1.Pod, err error) {
 	result = &v1.Pod{}
 	err = c.GetClient().Put().
+		UseProtobufAsDefault().
 		Namespace(c.GetNamespace()).
 		Resource("pods").
 		Name(podName).
