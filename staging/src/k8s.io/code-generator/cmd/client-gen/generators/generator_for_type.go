@@ -481,7 +481,7 @@ var newStruct = []string{
 				$.schemeParameterCodec|raw$,
 				namespace,
 				func() *$.resultType|raw$ { return &$.resultType|raw${} }),
-				$.prefersProtobuf|raw$,
+				$.prefersProtobuf$,
 		}
 	}
 	`,
@@ -495,7 +495,7 @@ var newStruct = []string{
 				$.schemeParameterCodec|raw$,
 				namespace,
 				func() *$.resultType|raw$ { return &$.resultType|raw${} }),
-				$.prefersProtobuf|raw$,
+				$.prefersProtobuf$,
 		}
 	}
 	`,
@@ -510,7 +510,7 @@ var newStruct = []string{
 				namespace,
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				func() *$.resultType|raw$List { return &$.resultType|raw$List{} }),
-				$.prefersProtobuf|raw$,
+				$.prefersProtobuf$,
 		}
 	}
 	`,
@@ -525,7 +525,7 @@ var newStruct = []string{
 				namespace,
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				func() *$.resultType|raw$List { return &$.resultType|raw$List{} }),
-				$.prefersProtobuf|raw$,
+				$.prefersProtobuf$,
 		}
 	}
 	`,
@@ -539,7 +539,7 @@ var newStruct = []string{
 				$.schemeParameterCodec|raw$,
 				"",
 				func() *$.resultType|raw$ { return &$.resultType|raw${} }),
-				$.prefersProtobuf|raw$,
+				$.prefersProtobuf$,
 		}
 	}
 	`,
@@ -553,7 +553,7 @@ var newStruct = []string{
 				$.schemeParameterCodec|raw$,
 				"",
 				func() *$.resultType|raw$ { return &$.resultType|raw${} }),
-				$.prefersProtobuf|raw$,
+				$.prefersProtobuf$,
 		}
 	}
 	`,
@@ -568,7 +568,7 @@ var newStruct = []string{
 				"",
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				func() *$.resultType|raw$List { return &$.resultType|raw$List{} }),
-				$.prefersProtobuf|raw$,
+				$.prefersProtobuf$,
 		}
 	}
 	`,
@@ -583,7 +583,7 @@ var newStruct = []string{
 				"",
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				func() *$.resultType|raw$List { return &$.resultType|raw$List{} }),
-				$.prefersProtobuf|raw$,
+				$.prefersProtobuf$,
 		}
 	}
 	`,
