@@ -1,0 +1,24 @@
+{
+  "apiVersion": "v1",
+  "groupVersion": "rbac.authorization.k8s.io/v1alpha1",
+  "kind": "APIResourceList",
+  "resources": [
+    {
+      "kind": "ConditionalClusterRoleBinding",
+      "name": "conditionalclusterrolebindings",
+      "namespaced": false,
+      "singularName": "conditionalclusterrolebinding",
+      "storageVersionHash": "8jsjyQDXzq4=",
+      "verbs": [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch"
+      ]
+    }
+  ]
+}

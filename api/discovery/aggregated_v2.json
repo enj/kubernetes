@@ -1059,6 +1059,32 @@
             }
           ],
           "version": "v1"
+        },
+        {
+          "freshness": "Current",
+          "resources": [
+            {
+              "resource": "conditionalclusterrolebindings",
+              "responseKind": {
+                "group": "",
+                "kind": "ConditionalClusterRoleBinding",
+                "version": ""
+              },
+              "scope": "Cluster",
+              "singularResource": "conditionalclusterrolebinding",
+              "verbs": [
+                "create",
+                "delete",
+                "deletecollection",
+                "get",
+                "list",
+                "patch",
+                "update",
+                "watch"
+              ]
+            }
+          ],
+          "version": "v1alpha1"
         }
       ]
     },
