@@ -291,6 +291,11 @@ type ConditionalClusterRoleBinding struct {
 	// I think selectors would be empty if the request didn't express them in a positive way (no NOT support)
 	// so both label and field selectors would be expressed as a map[string][]string
 
+	// +patchMergeKey=name
+	// +patchStrategy=merge
+	// +listType=map
+	// +listMapKey=name
+	// +optional
 	Variables []Variable `json:"variables,omitempty" patchStrategy:"merge" patchMergeKey:"name" protobuf:"bytes,3,rep,name=variables"`
 
 	// need at least one condition expression that checks the user info
