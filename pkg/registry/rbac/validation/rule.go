@@ -20,17 +20,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
-	"k8s.io/klog/v2"
-
 	rbacv1 "k8s.io/api/rbac/v1"
+	rbacv1alpha1 "k8s.io/api/rbac/v1alpha1"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
 	"k8s.io/apiserver/pkg/authentication/user"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/component-helpers/auth/rbac/validation"
+	"k8s.io/klog/v2"
 	rbacv1helpers "k8s.io/kubernetes/pkg/apis/rbac/v1"
 )
 
@@ -93,10 +94,12 @@ type DefaultRuleResolver struct {
 	roleBindingLister        RoleBindingLister
 	clusterRoleGetter        ClusterRoleGetter
 	clusterRoleBindingLister ClusterRoleBindingLister
+
+	conditionalClusterRoleBindingLister ConditionalClusterRoleBindingLister
 }
 
-func NewDefaultRuleResolver(roleGetter RoleGetter, roleBindingLister RoleBindingLister, clusterRoleGetter ClusterRoleGetter, clusterRoleBindingLister ClusterRoleBindingLister) *DefaultRuleResolver {
-	return &DefaultRuleResolver{roleGetter, roleBindingLister, clusterRoleGetter, clusterRoleBindingLister}
+func NewDefaultRuleResolver(roleGetter RoleGetter, roleBindingLister RoleBindingLister, clusterRoleGetter ClusterRoleGetter, clusterRoleBindingLister ClusterRoleBindingLister, conditionalClusterRoleBindingLister ConditionalClusterRoleBindingLister) *DefaultRuleResolver {
+	return &DefaultRuleResolver{roleGetter, roleBindingLister, clusterRoleGetter, clusterRoleBindingLister, conditionalClusterRoleBindingLister}
 }
 
 type RoleGetter interface {
@@ -113,6 +116,10 @@ type ClusterRoleGetter interface {
 
 type ClusterRoleBindingLister interface {
 	ListClusterRoleBindings() ([]*rbacv1.ClusterRoleBinding, error)
+}
+
+type ConditionalClusterRoleBindingLister interface {
+	ListConditionalClusterRoleBindings() ([]*rbacv1alpha1.ConditionalClusterRoleBinding, error)
 }
 
 func (r *DefaultRuleResolver) RulesFor(user user.Info, namespace string) ([]rbacv1.PolicyRule, error) {
@@ -162,6 +169,14 @@ func (d *clusterRoleBindingDescriber) String() string {
 	)
 }
 
+type conditionalClusterRoleBindingDescriber struct {
+	binding *rbacv1alpha1.ConditionalClusterRoleBinding
+}
+
+func (d *conditionalClusterRoleBindingDescriber) String() string {
+	return d.binding.Name
+}
+
 type roleBindingDescriber struct {
 	binding *rbacv1.RoleBinding
 	subject *rbacv1.Subject
@@ -200,6 +215,39 @@ func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, vi
 			for i := range rules {
 				if !visitor(sourceDescriber, &rules[i], nil) {
 					return
+				}
+			}
+		}
+	}
+
+	if r.conditionalClusterRoleBindingLister != nil {
+		if conditionalClusterRoleBindings, err := r.conditionalClusterRoleBindingLister.ListConditionalClusterRoleBindings(); err != nil {
+			if !visitor(nil, nil, err) {
+				return
+			}
+		} else {
+			sourceDescriber := &conditionalClusterRoleBindingDescriber{}
+			for _, conditionalClusterRoleBinding := range conditionalClusterRoleBindings {
+				applies := conditionalClusterRoleBindingAppliesTo(conditionalClusterRoleBinding, user, namespace)
+				if !applies {
+					continue
+				}
+				rules, err := r.GetRoleReferenceRules(rbacv1.RoleRef{
+					APIGroup: rbacv1.GroupName,
+					Kind:     "ClusterRole",
+					Name:     conditionalClusterRoleBinding.ClusterRoleName,
+				}, "")
+				if err != nil {
+					if !visitor(nil, nil, err) {
+						return
+					}
+					continue
+				}
+				sourceDescriber.binding = conditionalClusterRoleBinding
+				for i := range rules {
+					if !visitor(sourceDescriber, &rules[i], nil) {
+						return
+					}
 				}
 			}
 		}
@@ -314,8 +362,31 @@ func NewTestRuleResolver(roles []*rbacv1.Role, roleBindings []*rbacv1.RoleBindin
 	return newMockRuleResolver(&r), &r
 }
 
+// TODO actually implement this with CEL
+func conditionalClusterRoleBindingAppliesTo(conditionalClusterRoleBinding *rbacv1alpha1.ConditionalClusterRoleBinding, user user.Info, namespace string) bool {
+	if len(conditionalClusterRoleBinding.Conditions) == 0 {
+		return false // fail closed, but validation should prevent this
+	}
+	for _, condition := range conditionalClusterRoleBinding.Conditions {
+		var target string
+		switch condition.Message { // pretend this is a type enum
+		case "user":
+			target = user.GetName()
+		case "namespace":
+			target = namespace
+		default:
+			return false
+		}
+		matched, err := regexp.MatchString(condition.Expression, target)
+		if ok := err == nil && matched; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func newMockRuleResolver(r *StaticRoles) AuthorizationRuleResolver {
-	return NewDefaultRuleResolver(r, r, r, r)
+	return NewDefaultRuleResolver(r, r, r, r, nil)
 }
 
 // StaticRoles is a rule resolver that resolves from lists of role objects.

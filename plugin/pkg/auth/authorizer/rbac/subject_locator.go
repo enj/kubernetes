@@ -51,7 +51,7 @@ func NewSubjectAccessEvaluator(roles rbacregistryvalidation.RoleGetter, roleBind
 		roleBindingLister:        roleBindings,
 		clusterRoleBindingLister: clusterRoleBindings,
 		roleToRuleMapper: rbacregistryvalidation.NewDefaultRuleResolver(
-			roles, roleBindings, clusterRoles, clusterRoleBindings,
+			roles, roleBindings, clusterRoles, clusterRoleBindings, nil,
 		),
 	}
 	return subjectLocator

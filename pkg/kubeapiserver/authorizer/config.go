@@ -121,6 +121,7 @@ func (config Config) New(ctx context.Context, serverID string) (authorizer.Autho
 				&rbac.RoleBindingLister{Lister: config.VersionedInformerFactory.Rbac().V1().RoleBindings().Lister()},
 				&rbac.ClusterRoleGetter{Lister: config.VersionedInformerFactory.Rbac().V1().ClusterRoles().Lister()},
 				&rbac.ClusterRoleBindingLister{Lister: config.VersionedInformerFactory.Rbac().V1().ClusterRoleBindings().Lister()},
+				&rbac.ConditionalClusterRoleBindingLister{Lister: config.VersionedInformerFactory.Rbac().V1alpha1().ConditionalClusterRoleBindings().Lister()},
 			)
 		}
 	}

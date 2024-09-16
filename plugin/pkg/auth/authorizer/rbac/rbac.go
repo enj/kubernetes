@@ -22,14 +22,15 @@ import (
 	"context"
 	"fmt"
 
-	"k8s.io/klog/v2"
-
 	rbacv1 "k8s.io/api/rbac/v1"
+	rbacv1alpha1 "k8s.io/api/rbac/v1alpha1"
 	"k8s.io/apimachinery/pkg/labels"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
-	rbaclisters "k8s.io/client-go/listers/rbac/v1"
+	rbaclistersv1 "k8s.io/client-go/listers/rbac/v1"
+	rbaclistersv1alpha1 "k8s.io/client-go/listers/rbac/v1alpha1"
+	"k8s.io/klog/v2"
 	rbacv1helpers "k8s.io/kubernetes/pkg/apis/rbac/v1"
 	rbacregistryvalidation "k8s.io/kubernetes/pkg/registry/rbac/validation"
 )
@@ -156,10 +157,10 @@ func (r *RBACAuthorizer) RulesFor(user user.Info, namespace string) ([]authorize
 	return resourceRules, nonResourceRules, false, err
 }
 
-func New(roles rbacregistryvalidation.RoleGetter, roleBindings rbacregistryvalidation.RoleBindingLister, clusterRoles rbacregistryvalidation.ClusterRoleGetter, clusterRoleBindings rbacregistryvalidation.ClusterRoleBindingLister) *RBACAuthorizer {
+func New(roles rbacregistryvalidation.RoleGetter, roleBindings rbacregistryvalidation.RoleBindingLister, clusterRoles rbacregistryvalidation.ClusterRoleGetter, clusterRoleBindings rbacregistryvalidation.ClusterRoleBindingLister, conditionalClusterRoleBinding rbacregistryvalidation.ConditionalClusterRoleBindingLister) *RBACAuthorizer {
 	authorizer := &RBACAuthorizer{
 		authorizationRuleResolver: rbacregistryvalidation.NewDefaultRuleResolver(
-			roles, roleBindings, clusterRoles, clusterRoleBindings,
+			roles, roleBindings, clusterRoles, clusterRoleBindings, conditionalClusterRoleBinding,
 		),
 	}
 	return authorizer
@@ -193,7 +194,7 @@ func RuleAllows(requestAttributes authorizer.Attributes, rule *rbacv1.PolicyRule
 }
 
 type RoleGetter struct {
-	Lister rbaclisters.RoleLister
+	Lister rbaclistersv1.RoleLister
 }
 
 func (g *RoleGetter) GetRole(namespace, name string) (*rbacv1.Role, error) {
@@ -201,7 +202,7 @@ func (g *RoleGetter) GetRole(namespace, name string) (*rbacv1.Role, error) {
 }
 
 type RoleBindingLister struct {
-	Lister rbaclisters.RoleBindingLister
+	Lister rbaclistersv1.RoleBindingLister
 }
 
 func (l *RoleBindingLister) ListRoleBindings(namespace string) ([]*rbacv1.RoleBinding, error) {
@@ -209,7 +210,7 @@ func (l *RoleBindingLister) ListRoleBindings(namespace string) ([]*rbacv1.RoleBi
 }
 
 type ClusterRoleGetter struct {
-	Lister rbaclisters.ClusterRoleLister
+	Lister rbaclistersv1.ClusterRoleLister
 }
 
 func (g *ClusterRoleGetter) GetClusterRole(name string) (*rbacv1.ClusterRole, error) {
@@ -217,9 +218,17 @@ func (g *ClusterRoleGetter) GetClusterRole(name string) (*rbacv1.ClusterRole, er
 }
 
 type ClusterRoleBindingLister struct {
-	Lister rbaclisters.ClusterRoleBindingLister
+	Lister rbaclistersv1.ClusterRoleBindingLister
 }
 
 func (l *ClusterRoleBindingLister) ListClusterRoleBindings() ([]*rbacv1.ClusterRoleBinding, error) {
+	return l.Lister.List(labels.Everything())
+}
+
+type ConditionalClusterRoleBindingLister struct {
+	Lister rbaclistersv1alpha1.ConditionalClusterRoleBindingLister
+}
+
+func (l *ConditionalClusterRoleBindingLister) ListConditionalClusterRoleBindings() ([]*rbacv1alpha1.ConditionalClusterRoleBinding, error) {
 	return l.Lister.List(labels.Everything())
 }

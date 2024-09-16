@@ -114,6 +114,7 @@ func (p RESTStorageProvider) storage(version schema.GroupVersion, apiResourceCon
 		rolebinding.AuthorizerAdapter{Registry: rolebinding.NewRegistry(roleBindingsStorage)},
 		clusterrole.AuthorizerAdapter{Registry: clusterrole.NewRegistry(clusterRolesStorage)},
 		clusterrolebinding.AuthorizerAdapter{Registry: clusterrolebinding.NewRegistry(clusterRoleBindingsStorage)},
+		nil,
 	)
 
 	// roles
