@@ -209,6 +209,8 @@ type ClusterRoleList struct {
 	Items []ClusterRole
 }
 
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
+
 type ConditionalClusterRoleBinding struct {
 	metav1.TypeMeta
 	// Standard object's metadata.
@@ -257,7 +259,6 @@ type ConditionalClusterRoleBinding struct {
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
-// +k8s:prerelease-lifecycle-gen:introduced=1.32
 
 // ConditionalClusterRoleBindingList is a collection of ConditionalClusterRoleBindings
 type ConditionalClusterRoleBindingList struct {
