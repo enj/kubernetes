@@ -277,7 +277,7 @@ type ConditionalClusterRoleBinding struct {
 	// If the RoleRef cannot be resolved, the Authorizer must return an error.
 	// This field is immutable.
 	// RoleRef RoleRef `json:"roleRef" protobuf:"bytes,3,opt,name=roleRef"`
-	ClusterRoleName string `json:"clusterRoleName" protobuf:"bytes,1,opt,name=clusterRoleName"`
+	ClusterRoleName string `json:"clusterRoleName" protobuf:"bytes,2,opt,name=clusterRoleName"`
 
 	// in all cases, expressions must be positively expressed like the rest of RBAC
 	// expressions are ANDed together and you need all of them to pass for the binding to apply
@@ -291,10 +291,10 @@ type ConditionalClusterRoleBinding struct {
 	// I think selectors would be empty if the request didn't express them in a positive way (no NOT support)
 	// so both label and field selectors would be expressed as a map[string][]string
 
-	Variables []Variable `json:"variables,omitempty" patchStrategy:"merge" patchMergeKey:"name" protobuf:"bytes,2,rep,name=variables"`
+	Variables []Variable `json:"variables,omitempty" patchStrategy:"merge" patchMergeKey:"name" protobuf:"bytes,3,rep,name=variables"`
 
 	// need at least one condition expression that checks the user info
-	Conditions []Condition `json:"conditions,omitempty" protobuf:"bytes,3,rep,name=conditions"`
+	Conditions []Condition `json:"conditions,omitempty" protobuf:"bytes,4,rep,name=conditions"`
 
 	// choice 2 was to split, it was ugly and didn't support variables and I don't really know if it made SRR better
 	// because the selector constraints wouldn't be part of SRR without changing that API as well somehow
