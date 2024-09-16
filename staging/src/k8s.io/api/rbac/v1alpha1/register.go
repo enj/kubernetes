@@ -52,6 +52,9 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&ClusterRoleBinding{},
 		&ClusterRoleBindingList{},
 		&ClusterRoleList{},
+
+		&ConditionalClusterRoleBinding{},
+		&ConditionalClusterRoleBindingList{},
 	)
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 	return nil
