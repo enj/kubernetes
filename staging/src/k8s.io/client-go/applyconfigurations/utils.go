@@ -1536,6 +1536,10 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &applyconfigurationsrbacv1alpha1.ClusterRoleApplyConfiguration{}
 	case rbacv1alpha1.SchemeGroupVersion.WithKind("ClusterRoleBinding"):
 		return &applyconfigurationsrbacv1alpha1.ClusterRoleBindingApplyConfiguration{}
+	case rbacv1alpha1.SchemeGroupVersion.WithKind("Condition"):
+		return &applyconfigurationsrbacv1alpha1.ConditionApplyConfiguration{}
+	case rbacv1alpha1.SchemeGroupVersion.WithKind("ConditionalClusterRoleBinding"):
+		return &applyconfigurationsrbacv1alpha1.ConditionalClusterRoleBindingApplyConfiguration{}
 	case rbacv1alpha1.SchemeGroupVersion.WithKind("PolicyRule"):
 		return &applyconfigurationsrbacv1alpha1.PolicyRuleApplyConfiguration{}
 	case rbacv1alpha1.SchemeGroupVersion.WithKind("Role"):
@@ -1546,6 +1550,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &applyconfigurationsrbacv1alpha1.RoleRefApplyConfiguration{}
 	case rbacv1alpha1.SchemeGroupVersion.WithKind("Subject"):
 		return &applyconfigurationsrbacv1alpha1.SubjectApplyConfiguration{}
+	case rbacv1alpha1.SchemeGroupVersion.WithKind("Variable"):
+		return &applyconfigurationsrbacv1alpha1.VariableApplyConfiguration{}
 
 		// Group=rbac.authorization.k8s.io, Version=v1beta1
 	case rbacv1beta1.SchemeGroupVersion.WithKind("AggregationRule"):

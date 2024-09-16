@@ -28,6 +28,8 @@ type Interface interface {
 	ClusterRoles() ClusterRoleInformer
 	// ClusterRoleBindings returns a ClusterRoleBindingInformer.
 	ClusterRoleBindings() ClusterRoleBindingInformer
+	// ConditionalClusterRoleBindings returns a ConditionalClusterRoleBindingInformer.
+	ConditionalClusterRoleBindings() ConditionalClusterRoleBindingInformer
 	// Roles returns a RoleInformer.
 	Roles() RoleInformer
 	// RoleBindings returns a RoleBindingInformer.
@@ -53,6 +55,11 @@ func (v *version) ClusterRoles() ClusterRoleInformer {
 // ClusterRoleBindings returns a ClusterRoleBindingInformer.
 func (v *version) ClusterRoleBindings() ClusterRoleBindingInformer {
 	return &clusterRoleBindingInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
+}
+
+// ConditionalClusterRoleBindings returns a ConditionalClusterRoleBindingInformer.
+func (v *version) ConditionalClusterRoleBindings() ConditionalClusterRoleBindingInformer {
+	return &conditionalClusterRoleBindingInformer{factory: v.factory, tweakListOptions: v.tweakListOptions}
 }
 
 // Roles returns a RoleInformer.

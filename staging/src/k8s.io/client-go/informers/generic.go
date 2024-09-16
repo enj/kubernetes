@@ -356,6 +356,8 @@ func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Rbac().V1alpha1().ClusterRoles().Informer()}, nil
 	case rbacv1alpha1.SchemeGroupVersion.WithResource("clusterrolebindings"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Rbac().V1alpha1().ClusterRoleBindings().Informer()}, nil
+	case rbacv1alpha1.SchemeGroupVersion.WithResource("conditionalclusterrolebindings"):
+		return &genericInformer{resource: resource.GroupResource(), informer: f.Rbac().V1alpha1().ConditionalClusterRoleBindings().Informer()}, nil
 	case rbacv1alpha1.SchemeGroupVersion.WithResource("roles"):
 		return &genericInformer{resource: resource.GroupResource(), informer: f.Rbac().V1alpha1().Roles().Informer()}, nil
 	case rbacv1alpha1.SchemeGroupVersion.WithResource("rolebindings"):

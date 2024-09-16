@@ -11976,6 +11976,53 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             namedType: io.k8s.api.rbac.v1alpha1.Subject
           elementRelationship: atomic
+- name: io.k8s.api.rbac.v1alpha1.Condition
+  map:
+    fields:
+    - name: expression
+      type:
+        scalar: string
+      default: ""
+    - name: message
+      type:
+        scalar: string
+    - name: messageExpression
+      type:
+        scalar: string
+    - name: reason
+      type:
+        scalar: string
+- name: io.k8s.api.rbac.v1alpha1.ConditionalClusterRoleBinding
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: clusterRoleName
+      type:
+        scalar: string
+      default: ""
+    - name: conditions
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.rbac.v1alpha1.Condition
+          elementRelationship: atomic
+    - name: kind
+      type:
+        scalar: string
+    - name: metadata
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
+      default: {}
+    - name: variables
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.api.rbac.v1alpha1.Variable
+          elementRelationship: associative
+          keys:
+          - name
 - name: io.k8s.api.rbac.v1alpha1.PolicyRule
   map:
     fields:
@@ -12083,6 +12130,18 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: namespace
       type:
         scalar: string
+- name: io.k8s.api.rbac.v1alpha1.Variable
+  map:
+    fields:
+    - name: expression
+      type:
+        scalar: string
+      default: ""
+    - name: name
+      type:
+        scalar: string
+      default: ""
+    elementRelationship: atomic
 - name: io.k8s.api.rbac.v1beta1.AggregationRule
   map:
     fields:

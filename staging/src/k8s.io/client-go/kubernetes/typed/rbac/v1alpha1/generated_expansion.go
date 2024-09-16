@@ -22,6 +22,8 @@ type ClusterRoleExpansion interface{}
 
 type ClusterRoleBindingExpansion interface{}
 
+type ConditionalClusterRoleBindingExpansion interface{}
+
 type RoleExpansion interface{}
 
 type RoleBindingExpansion interface{}

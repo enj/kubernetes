@@ -25,6 +25,7 @@ import (
 	io "io"
 
 	proto "github.com/gogo/protobuf/proto"
+	k8s_io_apimachinery_pkg_apis_meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	math "math"
@@ -184,10 +185,94 @@ func (m *ClusterRoleList) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_ClusterRoleList proto.InternalMessageInfo
 
+func (m *Condition) Reset()      { *m = Condition{} }
+func (*Condition) ProtoMessage() {}
+func (*Condition) Descriptor() ([]byte, []int) {
+	return fileDescriptor_758889dfd9a88fa6, []int{5}
+}
+func (m *Condition) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *Condition) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	b = b[:cap(b)]
+	n, err := m.MarshalToSizedBuffer(b)
+	if err != nil {
+		return nil, err
+	}
+	return b[:n], nil
+}
+func (m *Condition) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_Condition.Merge(m, src)
+}
+func (m *Condition) XXX_Size() int {
+	return m.Size()
+}
+func (m *Condition) XXX_DiscardUnknown() {
+	xxx_messageInfo_Condition.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_Condition proto.InternalMessageInfo
+
+func (m *ConditionalClusterRoleBinding) Reset()      { *m = ConditionalClusterRoleBinding{} }
+func (*ConditionalClusterRoleBinding) ProtoMessage() {}
+func (*ConditionalClusterRoleBinding) Descriptor() ([]byte, []int) {
+	return fileDescriptor_758889dfd9a88fa6, []int{6}
+}
+func (m *ConditionalClusterRoleBinding) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *ConditionalClusterRoleBinding) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	b = b[:cap(b)]
+	n, err := m.MarshalToSizedBuffer(b)
+	if err != nil {
+		return nil, err
+	}
+	return b[:n], nil
+}
+func (m *ConditionalClusterRoleBinding) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ConditionalClusterRoleBinding.Merge(m, src)
+}
+func (m *ConditionalClusterRoleBinding) XXX_Size() int {
+	return m.Size()
+}
+func (m *ConditionalClusterRoleBinding) XXX_DiscardUnknown() {
+	xxx_messageInfo_ConditionalClusterRoleBinding.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_ConditionalClusterRoleBinding proto.InternalMessageInfo
+
+func (m *ConditionalClusterRoleBindingList) Reset()      { *m = ConditionalClusterRoleBindingList{} }
+func (*ConditionalClusterRoleBindingList) ProtoMessage() {}
+func (*ConditionalClusterRoleBindingList) Descriptor() ([]byte, []int) {
+	return fileDescriptor_758889dfd9a88fa6, []int{7}
+}
+func (m *ConditionalClusterRoleBindingList) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *ConditionalClusterRoleBindingList) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	b = b[:cap(b)]
+	n, err := m.MarshalToSizedBuffer(b)
+	if err != nil {
+		return nil, err
+	}
+	return b[:n], nil
+}
+func (m *ConditionalClusterRoleBindingList) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ConditionalClusterRoleBindingList.Merge(m, src)
+}
+func (m *ConditionalClusterRoleBindingList) XXX_Size() int {
+	return m.Size()
+}
+func (m *ConditionalClusterRoleBindingList) XXX_DiscardUnknown() {
+	xxx_messageInfo_ConditionalClusterRoleBindingList.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_ConditionalClusterRoleBindingList proto.InternalMessageInfo
+
 func (m *PolicyRule) Reset()      { *m = PolicyRule{} }
 func (*PolicyRule) ProtoMessage() {}
 func (*PolicyRule) Descriptor() ([]byte, []int) {
-	return fileDescriptor_758889dfd9a88fa6, []int{5}
+	return fileDescriptor_758889dfd9a88fa6, []int{8}
 }
 func (m *PolicyRule) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -215,7 +300,7 @@ var xxx_messageInfo_PolicyRule proto.InternalMessageInfo
 func (m *Role) Reset()      { *m = Role{} }
 func (*Role) ProtoMessage() {}
 func (*Role) Descriptor() ([]byte, []int) {
-	return fileDescriptor_758889dfd9a88fa6, []int{6}
+	return fileDescriptor_758889dfd9a88fa6, []int{9}
 }
 func (m *Role) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -243,7 +328,7 @@ var xxx_messageInfo_Role proto.InternalMessageInfo
 func (m *RoleBinding) Reset()      { *m = RoleBinding{} }
 func (*RoleBinding) ProtoMessage() {}
 func (*RoleBinding) Descriptor() ([]byte, []int) {
-	return fileDescriptor_758889dfd9a88fa6, []int{7}
+	return fileDescriptor_758889dfd9a88fa6, []int{10}
 }
 func (m *RoleBinding) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -271,7 +356,7 @@ var xxx_messageInfo_RoleBinding proto.InternalMessageInfo
 func (m *RoleBindingList) Reset()      { *m = RoleBindingList{} }
 func (*RoleBindingList) ProtoMessage() {}
 func (*RoleBindingList) Descriptor() ([]byte, []int) {
-	return fileDescriptor_758889dfd9a88fa6, []int{8}
+	return fileDescriptor_758889dfd9a88fa6, []int{11}
 }
 func (m *RoleBindingList) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -299,7 +384,7 @@ var xxx_messageInfo_RoleBindingList proto.InternalMessageInfo
 func (m *RoleList) Reset()      { *m = RoleList{} }
 func (*RoleList) ProtoMessage() {}
 func (*RoleList) Descriptor() ([]byte, []int) {
-	return fileDescriptor_758889dfd9a88fa6, []int{9}
+	return fileDescriptor_758889dfd9a88fa6, []int{12}
 }
 func (m *RoleList) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -327,7 +412,7 @@ var xxx_messageInfo_RoleList proto.InternalMessageInfo
 func (m *RoleRef) Reset()      { *m = RoleRef{} }
 func (*RoleRef) ProtoMessage() {}
 func (*RoleRef) Descriptor() ([]byte, []int) {
-	return fileDescriptor_758889dfd9a88fa6, []int{10}
+	return fileDescriptor_758889dfd9a88fa6, []int{13}
 }
 func (m *RoleRef) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -355,7 +440,7 @@ var xxx_messageInfo_RoleRef proto.InternalMessageInfo
 func (m *Subject) Reset()      { *m = Subject{} }
 func (*Subject) ProtoMessage() {}
 func (*Subject) Descriptor() ([]byte, []int) {
-	return fileDescriptor_758889dfd9a88fa6, []int{11}
+	return fileDescriptor_758889dfd9a88fa6, []int{14}
 }
 func (m *Subject) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -380,12 +465,43 @@ func (m *Subject) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_Subject proto.InternalMessageInfo
 
+func (m *Variable) Reset()      { *m = Variable{} }
+func (*Variable) ProtoMessage() {}
+func (*Variable) Descriptor() ([]byte, []int) {
+	return fileDescriptor_758889dfd9a88fa6, []int{15}
+}
+func (m *Variable) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *Variable) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	b = b[:cap(b)]
+	n, err := m.MarshalToSizedBuffer(b)
+	if err != nil {
+		return nil, err
+	}
+	return b[:n], nil
+}
+func (m *Variable) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_Variable.Merge(m, src)
+}
+func (m *Variable) XXX_Size() int {
+	return m.Size()
+}
+func (m *Variable) XXX_DiscardUnknown() {
+	xxx_messageInfo_Variable.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_Variable proto.InternalMessageInfo
+
 func init() {
 	proto.RegisterType((*AggregationRule)(nil), "k8s.io.api.rbac.v1alpha1.AggregationRule")
 	proto.RegisterType((*ClusterRole)(nil), "k8s.io.api.rbac.v1alpha1.ClusterRole")
 	proto.RegisterType((*ClusterRoleBinding)(nil), "k8s.io.api.rbac.v1alpha1.ClusterRoleBinding")
 	proto.RegisterType((*ClusterRoleBindingList)(nil), "k8s.io.api.rbac.v1alpha1.ClusterRoleBindingList")
 	proto.RegisterType((*ClusterRoleList)(nil), "k8s.io.api.rbac.v1alpha1.ClusterRoleList")
+	proto.RegisterType((*Condition)(nil), "k8s.io.api.rbac.v1alpha1.Condition")
+	proto.RegisterType((*ConditionalClusterRoleBinding)(nil), "k8s.io.api.rbac.v1alpha1.ConditionalClusterRoleBinding")
+	proto.RegisterType((*ConditionalClusterRoleBindingList)(nil), "k8s.io.api.rbac.v1alpha1.ConditionalClusterRoleBindingList")
 	proto.RegisterType((*PolicyRule)(nil), "k8s.io.api.rbac.v1alpha1.PolicyRule")
 	proto.RegisterType((*Role)(nil), "k8s.io.api.rbac.v1alpha1.Role")
 	proto.RegisterType((*RoleBinding)(nil), "k8s.io.api.rbac.v1alpha1.RoleBinding")
@@ -393,6 +509,7 @@ func init() {
 	proto.RegisterType((*RoleList)(nil), "k8s.io.api.rbac.v1alpha1.RoleList")
 	proto.RegisterType((*RoleRef)(nil), "k8s.io.api.rbac.v1alpha1.RoleRef")
 	proto.RegisterType((*Subject)(nil), "k8s.io.api.rbac.v1alpha1.Subject")
+	proto.RegisterType((*Variable)(nil), "k8s.io.api.rbac.v1alpha1.Variable")
 }
 
 func init() {
@@ -400,59 +517,73 @@ func init() {
 }
 
 var fileDescriptor_758889dfd9a88fa6 = []byte{
-	// 819 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xec, 0x56, 0xcf, 0x6f, 0xe3, 0x44,
-	0x14, 0xce, 0xa4, 0x09, 0x4d, 0x26, 0x44, 0xa1, 0x43, 0x85, 0xac, 0x0a, 0x39, 0xc5, 0x02, 0xa9,
-	0x88, 0x62, 0xd3, 0x82, 0x80, 0x0b, 0x48, 0x75, 0x0f, 0x28, 0x10, 0xda, 0x32, 0x15, 0x3d, 0x20,
-	0x0e, 0x4c, 0x9c, 0xa9, 0x33, 0xc4, 0xbf, 0xe4, 0xb1, 0x23, 0x55, 0x5c, 0xb8, 0x70, 0x45, 0x5c,
-	0x38, 0x70, 0xe7, 0xca, 0x85, 0x3d, 0xee, 0x3f, 0xd0, 0xbd, 0xf5, 0xd8, 0x53, 0xb4, 0xf5, 0xfe,
-	0x21, 0xbb, 0xf2, 0xd8, 0x8e, 0x9d, 0x5f, 0x9b, 0x9c, 0x22, 0xad, 0xb4, 0xa7, 0x64, 0xde, 0xfb,
-	0xde, 0xf7, 0xde, 0xfb, 0x66, 0xde, 0x4b, 0xe0, 0xc1, 0xf0, 0x4b, 0xae, 0x32, 0x57, 0x23, 0x1e,
-	0xd3, 0xfc, 0x1e, 0x31, 0xb4, 0xd1, 0x11, 0xb1, 0xbc, 0x01, 0x39, 0xd2, 0x4c, 0xea, 0x50, 0x9f,
-	0x04, 0xb4, 0xaf, 0x7a, 0xbe, 0x1b, 0xb8, 0x48, 0x4a, 0x90, 0x2a, 0xf1, 0x98, 0x1a, 0x23, 0xd5,
-	0x0c, 0xb9, 0xf7, 0xb1, 0xc9, 0x82, 0x41, 0xd8, 0x53, 0x0d, 0xd7, 0xd6, 0x4c, 0xd7, 0x74, 0x35,
-	0x11, 0xd0, 0x0b, 0xaf, 0xc5, 0x49, 0x1c, 0xc4, 0xb7, 0x84, 0x68, 0xef, 0xb3, 0x3c, 0xa5, 0x4d,
-	0x8c, 0x01, 0x73, 0xa8, 0x7f, 0xa3, 0x79, 0x43, 0x33, 0x36, 0x70, 0xcd, 0xa6, 0x01, 0xd1, 0x46,
-	0x73, 0xe9, 0xf7, 0xb4, 0x65, 0x51, 0x7e, 0xe8, 0x04, 0xcc, 0xa6, 0x73, 0x01, 0x9f, 0xaf, 0x0a,
-	0xe0, 0xc6, 0x80, 0xda, 0x64, 0x36, 0x4e, 0xf9, 0x07, 0xc0, 0xd6, 0x89, 0x69, 0xfa, 0xd4, 0x24,
-	0x01, 0x73, 0x1d, 0x1c, 0x5a, 0x14, 0xfd, 0x01, 0xe0, 0xae, 0x61, 0x85, 0x3c, 0xa0, 0x3e, 0x76,
-	0x2d, 0x7a, 0x49, 0x2d, 0x6a, 0x04, 0xae, 0xcf, 0x25, 0xb0, 0xbf, 0x75, 0xd0, 0x38, 0xfe, 0x54,
-	0xcd, 0xb5, 0x99, 0xe4, 0x52, 0xbd, 0xa1, 0x19, 0x1b, 0xb8, 0x1a, 0xb7, 0xa4, 0x8e, 0x8e, 0xd4,
-	0x2e, 0xe9, 0x51, 0x2b, 0x8b, 0xd5, 0xdf, 0xbd, 0x1d, 0xb7, 0x4b, 0xd1, 0xb8, 0xbd, 0x7b, 0xba,
-	0x80, 0x18, 0x2f, 0x4c, 0xa7, 0xfc, 0x5b, 0x86, 0x8d, 0x02, 0x1c, 0xfd, 0x02, 0x6b, 0x31, 0x79,
-	0x9f, 0x04, 0x44, 0x02, 0xfb, 0xe0, 0xa0, 0x71, 0xfc, 0xc9, 0x7a, 0xa5, 0x9c, 0xf7, 0x7e, 0xa5,
-	0x46, 0xf0, 0x3d, 0x0d, 0x88, 0x8e, 0xd2, 0x3a, 0x60, 0x6e, 0xc3, 0x13, 0x56, 0xd4, 0x81, 0x55,
-	0x3f, 0xb4, 0x28, 0x97, 0xca, 0xa2, 0xd3, 0xf7, 0xd5, 0x65, 0xaf, 0x40, 0xbd, 0x70, 0x2d, 0x66,
-	0xdc, 0xc4, 0x72, 0xe9, 0xcd, 0x94, 0xb2, 0x1a, 0x9f, 0x38, 0x4e, 0x18, 0xd0, 0x00, 0xb6, 0xc8,
-	0xb4, 0xae, 0xd2, 0x96, 0xa8, 0xf9, 0xc3, 0xe5, 0xa4, 0x33, 0x17, 0xa1, 0xbf, 0x1d, 0x8d, 0xdb,
-	0xb3, 0xb7, 0x83, 0x67, 0x69, 0x95, 0xbf, 0xcb, 0x10, 0x15, 0x64, 0xd2, 0x99, 0xd3, 0x67, 0x8e,
-	0xb9, 0x01, 0xb5, 0xce, 0x61, 0x8d, 0x87, 0xc2, 0x91, 0x09, 0xf6, 0xde, 0xf2, 0xde, 0x2e, 0x13,
-	0xa4, 0xfe, 0x56, 0x4a, 0x59, 0x4b, 0x0d, 0x1c, 0x4f, 0x48, 0x50, 0x17, 0x6e, 0xfb, 0xae, 0x45,
-	0x31, 0xbd, 0x4e, 0xb5, 0x7a, 0x09, 0x1f, 0x4e, 0x80, 0x7a, 0x2b, 0xe5, 0xdb, 0x4e, 0x0d, 0x38,
-	0xa3, 0x50, 0x9e, 0x00, 0xf8, 0xce, 0xbc, 0x2e, 0x5d, 0xc6, 0x03, 0xf4, 0xf3, 0x9c, 0x36, 0xea,
-	0x9a, 0x8f, 0x9a, 0xf1, 0x44, 0x99, 0x49, 0x1b, 0x99, 0xa5, 0xa0, 0xcb, 0x0f, 0xb0, 0xca, 0x02,
-	0x6a, 0x67, 0xa2, 0x1c, 0x2e, 0x6f, 0x62, 0xbe, 0xbc, 0xfc, 0x35, 0x75, 0x62, 0x0a, 0x9c, 0x30,
-	0x29, 0x8f, 0x01, 0x6c, 0x15, 0xc0, 0x1b, 0x68, 0xe2, 0xdb, 0xe9, 0x26, 0x3e, 0x58, 0xaf, 0x89,
-	0xc5, 0xd5, 0x3f, 0x07, 0x10, 0xe6, 0x03, 0x83, 0xda, 0xb0, 0x3a, 0xa2, 0x7e, 0x2f, 0xd9, 0x27,
-	0x75, 0xbd, 0x1e, 0xe3, 0xaf, 0x62, 0x03, 0x4e, 0xec, 0xe8, 0x23, 0x58, 0x27, 0x1e, 0xfb, 0xc6,
-	0x77, 0x43, 0x8f, 0x4b, 0x5b, 0x02, 0xd4, 0x8c, 0xc6, 0xed, 0xfa, 0xc9, 0x45, 0x27, 0x31, 0xe2,
-	0xdc, 0x1f, 0x83, 0x7d, 0xca, 0xdd, 0xd0, 0x37, 0x28, 0x97, 0x2a, 0x39, 0x18, 0x67, 0x46, 0x9c,
-	0xfb, 0xd1, 0x17, 0xb0, 0x99, 0x1d, 0xce, 0x88, 0x4d, 0xb9, 0x54, 0x15, 0x01, 0x3b, 0xd1, 0xb8,
-	0xdd, 0xc4, 0x45, 0x07, 0x9e, 0xc6, 0xa1, 0xaf, 0x60, 0xcb, 0x71, 0x9d, 0x0c, 0xf2, 0x23, 0xee,
-	0x72, 0xe9, 0x0d, 0x11, 0x2a, 0x66, 0xf4, 0x6c, 0xda, 0x85, 0x67, 0xb1, 0xca, 0x23, 0x00, 0x2b,
-	0xaf, 0xdc, 0x0e, 0x53, 0xfe, 0x2c, 0xc3, 0xc6, 0xeb, 0x95, 0x52, 0x58, 0x29, 0xf1, 0x18, 0x6e,
-	0x76, 0x97, 0xac, 0x3f, 0x86, 0xab, 0x97, 0xc8, 0x7f, 0x00, 0xd6, 0x36, 0xb4, 0x3d, 0x4e, 0xa7,
-	0xcb, 0x96, 0x57, 0x94, 0xbd, 0xb8, 0xde, 0xdf, 0x60, 0x76, 0x03, 0xe8, 0x10, 0xd6, 0xb2, 0x89,
-	0x17, 0xd5, 0xd6, 0xf3, 0xec, 0xd9, 0x52, 0xc0, 0x13, 0x04, 0xda, 0x87, 0x95, 0x21, 0x73, 0xfa,
-	0x52, 0x59, 0x20, 0xdf, 0x4c, 0x91, 0x95, 0xef, 0x98, 0xd3, 0xc7, 0xc2, 0x13, 0x23, 0x1c, 0x62,
-	0x27, 0x3f, 0xc9, 0x05, 0x44, 0x3c, 0xeb, 0x58, 0x78, 0x94, 0xff, 0x01, 0xdc, 0x4e, 0xdf, 0xd3,
-	0x84, 0x0f, 0x2c, 0xe5, 0x3b, 0x86, 0x90, 0x78, 0xec, 0x8a, 0xfa, 0x9c, 0xb9, 0x4e, 0x9a, 0x77,
-	0xf2, 0xd2, 0x4f, 0x2e, 0x3a, 0xa9, 0x07, 0x17, 0x50, 0xab, 0x6b, 0x40, 0x1a, 0xac, 0xc7, 0x9f,
-	0xdc, 0x23, 0x06, 0x95, 0x2a, 0x02, 0xb6, 0x93, 0xc2, 0xea, 0x67, 0x99, 0x03, 0xe7, 0x18, 0xfd,
-	0xeb, 0xdb, 0x07, 0xb9, 0x74, 0xf7, 0x20, 0x97, 0xee, 0x1f, 0xe4, 0xd2, 0xef, 0x91, 0x0c, 0x6e,
-	0x23, 0x19, 0xdc, 0x45, 0x32, 0xb8, 0x8f, 0x64, 0xf0, 0x34, 0x92, 0xc1, 0x5f, 0xcf, 0xe4, 0xd2,
-	0x4f, 0xd2, 0xb2, 0x7f, 0xc1, 0x2f, 0x02, 0x00, 0x00, 0xff, 0xff, 0xf1, 0x02, 0x55, 0xe5, 0x20,
-	0x0b, 0x00, 0x00,
+	// 1043 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xec, 0x57, 0xbd, 0x6f, 0xe4, 0x44,
+	0x14, 0x8f, 0x37, 0x9b, 0xcb, 0xee, 0x0b, 0xd1, 0x92, 0xe1, 0x04, 0x26, 0x02, 0x6f, 0xce, 0x1c,
+	0x52, 0x4e, 0x1c, 0x36, 0x09, 0x88, 0xa3, 0x01, 0x14, 0x47, 0xe8, 0x94, 0x23, 0xc9, 0x85, 0x89,
+	0xc8, 0x49, 0xe8, 0x0a, 0x66, 0xbd, 0x73, 0xce, 0x10, 0xaf, 0x6d, 0x79, 0xec, 0x88, 0x13, 0x0d,
+	0x0d, 0x2d, 0xa2, 0xa1, 0xa0, 0xa7, 0xa5, 0x81, 0x92, 0x7f, 0x20, 0x74, 0x57, 0x5e, 0xb5, 0x90,
+	0xe5, 0x3f, 0xa0, 0xa4, 0x00, 0x34, 0xe3, 0xf1, 0xc7, 0x7e, 0x25, 0x5b, 0x05, 0x21, 0x51, 0x25,
+	0x7e, 0xef, 0xf7, 0x7e, 0xef, 0x63, 0xde, 0xf8, 0xe7, 0x85, 0xf5, 0x93, 0x77, 0xb8, 0xc5, 0x42,
+	0x9b, 0x44, 0xcc, 0x8e, 0x3b, 0xc4, 0xb5, 0x4f, 0x37, 0x88, 0x1f, 0x1d, 0x93, 0x0d, 0xdb, 0xa3,
+	0x01, 0x8d, 0x49, 0x42, 0xbb, 0x56, 0x14, 0x87, 0x49, 0x88, 0xf4, 0x0c, 0x69, 0x91, 0x88, 0x59,
+	0x02, 0x69, 0xe5, 0xc8, 0xd5, 0xd7, 0x3d, 0x96, 0x1c, 0xa7, 0x1d, 0xcb, 0x0d, 0x7b, 0xb6, 0x17,
+	0x7a, 0xa1, 0x2d, 0x03, 0x3a, 0xe9, 0x23, 0xf9, 0x24, 0x1f, 0xe4, 0x7f, 0x19, 0xd1, 0xea, 0x5b,
+	0x65, 0xca, 0x1e, 0x71, 0x8f, 0x59, 0x40, 0xe3, 0xc7, 0x76, 0x74, 0xe2, 0x09, 0x03, 0xb7, 0x7b,
+	0x34, 0x21, 0xf6, 0xe9, 0x58, 0xfa, 0x55, 0x7b, 0x5a, 0x54, 0x9c, 0x06, 0x09, 0xeb, 0xd1, 0xb1,
+	0x80, 0xb7, 0x2f, 0x0b, 0xe0, 0xee, 0x31, 0xed, 0x91, 0xd1, 0x38, 0xf3, 0x3b, 0x0d, 0x5a, 0x5b,
+	0x9e, 0x17, 0x53, 0x8f, 0x24, 0x2c, 0x0c, 0x70, 0xea, 0x53, 0xf4, 0x95, 0x06, 0xd7, 0x5d, 0x3f,
+	0xe5, 0x09, 0x8d, 0x71, 0xe8, 0xd3, 0x43, 0xea, 0x53, 0x37, 0x09, 0x63, 0xae, 0x6b, 0x6b, 0xf3,
+	0xeb, 0x4b, 0x9b, 0x6f, 0x5a, 0xe5, 0x6c, 0x8a, 0x5c, 0x56, 0x74, 0xe2, 0x09, 0x03, 0xb7, 0x44,
+	0x4b, 0xd6, 0xe9, 0x86, 0xb5, 0x4b, 0x3a, 0xd4, 0xcf, 0x63, 0x9d, 0x97, 0xce, 0xfa, 0xed, 0xb9,
+	0x41, 0xbf, 0x7d, 0x7d, 0x7b, 0x02, 0x31, 0x9e, 0x98, 0xce, 0xfc, 0xbe, 0x06, 0x4b, 0x15, 0x38,
+	0xfa, 0x14, 0x1a, 0x82, 0xbc, 0x4b, 0x12, 0xa2, 0x6b, 0x6b, 0xda, 0xfa, 0xd2, 0xe6, 0x1b, 0xb3,
+	0x95, 0x72, 0xbf, 0xf3, 0x19, 0x75, 0x93, 0x3d, 0x9a, 0x10, 0x07, 0xa9, 0x3a, 0xa0, 0xb4, 0xe1,
+	0x82, 0x15, 0xed, 0xc0, 0x42, 0x9c, 0xfa, 0x94, 0xeb, 0x35, 0xd9, 0xe9, 0x4d, 0x6b, 0xda, 0x16,
+	0x58, 0x07, 0xa1, 0xcf, 0xdc, 0xc7, 0x62, 0x5c, 0xce, 0xb2, 0xa2, 0x5c, 0x10, 0x4f, 0x1c, 0x67,
+	0x0c, 0xe8, 0x18, 0x5a, 0x64, 0x78, 0xae, 0xfa, 0xbc, 0xac, 0xf9, 0xd6, 0x74, 0xd2, 0x91, 0x83,
+	0x70, 0x9e, 0x1b, 0xf4, 0xdb, 0xa3, 0xa7, 0x83, 0x47, 0x69, 0xcd, 0x6f, 0x6b, 0x80, 0x2a, 0x63,
+	0x72, 0x58, 0xd0, 0x65, 0x81, 0x77, 0x05, 0xd3, 0xba, 0x0f, 0x0d, 0x9e, 0x4a, 0x47, 0x3e, 0xb0,
+	0x1b, 0xd3, 0x7b, 0x3b, 0xcc, 0x90, 0xce, 0xb3, 0x8a, 0xb2, 0xa1, 0x0c, 0x1c, 0x17, 0x24, 0x68,
+	0x17, 0x16, 0xe3, 0xd0, 0xa7, 0x98, 0x3e, 0x52, 0xb3, 0xba, 0x80, 0x0f, 0x67, 0x40, 0xa7, 0xa5,
+	0xf8, 0x16, 0x95, 0x01, 0xe7, 0x14, 0xe6, 0x2f, 0x1a, 0x3c, 0x3f, 0x3e, 0x97, 0x5d, 0xc6, 0x13,
+	0xf4, 0x70, 0x6c, 0x36, 0xd6, 0x8c, 0x4b, 0xcd, 0x78, 0x36, 0x99, 0xa2, 0x8d, 0xdc, 0x52, 0x99,
+	0xcb, 0x47, 0xb0, 0xc0, 0x12, 0xda, 0xcb, 0x87, 0x72, 0x7b, 0x7a, 0x13, 0xe3, 0xe5, 0x95, 0xdb,
+	0xb4, 0x23, 0x28, 0x70, 0xc6, 0x64, 0xfe, 0xac, 0x41, 0xab, 0x02, 0xbe, 0x82, 0x26, 0xee, 0x0d,
+	0x37, 0xf1, 0xea, 0x6c, 0x4d, 0x4c, 0xae, 0xfe, 0x2f, 0x0d, 0x9a, 0xdb, 0x61, 0xd0, 0x65, 0x62,
+	0x67, 0xd1, 0x4d, 0x80, 0x0f, 0x3e, 0x8f, 0x62, 0xca, 0x39, 0x0b, 0x03, 0x59, 0x79, 0xd3, 0xa9,
+	0x8b, 0x38, 0x5c, 0xb1, 0xa3, 0x5b, 0xb0, 0xd8, 0xa3, 0x9c, 0x13, 0x8f, 0xea, 0x35, 0x09, 0x29,
+	0x0e, 0x7a, 0x2f, 0x33, 0xe3, 0xdc, 0x8f, 0x1e, 0xc0, 0xb5, 0x98, 0x12, 0x1e, 0x06, 0x72, 0x6b,
+	0x9a, 0xce, 0xfb, 0x83, 0x7e, 0xfb, 0x1a, 0x96, 0x96, 0x3f, 0xfb, 0xed, 0x8d, 0x59, 0x5e, 0xc0,
+	0xd6, 0x61, 0x42, 0x92, 0x94, 0x67, 0x41, 0x58, 0xd1, 0xa1, 0xbb, 0xb0, 0xa2, 0x72, 0x54, 0x0a,
+	0xae, 0xcb, 0x1c, 0x2f, 0xaa, 0x6a, 0x56, 0xf6, 0x46, 0x01, 0x78, 0x3c, 0xc6, 0xfc, 0xa3, 0x06,
+	0x2f, 0x17, 0x03, 0x20, 0xfe, 0xbf, 0x72, 0x5b, 0xb7, 0xa0, 0x55, 0x79, 0xcb, 0xee, 0x93, 0x5e,
+	0x3e, 0xd8, 0x17, 0x54, 0x58, 0x75, 0xc1, 0x84, 0x1b, 0x8f, 0xe2, 0xd1, 0x21, 0x34, 0x4f, 0x49,
+	0xcc, 0x48, 0x47, 0xbc, 0x22, 0xe7, 0xe5, 0x5e, 0x98, 0xd3, 0xf7, 0xe2, 0x48, 0x41, 0x9d, 0x15,
+	0x95, 0xa0, 0x99, 0x5b, 0x38, 0x2e, 0x79, 0xd0, 0x03, 0x00, 0x37, 0x1f, 0x0d, 0xd7, 0xeb, 0x92,
+	0xf5, 0x95, 0x0b, 0xb6, 0x2d, 0xc7, 0x96, 0xed, 0x16, 0x26, 0x8e, 0x2b, 0x54, 0xe6, 0xaf, 0x1a,
+	0xdc, 0xb8, 0x70, 0xe8, 0x57, 0x70, 0x8b, 0x1e, 0x0e, 0xdf, 0xa2, 0x3b, 0x33, 0xf4, 0x35, 0xa9,
+	0xd2, 0x29, 0xf7, 0xea, 0x6f, 0x0d, 0xa0, 0x14, 0x22, 0xd4, 0x86, 0x85, 0x53, 0x1a, 0x77, 0x32,
+	0x9d, 0x6e, 0x3a, 0x4d, 0x81, 0x3f, 0x12, 0x06, 0x9c, 0xd9, 0xd1, 0x6b, 0xd0, 0x24, 0x11, 0xbb,
+	0x1b, 0x87, 0x69, 0x94, 0x9d, 0x5f, 0xd3, 0x59, 0x16, 0xe7, 0xb2, 0x75, 0xb0, 0x93, 0x19, 0x71,
+	0xe9, 0x17, 0xe0, 0x98, 0xf2, 0x30, 0x8d, 0x5d, 0x9a, 0x1d, 0x8b, 0x02, 0xe3, 0xdc, 0x88, 0x4b,
+	0x3f, 0xba, 0x03, 0xcb, 0xf9, 0x83, 0xd8, 0x14, 0xae, 0x2f, 0xc8, 0x80, 0x95, 0x41, 0xbf, 0xbd,
+	0x8c, 0xab, 0x0e, 0x3c, 0x8c, 0x43, 0xef, 0x42, 0x2b, 0x08, 0x83, 0x1c, 0xf2, 0x31, 0xde, 0xe5,
+	0xfa, 0x35, 0x19, 0x2a, 0xb5, 0x6f, 0x7f, 0xd8, 0x85, 0x47, 0xb1, 0xe6, 0x4f, 0x1a, 0xd4, 0xff,
+	0x73, 0xdf, 0x06, 0xe6, 0xd7, 0x35, 0x58, 0xfa, 0x5f, 0xaa, 0x2b, 0x52, 0x2d, 0xe4, 0xed, 0x6a,
+	0x2f, 0xe6, 0xec, 0xf2, 0x76, 0xf9, 0x35, 0xfc, 0x41, 0x83, 0xc6, 0x15, 0xa9, 0xf2, 0xf6, 0x70,
+	0xd9, 0xc6, 0x25, 0x65, 0x4f, 0xae, 0xf7, 0x0b, 0xc8, 0x4f, 0x00, 0xdd, 0x86, 0x46, 0x7e, 0xe3,
+	0x95, 0x12, 0x17, 0xd9, 0xf3, 0x97, 0x02, 0x2e, 0x10, 0x68, 0x0d, 0xea, 0x27, 0x2c, 0xe8, 0x2a,
+	0xdd, 0x78, 0x46, 0x21, 0xeb, 0x1f, 0xb2, 0xa0, 0x8b, 0xa5, 0x47, 0x20, 0x02, 0xa1, 0x2c, 0xf3,
+	0xc3, 0x08, 0x29, 0x27, 0xd2, 0x63, 0xfe, 0xa8, 0xc1, 0xa2, 0xda, 0xa7, 0x82, 0x4f, 0x9b, 0xca,
+	0xb7, 0x09, 0x40, 0x22, 0x76, 0x44, 0x63, 0x29, 0xbd, 0x59, 0xde, 0x62, 0xd3, 0xb7, 0x0e, 0x76,
+	0x94, 0x07, 0x57, 0x50, 0x97, 0xd7, 0x80, 0x6c, 0x68, 0x8a, 0xbf, 0x3c, 0x22, 0x2e, 0x55, 0x7a,
+	0x5e, 0x68, 0xd4, 0x7e, 0xee, 0xc0, 0x25, 0xc6, 0xbc, 0x07, 0x8d, 0x5c, 0xbb, 0x90, 0x0e, 0x92,
+	0x6a, 0xe8, 0xc3, 0x45, 0x5a, 0x46, 0x3e, 0x6c, 0x6a, 0x93, 0x3f, 0x6c, 0x9c, 0xf7, 0xce, 0xce,
+	0x8d, 0xb9, 0x27, 0xe7, 0xc6, 0xdc, 0xd3, 0x73, 0x63, 0xee, 0xcb, 0x81, 0xa1, 0x9d, 0x0d, 0x0c,
+	0xed, 0xc9, 0xc0, 0xd0, 0x9e, 0x0e, 0x0c, 0xed, 0xb7, 0x81, 0xa1, 0x7d, 0xf3, 0xbb, 0x31, 0xf7,
+	0x89, 0x3e, 0xed, 0x97, 0xea, 0x3f, 0x01, 0x00, 0x00, 0xff, 0xff, 0xc9, 0x9e, 0xd5, 0x6e, 0xc4,
+	0x0e, 0x00, 0x00,
 }
 
 func (m *AggregationRule) Marshal() (dAtA []byte, err error) {
@@ -671,6 +802,164 @@ func (m *ClusterRoleList) MarshalTo(dAtA []byte) (int, error) {
 }
 
 func (m *ClusterRoleList) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Items) > 0 {
+		for iNdEx := len(m.Items) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Items[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintGenerated(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x12
+		}
+	}
+	{
+		size, err := m.ListMeta.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintGenerated(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
+}
+
+func (m *Condition) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *Condition) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *Condition) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	i -= len(m.MessageExpression)
+	copy(dAtA[i:], m.MessageExpression)
+	i = encodeVarintGenerated(dAtA, i, uint64(len(m.MessageExpression)))
+	i--
+	dAtA[i] = 0x22
+	if m.Reason != nil {
+		i -= len(*m.Reason)
+		copy(dAtA[i:], *m.Reason)
+		i = encodeVarintGenerated(dAtA, i, uint64(len(*m.Reason)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	i -= len(m.Message)
+	copy(dAtA[i:], m.Message)
+	i = encodeVarintGenerated(dAtA, i, uint64(len(m.Message)))
+	i--
+	dAtA[i] = 0x12
+	i -= len(m.Expression)
+	copy(dAtA[i:], m.Expression)
+	i = encodeVarintGenerated(dAtA, i, uint64(len(m.Expression)))
+	i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
+}
+
+func (m *ConditionalClusterRoleBinding) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *ConditionalClusterRoleBinding) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *ConditionalClusterRoleBinding) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Conditions) > 0 {
+		for iNdEx := len(m.Conditions) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Conditions[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintGenerated(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x22
+		}
+	}
+	if len(m.Variables) > 0 {
+		for iNdEx := len(m.Variables) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Variables[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintGenerated(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x1a
+		}
+	}
+	i -= len(m.ClusterRoleName)
+	copy(dAtA[i:], m.ClusterRoleName)
+	i = encodeVarintGenerated(dAtA, i, uint64(len(m.ClusterRoleName)))
+	i--
+	dAtA[i] = 0x12
+	{
+		size, err := m.ObjectMeta.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintGenerated(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
+}
+
+func (m *ConditionalClusterRoleBindingList) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *ConditionalClusterRoleBindingList) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *ConditionalClusterRoleBindingList) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	i := len(dAtA)
 	_ = i
 	var l int
@@ -1049,6 +1338,39 @@ func (m *Subject) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
+func (m *Variable) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *Variable) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *Variable) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	i -= len(m.Expression)
+	copy(dAtA[i:], m.Expression)
+	i = encodeVarintGenerated(dAtA, i, uint64(len(m.Expression)))
+	i--
+	dAtA[i] = 0x12
+	i -= len(m.Name)
+	copy(dAtA[i:], m.Name)
+	i = encodeVarintGenerated(dAtA, i, uint64(len(m.Name)))
+	i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
+}
+
 func encodeVarintGenerated(dAtA []byte, offset int, v uint64) int {
 	offset -= sovGenerated(v)
 	base := offset
@@ -1133,6 +1455,67 @@ func (m *ClusterRoleBindingList) Size() (n int) {
 }
 
 func (m *ClusterRoleList) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = m.ListMeta.Size()
+	n += 1 + l + sovGenerated(uint64(l))
+	if len(m.Items) > 0 {
+		for _, e := range m.Items {
+			l = e.Size()
+			n += 1 + l + sovGenerated(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *Condition) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Expression)
+	n += 1 + l + sovGenerated(uint64(l))
+	l = len(m.Message)
+	n += 1 + l + sovGenerated(uint64(l))
+	if m.Reason != nil {
+		l = len(*m.Reason)
+		n += 1 + l + sovGenerated(uint64(l))
+	}
+	l = len(m.MessageExpression)
+	n += 1 + l + sovGenerated(uint64(l))
+	return n
+}
+
+func (m *ConditionalClusterRoleBinding) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = m.ObjectMeta.Size()
+	n += 1 + l + sovGenerated(uint64(l))
+	l = len(m.ClusterRoleName)
+	n += 1 + l + sovGenerated(uint64(l))
+	if len(m.Variables) > 0 {
+		for _, e := range m.Variables {
+			l = e.Size()
+			n += 1 + l + sovGenerated(uint64(l))
+		}
+	}
+	if len(m.Conditions) > 0 {
+		for _, e := range m.Conditions {
+			l = e.Size()
+			n += 1 + l + sovGenerated(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *ConditionalClusterRoleBindingList) Size() (n int) {
 	if m == nil {
 		return 0
 	}
@@ -1290,6 +1673,19 @@ func (m *Subject) Size() (n int) {
 	return n
 }
 
+func (m *Variable) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Name)
+	n += 1 + l + sovGenerated(uint64(l))
+	l = len(m.Expression)
+	n += 1 + l + sovGenerated(uint64(l))
+	return n
+}
+
 func sovGenerated(x uint64) (n int) {
 	return (math_bits.Len64(x|1) + 6) / 7
 }
@@ -1371,6 +1767,58 @@ func (this *ClusterRoleList) String() string {
 	}
 	repeatedStringForItems += "}"
 	s := strings.Join([]string{`&ClusterRoleList{`,
+		`ListMeta:` + strings.Replace(strings.Replace(fmt.Sprintf("%v", this.ListMeta), "ListMeta", "v1.ListMeta", 1), `&`, ``, 1) + `,`,
+		`Items:` + repeatedStringForItems + `,`,
+		`}`,
+	}, "")
+	return s
+}
+func (this *Condition) String() string {
+	if this == nil {
+		return "nil"
+	}
+	s := strings.Join([]string{`&Condition{`,
+		`Expression:` + fmt.Sprintf("%v", this.Expression) + `,`,
+		`Message:` + fmt.Sprintf("%v", this.Message) + `,`,
+		`Reason:` + valueToStringGenerated(this.Reason) + `,`,
+		`MessageExpression:` + fmt.Sprintf("%v", this.MessageExpression) + `,`,
+		`}`,
+	}, "")
+	return s
+}
+func (this *ConditionalClusterRoleBinding) String() string {
+	if this == nil {
+		return "nil"
+	}
+	repeatedStringForVariables := "[]Variable{"
+	for _, f := range this.Variables {
+		repeatedStringForVariables += strings.Replace(strings.Replace(f.String(), "Variable", "Variable", 1), `&`, ``, 1) + ","
+	}
+	repeatedStringForVariables += "}"
+	repeatedStringForConditions := "[]Condition{"
+	for _, f := range this.Conditions {
+		repeatedStringForConditions += strings.Replace(strings.Replace(f.String(), "Condition", "Condition", 1), `&`, ``, 1) + ","
+	}
+	repeatedStringForConditions += "}"
+	s := strings.Join([]string{`&ConditionalClusterRoleBinding{`,
+		`ObjectMeta:` + strings.Replace(strings.Replace(fmt.Sprintf("%v", this.ObjectMeta), "ObjectMeta", "v1.ObjectMeta", 1), `&`, ``, 1) + `,`,
+		`ClusterRoleName:` + fmt.Sprintf("%v", this.ClusterRoleName) + `,`,
+		`Variables:` + repeatedStringForVariables + `,`,
+		`Conditions:` + repeatedStringForConditions + `,`,
+		`}`,
+	}, "")
+	return s
+}
+func (this *ConditionalClusterRoleBindingList) String() string {
+	if this == nil {
+		return "nil"
+	}
+	repeatedStringForItems := "[]ConditionalClusterRoleBinding{"
+	for _, f := range this.Items {
+		repeatedStringForItems += strings.Replace(strings.Replace(f.String(), "ConditionalClusterRoleBinding", "ConditionalClusterRoleBinding", 1), `&`, ``, 1) + ","
+	}
+	repeatedStringForItems += "}"
+	s := strings.Join([]string{`&ConditionalClusterRoleBindingList{`,
 		`ListMeta:` + strings.Replace(strings.Replace(fmt.Sprintf("%v", this.ListMeta), "ListMeta", "v1.ListMeta", 1), `&`, ``, 1) + `,`,
 		`Items:` + repeatedStringForItems + `,`,
 		`}`,
@@ -1477,6 +1925,17 @@ func (this *Subject) String() string {
 		`APIVersion:` + fmt.Sprintf("%v", this.APIVersion) + `,`,
 		`Name:` + fmt.Sprintf("%v", this.Name) + `,`,
 		`Namespace:` + fmt.Sprintf("%v", this.Namespace) + `,`,
+		`}`,
+	}, "")
+	return s
+}
+func (this *Variable) String() string {
+	if this == nil {
+		return "nil"
+	}
+	s := strings.Join([]string{`&Variable{`,
+		`Name:` + fmt.Sprintf("%v", this.Name) + `,`,
+		`Expression:` + fmt.Sprintf("%v", this.Expression) + `,`,
 		`}`,
 	}, "")
 	return s
@@ -2085,6 +2544,485 @@ func (m *ClusterRoleList) Unmarshal(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.Items = append(m.Items, ClusterRole{})
+			if err := m.Items[len(m.Items)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipGenerated(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *Condition) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowGenerated
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: Condition: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: Condition: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Expression", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenerated
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Expression = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Message", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenerated
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Message = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Reason", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenerated
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			s := k8s_io_apimachinery_pkg_apis_meta_v1.StatusReason(dAtA[iNdEx:postIndex])
+			m.Reason = &s
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MessageExpression", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenerated
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.MessageExpression = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipGenerated(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *ConditionalClusterRoleBinding) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowGenerated
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: ConditionalClusterRoleBinding: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: ConditionalClusterRoleBinding: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ObjectMeta", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenerated
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.ObjectMeta.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ClusterRoleName", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenerated
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ClusterRoleName = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Variables", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenerated
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Variables = append(m.Variables, Variable{})
+			if err := m.Variables[len(m.Variables)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Conditions", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenerated
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Conditions = append(m.Conditions, Condition{})
+			if err := m.Conditions[len(m.Conditions)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipGenerated(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *ConditionalClusterRoleBindingList) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowGenerated
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: ConditionalClusterRoleBindingList: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: ConditionalClusterRoleBindingList: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ListMeta", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenerated
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.ListMeta.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Items", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenerated
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Items = append(m.Items, ConditionalClusterRoleBinding{})
 			if err := m.Items[len(m.Items)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
@@ -3123,6 +4061,120 @@ func (m *Subject) Unmarshal(dAtA []byte) error {
 				return io.ErrUnexpectedEOF
 			}
 			m.Namespace = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipGenerated(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *Variable) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowGenerated
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: Variable: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: Variable: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Name", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenerated
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Name = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Expression", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowGenerated
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthGenerated
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Expression = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

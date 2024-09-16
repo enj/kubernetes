@@ -30,6 +30,7 @@ type RbacV1alpha1Interface interface {
 	RESTClient() rest.Interface
 	ClusterRolesGetter
 	ClusterRoleBindingsGetter
+	ConditionalClusterRoleBindingsGetter
 	RolesGetter
 	RoleBindingsGetter
 }
@@ -45,6 +46,10 @@ func (c *RbacV1alpha1Client) ClusterRoles() ClusterRoleInterface {
 
 func (c *RbacV1alpha1Client) ClusterRoleBindings() ClusterRoleBindingInterface {
 	return newClusterRoleBindings(c)
+}
+
+func (c *RbacV1alpha1Client) ConditionalClusterRoleBindings() ConditionalClusterRoleBindingInterface {
+	return newConditionalClusterRoleBindings(c)
 }
 
 func (c *RbacV1alpha1Client) Roles(namespace string) RoleInterface {

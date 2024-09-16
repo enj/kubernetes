@@ -36,6 +36,10 @@ func (c *FakeRbacV1alpha1) ClusterRoleBindings() v1alpha1.ClusterRoleBindingInte
 	return &FakeClusterRoleBindings{c}
 }
 
+func (c *FakeRbacV1alpha1) ConditionalClusterRoleBindings() v1alpha1.ConditionalClusterRoleBindingInterface {
+	return &FakeConditionalClusterRoleBindings{c}
+}
+
 func (c *FakeRbacV1alpha1) Roles(namespace string) v1alpha1.RoleInterface {
 	return &FakeRoles{c, namespace}
 }
