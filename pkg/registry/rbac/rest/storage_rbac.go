@@ -24,6 +24,7 @@ import (
 	"k8s.io/klog/v2"
 
 	rbacapiv1 "k8s.io/api/rbac/v1"
+	rbacapiv1alpha1 "k8s.io/api/rbac/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -46,6 +47,7 @@ import (
 	"k8s.io/kubernetes/pkg/registry/rbac/clusterrolebinding"
 	clusterrolebindingpolicybased "k8s.io/kubernetes/pkg/registry/rbac/clusterrolebinding/policybased"
 	clusterrolebindingstore "k8s.io/kubernetes/pkg/registry/rbac/clusterrolebinding/storage"
+	conditionalclusterrolebindingstore "k8s.io/kubernetes/pkg/registry/rbac/conditionalclusterrolebinding/storage"
 	"k8s.io/kubernetes/pkg/registry/rbac/role"
 	rolepolicybased "k8s.io/kubernetes/pkg/registry/rbac/role/policybased"
 	rolestore "k8s.io/kubernetes/pkg/registry/rbac/role/storage"
@@ -73,6 +75,15 @@ func (p RESTStorageProvider) NewRESTStorage(apiResourceConfigSource serverstorag
 		return genericapiserver.APIGroupInfo{}, err
 	} else if len(storageMap) > 0 {
 		apiGroupInfo.VersionedResourcesStorageMap[rbacapiv1.SchemeGroupVersion.Version] = storageMap
+
+		// TODO don't always enable and actually check for escalation
+		conditionalClusterRoleBindingsStorage, err := conditionalclusterrolebindingstore.NewREST(restOptionsGetter)
+		if err != nil {
+			return genericapiserver.APIGroupInfo{}, err
+		}
+		apiGroupInfo.VersionedResourcesStorageMap[rbacapiv1alpha1.SchemeGroupVersion.Version] = map[string]rest.Storage{
+			"conditionalclusterrolebindings": conditionalClusterRoleBindingsStorage,
+		}
 	}
 
 	return apiGroupInfo, nil

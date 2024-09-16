@@ -406,6 +406,12 @@ func AddHandlers(h printers.PrintHandler) {
 	_ = h.TableHandler(clusterRoleBindingsColumnDefinitions, printClusterRoleBinding)
 	_ = h.TableHandler(clusterRoleBindingsColumnDefinitions, printClusterRoleBindingList)
 
+	conditionalClusterRoleBindingsColumnDefinitions := []metav1.TableColumnDefinition{
+		{Name: "Name", Type: "string", Format: "name", Description: metav1.ObjectMeta{}.SwaggerDoc()["name"]}, // TODO add the columns
+	}
+	_ = h.TableHandler(conditionalClusterRoleBindingsColumnDefinitions, printConditionalClusterRoleBinding)
+	_ = h.TableHandler(conditionalClusterRoleBindingsColumnDefinitions, printConditionalClusterRoleBindingList)
+
 	certificateSigningRequestColumnDefinitions := []metav1.TableColumnDefinition{
 		{Name: "Name", Type: "string", Format: "name", Description: metav1.ObjectMeta{}.SwaggerDoc()["name"]},
 		{Name: "Age", Type: "string", Description: metav1.ObjectMeta{}.SwaggerDoc()["creationTimestamp"]},
@@ -2158,6 +2164,30 @@ func printClusterRoleBindingList(list *rbac.ClusterRoleBindingList, options prin
 	return rows, nil
 }
 
+func printConditionalClusterRoleBinding(obj *rbac.ConditionalClusterRoleBinding, options printers.GenerateOptions) ([]metav1.TableRow, error) {
+	row := metav1.TableRow{
+		Object: runtime.RawExtension{Object: obj},
+	}
+
+	row.Cells = append(row.Cells, obj.Name) // TODO more columns
+
+	// TODO add wide support
+
+	return []metav1.TableRow{row}, nil
+}
+
+func printConditionalClusterRoleBindingList(list *rbac.ConditionalClusterRoleBindingList, options printers.GenerateOptions) ([]metav1.TableRow, error) {
+	rows := make([]metav1.TableRow, 0, len(list.Items))
+	for i := range list.Items {
+		r, err := printConditionalClusterRoleBinding(&list.Items[i], options)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, r...)
+	}
+	return rows, nil
+}
+
 func printCertificateSigningRequest(obj *certificates.CertificateSigningRequest, options printers.GenerateOptions) ([]metav1.TableRow, error) {
 	row := metav1.TableRow{
 		Object: runtime.RawExtension{Object: obj},
@@ -3133,7 +3163,7 @@ func printStorageVersionMigration(obj *svmv1alpha1.StorageVersionMigration, opti
 
 	migrationGVR := obj.Spec.Resource.Resource + "." + obj.Spec.Resource.Version + "." + obj.Spec.Resource.Group
 	row.Cells = append(row.Cells, obj.Name, migrationGVR)
-	//ToDo: add migration condition 'status' and 'type' (migration successful | failed)
+	// ToDo: add migration condition 'status' and 'type' (migration successful | failed)
 
 	return []metav1.TableRow{row}, nil
 }
