@@ -220,7 +220,7 @@ func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, vi
 		}
 	}
 
-	if r.conditionalClusterRoleBindingLister != nil {
+	if r.conditionalClusterRoleBindingLister != nil { // TODO check is resource request
 		if conditionalClusterRoleBindings, err := r.conditionalClusterRoleBindingLister.ListConditionalClusterRoleBindings(); err != nil {
 			if !visitor(nil, nil, err) {
 				return
@@ -245,7 +245,11 @@ func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, vi
 				}
 				sourceDescriber.binding = conditionalClusterRoleBinding
 				for i := range rules {
-					if !visitor(sourceDescriber, &rules[i], nil) {
+					rule := &rules[i]
+					if len(rule.NonResourceURLs) > 0 {
+						continue // skip non-resource rules
+					}
+					if !visitor(sourceDescriber, rule, nil) {
 						return
 					}
 				}
@@ -372,6 +376,8 @@ func conditionalClusterRoleBindingAppliesTo(conditionalClusterRoleBinding *rbacv
 		switch condition.Message { // pretend this is a type enum
 		case "user":
 			target = user.GetName()
+		case "uid":
+			target = user.GetUID()
 		case "namespace":
 			target = namespace
 		default:
