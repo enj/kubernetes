@@ -25,6 +25,8 @@ import (
 
 	rbacv1 "k8s.io/api/rbac/v1"
 	rbacv1alpha1 "k8s.io/api/rbac/v1alpha1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
@@ -47,7 +49,33 @@ type AuthorizationRuleResolver interface {
 
 	// VisitRulesFor invokes visitor() with each rule that applies to a given user in a given namespace, and each error encountered resolving those rules.
 	// If visitor() returns false, visiting is short-circuited.
-	VisitRulesFor(user user.Info, namespace string, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool)
+	VisitRulesFor(user user.Info, namespace string, conditionalAttributes ConditionalAttributes, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool)
+}
+
+type ConditionalAttributes interface {
+	// GetUser returns the user.Info object to authorize
+	GetUser() user.Info
+
+	// The namespace of the object, if a request is for a REST object.
+	GetNamespace() string
+
+	// GetName returns the name of the object as parsed off the request.  This will not be present for all request types, but
+	// will be present for: get, update, delete
+	GetName() string
+
+	// IsResourceRequest returns true for requests to API resources, like /api/v1/nodes,
+	// and false for non-resource endpoints like /api, /healthz
+	IsResourceRequest() bool
+
+	// ParseFieldSelector is lazy, thread-safe, and stores the parsed result and error.
+	// It returns an error if the field selector cannot be parsed.
+	// The returned requirements must be treated as readonly and not modified.
+	GetFieldSelector() (fields.Requirements, error)
+
+	// ParseLabelSelector is lazy, thread-safe, and stores the parsed result and error.
+	// It returns an error if the label selector cannot be parsed.
+	// The returned requirements must be treated as readonly and not modified.
+	GetLabelSelector() (labels.Requirements, error)
 }
 
 // ConfirmNoEscalation determines if the roles for a given user in a given namespace encompass the provided role.
@@ -124,7 +152,7 @@ type ConditionalClusterRoleBindingLister interface {
 
 func (r *DefaultRuleResolver) RulesFor(user user.Info, namespace string) ([]rbacv1.PolicyRule, error) {
 	visitor := &ruleAccumulator{}
-	r.VisitRulesFor(user, namespace, visitor.visit)
+	r.VisitRulesFor(user, namespace, nil, visitor.visit)
 	return visitor.rules, utilerrors.NewAggregate(visitor.errors)
 }
 
@@ -174,7 +202,7 @@ type conditionalClusterRoleBindingDescriber struct {
 }
 
 func (d *conditionalClusterRoleBindingDescriber) String() string {
-	return d.binding.Name
+	return d.binding.Name // TODO better stringer
 }
 
 type roleBindingDescriber struct {
@@ -191,7 +219,7 @@ func (d *roleBindingDescriber) String() string {
 	)
 }
 
-func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool) {
+func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, conditionalAttributes ConditionalAttributes, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool) {
 	if clusterRoleBindings, err := r.clusterRoleBindingLister.ListClusterRoleBindings(); err != nil {
 		if !visitor(nil, nil, err) {
 			return
@@ -220,7 +248,7 @@ func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, vi
 		}
 	}
 
-	if r.conditionalClusterRoleBindingLister != nil { // TODO check is resource request
+	if r.conditionalClusterRoleBindingLister != nil && conditionalAttributes != nil && conditionalAttributes.IsResourceRequest() {
 		if conditionalClusterRoleBindings, err := r.conditionalClusterRoleBindingLister.ListConditionalClusterRoleBindings(); err != nil {
 			if !visitor(nil, nil, err) {
 				return
@@ -228,7 +256,7 @@ func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, vi
 		} else {
 			sourceDescriber := &conditionalClusterRoleBindingDescriber{}
 			for _, conditionalClusterRoleBinding := range conditionalClusterRoleBindings {
-				applies := conditionalClusterRoleBindingAppliesTo(conditionalClusterRoleBinding, user, namespace)
+				applies := conditionalClusterRoleBindingAppliesTo(conditionalClusterRoleBinding, conditionalAttributes)
 				if !applies {
 					continue
 				}
@@ -367,21 +395,24 @@ func NewTestRuleResolver(roles []*rbacv1.Role, roleBindings []*rbacv1.RoleBindin
 }
 
 // TODO actually implement this with CEL
-func conditionalClusterRoleBindingAppliesTo(conditionalClusterRoleBinding *rbacv1alpha1.ConditionalClusterRoleBinding, user user.Info, namespace string) bool {
+func conditionalClusterRoleBindingAppliesTo(conditionalClusterRoleBinding *rbacv1alpha1.ConditionalClusterRoleBinding, conditionalAttributes ConditionalAttributes) bool {
 	if len(conditionalClusterRoleBinding.Conditions) == 0 {
 		return false // fail closed, but validation should prevent this
 	}
+	u := conditionalAttributes.GetUser() // TODO groups, extra support
 	for _, condition := range conditionalClusterRoleBinding.Conditions {
 		var target string
 		switch condition.Message { // pretend this is a type enum
 		case "user":
-			target = user.GetName()
+			target = u.GetName()
 		case "uid":
-			target = user.GetUID()
+			target = u.GetUID()
 		case "namespace":
-			target = namespace
+			target = conditionalAttributes.GetNamespace()
+		case "name":
+			target = conditionalAttributes.GetName()
 		default:
-			return false
+			return false // TODO field and label selector support
 		}
 		matched, err := regexp.MatchString(condition.Expression, target)
 		if ok := err == nil && matched; !ok {
