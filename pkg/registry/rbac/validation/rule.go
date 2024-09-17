@@ -203,7 +203,12 @@ type conditionalClusterRoleBindingDescriber struct {
 }
 
 func (d *conditionalClusterRoleBindingDescriber) String() string {
-	return d.binding.Name // TODO better stringer
+	return fmt.Sprintf(
+		"ConditionalClusterRoleBinding %q of ClusterRole %q with %d conditions",
+		d.binding.Name,
+		d.binding.ClusterRoleName,
+		len(d.binding.Conditions),
+	)
 }
 
 type roleBindingDescriber struct {
