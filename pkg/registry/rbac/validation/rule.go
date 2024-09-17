@@ -399,27 +399,31 @@ func conditionalClusterRoleBindingAppliesTo(conditionalClusterRoleBinding *rbacv
 	if len(conditionalClusterRoleBinding.Conditions) == 0 {
 		return false // fail closed, but validation should prevent this
 	}
-	u := conditionalAttributes.GetUser() // TODO groups, extra support
 	for _, condition := range conditionalClusterRoleBinding.Conditions {
-		var target string
-		switch condition.Message { // pretend this is a type enum
-		case "user":
-			target = u.GetName()
-		case "uid":
-			target = u.GetUID()
-		case "namespace":
-			target = conditionalAttributes.GetNamespace()
-		case "name":
-			target = conditionalAttributes.GetName()
-		default:
-			return false // TODO field and label selector support
-		}
-		matched, err := regexp.MatchString(condition.Expression, target)
-		if ok := err == nil && matched; !ok {
+		if !conditionAppliesTo(condition, conditionalAttributes) {
 			return false
 		}
 	}
 	return true
+}
+
+func conditionAppliesTo(condition rbacv1alpha1.Condition, conditionalAttributes ConditionalAttributes) bool {
+	u := conditionalAttributes.GetUser() // TODO groups, extra support
+	var target string
+	switch condition.Message { // pretend this is a type enum
+	case "user":
+		target = u.GetName()
+	case "uid":
+		target = u.GetUID()
+	case "namespace":
+		target = conditionalAttributes.GetNamespace()
+	case "name":
+		target = conditionalAttributes.GetName()
+	default:
+		return false // TODO field and label selector support
+	}
+	matched, err := regexp.MatchString(condition.Expression, target)
+	return err == nil && matched
 }
 
 func newMockRuleResolver(r *StaticRoles) AuthorizationRuleResolver {
