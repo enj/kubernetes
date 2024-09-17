@@ -40,6 +40,7 @@ import (
 	extensionsv1beta1 "k8s.io/api/extensions/v1beta1"
 	flowcontrolv1 "k8s.io/api/flowcontrol/v1"
 	networkingv1beta1 "k8s.io/api/networking/v1beta1"
+	rbacv1alpha1 "k8s.io/api/rbac/v1alpha1"
 	rbacv1beta1 "k8s.io/api/rbac/v1beta1"
 	resourceapi "k8s.io/api/resource/v1alpha3"
 	schedulingv1 "k8s.io/api/scheduling/v1"
@@ -407,7 +408,10 @@ func AddHandlers(h printers.PrintHandler) {
 	_ = h.TableHandler(clusterRoleBindingsColumnDefinitions, printClusterRoleBindingList)
 
 	conditionalClusterRoleBindingsColumnDefinitions := []metav1.TableColumnDefinition{
-		{Name: "Name", Type: "string", Format: "name", Description: metav1.ObjectMeta{}.SwaggerDoc()["name"]}, // TODO add the columns
+		{Name: "Name", Type: "string", Format: "name", Description: metav1.ObjectMeta{}.SwaggerDoc()["name"]},
+		{Name: "Role", Type: "string", Description: rbacv1alpha1.ConditionalClusterRoleBinding{}.SwaggerDoc()["clusterRoleName"]},
+		{Name: "Age", Type: "string", Description: metav1.ObjectMeta{}.SwaggerDoc()["creationTimestamp"]},
+		{Name: "Expressions", Type: "string", Priority: 1, Description: "Expressions used in conditions in the conditionalClusterRoleBinding"},
 	}
 	_ = h.TableHandler(conditionalClusterRoleBindingsColumnDefinitions, printConditionalClusterRoleBinding)
 	_ = h.TableHandler(conditionalClusterRoleBindingsColumnDefinitions, printConditionalClusterRoleBindingList)
@@ -2169,10 +2173,14 @@ func printConditionalClusterRoleBinding(obj *rbac.ConditionalClusterRoleBinding,
 		Object: runtime.RawExtension{Object: obj},
 	}
 
-	row.Cells = append(row.Cells, obj.Name) // TODO more columns
-
-	// TODO add wide support
-
+	row.Cells = append(row.Cells, obj.Name, obj.ClusterRoleName, translateTimestampSince(obj.CreationTimestamp))
+	if options.Wide {
+		var expressions []string
+		for _, condition := range obj.Conditions {
+			expressions = append(expressions, condition.Expression)
+		}
+		row.Cells = append(row.Cells, strings.Join(expressions, ", "))
+	}
 	return []metav1.TableRow{row}, nil
 }
 
