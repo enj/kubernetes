@@ -408,7 +408,12 @@ func conditionalClusterRoleBindingAppliesTo(conditionalClusterRoleBinding *rbacv
 }
 
 func conditionAppliesTo(condition rbacv1alpha1.Condition, conditionalAttributes ConditionalAttributes) bool {
-	u := conditionalAttributes.GetUser() // TODO groups, extra support
+	return conditionAppliesToString(condition, conditionalAttributes) ||
+		conditionAppliesToSlice(condition, conditionalAttributes)
+}
+
+func conditionAppliesToString(condition rbacv1alpha1.Condition, conditionalAttributes ConditionalAttributes) bool {
+	u := conditionalAttributes.GetUser()
 	var target string
 	switch condition.Message { // pretend this is a type enum
 	case "user":
@@ -424,6 +429,26 @@ func conditionAppliesTo(condition rbacv1alpha1.Condition, conditionalAttributes 
 	}
 	matched, err := regexp.MatchString(condition.Expression, target)
 	return err == nil && matched
+}
+
+func conditionAppliesToSlice(condition rbacv1alpha1.Condition, conditionalAttributes ConditionalAttributes) bool {
+	u := conditionalAttributes.GetUser()
+	var target []string
+	switch condition.Message { // pretend this is a type enum
+	case "groups":
+		target = u.GetGroups()
+	case "extra":
+		target = u.GetExtra()[condition.MessageExpression]
+	default:
+		return false
+	}
+	for _, s := range target {
+		matched, err := regexp.MatchString(condition.Expression, s)
+		if ok := err == nil && matched; ok {
+			return true // expression just has to match a single item in the list
+		}
+	}
+	return false
 }
 
 func newMockRuleResolver(r *StaticRoles) AuthorizationRuleResolver {
