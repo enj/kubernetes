@@ -27,6 +27,7 @@ import (
 	rbacv1alpha1 "k8s.io/api/rbac/v1alpha1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/selection"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
@@ -424,8 +425,44 @@ func conditionAppliesToString(condition rbacv1alpha1.Condition, conditionalAttri
 		target = conditionalAttributes.GetNamespace()
 	case "name":
 		target = conditionalAttributes.GetName()
+	case "field":
+		// super inefficient approach but works for now
+		fieldSelector, err := conditionalAttributes.GetFieldSelector()
+		if err != nil {
+			return false
+		}
+		var found bool
+		for _, selector := range fieldSelector {
+			if selector.Field == condition.MessageExpression && selector.Operator == selection.Equals { // only support simple equals for now
+				target = selector.Value
+				found = true
+			}
+		}
+		if !found {
+			return false
+		}
+	case "label":
+		// super inefficient approach but works for now
+		labelSelector, err := conditionalAttributes.GetLabelSelector()
+		if err != nil {
+			return false
+		}
+		var found bool
+		for _, selector := range labelSelector {
+			if selector.Key() == condition.MessageExpression && selector.Operator() == selection.Equals { // only support simple equals for now
+				vals := selector.ValuesUnsorted()
+				if len(vals) != 1 {
+					continue
+				}
+				target = vals[0]
+				found = true
+			}
+		}
+		if !found {
+			return false
+		}
 	default:
-		return false // TODO field and label selector support
+		return false
 	}
 	matched, err := regexp.MatchString(condition.Expression, target)
 	return err == nil && matched
@@ -438,7 +475,11 @@ func conditionAppliesToSlice(condition rbacv1alpha1.Condition, conditionalAttrib
 	case "groups":
 		target = u.GetGroups()
 	case "extra":
-		target = u.GetExtra()[condition.MessageExpression]
+		var ok bool
+		target, ok = u.GetExtra()[condition.MessageExpression]
+		if !ok {
+			return false
+		}
 	default:
 		return false
 	}
