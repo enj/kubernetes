@@ -160,6 +160,12 @@ func (r *DefaultRuleResolver) RulesFor(user user.Info, namespace string) ([]rbac
 // TODO: expand DefaultRuleResolver.RulesFor to return incomplete=true when conditional CRB applies to rulesForAttr
 //  when the conditions are filtered down to expressions that only check namespace and user, but does not apply when
 //  all the conditions are used (i.e. the current user may have extra rules based on how they make the request).
+//  OR maybe it is easier to express the inverse in code ->
+//  start with a per conditional CRB incomplete=true (union these at the end via ||).
+//  if a condition that only looks at user and/or namespace rejects the rulesForAttr,
+//  then we know the conditional CRB does not apply and we cab set incomplete=false for that conditional CRB.
+//  A very fancy CEL implementation could split up the condition expressions into distinct parts that could be
+//  evaluated separately to have more granularity, and thus less false positives for incomplete=true.
 
 var _ ConditionalAttributes = &rulesForAttr{}
 
