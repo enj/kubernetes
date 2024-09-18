@@ -32,10 +32,12 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
 	"k8s.io/apiserver/pkg/authentication/user"
+	"k8s.io/apiserver/pkg/cel/environment"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/component-helpers/auth/rbac/validation"
 	"k8s.io/klog/v2"
 	rbacv1helpers "k8s.io/kubernetes/pkg/apis/rbac/v1"
+	"k8s.io/kubernetes/pkg/registry/rbac/cel"
 )
 
 type AuthorizationRuleResolver interface {
@@ -68,12 +70,12 @@ type ConditionalAttributes interface {
 	// and false for non-resource endpoints like /api, /healthz
 	IsResourceRequest() bool
 
-	// ParseFieldSelector is lazy, thread-safe, and stores the parsed result and error.
+	// GetFieldSelector is lazy, thread-safe, and stores the parsed result and error.
 	// It returns an error if the field selector cannot be parsed.
 	// The returned requirements must be treated as readonly and not modified.
 	GetFieldSelector() (fields.Requirements, error)
 
-	// ParseLabelSelector is lazy, thread-safe, and stores the parsed result and error.
+	// GetLabelSelector is lazy, thread-safe, and stores the parsed result and error.
 	// It returns an error if the label selector cannot be parsed.
 	// The returned requirements must be treated as readonly and not modified.
 	GetLabelSelector() (labels.Requirements, error)
@@ -125,10 +127,12 @@ type DefaultRuleResolver struct {
 	clusterRoleBindingLister ClusterRoleBindingLister
 
 	conditionalClusterRoleBindingLister ConditionalClusterRoleBindingLister
+	compiler                            cel.Compiler
 }
 
 func NewDefaultRuleResolver(roleGetter RoleGetter, roleBindingLister RoleBindingLister, clusterRoleGetter ClusterRoleGetter, clusterRoleBindingLister ClusterRoleBindingLister, conditionalClusterRoleBindingLister ConditionalClusterRoleBindingLister) *DefaultRuleResolver {
-	return &DefaultRuleResolver{roleGetter, roleBindingLister, clusterRoleGetter, clusterRoleBindingLister, conditionalClusterRoleBindingLister}
+	compiler := cel.NewCompiler(environment.MustBaseEnvSet(environment.DefaultCompatibilityVersion(), true))
+	return &DefaultRuleResolver{roleGetter, roleBindingLister, clusterRoleGetter, clusterRoleBindingLister, conditionalClusterRoleBindingLister, compiler}
 }
 
 type RoleGetter interface {
@@ -299,7 +303,7 @@ func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, co
 		} else {
 			sourceDescriber := &conditionalClusterRoleBindingDescriber{}
 			for _, conditionalClusterRoleBinding := range conditionalClusterRoleBindings {
-				applies := conditionalClusterRoleBindingAppliesTo(conditionalClusterRoleBinding, conditionalAttributes)
+				applies := conditionalClusterRoleBindingAppliesTo(r.compiler, conditionalClusterRoleBinding, conditionalAttributes)
 				if !applies {
 					continue
 				}
@@ -438,21 +442,49 @@ func NewTestRuleResolver(roles []*rbacv1.Role, roleBindings []*rbacv1.RoleBindin
 }
 
 // TODO actually implement this with CEL
-func conditionalClusterRoleBindingAppliesTo(conditionalClusterRoleBinding *rbacv1alpha1.ConditionalClusterRoleBinding, conditionalAttributes ConditionalAttributes) bool {
+func conditionalClusterRoleBindingAppliesTo(compiler cel.Compiler, conditionalClusterRoleBinding *rbacv1alpha1.ConditionalClusterRoleBinding, conditionalAttributes ConditionalAttributes) bool {
 	if len(conditionalClusterRoleBinding.Conditions) == 0 {
 		return false // fail closed, but validation should prevent this
 	}
+
+	compilationResults := make([]cel.CompilationResult, 0, len(conditionalClusterRoleBinding.Conditions))
+	var usesFieldSelector, usesLabelSelector bool
 	for _, condition := range conditionalClusterRoleBinding.Conditions {
-		if !conditionAppliesTo(condition, conditionalAttributes) {
+		expressionAccessor := &cel.ConditionalClusterRoleBindingMatchCondition{Expression: condition.Expression}
+		compilationResult, err := compiler.CompileCELExpression(expressionAccessor)
+		if err != nil {
+			klog.Errorf("error compiling expression %q: %v", condition.Expression, err)
 			return false
 		}
+		compilationResults = append(compilationResults, compilationResult)
+		usesFieldSelector = usesFieldSelector || compilationResult.UsesFieldSelector
+		usesLabelSelector = usesLabelSelector || compilationResult.UsesLabelSelector
 	}
-	return true
-}
 
-func conditionAppliesTo(condition rbacv1alpha1.Condition, conditionalAttributes ConditionalAttributes) bool {
-	return conditionAppliesToString(condition, conditionalAttributes) ||
-		conditionAppliesToSlice(condition, conditionalAttributes)
+	matcher := &cel.CELMatcher{
+		CompilationResults: compilationResults,
+		UsesFieldSelector:  usesFieldSelector,
+		UsesLabelSelector:  usesLabelSelector,
+	}
+
+	fieldSelectors, err := conditionalAttributes.GetFieldSelector()
+	if err != nil {
+		klog.Errorf("error parsing field selector: %v", err)
+		return false
+	}
+	labelSelectors, err := conditionalAttributes.GetLabelSelector()
+	if err != nil {
+		klog.Errorf("error parsing label selector: %v", err)
+		return false
+	}
+
+	matched, err := matcher.Eval(context.Background(), conditionalAttributes.GetUser(), conditionalAttributes.GetNamespace(), conditionalAttributes.GetName(), fieldSelectors, labelSelectors)
+	if err != nil {
+		klog.Errorf("error evaluating expression: %v", err)
+		return false
+	}
+
+	return matched
 }
 
 func conditionAppliesToString(condition rbacv1alpha1.Condition, conditionalAttributes ConditionalAttributes) bool {
