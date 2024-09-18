@@ -22,10 +22,7 @@ import (
 
 	celgo "github.com/google/cel-go/cel"
 
-	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/labels"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
-	"k8s.io/apiserver/pkg/authentication/user"
 )
 
 type CELMatcher struct {
@@ -37,11 +34,11 @@ type CELMatcher struct {
 	UsesFieldSelector bool
 }
 
-func (c *CELMatcher) Eval(ctx context.Context, user user.Info, namespace, name string, fieldSelector fields.Requirements, labelSelector labels.Requirements) (bool, error) {
+func (c *CELMatcher) Eval(ctx context.Context, conditionalAttributes ConditionalAttributes) (bool, error) {
 	var evalErrors []error
 
 	va := map[string]interface{}{
-		"request": convertObjectToUnstructured(user, namespace, name, fieldSelector, labelSelector, c.UsesFieldSelector, c.UsesLabelSelector),
+		"request": convertObjectToUnstructured(conditionalAttributes, c.UsesFieldSelector, c.UsesLabelSelector),
 	}
 	for _, compilationResult := range c.CompilationResults {
 		// TODO(aramase): fail fast if any error

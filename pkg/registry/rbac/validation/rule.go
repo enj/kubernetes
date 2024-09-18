@@ -50,33 +50,7 @@ type AuthorizationRuleResolver interface {
 
 	// VisitRulesFor invokes visitor() with each rule that applies to a given user in a given namespace, and each error encountered resolving those rules.
 	// If visitor() returns false, visiting is short-circuited.
-	VisitRulesFor(user user.Info, namespace string, conditionalAttributes ConditionalAttributes, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool)
-}
-
-type ConditionalAttributes interface {
-	// GetUser returns the user.Info object to authorize
-	GetUser() user.Info
-
-	// The namespace of the object, if a request is for a REST object.
-	GetNamespace() string
-
-	// GetName returns the name of the object as parsed off the request.  This will not be present for all request types, but
-	// will be present for: get, update, delete
-	GetName() string
-
-	// IsResourceRequest returns true for requests to API resources, like /api/v1/nodes,
-	// and false for non-resource endpoints like /api, /healthz
-	IsResourceRequest() bool
-
-	// GetFieldSelector is lazy, thread-safe, and stores the parsed result and error.
-	// It returns an error if the field selector cannot be parsed.
-	// The returned requirements must be treated as readonly and not modified.
-	GetFieldSelector() (fields.Requirements, error)
-
-	// GetLabelSelector is lazy, thread-safe, and stores the parsed result and error.
-	// It returns an error if the label selector cannot be parsed.
-	// The returned requirements must be treated as readonly and not modified.
-	GetLabelSelector() (labels.Requirements, error)
+	VisitRulesFor(user user.Info, namespace string, conditionalAttributes cel.ConditionalAttributes, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool)
 }
 
 // ConfirmNoEscalation determines if the roles for a given user in a given namespace encompass the provided role.
@@ -173,7 +147,7 @@ func (r *DefaultRuleResolver) RulesFor(user user.Info, namespace string) ([]rbac
 //  But since there is no ordering guarantee, we would need to also track "earlier" incomplete=true calls that need
 //  to be overridden if a "later" binding for the same cluster role applies.
 
-var _ ConditionalAttributes = &rulesForAttr{}
+var _ cel.ConditionalAttributes = &rulesForAttr{}
 
 // rulesForAttr enables checking if conditional cluster role bindings apply via a
 // simulated resource request that does not provide the object name or any selectors.
@@ -262,7 +236,7 @@ func (d *roleBindingDescriber) String() string {
 	)
 }
 
-func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, conditionalAttributes ConditionalAttributes, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool) {
+func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, conditionalAttributes cel.ConditionalAttributes, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool) {
 	if clusterRoleBindings, err := r.clusterRoleBindingLister.ListClusterRoleBindings(); err != nil {
 		if !visitor(nil, nil, err) {
 			return
@@ -439,7 +413,7 @@ func NewTestRuleResolver(roles []*rbacv1.Role, roleBindings []*rbacv1.RoleBindin
 	return newMockRuleResolver(&r), &r
 }
 
-func conditionalClusterRoleBindingAppliesTo(compiler cel.Compiler, conditionalClusterRoleBinding *rbacv1alpha1.ConditionalClusterRoleBinding, conditionalAttributes ConditionalAttributes) bool {
+func conditionalClusterRoleBindingAppliesTo(compiler cel.Compiler, conditionalClusterRoleBinding *rbacv1alpha1.ConditionalClusterRoleBinding, conditionalAttributes cel.ConditionalAttributes) bool {
 	if len(conditionalClusterRoleBinding.Conditions) == 0 {
 		return false // fail closed, but validation should prevent this
 	}
@@ -465,20 +439,8 @@ func conditionalClusterRoleBindingAppliesTo(compiler cel.Compiler, conditionalCl
 		UsesLabelSelector:  usesLabelSelector,
 	}
 
-	fieldSelectors, err := conditionalAttributes.GetFieldSelector()
-	if err != nil {
-		klog.Errorf("error parsing field selector: %v", err)
-		fieldSelectors = nil
-	}
-	labelSelectors, err := conditionalAttributes.GetLabelSelector()
-	if err != nil {
-		klog.Errorf("error parsing label selector: %v", err)
-		labelSelectors = nil
-	}
-
 	// TODO(aramase): wire through context
-	// TODO(aramase): move conditional attributes inside cel package
-	matched, err := matcher.Eval(context.Background(), conditionalAttributes.GetUser(), conditionalAttributes.GetNamespace(), conditionalAttributes.GetName(), fieldSelectors, labelSelectors)
+	matched, err := matcher.Eval(context.Background(), conditionalAttributes)
 	if err != nil {
 		klog.Errorf("error evaluating expression: %v", err)
 		return false

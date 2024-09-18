@@ -24,10 +24,7 @@ import (
 	"github.com/google/cel-go/common/operators"
 	"github.com/google/cel-go/common/types/ref"
 
-	"k8s.io/apimachinery/pkg/fields"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/version"
-	"k8s.io/apiserver/pkg/authentication/user"
 	apiservercel "k8s.io/apiserver/pkg/cel"
 	"k8s.io/apiserver/pkg/cel/environment"
 )
@@ -242,23 +239,28 @@ func buildSelectorRequirementType(field func(name string, declType *apiservercel
 	))
 }
 
-func convertObjectToUnstructured(user user.Info, namespace, name string, fieldSelector fields.Requirements, labelSelector labels.Requirements, includeFieldSelector, includeLabelSelector bool) map[string]interface{} {
-	extra := user.GetExtra()
+func convertObjectToUnstructured(conditionalAttributes ConditionalAttributes, includeFieldSelector, includeLabelSelector bool) map[string]interface{} {
+	extra := conditionalAttributes.GetUser().GetExtra()
 	if extra == nil {
 		extra = map[string][]string{}
 	}
 	ret := map[string]interface{}{
-		"user":   user.GetName(),
-		"groups": user.GetGroups(),
-		"uid":    user.GetUID(),
+		"user":   conditionalAttributes.GetUser().GetName(),
+		"groups": conditionalAttributes.GetUser().GetGroups(),
+		"uid":    conditionalAttributes.GetUser().GetUID(),
 		"extra":  extra,
 	}
 	resourceAttributes := map[string]interface{}{
-		"namespace": namespace,
-		"name":      name,
+		"namespace": conditionalAttributes.GetNamespace(),
+		"name":      conditionalAttributes.GetName(),
 	}
 
 	if includeFieldSelector {
+		fieldSelector, err := conditionalAttributes.GetFieldSelector()
+		if err != nil {
+			fieldSelector = nil
+		}
+
 		if len(fieldSelector) > 0 {
 			requirements := make([]map[string]interface{}, 0, len(fieldSelector))
 			for _, r := range fieldSelector {
@@ -273,6 +275,11 @@ func convertObjectToUnstructured(user user.Info, namespace, name string, fieldSe
 	}
 
 	if includeLabelSelector {
+		labelSelector, err := conditionalAttributes.GetLabelSelector()
+		if err != nil {
+			labelSelector = nil
+		}
+
 		if len(labelSelector) > 0 {
 			requirements := make([]map[string]interface{}, 0, len(labelSelector))
 			for _, r := range labelSelector {
