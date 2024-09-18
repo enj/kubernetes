@@ -44,6 +44,7 @@ func (c *CELMatcher) Eval(ctx context.Context, user user.Info, namespace, name s
 		"request": convertObjectToUnstructured(user, namespace, name, fieldSelector, labelSelector, c.UsesFieldSelector, c.UsesLabelSelector),
 	}
 	for _, compilationResult := range c.CompilationResults {
+		// TODO(aramase): fail fast if any error
 		evalResult, _, err := compilationResult.Program.ContextEval(ctx, va)
 		if err != nil {
 			evalErrors = append(evalErrors, fmt.Errorf("cel evaluation error: expression '%v' resulted in error: %w", compilationResult.ExpressionAccessor.GetExpression(), err))

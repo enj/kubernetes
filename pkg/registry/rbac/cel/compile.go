@@ -224,14 +224,12 @@ func buildResourceAttributesType(field func(name string, declType *apiservercel.
 
 func buildFieldSelectorType(field func(name string, declType *apiservercel.DeclType, required bool) *apiservercel.DeclField, fields func(fields ...*apiservercel.DeclField) map[string]*apiservercel.DeclField) *apiservercel.DeclType {
 	return apiservercel.NewObjectType("kubernetes.FieldSelectorAttributes", fields(
-		field("rawSelector", apiservercel.StringType, false),
 		field("requirements", apiservercel.NewListType(buildSelectorRequirementType(field, fields), -1), false),
 	))
 }
 
 func buildLabelSelectorType(field func(name string, declType *apiservercel.DeclType, required bool) *apiservercel.DeclField, fields func(fields ...*apiservercel.DeclField) map[string]*apiservercel.DeclField) *apiservercel.DeclType {
 	return apiservercel.NewObjectType("kubernetes.LabelSelectorAttributes", fields(
-		field("rawSelector", apiservercel.StringType, false),
 		field("requirements", apiservercel.NewListType(buildSelectorRequirementType(field, fields), -1), false),
 	))
 }

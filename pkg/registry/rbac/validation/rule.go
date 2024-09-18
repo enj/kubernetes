@@ -20,14 +20,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 
 	rbacv1 "k8s.io/api/rbac/v1"
 	rbacv1alpha1 "k8s.io/api/rbac/v1alpha1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/selection"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
@@ -441,12 +439,12 @@ func NewTestRuleResolver(roles []*rbacv1.Role, roleBindings []*rbacv1.RoleBindin
 	return newMockRuleResolver(&r), &r
 }
 
-// TODO actually implement this with CEL
 func conditionalClusterRoleBindingAppliesTo(compiler cel.Compiler, conditionalClusterRoleBinding *rbacv1alpha1.ConditionalClusterRoleBinding, conditionalAttributes ConditionalAttributes) bool {
 	if len(conditionalClusterRoleBinding.Conditions) == 0 {
 		return false // fail closed, but validation should prevent this
 	}
 
+	// TODO(aramase): cache these compilation results
 	compilationResults := make([]cel.CompilationResult, 0, len(conditionalClusterRoleBinding.Conditions))
 	var usesFieldSelector, usesLabelSelector bool
 	for _, condition := range conditionalClusterRoleBinding.Conditions {
@@ -470,14 +468,16 @@ func conditionalClusterRoleBindingAppliesTo(compiler cel.Compiler, conditionalCl
 	fieldSelectors, err := conditionalAttributes.GetFieldSelector()
 	if err != nil {
 		klog.Errorf("error parsing field selector: %v", err)
-		return false
+		fieldSelectors = nil
 	}
 	labelSelectors, err := conditionalAttributes.GetLabelSelector()
 	if err != nil {
 		klog.Errorf("error parsing label selector: %v", err)
-		return false
+		labelSelectors = nil
 	}
 
+	// TODO(aramase): wire through context
+	// TODO(aramase): move conditional attributes inside cel package
 	matched, err := matcher.Eval(context.Background(), conditionalAttributes.GetUser(), conditionalAttributes.GetNamespace(), conditionalAttributes.GetName(), fieldSelectors, labelSelectors)
 	if err != nil {
 		klog.Errorf("error evaluating expression: %v", err)
@@ -485,85 +485,6 @@ func conditionalClusterRoleBindingAppliesTo(compiler cel.Compiler, conditionalCl
 	}
 
 	return matched
-}
-
-func conditionAppliesToString(condition rbacv1alpha1.Condition, conditionalAttributes ConditionalAttributes) bool {
-	u := conditionalAttributes.GetUser()
-	var target string
-	switch condition.Message { // pretend this is a type enum
-	case "user":
-		target = u.GetName()
-	case "uid":
-		target = u.GetUID()
-	case "namespace":
-		target = conditionalAttributes.GetNamespace()
-	case "name":
-		target = conditionalAttributes.GetName()
-	case "field":
-		// super inefficient approach but works for now
-		fieldSelector, err := conditionalAttributes.GetFieldSelector()
-		if err != nil {
-			return false
-		}
-		var found bool
-		for _, selector := range fieldSelector {
-			if selector.Field == condition.MessageExpression && selector.Operator == selection.Equals { // only support simple equals for now
-				target = selector.Value
-				found = true
-			}
-		}
-		if !found {
-			return false
-		}
-	case "label":
-		// super inefficient approach but works for now
-		labelSelector, err := conditionalAttributes.GetLabelSelector()
-		if err != nil {
-			return false
-		}
-		var found bool
-		for _, selector := range labelSelector {
-			if selector.Key() == condition.MessageExpression && selector.Operator() == selection.Equals { // only support simple equals for now
-				vals := selector.ValuesUnsorted()
-				if len(vals) != 1 {
-					continue
-				}
-				target = vals[0]
-				found = true
-			}
-		}
-		if !found {
-			return false
-		}
-	default:
-		return false
-	}
-	matched, err := regexp.MatchString(condition.Expression, target)
-	return err == nil && matched
-}
-
-func conditionAppliesToSlice(condition rbacv1alpha1.Condition, conditionalAttributes ConditionalAttributes) bool {
-	u := conditionalAttributes.GetUser()
-	var target []string
-	switch condition.Message { // pretend this is a type enum
-	case "groups":
-		target = u.GetGroups()
-	case "extra":
-		var ok bool
-		target, ok = u.GetExtra()[condition.MessageExpression]
-		if !ok {
-			return false
-		}
-	default:
-		return false
-	}
-	for _, s := range target {
-		matched, err := regexp.MatchString(condition.Expression, s)
-		if ok := err == nil && matched; ok {
-			return true // expression just has to match a single item in the list
-		}
-	}
-	return false
 }
 
 func newMockRuleResolver(r *StaticRoles) AuthorizationRuleResolver {
