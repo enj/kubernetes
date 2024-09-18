@@ -153,8 +153,33 @@ type ConditionalClusterRoleBindingLister interface {
 
 func (r *DefaultRuleResolver) RulesFor(user user.Info, namespace string) ([]rbacv1.PolicyRule, error) {
 	visitor := &ruleAccumulator{}
-	r.VisitRulesFor(user, namespace, nil, visitor.visit)
+	r.VisitRulesFor(user, namespace, &rulesForAttr{user: user, namespace: namespace}, visitor.visit)
 	return visitor.rules, utilerrors.NewAggregate(visitor.errors)
+}
+
+// TODO: expand DefaultRuleResolver.RulesFor to return incomplete=true when conditional CRB applies to rulesForAttr
+//  when the conditions are filtered down to expressions that only check namespace and user, but does not apply when
+//  all the conditions are used (i.e. the current user may have extra rules based on how they make the request).
+
+var _ ConditionalAttributes = &rulesForAttr{}
+
+// rulesForAttr enables checking if conditional cluster role bindings apply via a
+// simulated resource request that does not provide the object name or any selectors.
+// The associated policy rules are guaranteed to only be conditional on the user and/or the namespace.
+type rulesForAttr struct {
+	user      user.Info
+	namespace string
+}
+
+func (a *rulesForAttr) GetUser() user.Info      { return a.user }
+func (a *rulesForAttr) GetNamespace() string    { return a.namespace }
+func (a *rulesForAttr) GetName() string         { return "" }
+func (a *rulesForAttr) IsResourceRequest() bool { return true }
+func (a *rulesForAttr) GetFieldSelector() (fields.Requirements, error) {
+	return nil, nil
+}
+func (a *rulesForAttr) GetLabelSelector() (labels.Requirements, error) {
+	return nil, nil
 }
 
 type ruleAccumulator struct {
@@ -254,7 +279,9 @@ func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, co
 		}
 	}
 
-	if r.conditionalClusterRoleBindingLister != nil && conditionalAttributes != nil && conditionalAttributes.IsResourceRequest() {
+	// TODO always init conditionalClusterRoleBindingLister and remove the nil check
+	// TODO check selector feature gate and new RBACpp feature gate
+	if r.conditionalClusterRoleBindingLister != nil && conditionalAttributes.IsResourceRequest() {
 		if conditionalClusterRoleBindings, err := r.conditionalClusterRoleBindingLister.ListConditionalClusterRoleBindings(); err != nil {
 			if !visitor(nil, nil, err) {
 				return
@@ -281,7 +308,7 @@ func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, co
 				for i := range rules {
 					rule := &rules[i]
 					if len(rule.NonResourceURLs) > 0 {
-						continue // skip non-resource rules
+						continue // skip non-resource rules (caller may be simulating a resource request)
 					}
 					if !visitor(sourceDescriber, rule, nil) {
 						return
