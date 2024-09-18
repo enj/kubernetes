@@ -166,6 +166,10 @@ func (r *DefaultRuleResolver) RulesFor(user user.Info, namespace string) ([]rbac
 //  then we know the conditional CRB does not apply and we cab set incomplete=false for that conditional CRB.
 //  A very fancy CEL implementation could split up the condition expressions into distinct parts that could be
 //  evaluated separately to have more granularity, and thus less false positives for incomplete=true.
+//  If a cluster role's rules have already been applied (either with CRB or conditional CRB), it would be nice if
+//  further conditional bindings to that cluster role would automatically be skipped to avoid incorrect incomplete=true.
+//  But since there is no ordering guarantee, we would need to also track "earlier" incomplete=true calls that need
+//  to be overridden if a "later" binding for the same cluster role applies.
 
 var _ ConditionalAttributes = &rulesForAttr{}
 
