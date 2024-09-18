@@ -46,11 +46,11 @@ type AuthorizationRuleResolver interface {
 	// RulesFor returns the list of rules that apply to a given user in a given namespace and error.  If an error is returned, the slice of
 	// PolicyRules may not be complete, but it contains all retrievable rules.  This is done because policy rules are purely additive and policy determinations
 	// can be made on the basis of those rules that are found.
-	RulesFor(user user.Info, namespace string) ([]rbacv1.PolicyRule, error)
+	RulesFor(ctx context.Context, user user.Info, namespace string) ([]rbacv1.PolicyRule, error)
 
 	// VisitRulesFor invokes visitor() with each rule that applies to a given user in a given namespace, and each error encountered resolving those rules.
 	// If visitor() returns false, visiting is short-circuited.
-	VisitRulesFor(user user.Info, namespace string, conditionalAttributes cel.ConditionalAttributes, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool)
+	VisitRulesFor(ctx context.Context, user user.Info, namespace string, conditionalAttributes cel.ConditionalAttributes, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool)
 }
 
 // ConfirmNoEscalation determines if the roles for a given user in a given namespace encompass the provided role.
@@ -63,7 +63,7 @@ func ConfirmNoEscalation(ctx context.Context, ruleResolver AuthorizationRuleReso
 	}
 	namespace, _ := genericapirequest.NamespaceFrom(ctx)
 
-	ownerRules, err := ruleResolver.RulesFor(user, namespace)
+	ownerRules, err := ruleResolver.RulesFor(ctx, user, namespace)
 	if err != nil {
 		// As per AuthorizationRuleResolver contract, this may return a non fatal error with an incomplete list of policies. Log the error and continue.
 		klog.V(1).Infof("non-fatal error getting local rules for %v: %v", user, err)
@@ -127,9 +127,9 @@ type ConditionalClusterRoleBindingLister interface {
 	ListConditionalClusterRoleBindings() ([]*rbacv1alpha1.ConditionalClusterRoleBinding, error)
 }
 
-func (r *DefaultRuleResolver) RulesFor(user user.Info, namespace string) ([]rbacv1.PolicyRule, error) {
+func (r *DefaultRuleResolver) RulesFor(ctx context.Context, user user.Info, namespace string) ([]rbacv1.PolicyRule, error) {
 	visitor := &ruleAccumulator{}
-	r.VisitRulesFor(user, namespace, &rulesForAttr{user: user, namespace: namespace}, visitor.visit)
+	r.VisitRulesFor(ctx, user, namespace, &rulesForAttr{user: user, namespace: namespace}, visitor.visit)
 	return visitor.rules, utilerrors.NewAggregate(visitor.errors)
 }
 
@@ -236,7 +236,7 @@ func (d *roleBindingDescriber) String() string {
 	)
 }
 
-func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, conditionalAttributes cel.ConditionalAttributes, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool) {
+func (r *DefaultRuleResolver) VisitRulesFor(ctx context.Context, user user.Info, namespace string, conditionalAttributes cel.ConditionalAttributes, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool) {
 	if clusterRoleBindings, err := r.clusterRoleBindingLister.ListClusterRoleBindings(); err != nil {
 		if !visitor(nil, nil, err) {
 			return
@@ -275,7 +275,7 @@ func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, co
 		} else {
 			sourceDescriber := &conditionalClusterRoleBindingDescriber{}
 			for _, conditionalClusterRoleBinding := range conditionalClusterRoleBindings {
-				applies := conditionalClusterRoleBindingAppliesTo(r.compiler, conditionalClusterRoleBinding, conditionalAttributes)
+				applies := conditionalClusterRoleBindingAppliesTo(ctx, r.compiler, conditionalClusterRoleBinding, conditionalAttributes)
 				if !applies {
 					continue
 				}
@@ -413,7 +413,7 @@ func NewTestRuleResolver(roles []*rbacv1.Role, roleBindings []*rbacv1.RoleBindin
 	return newMockRuleResolver(&r), &r
 }
 
-func conditionalClusterRoleBindingAppliesTo(compiler cel.Compiler, conditionalClusterRoleBinding *rbacv1alpha1.ConditionalClusterRoleBinding, conditionalAttributes cel.ConditionalAttributes) bool {
+func conditionalClusterRoleBindingAppliesTo(ctx context.Context, compiler cel.Compiler, conditionalClusterRoleBinding *rbacv1alpha1.ConditionalClusterRoleBinding, conditionalAttributes cel.ConditionalAttributes) bool {
 	if len(conditionalClusterRoleBinding.Conditions) == 0 {
 		return false // fail closed, but validation should prevent this
 	}
@@ -439,8 +439,7 @@ func conditionalClusterRoleBindingAppliesTo(compiler cel.Compiler, conditionalCl
 		UsesLabelSelector:  usesLabelSelector,
 	}
 
-	// TODO(aramase): wire through context
-	matched, err := matcher.Eval(context.Background(), conditionalAttributes)
+	matched, err := matcher.Eval(ctx, conditionalAttributes)
 	if err != nil {
 		klog.Errorf("error evaluating expression: %v", err)
 		return false

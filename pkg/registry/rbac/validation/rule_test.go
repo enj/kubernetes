@@ -17,6 +17,7 @@ limitations under the License.
 package validation
 
 import (
+	"context"
 	"hash/fnv"
 	"io"
 	"reflect"
@@ -24,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/authentication/user"
@@ -145,7 +147,7 @@ func TestDefaultRuleResolver(t *testing.T) {
 
 	for i, tc := range tests {
 		ruleResolver := newMockRuleResolver(&tc.StaticRoles)
-		rules, err := ruleResolver.RulesFor(tc.user, tc.namespace)
+		rules, err := ruleResolver.RulesFor(context.Background(), tc.user, tc.namespace)
 		if err != nil {
 			t.Errorf("case %d: GetEffectivePolicyRules(context)=%v", i, err)
 			continue
