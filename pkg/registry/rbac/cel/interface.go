@@ -14,36 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// TODO(aramase): delete this
 package cel
 
 import (
-	celgo "github.com/google/cel-go/cel"
-
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apiserver/pkg/authentication/user"
 )
-
-type ExpressionAccessor interface {
-	GetExpression() string
-	ReturnTypes() []*celgo.Type
-}
-
-var _ ExpressionAccessor = &ConditionalClusterRoleBindingMatchCondition{}
-
-// ConditionalClusterRoleBindingMatchCondition is a CEL expression that maps a ConditionalClusterRoleBinding request to a list of values.
-type ConditionalClusterRoleBindingMatchCondition struct {
-	Expression string
-}
-
-func (v *ConditionalClusterRoleBindingMatchCondition) GetExpression() string {
-	return v.Expression
-}
-
-func (v *ConditionalClusterRoleBindingMatchCondition) ReturnTypes() []*celgo.Type {
-	return []*celgo.Type{celgo.BoolType}
-}
 
 type ConditionalAttributes interface {
 	// GetUser returns the user.Info object to authorize

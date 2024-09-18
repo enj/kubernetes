@@ -21,8 +21,6 @@ import (
 	"fmt"
 
 	celgo "github.com/google/cel-go/cel"
-
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 )
 
 type CELMatcher struct {
@@ -35,26 +33,20 @@ type CELMatcher struct {
 }
 
 func (c *CELMatcher) Eval(ctx context.Context, conditionalAttributes ConditionalAttributes) (bool, error) {
-	var evalErrors []error
-
 	va := map[string]interface{}{
 		"request": convertObjectToUnstructured(conditionalAttributes, c.UsesFieldSelector, c.UsesLabelSelector),
 	}
 	for _, compilationResult := range c.CompilationResults {
-		// TODO(aramase): fail fast if any error
 		evalResult, _, err := compilationResult.Program.ContextEval(ctx, va)
 		if err != nil {
-			evalErrors = append(evalErrors, fmt.Errorf("cel evaluation error: expression '%v' resulted in error: %w", compilationResult.ExpressionAccessor.GetExpression(), err))
-			continue
+			return false, fmt.Errorf("cel evaluation error: expression '%v' resulted in error: %w", compilationResult.Expression, err)
 		}
 		if evalResult.Type() != celgo.BoolType {
-			evalErrors = append(evalErrors, fmt.Errorf("cel evaluation error: expression '%v' eval result type should be bool but got %W", compilationResult.ExpressionAccessor.GetExpression(), evalResult.Type()))
-			continue
+			return false, fmt.Errorf("cel evaluation error: expression '%v' eval result type should be bool but got %W", compilationResult.Expression, evalResult.Type())
 		}
 		match, ok := evalResult.Value().(bool)
 		if !ok {
-			evalErrors = append(evalErrors, fmt.Errorf("cel evaluation error: expression '%v' eval result value should be bool but got %W", compilationResult.ExpressionAccessor.GetExpression(), evalResult.Value()))
-			continue
+			return false, fmt.Errorf("cel evaluation error: expression '%v' eval result value should be bool but got %W", compilationResult.Expression, evalResult.Value())
 		}
 		// If at least one matchCondition successfully evaluates to FALSE,
 		// return early
@@ -62,10 +54,7 @@ func (c *CELMatcher) Eval(ctx context.Context, conditionalAttributes Conditional
 			return false, nil
 		}
 	}
-	// if there is any error, return
-	if len(evalErrors) > 0 {
-		return false, utilerrors.NewAggregate(evalErrors)
-	}
+
 	// return ALL matchConditions evaluate to TRUE successfully without error
 	return true, nil
 }

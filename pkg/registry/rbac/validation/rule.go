@@ -422,8 +422,7 @@ func conditionalClusterRoleBindingAppliesTo(ctx context.Context, compiler cel.Co
 	compilationResults := make([]cel.CompilationResult, 0, len(conditionalClusterRoleBinding.Conditions))
 	var usesFieldSelector, usesLabelSelector bool
 	for _, condition := range conditionalClusterRoleBinding.Conditions {
-		expressionAccessor := &cel.ConditionalClusterRoleBindingMatchCondition{Expression: condition.Expression}
-		compilationResult, err := compiler.CompileCELExpression(expressionAccessor)
+		compilationResult, err := compiler.CompileCELExpression(condition.Expression)
 		if err != nil {
 			klog.Errorf("error compiling expression %q: %v", condition.Expression, err)
 			return false

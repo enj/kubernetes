@@ -22,7 +22,6 @@ import (
 	"github.com/google/cel-go/cel"
 	celast "github.com/google/cel-go/common/ast"
 	"github.com/google/cel-go/common/operators"
-	"github.com/google/cel-go/common/types/ref"
 
 	"k8s.io/apimachinery/pkg/util/version"
 	apiservercel "k8s.io/apiserver/pkg/cel"
@@ -38,8 +37,8 @@ const (
 
 // CompilationResult represents a compiled authorization cel expression.
 type CompilationResult struct {
-	Program            cel.Program
-	ExpressionAccessor ExpressionAccessor
+	Program    cel.Program
+	Expression string
 
 	// These track if a given expression uses fieldSelector and labelSelector,
 	// so construction of data passed to the CEL expression can be optimized if those fields are unused.
@@ -47,15 +46,9 @@ type CompilationResult struct {
 	UsesLabelSelector bool
 }
 
-// EvaluationResult contains the minimal required fields and metadata of a cel evaluation
-type EvaluationResult struct {
-	EvalResult         ref.Val
-	ExpressionAccessor ExpressionAccessor
-}
-
 // Compiler is an interface for compiling CEL expressions with the desired environment mode.
 type Compiler interface {
-	CompileCELExpression(expressionAccessor ExpressionAccessor) (CompilationResult, error)
+	CompileCELExpression(expression string) (CompilationResult, error)
 }
 
 type compiler struct {
@@ -69,42 +62,28 @@ func NewCompiler(env *environment.EnvSet) Compiler {
 	}
 }
 
-func (c compiler) CompileCELExpression(expressionAccessor ExpressionAccessor) (CompilationResult, error) {
+func (c compiler) CompileCELExpression(expression string) (CompilationResult, error) {
 	resultError := func(errorString string, errType apiservercel.ErrorType) (CompilationResult, error) {
 		err := &apiservercel.Error{
 			Type:   errType,
 			Detail: errorString,
 		}
 		return CompilationResult{
-			ExpressionAccessor: expressionAccessor,
+			Expression: expression,
 		}, err
 	}
 	env, err := c.envSet.Env(environment.StoredExpressions)
 	if err != nil {
 		return resultError(fmt.Sprintf("unexpected error loading CEL environment: %v", err), apiservercel.ErrorTypeInternal)
 	}
-	ast, issues := env.Compile(expressionAccessor.GetExpression())
+	ast, issues := env.Compile(expression)
 	if issues != nil {
 		return resultError("compilation failed: "+issues.String(), apiservercel.ErrorTypeInvalid)
 	}
-	found := false
-	returnTypes := expressionAccessor.ReturnTypes()
-	for _, returnType := range returnTypes {
-		if ast.OutputType() == returnType {
-			found = true
-			break
-		}
+	if ast.OutputType() != cel.BoolType {
+		return resultError(fmt.Sprintf("expression must evaluate to bool but got %v", ast.OutputType()), apiservercel.ErrorTypeInvalid)
 	}
-	if !found {
-		var reason string
-		if len(returnTypes) == 1 {
-			reason = fmt.Sprintf("must evaluate to %v but got %v", returnTypes[0].String(), ast.OutputType())
-		} else {
-			reason = fmt.Sprintf("must evaluate to one of %v", returnTypes)
-		}
 
-		return resultError(reason, apiservercel.ErrorTypeInvalid)
-	}
 	checkedExpr, err := cel.AstToCheckedExpr(ast)
 	if err != nil {
 		// should be impossible since env.Compile returned no issues
@@ -154,10 +133,10 @@ func (c compiler) CompileCELExpression(expressionAccessor ExpressionAccessor) (C
 		return resultError("program instantiation failed: "+err.Error(), apiservercel.ErrorTypeInternal)
 	}
 	return CompilationResult{
-		Program:            prog,
-		ExpressionAccessor: expressionAccessor,
-		UsesFieldSelector:  usesFieldSelector,
-		UsesLabelSelector:  usesLabelSelector,
+		Program:           prog,
+		Expression:        expression,
+		UsesFieldSelector: usesFieldSelector,
+		UsesLabelSelector: usesLabelSelector,
 	}, nil
 }
 
