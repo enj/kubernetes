@@ -32,6 +32,7 @@ import (
 	rbaclistersv1alpha1 "k8s.io/client-go/listers/rbac/v1alpha1"
 	"k8s.io/klog/v2"
 	rbacv1helpers "k8s.io/kubernetes/pkg/apis/rbac/v1"
+	rbaccel "k8s.io/kubernetes/pkg/registry/rbac/cel"
 	rbacregistryvalidation "k8s.io/kubernetes/pkg/registry/rbac/validation"
 )
 
@@ -40,12 +41,12 @@ type RequestToRuleMapper interface {
 	// Any rule returned is still valid, since rules are deny by default.  If you can pass with the rules
 	// supplied, you do not have to fail the request.  If you cannot, you should indicate the error along
 	// with your denial.
-	RulesFor(subject user.Info, namespace string) ([]rbacv1.PolicyRule, error)
+	RulesFor(ctx context.Context, subject user.Info, namespace string) ([]rbacv1.PolicyRule, error)
 
 	// VisitRulesFor invokes visitor() with each rule that applies to a given user in a given namespace,
 	// and each error encountered resolving those rules. Rule may be nil if err is non-nil.
 	// If visitor() returns false, visiting is short-circuited.
-	VisitRulesFor(user user.Info, namespace string, conditionalAttributes rbacregistryvalidation.ConditionalAttributes, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool)
+	VisitRulesFor(ctx context.Context, user user.Info, namespace string, conditionalAttributes rbaccel.ConditionalAttributes, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool)
 }
 
 type RBACAuthorizer struct {
@@ -76,7 +77,7 @@ func (v *authorizingVisitor) visit(source fmt.Stringer, rule *rbacv1.PolicyRule,
 func (r *RBACAuthorizer) Authorize(ctx context.Context, requestAttributes authorizer.Attributes) (authorizer.Decision, string, error) {
 	ruleCheckingVisitor := &authorizingVisitor{requestAttributes: requestAttributes}
 
-	r.authorizationRuleResolver.VisitRulesFor(requestAttributes.GetUser(), requestAttributes.GetNamespace(), requestAttributes, ruleCheckingVisitor.visit)
+	r.authorizationRuleResolver.VisitRulesFor(ctx, requestAttributes.GetUser(), requestAttributes.GetNamespace(), requestAttributes, ruleCheckingVisitor.visit)
 	if ruleCheckingVisitor.allowed {
 		return authorizer.DecisionAllow, ruleCheckingVisitor.reason, nil
 	}
@@ -127,13 +128,13 @@ func (r *RBACAuthorizer) Authorize(ctx context.Context, requestAttributes author
 	return authorizer.DecisionNoOpinion, reason, nil
 }
 
-func (r *RBACAuthorizer) RulesFor(user user.Info, namespace string) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
+func (r *RBACAuthorizer) RulesFor(ctx context.Context, user user.Info, namespace string) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
 	var (
 		resourceRules    []authorizer.ResourceRuleInfo
 		nonResourceRules []authorizer.NonResourceRuleInfo
 	)
 
-	policyRules, err := r.authorizationRuleResolver.RulesFor(user, namespace)
+	policyRules, err := r.authorizationRuleResolver.RulesFor(ctx, user, namespace)
 	for _, policyRule := range policyRules {
 		if len(policyRule.Resources) > 0 {
 			r := authorizer.DefaultResourceRuleInfo{

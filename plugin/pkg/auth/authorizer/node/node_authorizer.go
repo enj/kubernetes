@@ -95,7 +95,7 @@ var (
 	csiNodeResource       = storageapi.Resource("csinodes")
 )
 
-func (r *NodeAuthorizer) RulesFor(user user.Info, namespace string) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
+func (r *NodeAuthorizer) RulesFor(ctx context.Context, user user.Info, namespace string) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
 	if _, isNode := r.identifier.NodeIdentity(user); isNode {
 		// indicate nodes do not have fully enumerated permissions
 		return nil, nil, true, fmt.Errorf("node authorizer does not support user rule resolution")
@@ -196,7 +196,7 @@ func (r *NodeAuthorizer) authorizeGet(nodeName string, startingType vertexType, 
 func (r *NodeAuthorizer) authorizeReadNamespacedObject(nodeName string, startingType vertexType, attrs authorizer.Attributes) (authorizer.Decision, string, error) {
 	switch attrs.GetVerb() {
 	case "get", "list", "watch":
-		//ok
+		// ok
 	default:
 		klog.V(2).Infof("NODE DENY: '%s' %#v", nodeName, attrs)
 		return authorizer.DecisionNoOpinion, "can only read resources of this type", nil
@@ -262,7 +262,7 @@ func (r *NodeAuthorizer) authorizeLease(nodeName string, attrs authorizer.Attrib
 	verb := attrs.GetVerb()
 	switch verb {
 	case "get", "create", "update", "patch", "delete":
-		//ok
+		// ok
 	default:
 		klog.V(2).Infof("NODE DENY: '%s' %#v", nodeName, attrs)
 		return authorizer.DecisionNoOpinion, "can only get, create, update, patch, or delete a node lease", nil
@@ -291,7 +291,7 @@ func (r *NodeAuthorizer) authorizeCSINode(nodeName string, attrs authorizer.Attr
 	verb := attrs.GetVerb()
 	switch verb {
 	case "get", "create", "update", "patch", "delete":
-		//ok
+		// ok
 	default:
 		klog.V(2).Infof("NODE DENY: '%s' %#v", nodeName, attrs)
 		return authorizer.DecisionNoOpinion, "can only get, create, update, patch, or delete a CSINode", nil
