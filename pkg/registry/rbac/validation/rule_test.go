@@ -27,8 +27,14 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	rbacv1 "k8s.io/api/rbac/v1"
+	rbacv1alpha1 "k8s.io/api/rbac/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apiserver/pkg/authentication/user"
+	"k8s.io/apiserver/pkg/cel/environment"
+	"k8s.io/kubernetes/pkg/registry/rbac/cel"
 )
 
 // compute a hash of a policy rule so we can sort in a deterministic order
@@ -275,5 +281,123 @@ func TestAppliesTo(t *testing.T) {
 		if gotIndex != tc.index {
 			t.Errorf("case %q want index %d, got %d", tc.testCase, tc.index, gotIndex)
 		}
+	}
+}
+
+type conditionalAttributes struct {
+	namespace         string
+	name              string
+	user              user.DefaultInfo
+	isResourceRequest bool
+	fieldSelector     fields.Requirements
+	labelSelector     labels.Requirements
+}
+
+var _ cel.ConditionalAttributes = &conditionalAttributes{}
+
+func (c *conditionalAttributes) GetNamespace() string {
+	return c.namespace
+}
+
+func (c *conditionalAttributes) GetName() string {
+	return c.name
+}
+
+func (c *conditionalAttributes) GetUser() user.Info {
+	return &c.user
+}
+
+func (c *conditionalAttributes) IsResourceRequest() bool {
+	return c.isResourceRequest
+}
+
+func (c *conditionalAttributes) GetFieldSelector() (fields.Requirements, error) {
+	return c.fieldSelector, nil
+}
+
+func (c *conditionalAttributes) GetLabelSelector() (labels.Requirements, error) {
+	return c.labelSelector, nil
+}
+
+func labelRequirement(t *testing.T, key string, operator selection.Operator, values []string) labels.Requirement {
+	req, err := labels.NewRequirement(key, operator, values)
+	if err != nil {
+		t.Fatalf("error creating label requirement: %v", err)
+	}
+	return *req
+}
+
+func TestConditionalClusterRoleBindingAppliesTo(t *testing.T) {
+	tests := []struct {
+		name                          string
+		conditionalClusterRoleBinding *rbacv1alpha1.ConditionalClusterRoleBinding
+		conditionalAttributes         *conditionalAttributes
+		expected                      bool
+	}{
+		{
+			name:                          "no conditions",
+			conditionalClusterRoleBinding: &rbacv1alpha1.ConditionalClusterRoleBinding{},
+			expected:                      false,
+		},
+		{
+			name: "listing resource with specific label",
+			conditionalClusterRoleBinding: &rbacv1alpha1.ConditionalClusterRoleBinding{
+				Conditions: []rbacv1alpha1.Condition{
+					{
+						Expression: "request.user == 'foobar'",
+					},
+					{
+						Expression: "request.resourceAttributes.labelSelector.requirements.exists(r, r.key == 'hellokey' && r.operator == '=' && sets.equivalent(r.values, ['valuefoo']))",
+					},
+				},
+			},
+			conditionalAttributes: &conditionalAttributes{
+				user: user.DefaultInfo{Name: "foobar"},
+				labelSelector: labels.Requirements{
+					labelRequirement(t, "hellokey", selection.Equals, []string{"valuefoo"}),
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "node operation restricted based on field selector",
+			conditionalClusterRoleBinding: &rbacv1alpha1.ConditionalClusterRoleBinding{
+				Conditions: []rbacv1alpha1.Condition{
+					{
+						// determine it's a node by checking the prefix and asserting the name is not just the prefix
+						Expression: "request.user.startsWith('system:node:') && size(request.user) > size('system:node:')",
+					},
+					{
+						// it needs to be in system:nodes group
+						Expression: "request.groups.exists(g, g == 'system:nodes')",
+					},
+					{
+						// now match the field selector to restrict to a specific node
+						Expression: "request.resourceAttributes.fieldSelector.requirements.exists(r, r.key == 'spec.nodeName' && r.operator == '=' && sets.equivalent(r.values, [request.user.substring(12)]))",
+					},
+				},
+			},
+			conditionalAttributes: &conditionalAttributes{
+				user: user.DefaultInfo{Name: "system:node:node1", Groups: []string{"system:nodes"}},
+				fieldSelector: fields.Requirements{
+					{
+						Field:    "spec.nodeName",
+						Operator: selection.Equals,
+						Value:    "node1",
+					},
+				},
+			},
+			expected: true,
+		},
+	}
+
+	compiler := cel.NewCompiler(environment.MustBaseEnvSet(environment.DefaultCompatibilityVersion(), true))
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := conditionalClusterRoleBindingAppliesTo(context.Background(), compiler, tc.conditionalClusterRoleBinding, tc.conditionalAttributes)
+			if got != tc.expected {
+				t.Errorf("expected %t, got %t", tc.expected, got)
+			}
+		})
 	}
 }
