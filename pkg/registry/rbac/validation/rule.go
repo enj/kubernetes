@@ -20,22 +20,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 
 	rbacv1 "k8s.io/api/rbac/v1"
 	rbacv1alpha1 "k8s.io/api/rbac/v1alpha1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/selection"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
 	"k8s.io/apiserver/pkg/authentication/user"
+	"k8s.io/apiserver/pkg/cel/environment"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/component-helpers/auth/rbac/validation"
 	"k8s.io/klog/v2"
 	rbacv1helpers "k8s.io/kubernetes/pkg/apis/rbac/v1"
+	"k8s.io/kubernetes/pkg/registry/rbac/cel"
 )
 
 type AuthorizationRuleResolver interface {
@@ -46,37 +46,11 @@ type AuthorizationRuleResolver interface {
 	// RulesFor returns the list of rules that apply to a given user in a given namespace and error.  If an error is returned, the slice of
 	// PolicyRules may not be complete, but it contains all retrievable rules.  This is done because policy rules are purely additive and policy determinations
 	// can be made on the basis of those rules that are found.
-	RulesFor(user user.Info, namespace string) ([]rbacv1.PolicyRule, error)
+	RulesFor(ctx context.Context, user user.Info, namespace string) ([]rbacv1.PolicyRule, error)
 
 	// VisitRulesFor invokes visitor() with each rule that applies to a given user in a given namespace, and each error encountered resolving those rules.
 	// If visitor() returns false, visiting is short-circuited.
-	VisitRulesFor(user user.Info, namespace string, conditionalAttributes ConditionalAttributes, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool)
-}
-
-type ConditionalAttributes interface {
-	// GetUser returns the user.Info object to authorize
-	GetUser() user.Info
-
-	// The namespace of the object, if a request is for a REST object.
-	GetNamespace() string
-
-	// GetName returns the name of the object as parsed off the request.  This will not be present for all request types, but
-	// will be present for: get, update, delete
-	GetName() string
-
-	// IsResourceRequest returns true for requests to API resources, like /api/v1/nodes,
-	// and false for non-resource endpoints like /api, /healthz
-	IsResourceRequest() bool
-
-	// ParseFieldSelector is lazy, thread-safe, and stores the parsed result and error.
-	// It returns an error if the field selector cannot be parsed.
-	// The returned requirements must be treated as readonly and not modified.
-	GetFieldSelector() (fields.Requirements, error)
-
-	// ParseLabelSelector is lazy, thread-safe, and stores the parsed result and error.
-	// It returns an error if the label selector cannot be parsed.
-	// The returned requirements must be treated as readonly and not modified.
-	GetLabelSelector() (labels.Requirements, error)
+	VisitRulesFor(ctx context.Context, user user.Info, namespace string, conditionalAttributes cel.ConditionalAttributes, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool)
 }
 
 // ConfirmNoEscalation determines if the roles for a given user in a given namespace encompass the provided role.
@@ -89,7 +63,7 @@ func ConfirmNoEscalation(ctx context.Context, ruleResolver AuthorizationRuleReso
 	}
 	namespace, _ := genericapirequest.NamespaceFrom(ctx)
 
-	ownerRules, err := ruleResolver.RulesFor(user, namespace)
+	ownerRules, err := ruleResolver.RulesFor(ctx, user, namespace)
 	if err != nil {
 		// As per AuthorizationRuleResolver contract, this may return a non fatal error with an incomplete list of policies. Log the error and continue.
 		klog.V(1).Infof("non-fatal error getting local rules for %v: %v", user, err)
@@ -125,10 +99,12 @@ type DefaultRuleResolver struct {
 	clusterRoleBindingLister ClusterRoleBindingLister
 
 	conditionalClusterRoleBindingLister ConditionalClusterRoleBindingLister
+	compiler                            cel.Compiler
 }
 
 func NewDefaultRuleResolver(roleGetter RoleGetter, roleBindingLister RoleBindingLister, clusterRoleGetter ClusterRoleGetter, clusterRoleBindingLister ClusterRoleBindingLister, conditionalClusterRoleBindingLister ConditionalClusterRoleBindingLister) *DefaultRuleResolver {
-	return &DefaultRuleResolver{roleGetter, roleBindingLister, clusterRoleGetter, clusterRoleBindingLister, conditionalClusterRoleBindingLister}
+	compiler := cel.NewCompiler(environment.MustBaseEnvSet(environment.DefaultCompatibilityVersion(), true))
+	return &DefaultRuleResolver{roleGetter, roleBindingLister, clusterRoleGetter, clusterRoleBindingLister, conditionalClusterRoleBindingLister, compiler}
 }
 
 type RoleGetter interface {
@@ -151,9 +127,9 @@ type ConditionalClusterRoleBindingLister interface {
 	ListConditionalClusterRoleBindings() ([]*rbacv1alpha1.ConditionalClusterRoleBinding, error)
 }
 
-func (r *DefaultRuleResolver) RulesFor(user user.Info, namespace string) ([]rbacv1.PolicyRule, error) {
+func (r *DefaultRuleResolver) RulesFor(ctx context.Context, user user.Info, namespace string) ([]rbacv1.PolicyRule, error) {
 	visitor := &ruleAccumulator{}
-	r.VisitRulesFor(user, namespace, &rulesForAttr{user: user, namespace: namespace}, visitor.visit)
+	r.VisitRulesFor(ctx, user, namespace, &rulesForAttr{user: user, namespace: namespace}, visitor.visit)
 	return visitor.rules, utilerrors.NewAggregate(visitor.errors)
 }
 
@@ -171,7 +147,7 @@ func (r *DefaultRuleResolver) RulesFor(user user.Info, namespace string) ([]rbac
 //  But since there is no ordering guarantee, we would need to also track "earlier" incomplete=true calls that need
 //  to be overridden if a "later" binding for the same cluster role applies.
 
-var _ ConditionalAttributes = &rulesForAttr{}
+var _ cel.ConditionalAttributes = &rulesForAttr{}
 
 // rulesForAttr enables checking if conditional cluster role bindings apply via a
 // simulated resource request that does not provide the object name or any selectors.
@@ -260,7 +236,7 @@ func (d *roleBindingDescriber) String() string {
 	)
 }
 
-func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, conditionalAttributes ConditionalAttributes, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool) {
+func (r *DefaultRuleResolver) VisitRulesFor(ctx context.Context, user user.Info, namespace string, conditionalAttributes cel.ConditionalAttributes, visitor func(source fmt.Stringer, rule *rbacv1.PolicyRule, err error) bool) {
 	if clusterRoleBindings, err := r.clusterRoleBindingLister.ListClusterRoleBindings(); err != nil {
 		if !visitor(nil, nil, err) {
 			return
@@ -299,7 +275,7 @@ func (r *DefaultRuleResolver) VisitRulesFor(user user.Info, namespace string, co
 		} else {
 			sourceDescriber := &conditionalClusterRoleBindingDescriber{}
 			for _, conditionalClusterRoleBinding := range conditionalClusterRoleBindings {
-				applies := conditionalClusterRoleBindingAppliesTo(conditionalClusterRoleBinding, conditionalAttributes)
+				applies := conditionalClusterRoleBindingAppliesTo(ctx, r.compiler, conditionalClusterRoleBinding, conditionalAttributes)
 				if !applies {
 					continue
 				}
@@ -437,101 +413,38 @@ func NewTestRuleResolver(roles []*rbacv1.Role, roleBindings []*rbacv1.RoleBindin
 	return newMockRuleResolver(&r), &r
 }
 
-// TODO actually implement this with CEL
-func conditionalClusterRoleBindingAppliesTo(conditionalClusterRoleBinding *rbacv1alpha1.ConditionalClusterRoleBinding, conditionalAttributes ConditionalAttributes) bool {
+func conditionalClusterRoleBindingAppliesTo(ctx context.Context, compiler cel.Compiler, conditionalClusterRoleBinding *rbacv1alpha1.ConditionalClusterRoleBinding, conditionalAttributes cel.ConditionalAttributes) bool {
 	if len(conditionalClusterRoleBinding.Conditions) == 0 {
 		return false // fail closed, but validation should prevent this
 	}
+
+	// TODO(aramase): cache these compilation results
+	compilationResults := make([]cel.CompilationResult, 0, len(conditionalClusterRoleBinding.Conditions))
+	var usesFieldSelector, usesLabelSelector bool
 	for _, condition := range conditionalClusterRoleBinding.Conditions {
-		if !conditionAppliesTo(condition, conditionalAttributes) {
+		compilationResult, err := compiler.CompileCELExpression(condition.Expression)
+		if err != nil {
+			klog.Errorf("error compiling expression %q: %v", condition.Expression, err)
 			return false
 		}
+		compilationResults = append(compilationResults, compilationResult)
+		usesFieldSelector = usesFieldSelector || compilationResult.UsesFieldSelector
+		usesLabelSelector = usesLabelSelector || compilationResult.UsesLabelSelector
 	}
-	return true
-}
 
-func conditionAppliesTo(condition rbacv1alpha1.Condition, conditionalAttributes ConditionalAttributes) bool {
-	return conditionAppliesToString(condition, conditionalAttributes) ||
-		conditionAppliesToSlice(condition, conditionalAttributes)
-}
+	matcher := &cel.CELMatcher{
+		CompilationResults: compilationResults,
+		UsesFieldSelector:  usesFieldSelector,
+		UsesLabelSelector:  usesLabelSelector,
+	}
 
-func conditionAppliesToString(condition rbacv1alpha1.Condition, conditionalAttributes ConditionalAttributes) bool {
-	u := conditionalAttributes.GetUser()
-	var target string
-	switch condition.Message { // pretend this is a type enum
-	case "user":
-		target = u.GetName()
-	case "uid":
-		target = u.GetUID()
-	case "namespace":
-		target = conditionalAttributes.GetNamespace()
-	case "name":
-		target = conditionalAttributes.GetName()
-	case "field":
-		// super inefficient approach but works for now
-		fieldSelector, err := conditionalAttributes.GetFieldSelector()
-		if err != nil {
-			return false
-		}
-		var found bool
-		for _, selector := range fieldSelector {
-			if selector.Field == condition.MessageExpression && selector.Operator == selection.Equals { // only support simple equals for now
-				target = selector.Value
-				found = true
-			}
-		}
-		if !found {
-			return false
-		}
-	case "label":
-		// super inefficient approach but works for now
-		labelSelector, err := conditionalAttributes.GetLabelSelector()
-		if err != nil {
-			return false
-		}
-		var found bool
-		for _, selector := range labelSelector {
-			if selector.Key() == condition.MessageExpression && selector.Operator() == selection.Equals { // only support simple equals for now
-				vals := selector.ValuesUnsorted()
-				if len(vals) != 1 {
-					continue
-				}
-				target = vals[0]
-				found = true
-			}
-		}
-		if !found {
-			return false
-		}
-	default:
+	matched, err := matcher.Eval(ctx, conditionalAttributes)
+	if err != nil {
+		klog.Errorf("error evaluating expression: %v", err)
 		return false
 	}
-	matched, err := regexp.MatchString(condition.Expression, target)
-	return err == nil && matched
-}
 
-func conditionAppliesToSlice(condition rbacv1alpha1.Condition, conditionalAttributes ConditionalAttributes) bool {
-	u := conditionalAttributes.GetUser()
-	var target []string
-	switch condition.Message { // pretend this is a type enum
-	case "groups":
-		target = u.GetGroups()
-	case "extra":
-		var ok bool
-		target, ok = u.GetExtra()[condition.MessageExpression]
-		if !ok {
-			return false
-		}
-	default:
-		return false
-	}
-	for _, s := range target {
-		matched, err := regexp.MatchString(condition.Expression, s)
-		if ok := err == nil && matched; ok {
-			return true // expression just has to match a single item in the list
-		}
-	}
-	return false
+	return matched
 }
 
 func newMockRuleResolver(r *StaticRoles) AuthorizationRuleResolver {
