@@ -179,9 +179,9 @@ func buildRequestType(field func(name string, declType *apiservercel.DeclType, r
 	return apiservercel.NewObjectType("kubernetes.SubjectAccessReviewSpec", fields(
 		field("resourceAttributes", resourceAttributesType, false),
 		field("user", apiservercel.StringType, false),
+		field("uid", apiservercel.StringType, false),
 		field("groups", apiservercel.NewListType(apiservercel.StringType, -1), false),
 		field("extra", apiservercel.NewMapType(apiservercel.StringType, apiservercel.NewListType(apiservercel.StringType, -1), -1), false),
-		field("uid", apiservercel.StringType, false),
 	))
 }
 
@@ -225,8 +225,8 @@ func convertObjectToUnstructured(conditionalAttributes ConditionalAttributes, in
 	}
 	ret := map[string]interface{}{
 		"user":   conditionalAttributes.GetUser().GetName(),
-		"groups": conditionalAttributes.GetUser().GetGroups(),
 		"uid":    conditionalAttributes.GetUser().GetUID(),
+		"groups": conditionalAttributes.GetUser().GetGroups(),
 		"extra":  extra,
 	}
 	resourceAttributes := map[string]interface{}{

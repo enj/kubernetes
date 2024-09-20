@@ -373,7 +373,7 @@ func TestConditionalClusterRoleBindingAppliesTo(t *testing.T) {
 					},
 					{
 						// now match the field selector to restrict to a specific node
-						Expression: "request.resourceAttributes.fieldSelector.requirements.exists(r, r.key == 'spec.nodeName' && r.operator == '=' && sets.equivalent(r.values, [request.user.substring(12)]))",
+						Expression: "request.resourceAttributes.fieldSelector.requirements.exists(r, r.key == 'spec.nodeName' && r.operator == '=' && sets.equivalent(r.values, [request.user.substring(size('system:node:'))]))",
 					},
 				},
 			},

@@ -33,6 +33,10 @@ type CELMatcher struct {
 }
 
 func (c *CELMatcher) Eval(ctx context.Context, conditionalAttributes ConditionalAttributes) (bool, error) {
+	if len(c.CompilationResults) == 0 {
+		return false, nil
+	}
+
 	va := map[string]interface{}{
 		"request": convertObjectToUnstructured(conditionalAttributes, c.UsesFieldSelector, c.UsesLabelSelector),
 	}
