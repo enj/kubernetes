@@ -107,12 +107,14 @@ const (
 
 var codecs serializer.CodecFactory
 
-// this atomic bool allows us to swap enablement of the KMSv2KDF feature in tests
+// this map allows us to swap enablement of the KMSv2KDF feature in tests
 // as the feature gate is now locked to true starting with v1.29
 // Note: it cannot be set by an end user
-var kdfEnabledPerKMS sync.Map
+// KDF enablement is tracked per KMS provider to allow tests to run in parallel.
+var kdfEnabledPerKMS sync.Map // map[string]bool, KMS name -> KDF enabled
 
-// this function should only be called in tests to swap enablement of the KMSv2KDF feature
+// this function should only be called in tests to swap enablement of the KMSv2KDF feature.
+// Caller must guarantee that all KMS providers have distinct names across all tests.
 func SetKDFForTests(kmsName string, b bool) func() {
 	if len(kmsName) == 0 { // guarantee that GetKDF("") returns the default value
 		panic("empty KMS name used in test")
@@ -125,13 +127,15 @@ func SetKDFForTests(kmsName string, b bool) func() {
 
 // this function should be used to determine enablement of the KMSv2KDF feature
 // instead of getting it from DefaultFeatureGate as the feature gate is now locked
-// to true starting with v1.29
+// to true starting with v1.29.
+// to allow integration tests to run in parallel, this "feature flag" can be set
+// per KMS provider as long as all providers use distinct names.
 func GetKDF(kmsName string) bool {
 	kdfEnabled, ok := kdfEnabledPerKMS.Load(kmsName)
 	if !ok {
-		return true // KDF is enabled by default
+		return true // explicit config is missing, but KDF is enabled by default
 	}
-	return kdfEnabled.(bool) // this will panic if a non bool ever gets stored, which should never happen
+	return kdfEnabled.(bool) // this will panic if a non-bool ever gets stored, which should never happen
 }
 
 func init() {
