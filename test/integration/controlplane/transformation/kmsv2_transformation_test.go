@@ -248,20 +248,15 @@ resources:
 // 4. The cipherTextPayload (ex. Secret) should be encrypted via AES GCM transform / extended nonce GCM
 // 5. kmstypes.EncryptedObject structure should be serialized and deposited in ETCD
 func TestKMSv2Provider(t *testing.T) {
-	genericapiserver.SetHostnameFuncForTests("testAPIServerID")
-
-	t.Parallel() // the set hostname func above uses global state, so only run in parallel after that point
-
+	// this test cannot be run in parallel because both the API server ID and the metrics are global state
 	defaultUseSeed := encryptionconfig.GetKDF("")
 
 	t.Run("regular gcm", func(t *testing.T) {
-		t.Parallel()
 		kmsName := "kms-provider-v2-false"
 		defer encryptionconfig.SetKDFForTests(kmsName, false)()
 		testKMSv2Provider(t, kmsName, !defaultUseSeed)
 	})
 	t.Run("extended nonce gcm", func(t *testing.T) {
-		t.Parallel()
 		kmsName := "kms-provider-v2-true"
 		defer encryptionconfig.SetKDFForTests(kmsName, true)()
 		testKMSv2Provider(t, kmsName, defaultUseSeed)
@@ -281,6 +276,7 @@ resources:
        name: ` + kmsName + `
        endpoint: unix:///@` + kmsName + `.sock
 `
+	genericapiserver.SetHostnameFuncForTests("testAPIServerID")
 	pluginMock := kmsv2mock.NewBase64Plugin(t, "@"+kmsName+".sock")
 
 	test, err := newTransformTest(t, encryptionConfig, false, "", nil)
