@@ -113,7 +113,7 @@ var codecs serializer.CodecFactory
 // KDF enablement is tracked per KMS provider to allow tests to run in parallel.
 var kdfEnabledPerKMS sync.Map // map[string]bool, KMS name -> KDF enabled
 
-// this function should only be called in tests to swap enablement of the KMSv2KDF feature.
+// this function should only be called in tests to swap enablement of the KMSv2KDF feature
 // Caller must guarantee that all KMS providers have distinct names across all tests.
 func SetKDFForTests(kmsName string, b bool) func() {
 	if len(kmsName) == 0 { // guarantee that GetKDF("") returns the default value
@@ -127,7 +127,7 @@ func SetKDFForTests(kmsName string, b bool) func() {
 
 // this function should be used to determine enablement of the KMSv2KDF feature
 // instead of getting it from DefaultFeatureGate as the feature gate is now locked
-// to true starting with v1.29.
+// to true starting with v1.29
 // to allow integration tests to run in parallel, this "feature flag" can be set
 // per KMS provider as long as all providers use distinct names.
 func GetKDF(kmsName string) bool {
