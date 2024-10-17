@@ -69,7 +69,7 @@ func newVolumeAttachments(c *StorageV1Client) *volumeAttachments {
 			"",
 			func() *v1.VolumeAttachment { return &v1.VolumeAttachment{} },
 			func() *v1.VolumeAttachmentList { return &v1.VolumeAttachmentList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.VolumeAttachment](),
 		),
 	}
 }

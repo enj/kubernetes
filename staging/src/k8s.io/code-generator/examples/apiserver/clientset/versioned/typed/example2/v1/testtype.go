@@ -65,7 +65,6 @@ func newTestTypes(c *SecondExampleV1Client, namespace string) *testTypes {
 			namespace,
 			func() *v1.TestType { return &v1.TestType{} },
 			func() *v1.TestTypeList { return &v1.TestTypeList{} },
-			false,
 		),
 	}
 }

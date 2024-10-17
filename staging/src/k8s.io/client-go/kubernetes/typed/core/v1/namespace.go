@@ -68,7 +68,7 @@ func newNamespaces(c *CoreV1Client) *namespaces {
 			"",
 			func() *v1.Namespace { return &v1.Namespace{} },
 			func() *v1.NamespaceList { return &v1.NamespaceList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.Namespace](),
 		),
 	}
 }

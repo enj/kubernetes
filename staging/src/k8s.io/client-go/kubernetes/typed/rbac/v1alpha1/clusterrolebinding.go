@@ -65,7 +65,7 @@ func newClusterRoleBindings(c *RbacV1alpha1Client) *clusterRoleBindings {
 			"",
 			func() *v1alpha1.ClusterRoleBinding { return &v1alpha1.ClusterRoleBinding{} },
 			func() *v1alpha1.ClusterRoleBindingList { return &v1alpha1.ClusterRoleBindingList{} },
-			true,
+			gentype.PrefersProtobuf[*v1alpha1.ClusterRoleBinding](),
 		),
 	}
 }

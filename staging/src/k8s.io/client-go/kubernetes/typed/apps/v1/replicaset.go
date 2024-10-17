@@ -77,7 +77,7 @@ func newReplicaSets(c *AppsV1Client, namespace string) *replicaSets {
 			namespace,
 			func() *v1.ReplicaSet { return &v1.ReplicaSet{} },
 			func() *v1.ReplicaSetList { return &v1.ReplicaSetList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.ReplicaSet](),
 		),
 	}
 }

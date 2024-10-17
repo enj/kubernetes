@@ -53,7 +53,7 @@ func newLocalSubjectAccessReviews(c *AuthorizationV1Client, namespace string) *l
 			scheme.ParameterCodec,
 			namespace,
 			func() *v1.LocalSubjectAccessReview { return &v1.LocalSubjectAccessReview{} },
-			true,
+			gentype.PrefersProtobuf[*v1.LocalSubjectAccessReview](),
 		),
 	}
 }

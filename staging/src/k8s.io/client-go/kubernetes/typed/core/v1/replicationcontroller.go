@@ -73,7 +73,7 @@ func newReplicationControllers(c *CoreV1Client, namespace string) *replicationCo
 			namespace,
 			func() *v1.ReplicationController { return &v1.ReplicationController{} },
 			func() *v1.ReplicationControllerList { return &v1.ReplicationControllerList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.ReplicationController](),
 		),
 	}
 }

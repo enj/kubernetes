@@ -65,7 +65,6 @@ func newFoos(c *SamplecontrollerV1alpha1Client, namespace string) *foos {
 			namespace,
 			func() *v1alpha1.Foo { return &v1alpha1.Foo{} },
 			func() *v1alpha1.FooList { return &v1alpha1.FooList{} },
-			false,
 		),
 	}
 }

@@ -65,7 +65,7 @@ func newSecrets(c *CoreV1Client, namespace string) *secrets {
 			namespace,
 			func() *v1.Secret { return &v1.Secret{} },
 			func() *v1.SecretList { return &v1.SecretList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.Secret](),
 		),
 	}
 }

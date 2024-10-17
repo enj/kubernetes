@@ -65,7 +65,7 @@ func newResourceSlices(c *ResourceV1alpha3Client) *resourceSlices {
 			"",
 			func() *v1alpha3.ResourceSlice { return &v1alpha3.ResourceSlice{} },
 			func() *v1alpha3.ResourceSliceList { return &v1alpha3.ResourceSliceList{} },
-			true,
+			gentype.PrefersProtobuf[*v1alpha3.ResourceSlice](),
 		),
 	}
 }

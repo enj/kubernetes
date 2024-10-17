@@ -65,7 +65,7 @@ func newVolumeAttributesClasses(c *StorageV1alpha1Client) *volumeAttributesClass
 			"",
 			func() *v1alpha1.VolumeAttributesClass { return &v1alpha1.VolumeAttributesClass{} },
 			func() *v1alpha1.VolumeAttributesClassList { return &v1alpha1.VolumeAttributesClassList{} },
-			true,
+			gentype.PrefersProtobuf[*v1alpha1.VolumeAttributesClass](),
 		),
 	}
 }

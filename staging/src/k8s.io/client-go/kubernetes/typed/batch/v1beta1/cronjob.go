@@ -69,7 +69,7 @@ func newCronJobs(c *BatchV1beta1Client, namespace string) *cronJobs {
 			namespace,
 			func() *v1beta1.CronJob { return &v1beta1.CronJob{} },
 			func() *v1beta1.CronJobList { return &v1beta1.CronJobList{} },
-			true,
+			gentype.PrefersProtobuf[*v1beta1.CronJob](),
 		),
 	}
 }

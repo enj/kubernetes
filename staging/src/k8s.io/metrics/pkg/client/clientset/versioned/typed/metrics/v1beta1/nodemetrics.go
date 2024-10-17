@@ -57,7 +57,7 @@ func newNodeMetricses(c *MetricsV1beta1Client) *nodeMetricses {
 			"",
 			func() *v1beta1.NodeMetrics { return &v1beta1.NodeMetrics{} },
 			func() *v1beta1.NodeMetricsList { return &v1beta1.NodeMetricsList{} },
-			true,
+			gentype.PrefersProtobuf[*v1beta1.NodeMetrics](),
 		),
 	}
 }

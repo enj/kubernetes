@@ -65,7 +65,7 @@ func newRuntimeClasses(c *NodeV1alpha1Client) *runtimeClasses {
 			"",
 			func() *v1alpha1.RuntimeClass { return &v1alpha1.RuntimeClass{} },
 			func() *v1alpha1.RuntimeClassList { return &v1alpha1.RuntimeClassList{} },
-			true,
+			gentype.PrefersProtobuf[*v1alpha1.RuntimeClass](),
 		),
 	}
 }

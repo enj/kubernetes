@@ -77,7 +77,7 @@ func newStatefulSets(c *AppsV1Client, namespace string) *statefulSets {
 			namespace,
 			func() *v1.StatefulSet { return &v1.StatefulSet{} },
 			func() *v1.StatefulSetList { return &v1.StatefulSetList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.StatefulSet](),
 		),
 	}
 }

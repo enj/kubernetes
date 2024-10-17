@@ -69,7 +69,7 @@ func newPriorityLevelConfigurations(c *FlowcontrolV1beta2Client) *priorityLevelC
 			"",
 			func() *v1beta2.PriorityLevelConfiguration { return &v1beta2.PriorityLevelConfiguration{} },
 			func() *v1beta2.PriorityLevelConfigurationList { return &v1beta2.PriorityLevelConfigurationList{} },
-			true,
+			gentype.PrefersProtobuf[*v1beta2.PriorityLevelConfiguration](),
 		),
 	}
 }

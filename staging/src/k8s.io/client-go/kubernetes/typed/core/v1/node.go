@@ -69,7 +69,7 @@ func newNodes(c *CoreV1Client) *nodes {
 			"",
 			func() *v1.Node { return &v1.Node{} },
 			func() *v1.NodeList { return &v1.NodeList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.Node](),
 		),
 	}
 }

@@ -65,7 +65,7 @@ func newConfigMaps(c *CoreV1Client, namespace string) *configMaps {
 			namespace,
 			func() *v1.ConfigMap { return &v1.ConfigMap{} },
 			func() *v1.ConfigMapList { return &v1.ConfigMapList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.ConfigMap](),
 		),
 	}
 }

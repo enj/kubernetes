@@ -65,7 +65,6 @@ func newFischers(c *WardleV1alpha1Client) *fischers {
 			"",
 			func() *v1alpha1.Fischer { return &v1alpha1.Fischer{} },
 			func() *v1alpha1.FischerList { return &v1alpha1.FischerList{} },
-			false,
 		),
 	}
 }

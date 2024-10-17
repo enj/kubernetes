@@ -65,7 +65,7 @@ func newValidatingAdmissionPolicyBindings(c *AdmissionregistrationV1Client) *val
 			"",
 			func() *v1.ValidatingAdmissionPolicyBinding { return &v1.ValidatingAdmissionPolicyBinding{} },
 			func() *v1.ValidatingAdmissionPolicyBindingList { return &v1.ValidatingAdmissionPolicyBindingList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.ValidatingAdmissionPolicyBinding](),
 		),
 	}
 }

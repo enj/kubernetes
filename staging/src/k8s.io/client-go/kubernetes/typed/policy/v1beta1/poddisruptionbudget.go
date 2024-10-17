@@ -69,7 +69,7 @@ func newPodDisruptionBudgets(c *PolicyV1beta1Client, namespace string) *podDisru
 			namespace,
 			func() *v1beta1.PodDisruptionBudget { return &v1beta1.PodDisruptionBudget{} },
 			func() *v1beta1.PodDisruptionBudgetList { return &v1beta1.PodDisruptionBudgetList{} },
-			true,
+			gentype.PrefersProtobuf[*v1beta1.PodDisruptionBudget](),
 		),
 	}
 }

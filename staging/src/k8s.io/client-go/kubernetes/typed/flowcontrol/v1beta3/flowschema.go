@@ -69,7 +69,7 @@ func newFlowSchemas(c *FlowcontrolV1beta3Client) *flowSchemas {
 			"",
 			func() *v1beta3.FlowSchema { return &v1beta3.FlowSchema{} },
 			func() *v1beta3.FlowSchemaList { return &v1beta3.FlowSchemaList{} },
-			true,
+			gentype.PrefersProtobuf[*v1beta3.FlowSchema](),
 		),
 	}
 }

@@ -65,7 +65,7 @@ func newEvents(c *EventsV1beta1Client, namespace string) *events {
 			namespace,
 			func() *v1beta1.Event { return &v1beta1.Event{} },
 			func() *v1beta1.EventList { return &v1beta1.EventList{} },
-			true,
+			gentype.PrefersProtobuf[*v1beta1.Event](),
 		),
 	}
 }

@@ -65,7 +65,7 @@ func newAPIServices(c *ApiregistrationV1beta1Client) *aPIServices {
 			"",
 			func() *v1beta1.APIService { return &v1beta1.APIService{} },
 			func() *v1beta1.APIServiceList { return &v1beta1.APIServiceList{} },
-			true,
+			gentype.PrefersProtobuf[*v1beta1.APIService](),
 		),
 	}
 }

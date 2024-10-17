@@ -65,7 +65,7 @@ func newEvents(c *CoreV1Client, namespace string) *events {
 			namespace,
 			func() *v1.Event { return &v1.Event{} },
 			func() *v1.EventList { return &v1.EventList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.Event](),
 		),
 	}
 }

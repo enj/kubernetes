@@ -69,7 +69,7 @@ func newIngresses(c *NetworkingV1Client, namespace string) *ingresses {
 			namespace,
 			func() *v1.Ingress { return &v1.Ingress{} },
 			func() *v1.IngressList { return &v1.IngressList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.Ingress](),
 		),
 	}
 }

@@ -68,7 +68,7 @@ func newServiceAccounts(c *CoreV1Client, namespace string) *serviceAccounts {
 			namespace,
 			func() *v1.ServiceAccount { return &v1.ServiceAccount{} },
 			func() *v1.ServiceAccountList { return &v1.ServiceAccountList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.ServiceAccount](),
 		),
 	}
 }

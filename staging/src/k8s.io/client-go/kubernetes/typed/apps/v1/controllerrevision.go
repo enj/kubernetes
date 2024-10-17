@@ -65,7 +65,7 @@ func newControllerRevisions(c *AppsV1Client, namespace string) *controllerRevisi
 			namespace,
 			func() *v1.ControllerRevision { return &v1.ControllerRevision{} },
 			func() *v1.ControllerRevisionList { return &v1.ControllerRevisionList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.ControllerRevision](),
 		),
 	}
 }

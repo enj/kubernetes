@@ -65,7 +65,7 @@ func newIPAddresses(c *NetworkingV1beta1Client) *iPAddresses {
 			"",
 			func() *v1beta1.IPAddress { return &v1beta1.IPAddress{} },
 			func() *v1beta1.IPAddressList { return &v1beta1.IPAddressList{} },
-			true,
+			gentype.PrefersProtobuf[*v1beta1.IPAddress](),
 		),
 	}
 }

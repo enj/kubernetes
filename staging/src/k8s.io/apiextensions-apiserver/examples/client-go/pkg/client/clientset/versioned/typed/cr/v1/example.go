@@ -65,7 +65,6 @@ func newExamples(c *CrV1Client, namespace string) *examples {
 			namespace,
 			func() *v1.Example { return &v1.Example{} },
 			func() *v1.ExampleList { return &v1.ExampleList{} },
-			false,
 		),
 	}
 }

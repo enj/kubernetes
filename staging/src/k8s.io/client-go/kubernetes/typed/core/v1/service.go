@@ -68,7 +68,7 @@ func newServices(c *CoreV1Client, namespace string) *services {
 			namespace,
 			func() *v1.Service { return &v1.Service{} },
 			func() *v1.ServiceList { return &v1.ServiceList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.Service](),
 		),
 	}
 }

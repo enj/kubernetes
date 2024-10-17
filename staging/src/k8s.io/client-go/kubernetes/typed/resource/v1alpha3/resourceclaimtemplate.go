@@ -65,7 +65,7 @@ func newResourceClaimTemplates(c *ResourceV1alpha3Client, namespace string) *res
 			namespace,
 			func() *v1alpha3.ResourceClaimTemplate { return &v1alpha3.ResourceClaimTemplate{} },
 			func() *v1alpha3.ResourceClaimTemplateList { return &v1alpha3.ResourceClaimTemplateList{} },
-			true,
+			gentype.PrefersProtobuf[*v1alpha3.ResourceClaimTemplate](),
 		),
 	}
 }

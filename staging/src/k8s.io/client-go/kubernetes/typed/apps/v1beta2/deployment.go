@@ -69,7 +69,7 @@ func newDeployments(c *AppsV1beta2Client, namespace string) *deployments {
 			namespace,
 			func() *v1beta2.Deployment { return &v1beta2.Deployment{} },
 			func() *v1beta2.DeploymentList { return &v1beta2.DeploymentList{} },
-			true,
+			gentype.PrefersProtobuf[*v1beta2.Deployment](),
 		),
 	}
 }

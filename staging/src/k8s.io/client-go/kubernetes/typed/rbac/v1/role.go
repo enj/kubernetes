@@ -65,7 +65,7 @@ func newRoles(c *RbacV1Client, namespace string) *roles {
 			namespace,
 			func() *v1.Role { return &v1.Role{} },
 			func() *v1.RoleList { return &v1.RoleList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.Role](),
 		),
 	}
 }

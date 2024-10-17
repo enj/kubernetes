@@ -53,7 +53,7 @@ func newTokenReviews(c *AuthenticationV1beta1Client) *tokenReviews {
 			scheme.ParameterCodec,
 			"",
 			func() *v1beta1.TokenReview { return &v1beta1.TokenReview{} },
-			true,
+			gentype.PrefersProtobuf[*v1beta1.TokenReview](),
 		),
 	}
 }

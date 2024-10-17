@@ -65,7 +65,7 @@ func newMutatingWebhookConfigurations(c *AdmissionregistrationV1Client) *mutatin
 			"",
 			func() *v1.MutatingWebhookConfiguration { return &v1.MutatingWebhookConfiguration{} },
 			func() *v1.MutatingWebhookConfigurationList { return &v1.MutatingWebhookConfigurationList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.MutatingWebhookConfiguration](),
 		),
 	}
 }

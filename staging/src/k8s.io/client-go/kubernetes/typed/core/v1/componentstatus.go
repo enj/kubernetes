@@ -65,7 +65,7 @@ func newComponentStatuses(c *CoreV1Client) *componentStatuses {
 			"",
 			func() *v1.ComponentStatus { return &v1.ComponentStatus{} },
 			func() *v1.ComponentStatusList { return &v1.ComponentStatusList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.ComponentStatus](),
 		),
 	}
 }

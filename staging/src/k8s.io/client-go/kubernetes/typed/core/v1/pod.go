@@ -71,7 +71,7 @@ func newPods(c *CoreV1Client, namespace string) *pods {
 			namespace,
 			func() *v1.Pod { return &v1.Pod{} },
 			func() *v1.PodList { return &v1.PodList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.Pod](),
 		),
 	}
 }

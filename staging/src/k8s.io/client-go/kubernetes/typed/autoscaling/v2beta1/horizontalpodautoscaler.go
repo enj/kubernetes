@@ -69,7 +69,7 @@ func newHorizontalPodAutoscalers(c *AutoscalingV2beta1Client, namespace string) 
 			namespace,
 			func() *v2beta1.HorizontalPodAutoscaler { return &v2beta1.HorizontalPodAutoscaler{} },
 			func() *v2beta1.HorizontalPodAutoscalerList { return &v2beta1.HorizontalPodAutoscalerList{} },
-			true,
+			gentype.PrefersProtobuf[*v2beta1.HorizontalPodAutoscaler](),
 		),
 	}
 }

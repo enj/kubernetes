@@ -53,7 +53,7 @@ func newSelfSubjectAccessReviews(c *AuthorizationV1beta1Client) *selfSubjectAcce
 			scheme.ParameterCodec,
 			"",
 			func() *v1beta1.SelfSubjectAccessReview { return &v1beta1.SelfSubjectAccessReview{} },
-			true,
+			gentype.PrefersProtobuf[*v1beta1.SelfSubjectAccessReview](),
 		),
 	}
 }

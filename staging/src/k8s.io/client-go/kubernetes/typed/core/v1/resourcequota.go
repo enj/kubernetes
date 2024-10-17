@@ -69,7 +69,7 @@ func newResourceQuotas(c *CoreV1Client, namespace string) *resourceQuotas {
 			namespace,
 			func() *v1.ResourceQuota { return &v1.ResourceQuota{} },
 			func() *v1.ResourceQuotaList { return &v1.ResourceQuotaList{} },
-			true,
+			gentype.PrefersProtobuf[*v1.ResourceQuota](),
 		),
 	}
 }
