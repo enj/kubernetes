@@ -84,29 +84,37 @@ type alsoApplier[T objectWithMeta, C namedObject] struct {
 	client *Client[T]
 }
 
+type Option[T objectWithMeta] func(*Client[T])
+
+func PrefersProtobuf[T objectWithMeta]() Option[T] {
+	return func(c *Client[T]) { c.prefersProtobuf = true }
+}
+
 // NewClient constructs a client, namespaced or not, with no support for lists or apply.
 // Non-namespaced clients are constructed by passing an empty namespace ("").
 func NewClient[T objectWithMeta](
 	resource string, client rest.Interface, parameterCodec runtime.ParameterCodec, namespace string, emptyObjectCreator func() T,
-	prefersProtobuf bool,
+	options ...Option[T],
 ) *Client[T] {
-	return &Client[T]{
+	c := &Client[T]{
 		resource:       resource,
 		client:         client,
 		parameterCodec: parameterCodec,
 		namespace:      namespace,
 		newObject:      emptyObjectCreator,
-
-		prefersProtobuf: prefersProtobuf,
 	}
+	for _, option := range options {
+		option(c)
+	}
+	return c
 }
 
 // NewClientWithList constructs a namespaced client with support for lists.
 func NewClientWithList[T objectWithMeta, L runtime.Object](
 	resource string, client rest.Interface, parameterCodec runtime.ParameterCodec, namespace string, emptyObjectCreator func() T,
-	emptyListCreator func() L, prefersProtobuf bool,
+	emptyListCreator func() L, options ...Option[T],
 ) *ClientWithList[T, L] {
-	typeClient := NewClient[T](resource, client, parameterCodec, namespace, emptyObjectCreator, prefersProtobuf)
+	typeClient := NewClient[T](resource, client, parameterCodec, namespace, emptyObjectCreator, options...)
 	return &ClientWithList[T, L]{
 		typeClient,
 		alsoLister[T, L]{typeClient, emptyListCreator},
@@ -116,9 +124,9 @@ func NewClientWithList[T objectWithMeta, L runtime.Object](
 // NewClientWithApply constructs a namespaced client with support for apply declarative configurations.
 func NewClientWithApply[T objectWithMeta, C namedObject](
 	resource string, client rest.Interface, parameterCodec runtime.ParameterCodec, namespace string, emptyObjectCreator func() T,
-	prefersProtobuf bool,
+	options ...Option[T],
 ) *ClientWithApply[T, C] {
-	typeClient := NewClient[T](resource, client, parameterCodec, namespace, emptyObjectCreator, prefersProtobuf)
+	typeClient := NewClient[T](resource, client, parameterCodec, namespace, emptyObjectCreator, options...)
 	return &ClientWithApply[T, C]{
 		typeClient,
 		alsoApplier[T, C]{typeClient},
@@ -128,9 +136,9 @@ func NewClientWithApply[T objectWithMeta, C namedObject](
 // NewClientWithListAndApply constructs a client with support for lists and applying declarative configurations.
 func NewClientWithListAndApply[T objectWithMeta, L runtime.Object, C namedObject](
 	resource string, client rest.Interface, parameterCodec runtime.ParameterCodec, namespace string, emptyObjectCreator func() T,
-	emptyListCreator func() L, prefersProtobuf bool,
+	emptyListCreator func() L, options ...Option[T],
 ) *ClientWithListAndApply[T, L, C] {
-	typeClient := NewClient[T](resource, client, parameterCodec, namespace, emptyObjectCreator, prefersProtobuf)
+	typeClient := NewClient[T](resource, client, parameterCodec, namespace, emptyObjectCreator, options...)
 	return &ClientWithListAndApply[T, L, C]{
 		typeClient,
 		alsoLister[T, L]{typeClient, emptyListCreator},

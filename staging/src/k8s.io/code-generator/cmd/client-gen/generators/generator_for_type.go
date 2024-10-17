@@ -481,7 +481,7 @@ var newStruct = []string{
 				$.schemeParameterCodec|raw$,
 				namespace,
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
-				$.prefersProtobuf$,
+				$if .prefersProtobuf$gentype.PrefersProtobuf[*$.resultType|raw$](),$end$
 			),
 		}
 	}
@@ -496,7 +496,7 @@ var newStruct = []string{
 				$.schemeParameterCodec|raw$,
 				namespace,
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
-				$.prefersProtobuf$,
+				$if .prefersProtobuf$gentype.PrefersProtobuf[*$.resultType|raw$](),$end$
 			),
 		}
 	}
@@ -512,7 +512,7 @@ var newStruct = []string{
 				namespace,
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				func() *$.resultType|raw$List { return &$.resultType|raw$List{} },
-				$.prefersProtobuf$,
+				$if .prefersProtobuf$gentype.PrefersProtobuf[*$.resultType|raw$](),$end$
 			),
 		}
 	}
@@ -528,7 +528,7 @@ var newStruct = []string{
 				namespace,
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				func() *$.resultType|raw$List { return &$.resultType|raw$List{} },
-				$.prefersProtobuf$,
+				$if .prefersProtobuf$gentype.PrefersProtobuf[*$.resultType|raw$](),$end$
 			),
 		}
 	}
@@ -543,7 +543,7 @@ var newStruct = []string{
 				$.schemeParameterCodec|raw$,
 				"",
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
-				$.prefersProtobuf$,
+				$if .prefersProtobuf$gentype.PrefersProtobuf[*$.resultType|raw$](),$end$
 			),
 		}
 	}
@@ -558,7 +558,7 @@ var newStruct = []string{
 				$.schemeParameterCodec|raw$,
 				"",
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
-				$.prefersProtobuf$,
+				$if .prefersProtobuf$gentype.PrefersProtobuf[*$.resultType|raw$](),$end$
 			),
 		}
 	}
@@ -574,7 +574,7 @@ var newStruct = []string{
 				"",
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				func() *$.resultType|raw$List { return &$.resultType|raw$List{} },
-				$.prefersProtobuf$,
+				$if .prefersProtobuf$gentype.PrefersProtobuf[*$.resultType|raw$](),$end$
 			),
 		}
 	}
@@ -590,7 +590,7 @@ var newStruct = []string{
 				"",
 				func() *$.resultType|raw$ { return &$.resultType|raw${} },
 				func() *$.resultType|raw$List { return &$.resultType|raw$List{} },
-				$.prefersProtobuf$,
+				$if .prefersProtobuf$gentype.PrefersProtobuf[*$.resultType|raw$](),$end$
 			),
 		}
 	}
