@@ -253,6 +253,12 @@ const (
 	//
 	// Allow the API server to serve consistent lists from cache
 	ConsistentListFromCache featuregate.Feature = "ConsistentListFromCache"
+
+	// owner: @enj
+	// kep: TODO link
+	//
+	// TODO description
+	ServiceAccountImpersonateScheduledNode = featuregate.Feature("ServiceAccountImpersonateScheduledNode")
 )
 
 func init() {
@@ -380,6 +386,10 @@ var defaultVersionedKubernetesFeatureGates = map[featuregate.Feature]featuregate
 	SeparateCacheWatchRPC: {
 		{Version: version.MustParse("1.28"), Default: true, PreRelease: featuregate.Beta},
 		{Version: version.MustParse("1.33"), Default: false, PreRelease: featuregate.Deprecated},
+	},
+
+	ServiceAccountImpersonateScheduledNode: {
+		{Version: version.MustParse("1.33"), Default: true, PreRelease: featuregate.Alpha}, // enabled for easier POC testing
 	},
 
 	StorageVersionAPI: {

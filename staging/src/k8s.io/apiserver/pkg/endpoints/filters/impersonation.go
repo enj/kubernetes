@@ -17,13 +17,12 @@ limitations under the License.
 package filters
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
-
-	"k8s.io/klog/v2"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	"k8s.io/api/core/v1"
@@ -34,7 +33,10 @@ import (
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
 	"k8s.io/apiserver/pkg/endpoints/request"
+	genericfeatures "k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/server/httplog"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/klog/v2"
 )
 
 // WithImpersonation is a filter that will inspect and check requests that attempt to change the user.Info for their requests
@@ -68,6 +70,17 @@ func WithImpersonation(handler http.Handler, a authorizer.Authorizer, s runtime.
 		groups := []string{}
 		userExtra := map[string][]string{}
 		uid := ""
+
+		if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.ServiceAccountImpersonateScheduledNode) &&
+			isSAImpersonatingScheduledNode(requestor, impersonationRequests) &&
+			isSAAuthorizedToImpersonateScheduledNode(ctx, requestor, a) &&
+			isSAAuthorizedToImpersonateScheduledNodeForCurrentRequest(ctx, requestor, a) {
+			username = impersonationRequests[0].Name // guaranteed to not panic by isSAImpersonatingScheduledNode
+			uid, _ = getSingleExtraValue(requestor, serviceaccount.NodeUIDKey)
+			groups = []string{user.NodesGroup, user.AllAuthenticated}
+			impersonationRequests = nil // silly hack to avoid else clause to keep the diff small for POC
+		}
+
 		for _, impersonationRequest := range impersonationRequests {
 			gvk := impersonationRequest.GetObjectKind().GroupVersionKind()
 			actingAsAttributes := &authorizer.AttributesRecord{
@@ -271,4 +284,93 @@ func buildImpersonationRequests(headers http.Header) ([]v1.ObjectReference, erro
 	}
 
 	return impersonationRequests, nil
+}
+
+const nodeUserNamePrefix = "system:node:"
+
+func isSAImpersonatingScheduledNode(requestor user.Info, impersonationRequests []v1.ObjectReference) bool {
+	nodeNameFromUserInfo, ok := getSingleExtraValue(requestor, serviceaccount.NodeNameKey) // TODO should we do a stricter lookup on the node before we use it here?
+	if !ok {
+		return false
+	}
+
+	if len(impersonationRequests) != 1 {
+		return false
+	}
+
+	impersonationRequest := impersonationRequests[0]
+
+	gvk := impersonationRequest.GetObjectKind().GroupVersionKind()
+	if gvk.GroupKind() != v1.SchemeGroupVersion.WithKind("User").GroupKind() {
+		return false
+	}
+
+	userName := impersonationRequest.Name
+	if !strings.HasPrefix(userName, nodeUserNamePrefix) {
+		return false
+	}
+
+	nodeNameFromRequest := strings.TrimPrefix(userName, nodeUserNamePrefix)
+
+	return nodeNameFromUserInfo == nodeNameFromRequest
+}
+
+func getSingleExtraValue(requestor user.Info, key string) (string, bool) {
+	if values := requestor.GetExtra()[key]; len(values) == 1 && len(values[0]) > 0 {
+		return values[0], true
+	}
+	return "", false
+}
+
+const impersonationAPIGroup = "impersonation." + authenticationv1.GroupName
+
+func isSAAuthorizedToImpersonateScheduledNode(ctx context.Context, requestor user.Info, a authorizer.Authorizer) bool {
+	nodeName, _ := getSingleExtraValue(requestor, serviceaccount.NodeNameKey)
+	attributes := &authorizer.AttributesRecord{
+		User:            requestor,
+		Verb:            "impersonate:scheduled-node", // custom verb that efficiently means "this service account is a node agent"
+		Namespace:       "",                           // cluster-scoped check
+		APIGroup:        impersonationAPIGroup,        // TODO decide what group makes the most sense here
+		APIVersion:      "*",
+		Resource:        "nodes",
+		Name:            nodeName, // TODO does it make sense to include this here?  it can only be used for audit logging
+		ResourceRequest: true,
+	}
+	decision, reason, err := a.Authorize(ctx, attributes)
+	if decision == authorizer.DecisionAllow {
+		return true
+	}
+	klog.V(4).InfoS("service account not authorized to impersonate scheduled node",
+		"nodeName", nodeName, "message", responsewriters.ForbiddenStatusError(attributes, reason).Error(), "err", err)
+	return false
+}
+
+func isSAAuthorizedToImpersonateScheduledNodeForCurrentRequest(ctx context.Context, requestor user.Info, a authorizer.Authorizer) bool {
+	attributes, err := GetAuthorizerAttributes(ctx)
+	if err != nil {
+		klog.ErrorS(err, "failed to get authorizer attributes") // should never happen
+		return false
+	}
+	// confirm that the service account itself is authorized for the current request
+	// if that request was framed under the impersonationAPIGroup suffix.
+	// this allows us to express "you can only make an impersonated request of this shape"
+	attributes = &attributesWithImpersonationGroupSuffix{Attributes: attributes}
+	decision, reason, err := a.Authorize(ctx, attributes)
+	if decision == authorizer.DecisionAllow {
+		return true
+	}
+	nodeName, _ := getSingleExtraValue(requestor, serviceaccount.NodeNameKey)
+	klog.V(4).InfoS("service account not authorized to impersonate scheduled node for current request",
+		"nodeName", nodeName, "message", responsewriters.ForbiddenStatusError(attributes, reason).Error(), "err", err)
+	return false
+}
+
+type attributesWithImpersonationGroupSuffix struct {
+	authorizer.Attributes
+}
+
+func (a *attributesWithImpersonationGroupSuffix) GetAPIGroup() string {
+	// TODO decide what group makes the most sense here
+	//  this will look a little bit awkward for the core API group
+	return a.Attributes.GetAPIGroup() + "." + impersonationAPIGroup
 }
