@@ -289,7 +289,9 @@ func buildImpersonationRequests(headers http.Header) ([]v1.ObjectReference, erro
 const nodeUserNamePrefix = "system:node:"
 
 func isSAImpersonatingScheduledNode(requestor user.Info, impersonationRequests []v1.ObjectReference) bool {
-	nodeNameFromUserInfo, ok := getSingleExtraValue(requestor, serviceaccount.NodeNameKey) // TODO should we do a stricter lookup on the node before we use it here?
+	// TODO should we do a stricter lookup on the node before we use it here (for pod bound tokens)?
+	//  also I assume we are okay with SA tokens that are not bound to pods (node bound only tokens)?
+	nodeNameFromUserInfo, ok := getSingleExtraValue(requestor, serviceaccount.NodeNameKey)
 	if !ok {
 		return false
 	}
