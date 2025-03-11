@@ -374,3 +374,74 @@ func (a *attributesWithImpersonationGroupSuffix) GetAPIGroup() string {
 	//  this will look a little bit awkward for the core API group
 	return a.Attributes.GetAPIGroup() + "." + impersonationAPIGroup
 }
+
+/*
+Test commands:
+
+kubectl config set-credentials sa1 --token=ignored
+kubectl get pods --token=$(kubectl create token default --bound-object-kind Node --bound-object-name test-node) --user=sa1 --as system:node:test-node --field-selector=spec.nodeName=test-node
+kubectl get nodes test-node --token=$(kubectl create token default --bound-object-kind Node --bound-object-name test-node) --user=sa1 --as system:node:test-node
+
+Test YAML:
+
+apiVersion: v1
+kind: Node
+metadata:
+  name: test-node
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: impersonate:scheduled-node
+rules:
+- apiGroups:
+  - impersonation.authentication.k8s.io
+  resources:
+  - nodes
+  verbs:
+  - impersonate:scheduled-node
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: impersonate:scheduled-node
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: impersonate:scheduled-node
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: impersonate:scheduled-node-get-pods
+rules:
+- apiGroups:
+  - .impersonation.authentication.k8s.io  # note the leading dot
+  resources:
+  - pods
+  verbs:
+  - list
+# - apiGroups:
+#   - .impersonation.authentication.k8s.io  # note the leading dot
+#   resources:
+#   - nodes
+#   verbs:
+#   - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: impersonate:scheduled-node-get-pods
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: impersonate:scheduled-node-get-pods
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: default
+*/
