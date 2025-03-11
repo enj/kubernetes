@@ -356,6 +356,12 @@ func isSAAuthorizedToImpersonateScheduledNodeForCurrentRequest(ctx context.Conte
 	// confirm that the service account itself is authorized for the current request
 	// if that request was framed under the impersonationAPIGroup suffix.
 	// this allows us to express "you can only make an impersonated request of this shape"
+	// TODO we should combine the requestor and the impersonated user info (i.e. the node)
+	//  by setting the impersonated user info into reserved extra fields in the requestor.
+	//  This would allow an authz webhook today (and RBAC++ in the future) to tie this
+	//  specific impersonation request back to the user info being impersonated.  That would
+	//  allow a more specific restriction such as "when a service account is impersonating
+	//  a node that it is scheduled on, it can make an impersonated request of this shape."
 	attributes = &attributesWithImpersonationGroupSuffix{Attributes: attributes}
 	decision, reason, err := a.Authorize(ctx, attributes)
 	if decision == authorizer.DecisionAllow {
