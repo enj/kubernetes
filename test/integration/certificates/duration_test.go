@@ -50,7 +50,7 @@ import (
 	"k8s.io/utils/pointer"
 )
 
-func TestCSRDuration(t *testing.T) {
+func TestCSRDurationAndCredentialID(t *testing.T) { // TODO fix by wiring audit events and checking for cred ID
 	t.Parallel()
 
 	s := kubeapiservertesting.StartTestServerOrDie(t, nil, framework.DefaultTestServerFlags(), framework.SharedEtcd())

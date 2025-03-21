@@ -278,28 +278,32 @@ func DefaultVerifyOptions() x509.VerifyOptions {
 
 // CommonNameUserConversion builds user info from a certificate chain using the subject's CommonName
 var CommonNameUserConversion = UserConversionFunc(func(chain []*x509.Certificate) (*authenticator.Response, bool, error) {
-	if len(chain[0].Subject.CommonName) == 0 {
+	leaf := chain[0]
+
+	if len(leaf.Subject.CommonName) == 0 {
 		return nil, false, nil
 	}
 
-	fp := sha256.Sum256(chain[0].Raw)
-	id := "X509SHA256=" + hex.EncodeToString(fp[:])
-
-	uid, err := parseUIDFromCert(chain[0])
+	uid, err := parseUIDFromCert(leaf)
 	if err != nil {
 		return nil, false, err
 	}
 	return &authenticator.Response{
 		User: &user.DefaultInfo{
-			Name:   chain[0].Subject.CommonName,
+			Name:   leaf.Subject.CommonName,
 			UID:    uid,
-			Groups: chain[0].Subject.Organization,
+			Groups: leaf.Subject.Organization,
 			Extra: map[string][]string{
-				user.CredentialIDKey: {id},
+				user.CredentialIDKey: {CredentialID(leaf)},
 			},
 		},
 	}, true, nil
 })
+
+func CredentialID(cert *x509.Certificate) string {
+	fp := sha256.Sum256(cert.Raw)
+	return "X509SHA256=" + hex.EncodeToString(fp[:])
+}
 
 var uidOID = asn1util.X509UID()
 

@@ -63,7 +63,7 @@ func NewREST(optsGetter generic.RESTOptionsGetter) (*REST, *StatusREST, *Approva
 	statusStore := *store
 	statusStore.UpdateStrategy = csrregistry.StatusStrategy
 	statusStore.ResetFieldsStrategy = csrregistry.StatusStrategy
-	statusStore.BeginUpdate = countCSRDurationMetric(csrDurationRequested, csrDurationHonored)
+	statusStore.BeginUpdate = countCSRDurationMetricAndAuditIssuedCredentialID(csrDurationRequested, csrDurationHonored)
 
 	approvalStore := *store
 	approvalStore.UpdateStrategy = csrregistry.ApprovalStrategy

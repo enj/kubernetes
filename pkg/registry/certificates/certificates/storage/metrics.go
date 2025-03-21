@@ -26,6 +26,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apiserver/pkg/audit"
+	"k8s.io/apiserver/pkg/authentication/request/x509"
+	"k8s.io/apiserver/pkg/authentication/user"
 	genericregistry "k8s.io/apiserver/pkg/registry/generic/registry"
 	"k8s.io/apiserver/pkg/util/dryrun"
 	"k8s.io/client-go/util/cert"
@@ -79,7 +82,7 @@ type counterVecMetric interface {
 	WithLabelValues(...string) metrics.CounterMetric
 }
 
-func countCSRDurationMetric(requested, honored counterVecMetric) genericregistry.BeginUpdateFunc {
+func countCSRDurationMetricAndAuditIssuedCredentialID(requested, honored counterVecMetric) genericregistry.BeginUpdateFunc {
 	return func(ctx context.Context, obj, old runtime.Object, options *metav1.UpdateOptions) (genericregistry.FinishFunc, error) {
 		return func(ctx context.Context, success bool) {
 			if !success {
@@ -100,10 +103,6 @@ func countCSRDurationMetric(requested, honored counterVecMetric) genericregistry
 				return
 			}
 
-			if oldCSR.Spec.ExpirationSeconds == nil {
-				return // ignore CSRs that are not using the CSR duration feature
-			}
-
 			newCSR, ok := obj.(*certificates.CertificateSigningRequest)
 			if !ok {
 				return
@@ -121,23 +120,35 @@ func countCSRDurationMetric(requested, honored counterVecMetric) genericregistry
 
 			signer := compressSignerName(oldCSR.Spec.SignerName)
 
+			// duration metrics only apply to CSRs that are using the CSR duration feature
+			clientRequestedDuration := oldCSR.Spec.ExpirationSeconds != nil
+
 			// at this point we know that this CSR is going to be persisted and
-			// the cert was just issued and the client requested a duration
-			requested.WithLabelValues(signer).Inc()
+			// the cert was just issued, check if the client requested a duration
+			if clientRequestedDuration {
+				requested.WithLabelValues(signer).Inc()
+			}
 
 			certs, err := cert.ParseCertsPEM(issuedCert)
 			if err != nil {
-				utilruntime.HandleError(fmt.Errorf("metrics recording failed to parse certificate for CSR %s: %w", oldCSR.Name, err))
+				utilruntime.HandleError(fmt.Errorf("metrics/audit recording failed to parse certificate for CSR %s: %w", oldCSR.Name, err))
 				return
 			}
 
-			// now we check to see if the signer honored the requested duration
 			certificate := certs[0]
-			wantDuration := csr.ExpirationSecondsToDuration(*oldCSR.Spec.ExpirationSeconds)
-			actualDuration := certificate.NotAfter.Sub(certificate.NotBefore)
-			if isDurationHonored(wantDuration, actualDuration) {
-				honored.WithLabelValues(signer).Inc()
+
+			// now we check to see if the signer honored the requested duration
+			if clientRequestedDuration {
+				wantDuration := csr.ExpirationSecondsToDuration(*oldCSR.Spec.ExpirationSeconds)
+				actualDuration := certificate.NotAfter.Sub(certificate.NotBefore)
+				if isDurationHonored(wantDuration, actualDuration) {
+					honored.WithLabelValues(signer).Inc()
+				}
 			}
+
+			// TODO include this same audit annotation for issued pod certs
+			audit.AddAuditAnnotation(ctx, user.IssuedCredentialIDAuditAnnotationKey, x509.CredentialID(certificate))
+
 		}, nil
 	}
 }

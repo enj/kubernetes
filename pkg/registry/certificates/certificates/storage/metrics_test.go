@@ -391,7 +391,8 @@ func Test_countCSRDurationMetric(t *testing.T) {
 			testReq := &testCounterVecMetric{}
 			testHon := &testCounterVecMetric{}
 
-			finishFunc, err := countCSRDurationMetric(testReq, testHon)(nil, tt.obj, tt.old, tt.options)
+			// TODO fix context
+			finishFunc, err := countCSRDurationMetricAndAuditIssuedCredentialID(testReq, testHon)(nil, tt.obj, tt.old, tt.options)
 			if err != nil {
 				t.Fatal(err)
 			}
