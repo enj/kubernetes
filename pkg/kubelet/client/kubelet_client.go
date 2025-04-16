@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
+	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/server/egressselector"
 	"k8s.io/client-go/transport"
 	nodeutil "k8s.io/kubernetes/pkg/util/node"
@@ -321,6 +323,9 @@ func (r *validateNodeNameRoundTripper) validateNodeName(conn net.Conn) error {
 	leaf := cs.PeerCertificates[0]
 	if expectedNodeName := "system:node:" + string(r.nodeName); leaf.Subject.CommonName != expectedNodeName {
 		return fmt.Errorf("invalid node name; expected %q, got %q", expectedNodeName, leaf.Subject.CommonName)
+	}
+	if !slices.Contains(leaf.Subject.Organization, user.NodesGroup) {
+		return fmt.Errorf("invalid node groups; expected to include %q, got %q", user.NodesGroup, leaf.Subject.Organization)
 	}
 	return nil
 }
