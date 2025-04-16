@@ -17,18 +17,10 @@ limitations under the License.
 package client
 
 import (
-	"bytes"
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
-	"fmt"
-	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -38,11 +30,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/client-go/util/cert"
 	"k8s.io/kubernetes/test/utils"
 )
@@ -247,11 +239,9 @@ type fakeKubeletServer struct {
 }
 
 func newKubeletServer(tb testing.TB, nodeName string) *fakeKubeletServer {
-	ca, err := createCA()
-	if err != nil {
-		tb.Fatal(err)
-	}
-	servingCert := createServingCert(tb, ca.cert, ca.key, nodeName)
+	signingCert, signingKey := createCA(tb)
+
+	servingCert := createServingCert(tb, signingCert, signingKey, nodeName)
 
 	testServer := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -266,8 +256,8 @@ func newKubeletServer(tb testing.TB, nodeName string) *fakeKubeletServer {
 	testServer.StartTLS()
 	tb.Cleanup(testServer.Close)
 
-	caPath := filepath.Join(tb.TempDir(), "test.ca")
-	if err = os.WriteFile(caPath, ca.certPEM, 0o644); err != nil {
+	caPath := filepath.Join(tb.TempDir(), "ca.crt")
+	if err := os.WriteFile(caPath, utils.EncodeCertPEM(signingCert), 0o644); err != nil {
 		tb.Fatal(err)
 	}
 
@@ -277,64 +267,23 @@ func newKubeletServer(tb testing.TB, nodeName string) *fakeKubeletServer {
 	}
 }
 
-type certificate struct {
-	cert    *x509.Certificate
-	certPEM []byte
-	key     *ecdsa.PrivateKey
-	keyPEM  []byte
+func createCA(tb testing.TB) (*x509.Certificate, crypto.Signer) {
+	tb.Helper()
+
+	signingKey, err := utils.NewPrivateKey()
+	if err != nil {
+		tb.Fatal(err)
+	}
+
+	signingCert, err := cert.NewSelfSignedCACert(cert.Config{CommonName: "e2e-server-cert-ca"}, signingKey)
+	if err != nil {
+		tb.Fatal(err)
+	}
+
+	return signingCert, signingKey
 }
 
-func createCA() (*certificate, error) {
-	now := time.Now()
-	privateKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("generating private key for CA: %w", err)
-	}
-
-	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return nil, fmt.Errorf("generating serial number for CA: %w", err)
-	}
-	ca := &x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			CommonName: "kubernetes",
-		},
-		NotBefore:             now,
-		NotAfter:              now.AddDate(1, 0, 0), // 1 year
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-	}
-
-	caBytes, err := x509.CreateCertificate(rand.Reader, ca, ca, &privateKey.PublicKey, privateKey)
-	if err != nil {
-		return nil, fmt.Errorf("creating CA certificate: %w", err)
-	}
-
-	caPEM := new(bytes.Buffer)
-	pem.Encode(caPEM, &pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: caBytes,
-	})
-
-	privateKeyBytes, err := x509.MarshalECPrivateKey(privateKey)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling private key: %w", err)
-	}
-
-	keyPEM := new(bytes.Buffer)
-	pem.Encode(keyPEM, &pem.Block{Type: "EC PRIVATE KEY", Bytes: privateKeyBytes})
-
-	return &certificate{
-		certPEM: caPEM.Bytes(),
-		cert:    ca,
-		key:     privateKey,
-		keyPEM:  keyPEM.Bytes(),
-	}, nil
-}
-
-func createServingCert(tb testing.TB, ca *x509.Certificate, caPrivKey crypto.Signer, nodeName string) tls.Certificate {
+func createServingCert(tb testing.TB, signingCert *x509.Certificate, signingKey crypto.Signer, nodeName string) tls.Certificate {
 	tb.Helper()
 
 	key, err := utils.NewPrivateKey()
@@ -346,14 +295,14 @@ func createServingCert(tb testing.TB, ca *x509.Certificate, caPrivKey crypto.Sig
 		&cert.Config{
 			CommonName: "system:node:" + nodeName,
 			Organization: []string{
-				"system:nodes",
+				user.NodesGroup,
 			},
 			Usages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 			AltNames: cert.AltNames{
 				IPs: []net.IP{net.ParseIP("127.0.0.1")},
 			},
 		},
-		key, ca, caPrivKey,
+		key, signingCert, signingKey,
 	)
 	if err != nil {
 		tb.Fatal(err)
