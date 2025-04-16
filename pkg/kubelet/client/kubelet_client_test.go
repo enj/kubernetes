@@ -19,6 +19,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -42,6 +43,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/cert"
+	"k8s.io/kubernetes/test/utils"
 )
 
 func TestMakeTransportInvalid(t *testing.T) {
@@ -179,6 +182,8 @@ func TestValidateNodeName(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// TODO test with multiple nodes and with connection re-use
+
 	testCases := []struct {
 		name                 string
 		nodeName             types.NodeName
@@ -246,10 +251,7 @@ func newKubeletServer(tb testing.TB, nodeName string) *fakeKubeletServer {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	servingCert, err := createServingCert(ca.cert, ca.key, nodeName)
-	if err != nil {
-		tb.Fatal(err)
-	}
+	servingCert := createServingCert(tb, ca.cert, ca.key, nodeName)
 
 	testServer := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -257,12 +259,8 @@ func newKubeletServer(tb testing.TB, nodeName string) *fakeKubeletServer {
 
 	testServer.EnableHTTP2 = true // TODO test both with http1 and http2
 
-	cert, err := tls.X509KeyPair(servingCert.certPEM, servingCert.keyPEM)
-	if err != nil {
-		tb.Fatal(err)
-	}
 	testServer.TLS = &tls.Config{
-		Certificates: []tls.Certificate{cert},
+		Certificates: []tls.Certificate{servingCert},
 	}
 
 	testServer.StartTLS()
@@ -336,56 +334,33 @@ func createCA() (*certificate, error) {
 	}, nil
 }
 
-func createServingCert(ca *x509.Certificate, caPrivKey any, nodeName string) (*certificate, error) {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+func createServingCert(tb testing.TB, ca *x509.Certificate, caPrivKey crypto.Signer, nodeName string) tls.Certificate {
+	tb.Helper()
+
+	key, err := utils.NewPrivateKey()
 	if err != nil {
-		return nil, fmt.Errorf("generating private key for certificate: %w", err)
+		tb.Fatal(err)
 	}
 
-	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return nil, fmt.Errorf("generating serial number for certificate: %w", err)
-	}
-	now := time.Now()
-	cert := &x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
+	signedCert, err := utils.NewSignedCert(
+		&cert.Config{
 			CommonName: "system:node:" + nodeName,
 			Organization: []string{
 				"system:nodes",
 			},
+			Usages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+			AltNames: cert.AltNames{
+				IPs: []net.IP{net.ParseIP("127.0.0.1")},
+			},
 		},
-		NotBefore:             now,
-		NotAfter:              now.AddDate(1, 0, 0), // 1 years
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
-	}
-
-	certBytes, err := x509.CreateCertificate(rand.Reader, cert, ca, &privateKey.PublicKey, caPrivKey)
+		key, ca, caPrivKey,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("creating CA certificate: %w", err)
+		tb.Fatal(err)
 	}
 
-	certPEM := new(bytes.Buffer)
-	pem.Encode(certPEM, &pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: certBytes,
-	})
-
-	privateKeyBytes, err := x509.MarshalECPrivateKey(privateKey)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling private key: %w", err)
+	return tls.Certificate{
+		Certificate: [][]byte{signedCert.Raw},
+		PrivateKey:  key,
 	}
-
-	keyPEM := new(bytes.Buffer)
-	pem.Encode(keyPEM, &pem.Block{Type: "EC PRIVATE KEY", Bytes: privateKeyBytes})
-
-	return &certificate{
-		certPEM: certPEM.Bytes(),
-		cert:    cert,
-		key:     privateKey,
-		keyPEM:  keyPEM.Bytes(),
-	}, nil
 }
