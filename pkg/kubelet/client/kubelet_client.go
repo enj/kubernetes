@@ -233,6 +233,8 @@ func (k *NodeConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeNa
 	}, nil
 }
 
+var errNodeNameValidationSkipped = fmt.Errorf("node name was not validated")
+
 var _ utilnet.RoundTripperWrapper = &validateNodeNameRoundTripper{}
 
 type validateNodeNameRoundTripper struct {
@@ -265,11 +267,11 @@ func (r *validateNodeNameRoundTripper) RoundTrip(req *http.Request) (rtResp *htt
 		defer lock.Unlock()
 
 		if !validated && failedErr == nil {
-			rtErr = utilerrors.NewAggregate([]error{fmt.Errorf("node name was not validated"), rtErr})
+			rtErr = newAggregateWithCleaning(errNodeNameValidationSkipped, rtErr)
 		}
 
-		if failedErr != nil {
-			rtErr = utilerrors.NewAggregate([]error{failedErr, rtErr})
+		if failedErr != nil && failedErr != rtErr {
+			rtErr = newAggregateWithCleaning(failedErr, rtErr)
 		}
 
 		if rtErr != nil {
@@ -328,4 +330,8 @@ func (r *validateNodeNameRoundTripper) validateNodeName(conn net.Conn) error {
 		return fmt.Errorf("invalid node groups; expected to include %q, got %q", user.NodesGroup, leaf.Subject.Organization)
 	}
 	return nil
+}
+
+func newAggregateWithCleaning(errs ...error) error {
+	return utilerrors.Reduce(utilerrors.FilterOut(utilerrors.NewAggregate(errs), func(err error) bool { return err == context.Canceled }))
 }
