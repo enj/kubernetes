@@ -211,15 +211,9 @@ func TestValidateNodeName(t *testing.T) {
 				t.Fatal(err)
 			}
 			response, err := nodeInfo.Transport.RoundTrip(req)
-			if err != nil && tc.expectErr == "" {
-				t.Fatalf("Roundtrip failed: %s", err)
-			}
-			if err != nil && tc.expectErr != err.Error() {
-				t.Fatalf("Expected error [%s], got: %s", tc.expectErr, err)
-			}
 
-			if err == nil && tc.expectErr != "" {
-				t.Fatalf("Expected error [%s] but got success", err)
+			if got := errString(err); tc.expectErr != got {
+				t.Fatalf("expected error %q but got %q", tc.expectErr, got)
 			}
 
 			if err == nil && response.StatusCode != http.StatusOK {
@@ -312,4 +306,12 @@ func createServingCert(tb testing.TB, signingCert *x509.Certificate, signingKey 
 		Certificate: [][]byte{signedCert.Raw},
 		PrivateKey:  key,
 	}
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	return err.Error()
 }
