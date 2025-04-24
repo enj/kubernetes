@@ -138,15 +138,6 @@ func TestValidateNodeName(t *testing.T) {
 	const nodeName = "my-node-1"
 	kubeletServer := newKubeletServer(t, nodeName)
 
-	hostname, portStr, err := net.SplitHostPort(kubeletServer.server.Listener.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	port, err := strconv.ParseInt(portStr, 10, 32)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	nodeGetter := NodeGetterFunc(func(ctx context.Context, name string, options metav1.GetOptions) (*corev1.Node, error) {
 		return &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
@@ -156,12 +147,12 @@ func TestValidateNodeName(t *testing.T) {
 				Addresses: []corev1.NodeAddress{
 					{
 						Type:    corev1.NodeInternalIP,
-						Address: hostname,
+						Address: kubeletServer.hostname,
 					},
 				},
 				DaemonEndpoints: corev1.NodeDaemonEndpoints{
 					KubeletEndpoint: corev1.DaemonEndpoint{
-						Port: int32(port),
+						Port: kubeletServer.port,
 					},
 				},
 			},
@@ -245,16 +236,19 @@ func TestValidateNodeName(t *testing.T) {
 type fakeKubeletServer struct {
 	server     *httptest.Server
 	caFilePath string
+	hostname   string
+	port       int32
 }
 
 func newKubeletServer(tb testing.TB, nodeName string) *fakeKubeletServer {
+	tb.Helper()
+
 	signingCert, signingKey := createCA(tb)
 
 	servingCert := createServingCert(tb, signingCert, signingKey, nodeName)
 
-	testServer := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	mux := http.NewServeMux()
+	testServer := httptest.NewUnstartedServer(mux)
 
 	testServer.EnableHTTP2 = true // TODO test both with http1 and http2
 
@@ -265,6 +259,20 @@ func newKubeletServer(tb testing.TB, nodeName string) *fakeKubeletServer {
 	testServer.StartTLS()
 	tb.Cleanup(testServer.Close)
 
+	hostname, portStr, err := net.SplitHostPort(testServer.Listener.Addr().String())
+	if err != nil {
+		tb.Fatal(err)
+	}
+	port, err := strconv.ParseInt(portStr, 10, 32)
+	if err != nil {
+		tb.Fatal(err)
+	}
+
+	// validate the incoming host via the mux registration
+	mux.HandleFunc(hostname+"/", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
 	caPath := filepath.Join(tb.TempDir(), "ca.crt")
 	if err := os.WriteFile(caPath, utils.EncodeCertPEM(signingCert), 0o644); err != nil {
 		tb.Fatal(err)
@@ -273,6 +281,8 @@ func newKubeletServer(tb testing.TB, nodeName string) *fakeKubeletServer {
 	return &fakeKubeletServer{
 		server:     testServer,
 		caFilePath: caPath,
+		hostname:   hostname,
+		port:       int32(port),
 	}
 }
 

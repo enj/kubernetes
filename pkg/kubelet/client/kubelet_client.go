@@ -278,7 +278,7 @@ func withValidateNodeName(delegate http.RoundTripper, nodeName, hostname, port s
 			commonName: "system:node:" + nodeName,
 			// nodeName cannot contain ; or : due to ValidateNodeName
 			// hostname could be anything so we lowercase base32 encode it -> it also cannot contain ; or :
-			// therefore we know this is an unambiguous cache key that passes httpguts.ValidHostHeader
+			// therefore we know this is an unambiguous cache key that passes httpguts.ValidHostHeader and net.SplitHostPort
 			connCacheKey:  net.JoinHostPort(nodeName+";"+base32Hostname, port),
 			tlsServerName: hostname,
 			tcpDialAddr:   net.JoinHostPort(hostname, port),
@@ -312,13 +312,18 @@ func (r *validateNodeNameRoundTripper) RoundTrip(req *http.Request) (*http.Respo
 	onlyH1 := wsstream.IsWebSocketRequest(req) // matches *http.Request.requiresHTTP1
 	ctx := withReqHostRewrite(req.Context(), r.hostRewrite, onlyH1)
 	req = req.Clone(ctx) // so we can mutate the request URL
-	req.Host = ""
+	// set the "Host" header / ":authority" pseudo-header field so that servers
+	// can correctly perform host based routing based on the original value.
+	req.Host = r.hostRewrite.tcpDialAddr
 	// override targetAddr used by *http.Transport.connectMethodForRequest which directly
 	// controls the cache key used by *http.Transport.getConn and *http.Transport.dialConn.
 	// we undo this rewrite in *http.Transport.DialTLSContext by passing in the original
 	// value to *http.Transport.DialContext.  DialTLSContext maintains the regular TLS
 	// verification semantics by setting *tls.Config.ServerName to the same value that
 	// *http.persistConn.addTLS would have set if we did not rewrite the host value here.
+	// this also works for http2 requests as http.http2authorityAddr uses this same value
+	// to determine the http2ClientConnPool.GetClientConn input which is used as the map
+	// key for tracking and re-using http.http2ClientConn values.
 	req.URL.Host = r.hostRewrite.connCacheKey
 
 	return r.delegate.RoundTrip(req)
