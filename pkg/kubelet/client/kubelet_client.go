@@ -301,10 +301,10 @@ func (k *NodeConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeNa
 			proxy:    k.proxy,
 			hostRewrite: reqHostRewrite{
 				commonName: "system:node:" + string(nodeName),
-				// nodeName cannot contain / or : due to ValidateNodeName
-				// hostname could be anything so we lowercase base32 encode it -> it also cannot contain / or :
-				// therefore we know this is a safe cache and unambiguous key
-				connCacheKey:  net.JoinHostPort(string(nodeName)+"/"+base32Hostname, portStr),
+				// nodeName cannot contain ; or : due to ValidateNodeName
+				// hostname could be anything so we lowercase base32 encode it -> it also cannot contain ; or :
+				// therefore we know this is an unambiguous cache key that passes httpguts.ValidHostHeader
+				connCacheKey:  net.JoinHostPort(string(nodeName)+";"+base32Hostname, portStr),
 				tlsServerName: hostname,
 				tcpDialAddr:   net.JoinHostPort(hostname, portStr),
 			},
