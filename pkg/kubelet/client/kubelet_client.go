@@ -101,7 +101,7 @@ type reqHostRewriteKeyType int
 
 const reqHostRewriteKey reqHostRewriteKeyType = iota
 
-func withDialRewrite(ctx context.Context, hostRewrite reqHostRewrite, onlyH1 bool) context.Context {
+func withReqHostRewrite(ctx context.Context, hostRewrite reqHostRewrite, onlyH1 bool) context.Context {
 	return context.WithValue(ctx, reqHostRewriteKey, reqHostRewriteAndH1{hostRewrite: hostRewrite, onlyH1: onlyH1})
 }
 
@@ -148,8 +148,9 @@ func makeTransport(config *KubeletClientConfig, insecureSkipTLSVerify bool) (htt
 // transportConfig converts a client config to an appropriate transport config.
 func (c *KubeletClientConfig) transportConfig() *transport.Config {
 	cfg := &transport.Config{
-		// always bust the client-go TLS cache instead of only when KubeletClientConfig.Lookup is set
-		// this allows us to safely mutate the underlying *http.Transport in NewNodeConnectionInfoGetter
+		// always bust the client-go TLS cache instead of only when KubeletClientConfig.Lookup is set.
+		// this allows us to safely mutate the underlying *http.Transport in mutateTransportToValidateNodeName.
+		// note that we do not need the client-go TLS cache since we make and re-use a small number of transports.
 		// TODO add unit test
 		//  1. unique transport per call for same inputs
 		//  2. unwrapping still works at high log levels when the transport is actually wrapped
@@ -256,20 +257,7 @@ func (k *NodeConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeNa
 
 	rt := k.transport
 	if k.validateNodeName {
-		// TODO should we hash the hostname before encoding it?
-		base32Hostname := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte(hostname)))
-		rt = &validateNodeNameRoundTripper{
-			delegate: rt,
-			hostRewrite: reqHostRewrite{
-				commonName: "system:node:" + string(nodeName),
-				// nodeName cannot contain ; or : due to ValidateNodeName
-				// hostname could be anything so we lowercase base32 encode it -> it also cannot contain ; or :
-				// therefore we know this is an unambiguous cache key that passes httpguts.ValidHostHeader
-				connCacheKey:  net.JoinHostPort(string(nodeName)+";"+base32Hostname, portStr),
-				tlsServerName: hostname,
-				tcpDialAddr:   net.JoinHostPort(hostname, portStr),
-			},
-		}
+		rt = withValidateNodeName(rt, string(nodeName), hostname, portStr)
 	}
 
 	return &ConnectionInfo{
@@ -279,6 +267,23 @@ func (k *NodeConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeNa
 		Transport:                      rt,
 		InsecureSkipTLSVerifyTransport: k.insecureSkipTLSVerifyTransport,
 	}, nil
+}
+
+func withValidateNodeName(delegate http.RoundTripper, nodeName, hostname, port string) http.RoundTripper {
+	// TODO should we hash the hostname before encoding it?
+	base32Hostname := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte(hostname)))
+	return &validateNodeNameRoundTripper{
+		delegate: delegate,
+		hostRewrite: reqHostRewrite{
+			commonName: "system:node:" + nodeName,
+			// nodeName cannot contain ; or : due to ValidateNodeName
+			// hostname could be anything so we lowercase base32 encode it -> it also cannot contain ; or :
+			// therefore we know this is an unambiguous cache key that passes httpguts.ValidHostHeader
+			connCacheKey:  net.JoinHostPort(nodeName+";"+base32Hostname, port),
+			tlsServerName: hostname,
+			tcpDialAddr:   net.JoinHostPort(hostname, port),
+		},
+	}
 }
 
 var _ utilnet.RoundTripperWrapper = &validateNodeNameRoundTripper{}
@@ -305,9 +310,15 @@ func (r *validateNodeNameRoundTripper) RoundTrip(req *http.Request) (*http.Respo
 	}
 
 	onlyH1 := wsstream.IsWebSocketRequest(req) // matches *http.Request.requiresHTTP1
-	ctx := withDialRewrite(req.Context(), r.hostRewrite, onlyH1)
+	ctx := withReqHostRewrite(req.Context(), r.hostRewrite, onlyH1)
 	req = req.Clone(ctx) // so we can mutate the request URL
 	req.Host = ""
+	// override targetAddr used by *http.Transport.connectMethodForRequest which directly
+	// controls the cache key used by *http.Transport.getConn and *http.Transport.dialConn.
+	// we undo this rewrite in *http.Transport.DialTLSContext by passing in the original
+	// value to *http.Transport.DialContext.  DialTLSContext maintains the regular TLS
+	// verification semantics by setting *tls.Config.ServerName to the same value that
+	// *http.persistConn.addTLS would have set if we did not rewrite the host value here.
 	req.URL.Host = r.hostRewrite.connCacheKey
 
 	return r.delegate.RoundTrip(req)
@@ -318,8 +329,9 @@ func mutateTransportToValidateNodeName(baseRT http.RoundTripper) error {
 	if err != nil {
 		return fmt.Errorf("failed to get *http.Transport for transport: %w", err)
 	}
-	if rt.DialTLSContext != nil || rt.DialContext == nil || rt.TLSClientConfig == nil || len(rt.TLSClientConfig.ServerName) != 0 || rt.TLSHandshakeTimeout == 0 {
-		return fmt.Errorf("*http.Transport has invalid state: %#v", rt)
+	if rt.DialTLSContext != nil || rt.DialContext == nil || rt.TLSHandshakeTimeout == 0 ||
+		rt.TLSClientConfig == nil || len(rt.TLSClientConfig.ServerName) != 0 || rt.TLSClientConfig.VerifyConnection != nil {
+		return fmt.Errorf("*http.Transport has invalid state: %#v", rt) // sanity check client-go internals that we rely on
 	}
 	// mutate the underlying *http.Transport in-place
 	rt.DialTLSContext = func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -333,13 +345,13 @@ func mutateTransportToValidateNodeName(baseRT http.RoundTripper) error {
 		if address != hostRewrite.connCacheKey {
 			return nil, fmt.Errorf("rewrite of %q->%q failed, got unexpected address %q", hostRewrite.connCacheKey, hostRewrite.tcpDialAddr, address)
 		}
-		plainConn, err := rt.DialContext(ctx, "tcp", hostRewrite.tcpDialAddr)
+		plainConn, err := rt.DialContext(ctx, "tcp", hostRewrite.tcpDialAddr) // make the TCP connection to the original host
 		if err != nil {
 			return nil, fmt.Errorf("failed to make TCP connection: %w", err)
 		}
-		tlsConfig := rt.TLSClientConfig.Clone()                           // so we can mutate it per connection
-		tlsConfig.ServerName = hostRewrite.tlsServerName                  // maintain the existing SAN check
-		tlsConfig.VerifyConnection = func(cs tls.ConnectionState) error { // add the extra CN check
+		tlsConfig := rt.TLSClientConfig.Clone()                           // shallow clone so we can mutate it per connection
+		tlsConfig.ServerName = hostRewrite.tlsServerName                  // maintain the existing SAN check via *x509.Certificate.VerifyHostname
+		tlsConfig.VerifyConnection = func(cs tls.ConnectionState) error { // add the extra kubelet common name check
 			leaf := cs.PeerCertificates[0]
 			if leaf.Subject.CommonName != hostRewrite.commonName {
 				return fmt.Errorf("invalid node name; expected %q, got %q", hostRewrite.commonName, leaf.Subject.CommonName)
@@ -365,16 +377,17 @@ func httpTransportFor(rt http.RoundTripper) (*http.Transport, error) {
 	switch t := rt.(type) {
 	case *http.Transport:
 		return t, nil
-	case utilnet.RoundTripperWrapper:
+	case utilnet.RoundTripperWrapper: // TODO see if we can add a unit test to enforce that all http.RoundTripper in k/k implement this
 		return httpTransportFor(t.WrappedRoundTripper())
 	default:
 		return nil, fmt.Errorf("unknown transport type: %T", t)
 	}
 }
 
-// copied with modifications from *http.persistConn.addTLS
+// tlsHandshakeTimeoutError and addTLS below are copied with modifications from *http.persistConn.addTLS.
 // we lose the exact timings of the tracing TLSHandshakeStart and TLSHandshakeDone hooks
-// but not calling them here seems better than calling them multiple times for the same TLS connection
+// but not calling them in addTLS seems better than calling them multiple times for the same TLS connection.
+// we need to copy addTLS to preserve the non-blocking cancellation logic for *http.Transport.TLSHandshakeTimeout.
 
 type tlsHandshakeTimeoutError struct{}
 
