@@ -138,9 +138,14 @@ func TestValidateNodeName(t *testing.T) {
 	const nodeName = "my-node-1"
 	kubeletServer := newKubeletServer(t, nodeName)
 
-	// TODO fail on errors
-	hostname, portStr, _ := net.SplitHostPort(kubeletServer.server.Listener.Addr().String())
-	port, _ := strconv.ParseInt(portStr, 10, 32)
+	hostname, portStr, err := net.SplitHostPort(kubeletServer.server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.ParseInt(portStr, 10, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	nodeGetter := NodeGetterFunc(func(ctx context.Context, name string, options metav1.GetOptions) (*corev1.Node, error) {
 		return &corev1.Node{
