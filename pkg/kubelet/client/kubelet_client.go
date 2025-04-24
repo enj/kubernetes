@@ -19,6 +19,7 @@ package client
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base32"
 	"fmt"
 	"net"
 	"net/http"
@@ -26,6 +27,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -86,24 +88,24 @@ type ConnectionInfoGetter interface {
 	GetConnectionInfo(ctx context.Context, nodeName types.NodeName) (*ConnectionInfo, error)
 }
 
-type dialRewrite struct {
-	cn               string
-	cnWithPort       string
-	hostname         string
-	hostnameWithPort string
+type reqHostRewrite struct {
+	commonName    string
+	connCacheKey  string
+	tlsServerName string
+	tcpDialAddr   string
 }
 
-type dialRewriteKeyType int
+type reqHostRewriteKeyType int
 
-const dialRewriteKey dialRewriteKeyType = iota
+const reqHostRewriteKey reqHostRewriteKeyType = iota
 
-func withDialRewrite(ctx context.Context, dr dialRewrite) context.Context {
-	return context.WithValue(ctx, dialRewriteKey, dr)
+func withDialRewrite(ctx context.Context, hostRewrite reqHostRewrite) context.Context {
+	return context.WithValue(ctx, reqHostRewriteKey, hostRewrite)
 }
 
-func dialRewriteFrom(ctx context.Context) (dialRewrite, bool) {
-	dr, ok := ctx.Value(dialRewriteKey).(dialRewrite)
-	return dr, ok
+func reqHostRewriteFrom(ctx context.Context) (reqHostRewrite, bool) {
+	hostRewrite, ok := ctx.Value(reqHostRewriteKey).(reqHostRewrite)
+	return hostRewrite, ok
 }
 
 // MakeTransport creates a secure RoundTripper for HTTP Transport.
@@ -211,7 +213,7 @@ func NewNodeConnectionInfoGetter(nodes NodeGetter, config KubeletClientConfig) (
 		if err != nil {
 			return nil, fmt.Errorf("failed to get *http.Transport for transport: %w", err)
 		}
-		if rt.DialTLSContext != nil || rt.DialContext == nil || rt.TLSClientConfig == nil {
+		if rt.DialTLSContext != nil || rt.DialContext == nil || rt.TLSClientConfig == nil || len(rt.TLSClientConfig.ServerName) != 0 {
 			return nil, fmt.Errorf("*http.Transport has invalid state")
 		}
 		// mutate the underlying *http.Transport in-place
@@ -219,23 +221,23 @@ func NewNodeConnectionInfoGetter(nodes NodeGetter, config KubeletClientConfig) (
 			if network != "tcp" {
 				return nil, fmt.Errorf("only tcp connections are supported")
 			}
-			dr, ok := dialRewriteFrom(ctx)
+			hostRewrite, ok := reqHostRewriteFrom(ctx)
 			if !ok {
 				return nil, fmt.Errorf("failed to get dial rewrite from context")
 			}
-			if address != dr.cnWithPort {
-				return nil, fmt.Errorf("rewrite of %q->%q failed, got unexpected address %q", dr.cnWithPort, dr.hostnameWithPort, address)
+			if address != hostRewrite.connCacheKey {
+				return nil, fmt.Errorf("rewrite of %q->%q failed, got unexpected address %q", hostRewrite.connCacheKey, hostRewrite.tcpDialAddr, address)
 			}
-			rawConn, err := rt.DialContext(ctx, "tcp", dr.hostnameWithPort)
+			rawConn, err := rt.DialContext(ctx, "tcp", hostRewrite.tcpDialAddr)
 			if err != nil {
 				return nil, fmt.Errorf("failed to make TCP connection: %w", err)
 			}
-			tlsConfig := rt.TLSClientConfig.Clone()
-			tlsConfig.ServerName = dr.hostname                                // maintain the existing SAN check
+			tlsConfig := rt.TLSClientConfig.Clone()                           // so we can mutate it per connection
+			tlsConfig.ServerName = hostRewrite.tlsServerName                  // maintain the existing SAN check
 			tlsConfig.VerifyConnection = func(cs tls.ConnectionState) error { // add the extra CN check
 				leaf := cs.PeerCertificates[0]
-				if leaf.Subject.CommonName != dr.cn {
-					return fmt.Errorf("invalid node name; expected %q, got %q", dr.cn, leaf.Subject.CommonName)
+				if leaf.Subject.CommonName != hostRewrite.commonName {
+					return fmt.Errorf("invalid node name; expected %q, got %q", hostRewrite.commonName, leaf.Subject.CommonName)
 				}
 				if !slices.Contains(leaf.Subject.Organization, user.NodesGroup) {
 					return fmt.Errorf("invalid node groups; expected to include %q, got %q", user.NodesGroup, leaf.Subject.Organization)
@@ -291,16 +293,20 @@ func (k *NodeConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeNa
 
 	rt := k.transport
 	if k.validateNodeName {
-		cn := "system:node:" + string(nodeName)
+		// TODO should we hash the hostname before encoding it?
+		base32Hostname := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte(hostname)))
 		rt = &validateNodeNameRoundTripper{
 			nodeName: nodeName,
 			delegate: rt,
 			proxy:    k.proxy,
-			dr: dialRewrite{
-				cn:               cn,
-				cnWithPort:       net.JoinHostPort(cn, portStr),
-				hostname:         hostname,
-				hostnameWithPort: net.JoinHostPort(hostname, portStr),
+			hostRewrite: reqHostRewrite{
+				commonName: "system:node:" + string(nodeName),
+				// nodeName cannot contain / or : due to ValidateNodeName
+				// hostname could be anything so we lowercase base32 encode it -> it also cannot contain / or :
+				// therefore we know this is a safe cache and unambiguous key
+				connCacheKey:  net.JoinHostPort(string(nodeName)+"/"+base32Hostname, portStr),
+				tlsServerName: hostname,
+				tcpDialAddr:   net.JoinHostPort(hostname, portStr),
 			},
 		}
 	}
@@ -319,10 +325,10 @@ var errNodeNameValidationSkipped = fmt.Errorf("node name was not validated")
 var _ utilnet.RoundTripperWrapper = &validateNodeNameRoundTripper{}
 
 type validateNodeNameRoundTripper struct {
-	nodeName types.NodeName
-	delegate http.RoundTripper
-	proxy    func(*http.Request) (*url.URL, error)
-	dr       dialRewrite
+	nodeName    types.NodeName
+	delegate    http.RoundTripper
+	proxy       func(*http.Request) (*url.URL, error)
+	hostRewrite reqHostRewrite
 }
 
 func (r *validateNodeNameRoundTripper) WrappedRoundTripper() http.RoundTripper {
@@ -333,17 +339,18 @@ func (r *validateNodeNameRoundTripper) RoundTrip(req *http.Request) (*http.Respo
 	if req.URL.Scheme != "https" {
 		return nil, fmt.Errorf(`node name %q must use scheme "https", got %q`, r.nodeName, req.URL.Scheme)
 	}
-	if req.URL.Host != r.dr.hostnameWithPort {
-		return nil, fmt.Errorf("node name %q must use host %q, got %q", r.nodeName, r.dr.hostnameWithPort, req.URL.Host)
+	// TODO these checks enforce that proxy URL is not set, does that make sense?
+	if req.URL.Host != r.hostRewrite.tcpDialAddr {
+		return nil, fmt.Errorf("node name %q must use host %q, got %q", r.nodeName, r.hostRewrite.tcpDialAddr, req.URL.Host)
 	}
-	if len(req.Host) > 0 && req.Host != r.dr.hostnameWithPort {
-		return nil, fmt.Errorf("node name %q must use host %q, got %q", r.nodeName, r.dr.hostnameWithPort, req.Host)
+	if len(req.Host) > 0 && req.Host != r.hostRewrite.tcpDialAddr {
+		return nil, fmt.Errorf("node name %q must use host %q, got %q", r.nodeName, r.hostRewrite.tcpDialAddr, req.Host)
 	}
 
-	ctx := withDialRewrite(req.Context(), r.dr)
-	req = req.Clone(ctx)       // so we can mutate the request URL
-	req.Host = r.dr.cnWithPort // TODO should we set this to the empty string?
-	req.URL.Host = r.dr.cnWithPort
+	ctx := withDialRewrite(req.Context(), r.hostRewrite)
+	req = req.Clone(ctx) // so we can mutate the request URL
+	req.Host = ""
+	req.URL.Host = r.hostRewrite.connCacheKey
 
 	resp, err := r.delegate.RoundTrip(req)
 	if err != nil {
