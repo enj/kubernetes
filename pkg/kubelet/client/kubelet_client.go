@@ -23,18 +23,14 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/http/httptrace"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/server/egressselector"
@@ -149,6 +145,8 @@ func (c *KubeletClientConfig) transportConfig() *transport.Config {
 		// always bust the client-go TLS cache instead of only when KubeletClientConfig.Lookup is set
 		// this allows us to safely mutate the underlying *http.Transport in NewNodeConnectionInfoGetter
 		// TODO add unit test
+		//  1. unique transport per call for same inputs
+		//  2. unwrapping still works at high log levels when the transport is actually wrapped
 		Proxy: http.ProxyFromEnvironment,
 		TLS: transport.TLSConfig{
 			CAFile:   c.TLSClientConfig.CAFile,
@@ -188,8 +186,6 @@ type NodeConnectionInfoGetter struct {
 	defaultPort int
 	// transport is the transport to use to send a request to all kubelets
 	transport http.RoundTripper
-	// proxy is proxy func associated with transport
-	proxy func(*http.Request) (*url.URL, error)
 	// check that the kubelet's serving certificate common name matches the name of the kubelet
 	validateNodeName bool
 	// insecureSkipTLSVerifyTransport is the transport to use if the kube-apiserver wants to skip verifying the TLS certificate of the kubelet
@@ -203,10 +199,6 @@ func NewNodeConnectionInfoGetter(nodes NodeGetter, config KubeletClientConfig) (
 	transport, err := MakeTransport(&config)
 	if err != nil {
 		return nil, err
-	}
-	proxy, err := proxyFor(transport)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get proxy for transport: %w", err)
 	}
 	if config.TLSClientConfig.ValidateNodeName {
 		rt, err := httpTransportFor(transport)
@@ -263,7 +255,6 @@ func NewNodeConnectionInfoGetter(nodes NodeGetter, config KubeletClientConfig) (
 		scheme:                         "https",
 		defaultPort:                    int(config.Port),
 		transport:                      transport,
-		proxy:                          proxy,
 		validateNodeName:               config.TLSClientConfig.ValidateNodeName,
 		insecureSkipTLSVerifyTransport: insecureSkipTLSVerifyTransport,
 
@@ -296,9 +287,7 @@ func (k *NodeConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeNa
 		// TODO should we hash the hostname before encoding it?
 		base32Hostname := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte(hostname)))
 		rt = &validateNodeNameRoundTripper{
-			nodeName: nodeName,
 			delegate: rt,
-			proxy:    k.proxy,
 			hostRewrite: reqHostRewrite{
 				commonName: "system:node:" + string(nodeName),
 				// nodeName cannot contain ; or : due to ValidateNodeName
@@ -320,14 +309,10 @@ func (k *NodeConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeNa
 	}, nil
 }
 
-var errNodeNameValidationSkipped = fmt.Errorf("node name was not validated")
-
 var _ utilnet.RoundTripperWrapper = &validateNodeNameRoundTripper{}
 
 type validateNodeNameRoundTripper struct {
-	nodeName    types.NodeName
 	delegate    http.RoundTripper
-	proxy       func(*http.Request) (*url.URL, error)
 	hostRewrite reqHostRewrite
 }
 
@@ -337,14 +322,14 @@ func (r *validateNodeNameRoundTripper) WrappedRoundTripper() http.RoundTripper {
 
 func (r *validateNodeNameRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Scheme != "https" {
-		return nil, fmt.Errorf(`node name %q must use scheme "https", got %q`, r.nodeName, req.URL.Scheme)
+		return nil, fmt.Errorf(`%q must use scheme "https", got %q`, r.hostRewrite.commonName, req.URL.Scheme)
 	}
 	// TODO these checks enforce that proxy URL is not set, does that make sense?
 	if req.URL.Host != r.hostRewrite.tcpDialAddr {
-		return nil, fmt.Errorf("node name %q must use host %q, got %q", r.nodeName, r.hostRewrite.tcpDialAddr, req.URL.Host)
+		return nil, fmt.Errorf("%q must use host %q, got %q", r.hostRewrite.commonName, r.hostRewrite.tcpDialAddr, req.URL.Host)
 	}
 	if len(req.Host) > 0 && req.Host != r.hostRewrite.tcpDialAddr {
-		return nil, fmt.Errorf("node name %q must use host %q, got %q", r.nodeName, r.hostRewrite.tcpDialAddr, req.Host)
+		return nil, fmt.Errorf("%q must use host %q, got %q", r.hostRewrite.commonName, r.hostRewrite.tcpDialAddr, req.Host)
 	}
 
 	ctx := withDialRewrite(req.Context(), r.hostRewrite)
@@ -352,148 +337,7 @@ func (r *validateNodeNameRoundTripper) RoundTrip(req *http.Request) (*http.Respo
 	req.Host = ""
 	req.URL.Host = r.hostRewrite.connCacheKey
 
-	resp, err := r.delegate.RoundTrip(req)
-	if err != nil {
-		return nil, err
-	}
-
-	// check the actual response TLS connection state before returning it
-	// this means that we could make a "bad" request to the kubelet, but at least we will not forward it to the client
-	if err := r.validateNodeNameConnectionState(resp.TLS); err != nil {
-		if resp.Body != nil {
-			_ = resp.Body.Close()
-		}
-		return nil, fmt.Errorf(`FAIL TEST IF SEEN: node name %q validation failed: %w`, r.nodeName, err)
-	}
-
-	return resp, nil
-}
-
-func (r *validateNodeNameRoundTripper) probeHostTLS(baseReq *http.Request) (rtErr error) {
-	ctx, cancel := context.WithCancelCause(baseReq.Context())
-	defer cancel(nil)
-
-	req, err := r.buildProbeRequest(baseReq)
-	if err != nil {
-		return err
-	}
-
-	var (
-		lock      sync.Mutex // trace functions may be called concurrently from different goroutines
-		failedErr error
-		validated bool
-	)
-	defer func() {
-		lock.Lock()
-		defer lock.Unlock()
-
-		if !validated && failedErr == nil {
-			rtErr = newAggregateWithCleaning(errNodeNameValidationSkipped, rtErr)
-		}
-
-		if failedErr != nil && failedErr != rtErr {
-			rtErr = newAggregateWithCleaning(failedErr, rtErr)
-		}
-	}()
-
-	// TODO decide if we want to use tracing or just response.TLS
-	trace := &httptrace.ClientTrace{
-		// the easiest thing would be to panic here and while that would likely work today because everything is
-		// within the same goroutine, the docs for httptrace state that different goroutines may be used meaning
-		// that in the future such a panic could cause the entire process to terminate
-		GotConn: func(connInfo httptrace.GotConnInfo) {
-			lock.Lock()
-			defer lock.Unlock()
-
-			if failedErr != nil {
-				return
-			}
-
-			if err := r.validateNodeName(connInfo.Conn); err != nil {
-				failedErr = err // TODO decide on klog / audit log / metrics around this
-				cancel(err)     // best effort request cancellation
-
-				// make it impossible for the request to be sent
-				// TODO decide if making the request invalid like this makes sense
-				invalidRequest := new(http.Request).WithContext(req.Context())
-				*req = *invalidRequest
-				return
-			}
-
-			validated = true // make sure the validation is actually called
-		},
-	}
-
-	req = req.WithContext(httptrace.WithClientTrace(ctx, trace)) // WithClientTrace automatically composes with any existing trace
-	resp, err := r.delegate.RoundTrip(req)
-	if resp != nil && resp.Body != nil {
-		_ = resp.Body.Close()
-	}
-	return err
-}
-
-func (r *validateNodeNameRoundTripper) buildProbeRequest(baseReq *http.Request) (*http.Request, error) {
-	cm, err := connectMethodForRequest(baseReq, r.proxy)
-	if err != nil {
-		return nil, fmt.Errorf("failed to determine connect method for request to node %q: %w", r.nodeName, err)
-	}
-	cmk := cm.key()
-	if len(cmk.proxy) != 0 || cmk.onlyH1 {
-		return nil, fmt.Errorf("unhandled connect method key: %#v", cmk) // TODO handle these as well
-	}
-	if cmk.scheme != "https" {
-		return nil, fmt.Errorf("unhandled connect method scheme: %q", cmk.scheme)
-	}
-	// TODO add single flight logic
-	// TODO maybe use MethodOptions instead?
-	// TODO maybe add size limited LRU caching with a short TTL?
-	// TODO determine if the assumptions we are making about "TLS overlap" are safe
-	req, err := http.NewRequestWithContext(baseReq.Context(), http.MethodHead, (&url.URL{Scheme: "https", Host: cmk.addr}).String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build probe request to host %q: %w", cmk.addr, err)
-	}
-	return req, nil
-}
-
-func (r *validateNodeNameRoundTripper) validateNodeName(conn net.Conn) error {
-	tlsConn, ok := conn.(*tls.Conn)
-	if !ok {
-		return fmt.Errorf("invalid connection type; expected tls.Conn, got %T", conn)
-	}
-	cs := tlsConn.ConnectionState()
-	return r.validateNodeNameConnectionState(&cs)
-}
-
-func (r *validateNodeNameRoundTripper) validateNodeNameConnectionState(cs *tls.ConnectionState) error {
-	if cs == nil {
-		return fmt.Errorf("invalid nil connection state")
-	}
-	if !cs.HandshakeComplete {
-		return fmt.Errorf("invalid connection state; handshake not complete")
-	}
-	leaf := cs.PeerCertificates[0]
-	if expectedNodeName := "system:node:" + string(r.nodeName); leaf.Subject.CommonName != expectedNodeName {
-		return fmt.Errorf("invalid node name; expected %q, got %q", expectedNodeName, leaf.Subject.CommonName)
-	}
-	if !slices.Contains(leaf.Subject.Organization, user.NodesGroup) {
-		return fmt.Errorf("invalid node groups; expected to include %q, got %q", user.NodesGroup, leaf.Subject.Organization)
-	}
-	return nil
-}
-
-func newAggregateWithCleaning(errs ...error) error {
-	return utilerrors.Reduce(utilerrors.FilterOut(utilerrors.NewAggregate(errs), func(err error) bool { return err == context.Canceled }))
-}
-
-func proxyFor(rt http.RoundTripper) (func(*http.Request) (*url.URL, error), error) {
-	switch t := rt.(type) {
-	case *http.Transport:
-		return t.Proxy, nil
-	case utilnet.RoundTripperWrapper:
-		return proxyFor(t.WrappedRoundTripper())
-	default:
-		return nil, fmt.Errorf("unknown transport type: %T", t)
-	}
+	return r.delegate.RoundTrip(req)
 }
 
 func httpTransportFor(rt http.RoundTripper) (*http.Transport, error) {
