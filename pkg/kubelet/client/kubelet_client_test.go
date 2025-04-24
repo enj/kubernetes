@@ -138,6 +138,10 @@ func TestValidateNodeName(t *testing.T) {
 	const nodeName = "my-node-1"
 	kubeletServer := newKubeletServer(t, nodeName)
 
+	// TODO fail on errors
+	hostname, portStr, _ := net.SplitHostPort(kubeletServer.server.Listener.Addr().String())
+	port, _ := strconv.ParseInt(portStr, 10, 32)
+
 	nodeGetter := NodeGetterFunc(func(ctx context.Context, name string, options metav1.GetOptions) (*corev1.Node, error) {
 		return &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
@@ -146,7 +150,13 @@ func TestValidateNodeName(t *testing.T) {
 			Status: corev1.NodeStatus{
 				Addresses: []corev1.NodeAddress{
 					{
-						Type: corev1.NodeInternalIP,
+						Type:    corev1.NodeInternalIP,
+						Address: hostname,
+					},
+				},
+				DaemonEndpoints: corev1.NodeDaemonEndpoints{
+					KubeletEndpoint: corev1.DaemonEndpoint{
+						Port: int32(port),
 					},
 				},
 			},

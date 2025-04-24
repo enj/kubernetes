@@ -86,6 +86,26 @@ type ConnectionInfoGetter interface {
 	GetConnectionInfo(ctx context.Context, nodeName types.NodeName) (*ConnectionInfo, error)
 }
 
+type dialRewrite struct {
+	cn               string
+	cnWithPort       string
+	hostname         string
+	hostnameWithPort string
+}
+
+type dialRewriteKeyType int
+
+const dialRewriteKey dialRewriteKeyType = iota
+
+func withDialRewrite(ctx context.Context, dr dialRewrite) context.Context {
+	return context.WithValue(ctx, dialRewriteKey, dr)
+}
+
+func dialRewriteFrom(ctx context.Context) (dialRewrite, bool) {
+	dr, ok := ctx.Value(dialRewriteKey).(dialRewrite)
+	return dr, ok
+}
+
 // MakeTransport creates a secure RoundTripper for HTTP Transport.
 func MakeTransport(config *KubeletClientConfig) (http.RoundTripper, error) {
 	return makeTransport(config, false)
@@ -182,6 +202,46 @@ func NewNodeConnectionInfoGetter(nodes NodeGetter, config KubeletClientConfig) (
 	if err != nil {
 		return nil, fmt.Errorf("failed to get proxy for transport: %w", err)
 	}
+	if config.TLSClientConfig.ValidateNodeName {
+		rt, err := httpTransportFor(transport)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get *http.Transport for transport: %w", err)
+		}
+		if rt.DialTLSContext != nil || rt.DialContext == nil || rt.TLSClientConfig == nil {
+			return nil, fmt.Errorf("*http.Transport has invalid state")
+		}
+		rt = rt.Clone() // so we can mutate it safely
+		rt.DialTLSContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			if network != "tcp" {
+				return nil, fmt.Errorf("only tcp connections are supported")
+			}
+			dr, ok := dialRewriteFrom(ctx)
+			if !ok {
+				return nil, fmt.Errorf("failed to get dial rewrite from context")
+			}
+			if address != dr.cnWithPort {
+				return nil, fmt.Errorf("rewrite of %q->%q failed, got unexpected address %q", dr.cnWithPort, dr.hostnameWithPort, address)
+			}
+			rawConn, err := rt.DialContext(ctx, "tcp", dr.hostnameWithPort)
+			if err != nil {
+				return nil, fmt.Errorf("failed to make TCP connection: %w", err)
+			}
+			tlsConfig := rt.TLSClientConfig.Clone()
+			tlsConfig.ServerName = dr.hostname // maintain the existing SAN check
+			tlsConfig.VerifyConnection = func(cs tls.ConnectionState) error {
+				leaf := cs.PeerCertificates[0]
+				if leaf.Subject.CommonName != dr.cn {
+					return fmt.Errorf("invalid node name; expected %q, got %q", dr.cn, leaf.Subject.CommonName)
+				}
+				if !slices.Contains(leaf.Subject.Organization, user.NodesGroup) {
+					return fmt.Errorf("invalid node groups; expected to include %q, got %q", user.NodesGroup, leaf.Subject.Organization)
+				}
+				return nil
+			}
+			return tls.Client(rawConn, tlsConfig), nil // TODO fix handshake logic to match std lib
+		}
+		transport = rt
+	}
 
 	insecureSkipTLSVerifyTransport, err := MakeInsecureTransport(&config)
 	if err != nil {
@@ -214,7 +274,7 @@ func (k *NodeConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeNa
 	}
 
 	// Find a kubelet-reported address, using preferred address type
-	host, err := nodeutil.GetPreferredNodeAddress(node, k.preferredAddressTypes)
+	hostname, err := nodeutil.GetPreferredNodeAddress(node, k.preferredAddressTypes)
 	if err != nil {
 		return nil, err
 	}
@@ -224,20 +284,28 @@ func (k *NodeConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeNa
 	if port <= 0 {
 		port = k.defaultPort
 	}
+	portStr := strconv.Itoa(port)
 
 	rt := k.transport
 	if k.validateNodeName {
+		cn := "system:node:" + string(nodeName)
 		rt = &validateNodeNameRoundTripper{
 			nodeName: nodeName,
 			delegate: rt,
 			proxy:    k.proxy,
+			dr: dialRewrite{
+				cn:               cn,
+				cnWithPort:       net.JoinHostPort(cn, portStr),
+				hostname:         hostname,
+				hostnameWithPort: net.JoinHostPort(hostname, portStr),
+			},
 		}
 	}
 
 	return &ConnectionInfo{
 		Scheme:                         k.scheme,
-		Hostname:                       host,
-		Port:                           strconv.Itoa(port),
+		Hostname:                       hostname,
+		Port:                           portStr,
 		Transport:                      rt,
 		InsecureSkipTLSVerifyTransport: k.insecureSkipTLSVerifyTransport,
 	}, nil
@@ -251,6 +319,7 @@ type validateNodeNameRoundTripper struct {
 	nodeName types.NodeName
 	delegate http.RoundTripper
 	proxy    func(*http.Request) (*url.URL, error)
+	dr       dialRewrite
 }
 
 func (r *validateNodeNameRoundTripper) WrappedRoundTripper() http.RoundTripper {
@@ -258,9 +327,20 @@ func (r *validateNodeNameRoundTripper) WrappedRoundTripper() http.RoundTripper {
 }
 
 func (r *validateNodeNameRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if err := r.probeHostTLS(req); err != nil {
-		return nil, err
+	if req.URL.Scheme != "https" {
+		return nil, fmt.Errorf(`node name %q must use scheme "https", got %q`, r.nodeName, req.URL.Scheme)
 	}
+	if req.URL.Host != r.dr.hostnameWithPort {
+		return nil, fmt.Errorf("node name %q must use host %q, got %q", r.nodeName, r.dr.hostnameWithPort, req.URL.Host)
+	}
+	if len(req.Host) > 0 && req.Host != r.dr.hostnameWithPort {
+		return nil, fmt.Errorf("node name %q must use host %q, got %q", r.nodeName, r.dr.hostnameWithPort, req.Host)
+	}
+
+	ctx := withDialRewrite(req.Context(), r.dr)
+	req = req.Clone(ctx)       // so we can mutate the request URL
+	req.Host = r.dr.cnWithPort // TODO should we set this to the empty string?
+	req.URL.Host = r.dr.cnWithPort
 
 	resp, err := r.delegate.RoundTrip(req)
 	if err != nil {
@@ -273,7 +353,7 @@ func (r *validateNodeNameRoundTripper) RoundTrip(req *http.Request) (*http.Respo
 		if resp.Body != nil {
 			_ = resp.Body.Close()
 		}
-		return nil, err
+		return nil, fmt.Errorf(`FAIL TEST IF SEEN: node name %q validation failed: %w`, r.nodeName, err)
 	}
 
 	return resp, nil
@@ -401,6 +481,17 @@ func proxyFor(rt http.RoundTripper) (func(*http.Request) (*url.URL, error), erro
 		return t.Proxy, nil
 	case utilnet.RoundTripperWrapper:
 		return proxyFor(t.WrappedRoundTripper())
+	default:
+		return nil, fmt.Errorf("unknown transport type: %T", t)
+	}
+}
+
+func httpTransportFor(rt http.RoundTripper) (*http.Transport, error) {
+	switch t := rt.(type) {
+	case *http.Transport:
+		return t, nil
+	case utilnet.RoundTripperWrapper:
+		return httpTransportFor(t.WrappedRoundTripper())
 	default:
 		return nil, fmt.Errorf("unknown transport type: %T", t)
 	}
