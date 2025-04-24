@@ -31,6 +31,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/httpstream/wsstream"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/server/egressselector"
@@ -91,17 +92,22 @@ type reqHostRewrite struct {
 	tcpDialAddr   string
 }
 
+type reqHostRewriteAndH1 struct {
+	hostRewrite reqHostRewrite
+	onlyH1      bool
+}
+
 type reqHostRewriteKeyType int
 
 const reqHostRewriteKey reqHostRewriteKeyType = iota
 
-func withDialRewrite(ctx context.Context, hostRewrite reqHostRewrite) context.Context {
-	return context.WithValue(ctx, reqHostRewriteKey, hostRewrite)
+func withDialRewrite(ctx context.Context, hostRewrite reqHostRewrite, onlyH1 bool) context.Context {
+	return context.WithValue(ctx, reqHostRewriteKey, reqHostRewriteAndH1{hostRewrite: hostRewrite, onlyH1: onlyH1})
 }
 
-func reqHostRewriteFrom(ctx context.Context) (reqHostRewrite, bool) {
-	hostRewrite, ok := ctx.Value(reqHostRewriteKey).(reqHostRewrite)
-	return hostRewrite, ok
+func reqHostRewriteFrom(ctx context.Context) (reqHostRewrite, bool, bool) {
+	hostRewriteAndH1, ok := ctx.Value(reqHostRewriteKey).(reqHostRewriteAndH1)
+	return hostRewriteAndH1.hostRewrite, hostRewriteAndH1.onlyH1, ok
 }
 
 // MakeTransport creates a secure RoundTripper for HTTP Transport.
@@ -201,42 +207,8 @@ func NewNodeConnectionInfoGetter(nodes NodeGetter, config KubeletClientConfig) (
 		return nil, err
 	}
 	if config.TLSClientConfig.ValidateNodeName {
-		rt, err := httpTransportFor(transport)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get *http.Transport for transport: %w", err)
-		}
-		if rt.DialTLSContext != nil || rt.DialContext == nil || rt.TLSClientConfig == nil || len(rt.TLSClientConfig.ServerName) != 0 {
-			return nil, fmt.Errorf("*http.Transport has invalid state")
-		}
-		// mutate the underlying *http.Transport in-place
-		rt.DialTLSContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-			if network != "tcp" {
-				return nil, fmt.Errorf("only tcp connections are supported")
-			}
-			hostRewrite, ok := reqHostRewriteFrom(ctx)
-			if !ok {
-				return nil, fmt.Errorf("failed to get dial rewrite from context")
-			}
-			if address != hostRewrite.connCacheKey {
-				return nil, fmt.Errorf("rewrite of %q->%q failed, got unexpected address %q", hostRewrite.connCacheKey, hostRewrite.tcpDialAddr, address)
-			}
-			rawConn, err := rt.DialContext(ctx, "tcp", hostRewrite.tcpDialAddr)
-			if err != nil {
-				return nil, fmt.Errorf("failed to make TCP connection: %w", err)
-			}
-			tlsConfig := rt.TLSClientConfig.Clone()                           // so we can mutate it per connection
-			tlsConfig.ServerName = hostRewrite.tlsServerName                  // maintain the existing SAN check
-			tlsConfig.VerifyConnection = func(cs tls.ConnectionState) error { // add the extra CN check
-				leaf := cs.PeerCertificates[0]
-				if leaf.Subject.CommonName != hostRewrite.commonName {
-					return fmt.Errorf("invalid node name; expected %q, got %q", hostRewrite.commonName, leaf.Subject.CommonName)
-				}
-				if !slices.Contains(leaf.Subject.Organization, user.NodesGroup) {
-					return fmt.Errorf("invalid node groups; expected to include %q, got %q", user.NodesGroup, leaf.Subject.Organization)
-				}
-				return nil
-			}
-			return tls.Client(rawConn, tlsConfig), nil // TODO fix handshake logic to match std lib
+		if err := mutateTransportToValidateNodeName(transport); err != nil {
+			return nil, err
 		}
 	}
 
@@ -332,12 +304,61 @@ func (r *validateNodeNameRoundTripper) RoundTrip(req *http.Request) (*http.Respo
 		return nil, fmt.Errorf("%q must use host %q, got %q", r.hostRewrite.commonName, r.hostRewrite.tcpDialAddr, req.Host)
 	}
 
-	ctx := withDialRewrite(req.Context(), r.hostRewrite)
+	onlyH1 := wsstream.IsWebSocketRequest(req) // matches *http.Request.requiresHTTP1
+	ctx := withDialRewrite(req.Context(), r.hostRewrite, onlyH1)
 	req = req.Clone(ctx) // so we can mutate the request URL
 	req.Host = ""
 	req.URL.Host = r.hostRewrite.connCacheKey
 
 	return r.delegate.RoundTrip(req)
+}
+
+func mutateTransportToValidateNodeName(baseRT http.RoundTripper) error {
+	rt, err := httpTransportFor(baseRT)
+	if err != nil {
+		return fmt.Errorf("failed to get *http.Transport for transport: %w", err)
+	}
+	if rt.DialTLSContext != nil || rt.DialContext == nil || rt.TLSClientConfig == nil || len(rt.TLSClientConfig.ServerName) != 0 || rt.TLSHandshakeTimeout == 0 {
+		return fmt.Errorf("*http.Transport has invalid state: %#v", rt)
+	}
+	// mutate the underlying *http.Transport in-place
+	rt.DialTLSContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if network != "tcp" {
+			return nil, fmt.Errorf("only tcp connections are supported")
+		}
+		hostRewrite, onlyH1, ok := reqHostRewriteFrom(ctx)
+		if !ok {
+			return nil, fmt.Errorf("failed to get dial rewrite from context")
+		}
+		if address != hostRewrite.connCacheKey {
+			return nil, fmt.Errorf("rewrite of %q->%q failed, got unexpected address %q", hostRewrite.connCacheKey, hostRewrite.tcpDialAddr, address)
+		}
+		plainConn, err := rt.DialContext(ctx, "tcp", hostRewrite.tcpDialAddr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to make TCP connection: %w", err)
+		}
+		tlsConfig := rt.TLSClientConfig.Clone()                           // so we can mutate it per connection
+		tlsConfig.ServerName = hostRewrite.tlsServerName                  // maintain the existing SAN check
+		tlsConfig.VerifyConnection = func(cs tls.ConnectionState) error { // add the extra CN check
+			leaf := cs.PeerCertificates[0]
+			if leaf.Subject.CommonName != hostRewrite.commonName {
+				return fmt.Errorf("invalid node name; expected %q, got %q", hostRewrite.commonName, leaf.Subject.CommonName)
+			}
+			if !slices.Contains(leaf.Subject.Organization, user.NodesGroup) {
+				return fmt.Errorf("invalid node groups; expected to include %q, got %q", user.NodesGroup, leaf.Subject.Organization)
+			}
+			return nil
+		}
+		if onlyH1 {
+			tlsConfig.NextProtos = nil // copied from *http.persistConn.addTLS
+		}
+		tlsConn, err := addTLS(ctx, plainConn, tlsConfig, rt.TLSHandshakeTimeout) // ensure TLSHandshakeTimeout is honored
+		if err != nil {
+			return nil, err
+		}
+		return tlsConn, nil
+	}
+	return nil
 }
 
 func httpTransportFor(rt http.RoundTripper) (*http.Transport, error) {
@@ -349,4 +370,38 @@ func httpTransportFor(rt http.RoundTripper) (*http.Transport, error) {
 	default:
 		return nil, fmt.Errorf("unknown transport type: %T", t)
 	}
+}
+
+// copied with modifications from *http.persistConn.addTLS
+// we lose the exact timings of the tracing TLSHandshakeStart and TLSHandshakeDone hooks
+// but not calling them here seems better than calling them multiple times for the same TLS connection
+
+type tlsHandshakeTimeoutError struct{}
+
+func (tlsHandshakeTimeoutError) Timeout() bool   { return true }
+func (tlsHandshakeTimeoutError) Temporary() bool { return true }
+func (tlsHandshakeTimeoutError) Error() string   { return "net/http: TLS handshake timeout" }
+
+func addTLS(ctx context.Context, plainConn net.Conn, tlsConfig *tls.Config, tlsHandshakeTimeout time.Duration) (*tls.Conn, error) {
+	tlsConn := tls.Client(plainConn, tlsConfig)
+	errc := make(chan error, 2)
+	// for canceling TLS handshake
+	timer := time.AfterFunc(tlsHandshakeTimeout, func() {
+		errc <- tlsHandshakeTimeoutError{}
+	})
+	go func() {
+		err := tlsConn.HandshakeContext(ctx)
+		timer.Stop()
+		errc <- err
+	}()
+	if err := <-errc; err != nil {
+		_ = plainConn.Close()
+		if err == (tlsHandshakeTimeoutError{}) {
+			// Now that we have closed the connection,
+			// wait for the call to HandshakeContext to return.
+			<-errc
+		}
+		return nil, err
+	}
+	return tlsConn, nil
 }
