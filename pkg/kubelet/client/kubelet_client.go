@@ -144,6 +144,10 @@ func makeTransport(config *KubeletClientConfig, insecureSkipTLSVerify bool) (htt
 // transportConfig converts a client config to an appropriate transport config.
 func (c *KubeletClientConfig) transportConfig() *transport.Config {
 	cfg := &transport.Config{
+		// always bust the client-go TLS cache instead of only when KubeletClientConfig.Lookup is set
+		// this allows us to safely mutate the underlying *http.Transport in NewNodeConnectionInfoGetter
+		// TODO add unit test
+		Proxy: http.ProxyFromEnvironment,
 		TLS: transport.TLSConfig{
 			CAFile:   c.TLSClientConfig.CAFile,
 			CertFile: c.TLSClientConfig.CertFile,
@@ -210,7 +214,7 @@ func NewNodeConnectionInfoGetter(nodes NodeGetter, config KubeletClientConfig) (
 		if rt.DialTLSContext != nil || rt.DialContext == nil || rt.TLSClientConfig == nil {
 			return nil, fmt.Errorf("*http.Transport has invalid state")
 		}
-		rt = rt.Clone() // so we can mutate it safely
+		// mutate the underlying *http.Transport in-place
 		rt.DialTLSContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 			if network != "tcp" {
 				return nil, fmt.Errorf("only tcp connections are supported")
@@ -227,8 +231,8 @@ func NewNodeConnectionInfoGetter(nodes NodeGetter, config KubeletClientConfig) (
 				return nil, fmt.Errorf("failed to make TCP connection: %w", err)
 			}
 			tlsConfig := rt.TLSClientConfig.Clone()
-			tlsConfig.ServerName = dr.hostname // maintain the existing SAN check
-			tlsConfig.VerifyConnection = func(cs tls.ConnectionState) error {
+			tlsConfig.ServerName = dr.hostname                                // maintain the existing SAN check
+			tlsConfig.VerifyConnection = func(cs tls.ConnectionState) error { // add the extra CN check
 				leaf := cs.PeerCertificates[0]
 				if leaf.Subject.CommonName != dr.cn {
 					return fmt.Errorf("invalid node name; expected %q, got %q", dr.cn, leaf.Subject.CommonName)
@@ -240,7 +244,6 @@ func NewNodeConnectionInfoGetter(nodes NodeGetter, config KubeletClientConfig) (
 			}
 			return tls.Client(rawConn, tlsConfig), nil // TODO fix handshake logic to match std lib
 		}
-		transport = rt
 	}
 
 	insecureSkipTLSVerifyTransport, err := MakeInsecureTransport(&config)
