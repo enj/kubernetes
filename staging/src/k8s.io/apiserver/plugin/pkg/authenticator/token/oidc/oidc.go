@@ -44,7 +44,9 @@ import (
 
 	"github.com/coreos/go-oidc"
 	celgo "github.com/google/cel-go/cel"
+	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
+	"github.com/google/cel-go/interpreter"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -708,7 +710,7 @@ func (a *jwtAuthenticator) AuthenticateToken(ctx context.Context, token string) 
 		}
 	}
 
-	var claimsUnstructured *unstructured.Unstructured
+	ca := &claimsActivation{c: c}
 	// Convert the claims to unstructured so that we can evaluate the CEL expressions
 	// against the claims. This is done once here so that we don't have to convert
 	// the claims to unstructured multiple times in the CEL mapper for each mapping.
@@ -717,27 +719,27 @@ func (a *jwtAuthenticator) AuthenticateToken(ctx context.Context, token string) 
 	// TODO(aramase): In the future when we look into making distributed claims work,
 	// we should see if we can skip this function and use a dynamic type resolver for
 	// both json.RawMessage and the distributed claim fetching.
-	if a.celMapper.Username != nil || a.celMapper.Groups != nil || a.celMapper.UID != nil || a.celMapper.Extra != nil || a.celMapper.ClaimValidationRules != nil {
-		if claimsUnstructured, err = convertObjectToUnstructured(&c); err != nil {
-			return nil, false, fmt.Errorf("oidc: could not convert claims to unstructured: %w", err)
-		}
-	}
+	// if a.celMapper.Username != nil || a.celMapper.Groups != nil || a.celMapper.UID != nil || a.celMapper.Extra != nil || a.celMapper.ClaimValidationRules != nil {
+	// 	if ca, err = convertObjectToUnstructured(&c); err != nil {
+	// 		return nil, false, fmt.Errorf("oidc: could not convert claims to unstructured: %w", err)
+	// 	}
+	// }
 
 	var username string
-	if username, err = a.getUsername(ctx, c, claimsUnstructured); err != nil {
+	if username, err = a.getUsername(ctx, c, ca); err != nil {
 		return nil, false, err
 	}
 
 	info := &user.DefaultInfo{Name: username}
-	if info.Groups, err = a.getGroups(ctx, c, claimsUnstructured); err != nil {
+	if info.Groups, err = a.getGroups(ctx, c, ca); err != nil {
 		return nil, false, err
 	}
 
-	if info.UID, err = a.getUID(ctx, c, claimsUnstructured); err != nil {
+	if info.UID, err = a.getUID(ctx, c, ca); err != nil {
 		return nil, false, err
 	}
 
-	extra, err := a.getExtra(ctx, c, claimsUnstructured)
+	extra, err := a.getExtra(ctx, c, ca)
 	if err != nil {
 		return nil, false, err
 	}
@@ -762,7 +764,7 @@ func (a *jwtAuthenticator) AuthenticateToken(ctx context.Context, token string) 
 	}
 
 	if a.celMapper.ClaimValidationRules != nil {
-		evalResult, err := a.celMapper.ClaimValidationRules.EvalClaimMappings(ctx, claimsUnstructured)
+		evalResult, err := a.celMapper.ClaimValidationRules.EvalClaimMappings(ctx, ca)
 		if err != nil {
 			return nil, false, fmt.Errorf("oidc: error evaluating claim validation expression: %w", err)
 		}
@@ -812,9 +814,9 @@ func (a *jwtAuthenticator) HealthCheck() error {
 	return nil
 }
 
-func (a *jwtAuthenticator) getUsername(ctx context.Context, c claims, claimsUnstructured *unstructured.Unstructured) (string, error) {
+func (a *jwtAuthenticator) getUsername(ctx context.Context, c claims, ca *claimsActivation) (string, error) {
 	if a.celMapper.Username != nil {
-		evalResult, err := a.celMapper.Username.EvalClaimMapping(ctx, claimsUnstructured)
+		evalResult, err := a.celMapper.Username.EvalClaimMapping(ctx, ca)
 		if err != nil {
 			return "", fmt.Errorf("oidc: error evaluating username claim expression: %w", err)
 		}
@@ -860,7 +862,7 @@ func (a *jwtAuthenticator) getUsername(ctx context.Context, c claims, claimsUnst
 	return username, nil
 }
 
-func (a *jwtAuthenticator) getGroups(ctx context.Context, c claims, claimsUnstructured *unstructured.Unstructured) ([]string, error) {
+func (a *jwtAuthenticator) getGroups(ctx context.Context, c claims, ca *claimsActivation) ([]string, error) {
 	groupsClaim := a.jwtAuthenticator.ClaimMappings.Groups.Claim
 	if len(groupsClaim) > 0 {
 		if _, ok := c[groupsClaim]; ok {
@@ -888,7 +890,7 @@ func (a *jwtAuthenticator) getGroups(ctx context.Context, c claims, claimsUnstru
 		return nil, nil
 	}
 
-	evalResult, err := a.celMapper.Groups.EvalClaimMapping(ctx, claimsUnstructured)
+	evalResult, err := a.celMapper.Groups.EvalClaimMapping(ctx, ca)
 	if err != nil {
 		return nil, fmt.Errorf("oidc: error evaluating group claim expression: %w", err)
 	}
@@ -900,7 +902,7 @@ func (a *jwtAuthenticator) getGroups(ctx context.Context, c claims, claimsUnstru
 	return groups, nil
 }
 
-func (a *jwtAuthenticator) getUID(ctx context.Context, c claims, claimsUnstructured *unstructured.Unstructured) (string, error) {
+func (a *jwtAuthenticator) getUID(ctx context.Context, c claims, ca *claimsActivation) (string, error) {
 	uidClaim := a.jwtAuthenticator.ClaimMappings.UID.Claim
 	if len(uidClaim) > 0 {
 		var uid string
@@ -914,7 +916,7 @@ func (a *jwtAuthenticator) getUID(ctx context.Context, c claims, claimsUnstructu
 		return "", nil
 	}
 
-	evalResult, err := a.celMapper.UID.EvalClaimMapping(ctx, claimsUnstructured)
+	evalResult, err := a.celMapper.UID.EvalClaimMapping(ctx, ca)
 	if err != nil {
 		return "", fmt.Errorf("oidc: error evaluating uid claim expression: %w", err)
 	}
@@ -925,7 +927,7 @@ func (a *jwtAuthenticator) getUID(ctx context.Context, c claims, claimsUnstructu
 	return evalResult.EvalResult.Value().(string), nil
 }
 
-func (a *jwtAuthenticator) getExtra(ctx context.Context, c claims, claimsUnstructured *unstructured.Unstructured) (map[string][]string, error) {
+func (a *jwtAuthenticator) getExtra(ctx context.Context, c claims, ca *claimsActivation) (map[string][]string, error) {
 	extra := make(map[string][]string)
 
 	if credentialID := getCredentialID(c); len(credentialID) > 0 {
@@ -936,7 +938,7 @@ func (a *jwtAuthenticator) getExtra(ctx context.Context, c claims, claimsUnstruc
 		return extra, nil
 	}
 
-	evalResult, err := a.celMapper.Extra.EvalClaimMappings(ctx, claimsUnstructured)
+	evalResult, err := a.celMapper.Extra.EvalClaimMappings(ctx, ca)
 	if err != nil {
 		return nil, err
 	}
@@ -1023,7 +1025,7 @@ func (c claims) unmarshalClaim(name string, v interface{}) error {
 	if !ok {
 		return fmt.Errorf("claim not present")
 	}
-	return json.Unmarshal([]byte(val), v)
+	return json.Unmarshal(val, v)
 }
 
 func (c claims) hasClaim(name string) bool {
@@ -1032,6 +1034,41 @@ func (c claims) hasClaim(name string) bool {
 	}
 	return true
 }
+
+var _ interpreter.Activation = &claimsActivation{}
+
+type claimsActivation struct {
+	c                  claims
+	unmarshalledClaims map[string]any // TODO how do we do multiple levels of lazy decoding?
+}
+
+func (c *claimsActivation) ResolveName(name string) (any, bool) {
+	if v, ok := c.unmarshalledClaims[name]; ok {
+		return v, true
+	}
+
+	msg, ok := c.c[name]
+	if !ok {
+		return nil, false
+	}
+
+	data, err := msg.MarshalJSON()
+	if err != nil {
+		return types.NewErr("claim %q failed resolve: %w", name, err), true
+	}
+
+	obj := `{"f":` + string(data) + `}` // TODO this seems like a poor way to implement this?
+	var val map[string]any
+	if err := json.Unmarshal([]byte(obj), &val); err != nil {
+		return types.NewErr("claim %q failed resolve: %w", name, err), true
+	}
+	v := val["f"]
+
+	c.unmarshalledClaims[name] = v
+	return v, true
+}
+
+func (c *claimsActivation) Parent() interpreter.Activation { return nil }
 
 // convertCELValueToStringList converts the CEL value to a string list.
 // The CEL value needs to be either a string or a list of strings.
