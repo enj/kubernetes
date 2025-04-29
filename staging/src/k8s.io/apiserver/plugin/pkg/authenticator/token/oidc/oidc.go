@@ -1125,14 +1125,15 @@ func checkValidationRulesEvaluation(results []authenticationcel.EvaluationResult
 
 func newUserInfoValue(info user.Info) *lazy.MapValue {
 	lazyMap := lazy.NewMapValue(types.NewObjectType("kubernetes.UserInfo"))
-	field := func(name string, value any) {
+	field := func(name string, get func() any) {
 		lazyMap.Append(name, func(_ *lazy.MapValue) ref.Val {
+			value := get()
 			return types.DefaultTypeAdapter.NativeToValue(value)
 		})
 	}
-	field("username", info.GetName())
-	field("uid", info.GetUID())
-	field("groups", info.GetGroups())
-	field("extra", info.GetExtra())
+	field("username", func() any { return info.GetName() })
+	field("uid", func() any { return info.GetUID() })
+	field("groups", func() any { return info.GetGroups() })
+	field("extra", func() any { return info.GetExtra() })
 	return lazyMap
 }
