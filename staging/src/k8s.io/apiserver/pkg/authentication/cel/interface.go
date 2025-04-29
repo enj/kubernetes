@@ -23,8 +23,6 @@ import (
 	celgo "github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types/ref"
 	"github.com/google/cel-go/common/types/traits"
-
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // ExpressionAccessor is an interface that provides access to a CEL expression.
@@ -66,7 +64,7 @@ type ClaimsMapper interface {
 type UserMapper interface {
 	// EvalUser evaluates the given user expressions and returns a list of EvaluationResult.
 	// This is used for user validation that contains a list of expressions.
-	EvalUser(ctx context.Context, userInfo *unstructured.Unstructured) ([]EvaluationResult, error)
+	EvalUser(ctx context.Context, userInfo traits.Mapper) ([]EvaluationResult, error)
 }
 
 var _ ExpressionAccessor = &ClaimMappingExpression{}

@@ -22,8 +22,6 @@ import (
 
 	"github.com/google/cel-go/common/types/traits"
 	"github.com/google/cel-go/interpreter"
-
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 var _ ClaimsMapper = &mapper{}
@@ -77,8 +75,8 @@ func (m *mapper) EvalClaimMappings(ctx context.Context, claims traits.Mapper) ([
 }
 
 // EvalUser evaluates the given user expressions and returns a list of EvaluationResult.
-func (m *mapper) EvalUser(ctx context.Context, userInfo *unstructured.Unstructured) ([]EvaluationResult, error) {
-	return m.eval(ctx, &varNameActivation{name: userVarName, value: userInfo.Object})
+func (m *mapper) EvalUser(ctx context.Context, userInfo traits.Mapper) ([]EvaluationResult, error) {
+	return m.eval(ctx, &varNameActivation{name: userVarName, value: userInfo})
 }
 
 func (m *mapper) eval(ctx context.Context, input *varNameActivation) ([]EvaluationResult, error) {
@@ -103,7 +101,7 @@ var _ interpreter.Activation = &varNameActivation{}
 
 type varNameActivation struct {
 	name  string
-	value any // TODO fix to traits.Mapper
+	value traits.Mapper
 }
 
 func (v *varNameActivation) ResolveName(name string) (any, bool) {
