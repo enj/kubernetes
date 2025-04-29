@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/cel-go/common/types/ref"
 	"github.com/google/cel-go/interpreter"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -59,7 +60,7 @@ func NewUserMapper(compilationResults []CompilationResult) UserMapper {
 }
 
 // EvalClaimMapping evaluates the given claim mapping expression and returns a EvaluationResult.
-func (m *mapper) EvalClaimMapping(ctx context.Context, claims interpreter.Activation) (EvaluationResult, error) {
+func (m *mapper) EvalClaimMapping(ctx context.Context, claims ref.Val) (EvaluationResult, error) {
 	results, err := m.eval(ctx, &varNameActivation{name: claimsVarName, v: claims})
 	if err != nil {
 		return EvaluationResult{}, err
@@ -71,7 +72,7 @@ func (m *mapper) EvalClaimMapping(ctx context.Context, claims interpreter.Activa
 }
 
 // EvalClaimMappings evaluates the given expressions and returns a list of EvaluationResult.
-func (m *mapper) EvalClaimMappings(ctx context.Context, claims interpreter.Activation) ([]EvaluationResult, error) {
+func (m *mapper) EvalClaimMappings(ctx context.Context, claims ref.Val) ([]EvaluationResult, error) {
 	return m.eval(ctx, &varNameActivation{name: claimsVarName, v: claims})
 }
 
