@@ -706,14 +706,14 @@ func (a *jwtAuthenticator) AuthenticateToken(ctx context.Context, token string) 
 		}
 	}
 
-	var claimsValue *claimsVal
+	var claimsValue *lazy.MapValue
 	// Convert the claims to traits.Mapper so that we can evaluate the CEL expressions
 	// against the claims. This is done once here so that we don't have to convert
 	// the claims to traits.Mapper multiple times in the CEL mapper for each mapping.
 	// Only perform this conversion if any of the mapping or validation rules contain
 	// CEL expressions.  The traits.Mapper is lazily evaluated against the expressions.
 	if a.celMapper.Username != nil || a.celMapper.Groups != nil || a.celMapper.UID != nil || a.celMapper.Extra != nil || a.celMapper.ClaimValidationRules != nil {
-		claimsValue = newClaimsVal(c)
+		claimsValue = newClaimsValue(c)
 	}
 
 	var username string
@@ -775,7 +775,7 @@ func (a *jwtAuthenticator) AuthenticateToken(ctx context.Context, token string) 
 		// against the user info. This is done once here so that we don't have to convert
 		// the user info to traits.Mapper multiple times in the CEL mapper for each mapping.
 		// The traits.Mapper is lazily evaluated against the expressions.
-		userInfoVal := newUserInfoVal(info)
+		userInfoVal := newUserInfoValue(info)
 
 		evalResult, err := a.celMapper.UserValidationRules.EvalUser(ctx, userInfoVal)
 		if err != nil {
@@ -803,7 +803,7 @@ func (a *jwtAuthenticator) HealthCheck() error {
 	return nil
 }
 
-func (a *jwtAuthenticator) getUsername(ctx context.Context, c claims, claimsValue *claimsVal) (string, error) {
+func (a *jwtAuthenticator) getUsername(ctx context.Context, c claims, claimsValue *lazy.MapValue) (string, error) {
 	if a.celMapper.Username != nil {
 		evalResult, err := a.celMapper.Username.EvalClaimMapping(ctx, claimsValue)
 		if err != nil {
@@ -851,7 +851,7 @@ func (a *jwtAuthenticator) getUsername(ctx context.Context, c claims, claimsValu
 	return username, nil
 }
 
-func (a *jwtAuthenticator) getGroups(ctx context.Context, c claims, claimsValue *claimsVal) ([]string, error) {
+func (a *jwtAuthenticator) getGroups(ctx context.Context, c claims, claimsValue *lazy.MapValue) ([]string, error) {
 	groupsClaim := a.jwtAuthenticator.ClaimMappings.Groups.Claim
 	if len(groupsClaim) > 0 {
 		if _, ok := c[groupsClaim]; ok {
@@ -891,7 +891,7 @@ func (a *jwtAuthenticator) getGroups(ctx context.Context, c claims, claimsValue 
 	return groups, nil
 }
 
-func (a *jwtAuthenticator) getUID(ctx context.Context, c claims, claimsValue *claimsVal) (string, error) {
+func (a *jwtAuthenticator) getUID(ctx context.Context, c claims, claimsValue *lazy.MapValue) (string, error) {
 	uidClaim := a.jwtAuthenticator.ClaimMappings.UID.Claim
 	if len(uidClaim) > 0 {
 		var uid string
@@ -916,7 +916,7 @@ func (a *jwtAuthenticator) getUID(ctx context.Context, c claims, claimsValue *cl
 	return evalResult.EvalResult.Value().(string), nil
 }
 
-func (a *jwtAuthenticator) getExtra(ctx context.Context, c claims, claimsValue *claimsVal) (map[string][]string, error) {
+func (a *jwtAuthenticator) getExtra(ctx context.Context, c claims, claimsValue *lazy.MapValue) (map[string][]string, error) {
 	extra := make(map[string][]string)
 
 	if credentialID := getCredentialID(c); len(credentialID) > 0 {
@@ -1024,7 +1024,7 @@ func (c claims) hasClaim(name string) bool {
 	return true
 }
 
-func newClaimsVal(c claims) *claimsVal {
+func newClaimsValue(c claims) *lazy.MapValue {
 	lazyMap := lazy.NewMapValue(types.NewObjectType("kubernetes.claims"))
 	for name, msg := range c { // TODO add distributed claims support
 		lazyMap.Append(name, func(_ *lazy.MapValue) ref.Val {
@@ -1040,15 +1040,7 @@ func newClaimsVal(c claims) *claimsVal {
 			return types.DefaultTypeAdapter.NativeToValue(value)
 		})
 	}
-	return &claimsVal{
-		c:        c,
-		MapValue: lazyMap,
-	}
-}
-
-type claimsVal struct {
-	c              claims
-	*lazy.MapValue // embedded to implement the necessary github.com/google/cel-go interfaces
+	return lazyMap
 }
 
 // convertCELValueToStringList converts the CEL value to a string list.
@@ -1131,7 +1123,7 @@ func checkValidationRulesEvaluation(results []authenticationcel.EvaluationResult
 	return nil
 }
 
-func newUserInfoVal(info user.Info) *lazy.MapValue {
+func newUserInfoValue(info user.Info) *lazy.MapValue {
 	lazyMap := lazy.NewMapValue(types.NewObjectType("kubernetes.UserInfo"))
 	field := func(name string, value any) {
 		lazyMap.Append(name, func(_ *lazy.MapValue) ref.Val {
