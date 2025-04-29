@@ -22,6 +22,8 @@ import (
 
 	celgo "github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types/ref"
+	"github.com/google/cel-go/common/types/traits"
+
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -54,10 +56,10 @@ type Compiler interface {
 type ClaimsMapper interface {
 	// EvalClaimMapping evaluates the given claim mapping expression and returns a EvaluationResult.
 	// This is used for username, groups and uid claim mapping that contains a single expression.
-	EvalClaimMapping(ctx context.Context, claims ref.Val) (EvaluationResult, error)
+	EvalClaimMapping(ctx context.Context, claims traits.Mapper) (EvaluationResult, error)
 	// EvalClaimMappings evaluates the given expressions and returns a list of EvaluationResult.
 	// This is used for extra claim mapping and claim validation that contains a list of expressions.
-	EvalClaimMappings(ctx context.Context, claims ref.Val) ([]EvaluationResult, error)
+	EvalClaimMappings(ctx context.Context, claims traits.Mapper) ([]EvaluationResult, error)
 }
 
 // UserMapper provides a CEL expression mapper configured with the user CEL variable.

@@ -20,7 +20,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/google/cel-go/common/types/ref"
+	"github.com/google/cel-go/common/types/traits"
 	"github.com/google/cel-go/interpreter"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -60,8 +60,8 @@ func NewUserMapper(compilationResults []CompilationResult) UserMapper {
 }
 
 // EvalClaimMapping evaluates the given claim mapping expression and returns a EvaluationResult.
-func (m *mapper) EvalClaimMapping(ctx context.Context, claims ref.Val) (EvaluationResult, error) {
-	results, err := m.eval(ctx, &varNameActivation{name: claimsVarName, v: claims})
+func (m *mapper) EvalClaimMapping(ctx context.Context, claims traits.Mapper) (EvaluationResult, error) {
+	results, err := m.eval(ctx, &varNameActivation{name: claimsVarName, value: claims})
 	if err != nil {
 		return EvaluationResult{}, err
 	}
@@ -72,13 +72,13 @@ func (m *mapper) EvalClaimMapping(ctx context.Context, claims ref.Val) (Evaluati
 }
 
 // EvalClaimMappings evaluates the given expressions and returns a list of EvaluationResult.
-func (m *mapper) EvalClaimMappings(ctx context.Context, claims ref.Val) ([]EvaluationResult, error) {
-	return m.eval(ctx, &varNameActivation{name: claimsVarName, v: claims})
+func (m *mapper) EvalClaimMappings(ctx context.Context, claims traits.Mapper) ([]EvaluationResult, error) {
+	return m.eval(ctx, &varNameActivation{name: claimsVarName, value: claims})
 }
 
 // EvalUser evaluates the given user expressions and returns a list of EvaluationResult.
 func (m *mapper) EvalUser(ctx context.Context, userInfo *unstructured.Unstructured) ([]EvaluationResult, error) {
-	return m.eval(ctx, &varNameActivation{name: userVarName, v: userInfo.Object})
+	return m.eval(ctx, &varNameActivation{name: userVarName, value: userInfo.Object})
 }
 
 func (m *mapper) eval(ctx context.Context, input *varNameActivation) ([]EvaluationResult, error) {
@@ -102,15 +102,15 @@ func (m *mapper) eval(ctx context.Context, input *varNameActivation) ([]Evaluati
 var _ interpreter.Activation = &varNameActivation{}
 
 type varNameActivation struct {
-	name string
-	v    any // TODO fix to interpreter.Activation
+	name  string
+	value any // TODO fix to traits.Mapper
 }
 
 func (v *varNameActivation) ResolveName(name string) (any, bool) {
 	if v.name != name {
 		return nil, false
 	}
-	return v.v, true
+	return v.value, true
 }
 
 func (v *varNameActivation) Parent() interpreter.Activation { return nil }

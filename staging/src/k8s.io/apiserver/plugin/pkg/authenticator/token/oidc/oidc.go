@@ -710,20 +710,15 @@ func (a *jwtAuthenticator) AuthenticateToken(ctx context.Context, token string) 
 		}
 	}
 
-	cv := newClaimsVal(c)
-	// Convert the claims to unstructured so that we can evaluate the CEL expressions
+	var cv *claimsVal
+	// Convert the claims to traits.Mapper so that we can evaluate the CEL expressions
 	// against the claims. This is done once here so that we don't have to convert
-	// the claims to unstructured multiple times in the CEL mapper for each mapping.
+	// the claims to traits.Mapper multiple times in the CEL mapper for each mapping.
 	// Only perform this conversion if any of the mapping or validation rules contain
-	// CEL expressions.
-	// TODO(aramase): In the future when we look into making distributed claims work,
-	// we should see if we can skip this function and use a dynamic type resolver for
-	// both json.RawMessage and the distributed claim fetching.
-	// if a.celMapper.Username != nil || a.celMapper.Groups != nil || a.celMapper.UID != nil || a.celMapper.Extra != nil || a.celMapper.ClaimValidationRules != nil {
-	// 	if ca, err = convertObjectToUnstructured(&c); err != nil {
-	// 		return nil, false, fmt.Errorf("oidc: could not convert claims to unstructured: %w", err)
-	// 	}
-	// }
+	// CEL expressions.  The traits.Mapper is lazily evaluated against the expressions.
+	if a.celMapper.Username != nil || a.celMapper.Groups != nil || a.celMapper.UID != nil || a.celMapper.Extra != nil || a.celMapper.ClaimValidationRules != nil {
+		cv = newClaimsVal(c)
+	}
 
 	var username string
 	if username, err = a.getUsername(ctx, c, cv); err != nil {
@@ -1037,20 +1032,18 @@ func (c claims) hasClaim(name string) bool {
 
 func newClaimsVal(c claims) *claimsVal {
 	lazyMap := lazy.NewMapValue(types.NewObjectType("kubernetes.claims"))
-	for name, msg := range c {
-		// TODO how do we do multiple levels of lazy decoding?
+	for name, msg := range c { // TODO add distributed claims support
 		lazyMap.Append(name, func(_ *lazy.MapValue) ref.Val {
 			data, err := msg.MarshalJSON()
 			if err != nil {
 				return types.WrapErr(err) // impossible since RawMessage never errors
 			}
 
-			obj := `{"f":` + string(data) + `}` // TODO this seems like a poor way to implement this?
-			var val map[string]any
-			if err := json.Unmarshal([]byte(obj), &val); err != nil {
-				return types.NewErr("claim %q failed resolve: %w", name, err)
+			var value any // TODO how do we do multiple levels of lazy decoding?
+			if err := json.Unmarshal(data, &value); err != nil {
+				return types.NewErr("claim %q failed to unmarshal: %w", name, err)
 			}
-			return types.DefaultTypeAdapter.NativeToValue(val["f"])
+			return types.DefaultTypeAdapter.NativeToValue(value)
 		})
 	}
 	return &claimsVal{
@@ -1061,7 +1054,7 @@ func newClaimsVal(c claims) *claimsVal {
 
 type claimsVal struct {
 	c              claims
-	*lazy.MapValue // embedded to implement the necessary CEL interfaces
+	*lazy.MapValue // embedded to implement the necessary github.com/google/cel-go interfaces
 }
 
 // convertCELValueToStringList converts the CEL value to a string list.
