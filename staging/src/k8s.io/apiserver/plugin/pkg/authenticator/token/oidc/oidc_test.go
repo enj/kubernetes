@@ -2520,7 +2520,7 @@ func TestToken(t *testing.T) {
 							Expression: `"claus" in user.groups`,
 						},
 						{
-							Expression: `user.extra["bio.snorlax.org/3"].size() == 4`,
+							Expression: `user.extra.bio__dot__snorlax__dot__org__slash__3.size() == 4`,
 						},
 					},
 				},
