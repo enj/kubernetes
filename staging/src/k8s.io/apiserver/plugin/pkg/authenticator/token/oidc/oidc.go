@@ -45,6 +45,7 @@ import (
 	celgo "github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
+	"github.com/google/cel-go/common/types/traits"
 
 	"k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -55,6 +56,7 @@ import (
 	authenticationcel "k8s.io/apiserver/pkg/authentication/cel"
 	authenticationtokenjwt "k8s.io/apiserver/pkg/authentication/token/jwt"
 	"k8s.io/apiserver/pkg/authentication/user"
+	"k8s.io/apiserver/pkg/cel"
 	"k8s.io/apiserver/pkg/cel/lazy"
 	certutil "k8s.io/client-go/util/cert"
 	"k8s.io/klog/v2"
@@ -1037,7 +1039,7 @@ func newClaimsValue(c claims) *lazy.MapValue {
 			if err := json.Unmarshal(data, &value); err != nil {
 				return types.NewErr("claim %q failed to unmarshal: %w", name, err)
 			}
-			return types.DefaultTypeAdapter.NativeToValue(value)
+			return nativeToValueWithUnescape(value)
 		})
 	}
 	return lazyMap
@@ -1128,7 +1130,7 @@ func newUserInfoValue(info user.Info) *lazy.MapValue {
 	field := func(name string, get func() any) {
 		lazyMap.Append(name, func(_ *lazy.MapValue) ref.Val {
 			value := get()
-			return types.DefaultTypeAdapter.NativeToValue(value)
+			return nativeToValueWithUnescape(value)
 		})
 	}
 	field("username", func() any { return info.GetName() })
@@ -1136,4 +1138,38 @@ func newUserInfoValue(info user.Info) *lazy.MapValue {
 	field("groups", func() any { return info.GetGroups() })
 	field("extra", func() any { return info.GetExtra() })
 	return lazyMap
+}
+
+func nativeToValueWithUnescape(value any) ref.Val {
+	celVal := types.DefaultTypeAdapter.NativeToValue(value)
+	mapper, ok := celVal.(traits.Mapper)
+	if !ok {
+		return celVal
+	}
+	return &unescapeMapper{Mapper: mapper}
+}
+
+type unescapeMapper struct {
+	traits.Mapper
+}
+
+func (m *unescapeMapper) Find(key ref.Val) (ref.Val, bool) {
+	name, ok := unescapedName(key)
+	if ok {
+		key = name
+	}
+	return m.Mapper.Find(key)
+}
+
+func unescapedName(key ref.Val) (ref.Val, bool) {
+	n, ok := key.(types.String)
+	if !ok {
+		return nil, false
+	}
+	ns := string(n)
+	name, ok := cel.Unescape(ns)
+	if !ok || name == ns {
+		return nil, false
+	}
+	return types.String(name), true
 }
