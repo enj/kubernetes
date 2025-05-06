@@ -352,9 +352,11 @@ func New(lifecycleCtx context.Context, opts Options) (AuthenticatorTokenWithHeal
 	}
 
 	var resolver *claimResolver
+	var verifier *claimResolverVerifier
 	groupsClaim := opts.JWTAuthenticator.ClaimMappings.Groups.Claim
 	if groupsClaim != "" {
-		resolver = newClaimResolver(lifecycleCtx, client, verifierConfig, audiences)
+		verifier = newClaimResolverVerifier(lifecycleCtx, client, verifierConfig, audiences)
+		resolver = newClaimResolver(client, verifier)
 	}
 
 	requiredClaims := make(map[string]string)
@@ -492,6 +494,13 @@ type endpoint struct {
 // claimResolver expands distributed claims by calling respective claim source
 // endpoints.
 type claimResolver struct {
+	// client is the to use for resolving distributed claims
+	client *http.Client
+
+	verifier *claimResolverVerifier
+}
+
+type claimResolverVerifier struct {
 	ctx context.Context
 
 	// audiences is the set of acceptable audiences the JWT must be issued to.
@@ -514,9 +523,17 @@ type claimResolver struct {
 }
 
 // newClaimResolver creates a new resolver for distributed claims.
-// the input ctx is retained and is used as the base context for background requests such as key fetching.
-func newClaimResolver(ctx context.Context, client *http.Client, config *oidc.Config, audiences sets.Set[string]) *claimResolver {
+func newClaimResolver(client *http.Client, verifier *claimResolverVerifier) *claimResolver {
 	return &claimResolver{
+		client:   client,
+		verifier: verifier,
+	}
+}
+
+// newClaimResolverVerifier creates a new verifier for distributed claims.
+// the input ctx is retained and is used as the base context for background requests such as key fetching.
+func newClaimResolverVerifier(ctx context.Context, client *http.Client, config *oidc.Config, audiences sets.Set[string]) *claimResolverVerifier {
+	return &claimResolverVerifier{
 		ctx:               ctx,
 		audiences:         audiences,
 		client:            client,
@@ -526,7 +543,7 @@ func newClaimResolver(ctx context.Context, client *http.Client, config *oidc.Con
 }
 
 // Verifier returns either the verifier for the specified issuer, or error.
-func (r *claimResolver) Verifier(iss string) (*idTokenVerifier, error) {
+func (r *claimResolverVerifier) verifier(iss string) (*idTokenVerifier, error) {
 	r.m.Lock()
 	av := r.verifierPerIssuer[iss]
 	if av == nil {
@@ -585,7 +602,7 @@ func (r *claimResolver) expand(ctx context.Context, c claims, claim string) erro
 	}
 
 	claimToSource := map[string]string{}
-	if err := json.Unmarshal([]byte(names), &claimToSource); err != nil {
+	if err := json.Unmarshal(names, &claimToSource); err != nil {
 		return fmt.Errorf("oidc: error parsing distributed claim names: %v", err)
 	}
 
@@ -597,7 +614,7 @@ func (r *claimResolver) expand(ctx context.Context, c claims, claim string) erro
 	}
 
 	var sources map[string]endpoint
-	if err := json.Unmarshal([]byte(rawSources), &sources); err != nil {
+	if err := json.Unmarshal(rawSources, &sources); err != nil {
 		// The claims sources claim is malformed, this is not an expected state.
 		return fmt.Errorf("oidc: could not parse claim sources: %v", err)
 	}
@@ -630,7 +647,7 @@ func (r *claimResolver) resolve(ctx context.Context, endpoint endpoint, allClaim
 	if err != nil {
 		return fmt.Errorf("getting untrusted issuer from endpoint %v failed for claim %q: %v", endpoint.URL, claim, err)
 	}
-	v, err := r.Verifier(untrustedIss)
+	v, err := r.verifier.verifier(untrustedIss)
 	if err != nil {
 		return fmt.Errorf("verifying untrusted issuer %v failed: %v", untrustedIss, err)
 	}
