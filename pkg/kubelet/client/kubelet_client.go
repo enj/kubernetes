@@ -19,6 +19,8 @@ package client
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"fmt"
 	"net"
 	"net/http"
@@ -26,7 +28,6 @@ import (
 	"slices"
 	"strconv"
 	"time"
-	"unsafe"
 
 	"golang.org/x/net/http2"
 
@@ -308,12 +309,7 @@ func (v *validateNodeNameClientConnPool) GetClientConn(req *http.Request, addr s
 	}()
 
 	// TODO ask Go maintainers if they are okay exposing this field via a NetConn method like tls.Conn has
-	tlsConn, ok := clientConnNetConn(clientConn).(*tls.Conn)
-	if !ok {
-		return nil, fmt.Errorf("failed to get TLS conn from client conn: %T", clientConn)
-	}
-
-	if err := validateNodeName(tlsConn.ConnectionState(), commonName); err != nil {
+	if err := validateNodeName(clientConnTLSState(clientConn), commonName); err != nil {
 		return nil, err
 	}
 
@@ -422,15 +418,27 @@ type hideTLSConn struct {
 	*tls.Conn
 }
 
-func clientConnNetConn(clientConn *http2.ClientConn) net.Conn {
-	return getPrivateField[net.Conn](clientConn, "tconn")
-}
-
-// getPrivateField is some dark magic to get a private field
-func getPrivateField[T any](obj any, fieldName string) T {
-	field := reflect.ValueOf(obj).Elem().FieldByName(fieldName)
-	ptr := (*T)(unsafe.Pointer(field.UnsafeAddr()))
-	return *ptr
+func clientConnTLSState(clientConn *http2.ClientConn) tls.ConnectionState {
+	// this is a cute trick to extract strings from private fields without using unsafe
+	subject := reflect.ValueOf(clientConn).Elem().
+		FieldByName("tlsState").Elem().
+		FieldByName("PeerCertificates").Index(0).Elem().
+		FieldByName("Subject")
+	commonName := subject.FieldByName("CommonName").String()
+	organization := "invalid default organization"
+	if organizationVal := subject.FieldByName("Organization"); organizationVal.Len() == 1 {
+		organization = organizationVal.Index(0).String()
+	}
+	return tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{
+			{
+				Subject: pkix.Name{
+					CommonName:   commonName,
+					Organization: []string{organization},
+				},
+			},
+		},
+	}
 }
 
 type reqCtxKeyType int
