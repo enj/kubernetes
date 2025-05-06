@@ -181,6 +181,7 @@ func (a *asyncIDTokenVerifier) verifier() *idTokenVerifier {
 
 type jwtAuthenticator struct {
 	jwtAuthenticator apiserver.JWTAuthenticator
+	groupsClaim      string
 
 	// Contains an *oidc.IDTokenVerifier. Do not access directly use the
 	// idTokenVerifier method.
@@ -353,7 +354,7 @@ func New(lifecycleCtx context.Context, opts Options) (AuthenticatorTokenWithHeal
 	var resolver *claimResolver
 	groupsClaim := opts.JWTAuthenticator.ClaimMappings.Groups.Claim
 	if groupsClaim != "" {
-		resolver = newClaimResolver(lifecycleCtx, groupsClaim, client, verifierConfig, audiences)
+		resolver = newClaimResolver(lifecycleCtx, client, verifierConfig, audiences)
 	}
 
 	requiredClaims := make(map[string]string)
@@ -366,6 +367,7 @@ func New(lifecycleCtx context.Context, opts Options) (AuthenticatorTokenWithHeal
 	authn := &jwtAuthenticator{
 		jwtAuthenticator: opts.JWTAuthenticator,
 		resolver:         resolver,
+		groupsClaim:      groupsClaim,
 		celMapper:        celMapper,
 		requiredClaims:   requiredClaims,
 	}
@@ -492,9 +494,6 @@ type endpoint struct {
 type claimResolver struct {
 	ctx context.Context
 
-	// claim is the distributed claim that may be resolved.
-	claim string
-
 	// audiences is the set of acceptable audiences the JWT must be issued to.
 	// At least one of the entries must match the "aud" claim in presented JWTs.
 	audiences sets.Set[string]
@@ -516,10 +515,9 @@ type claimResolver struct {
 
 // newClaimResolver creates a new resolver for distributed claims.
 // the input ctx is retained and is used as the base context for background requests such as key fetching.
-func newClaimResolver(ctx context.Context, claim string, client *http.Client, config *oidc.Config, audiences sets.Set[string]) *claimResolver {
+func newClaimResolver(ctx context.Context, client *http.Client, config *oidc.Config, audiences sets.Set[string]) *claimResolver {
 	return &claimResolver{
 		ctx:               ctx,
-		claim:             claim,
 		audiences:         audiences,
 		client:            client,
 		config:            config,
@@ -565,7 +563,7 @@ func (r *claimResolver) Verifier(iss string) (*idTokenVerifier, error) {
 //	    },
 //	  },
 //	}
-func (r *claimResolver) expand(ctx context.Context, c claims) error {
+func (r *claimResolver) expand(ctx context.Context, c claims, claim string) error {
 	const (
 		// The claim containing a map of endpoint references per claim.
 		// OIDC Connect Core 1.0, section 5.6.2.
@@ -575,7 +573,7 @@ func (r *claimResolver) expand(ctx context.Context, c claims) error {
 		claimSourcesKey = "_claim_sources"
 	)
 
-	_, ok := c[r.claim]
+	_, ok := c[claim]
 	if ok {
 		// There already is a normal claim, skip resolving.
 		return nil
@@ -604,7 +602,7 @@ func (r *claimResolver) expand(ctx context.Context, c claims) error {
 		return fmt.Errorf("oidc: could not parse claim sources: %v", err)
 	}
 
-	src, ok := claimToSource[r.claim]
+	src, ok := claimToSource[claim]
 	if !ok {
 		// No distributed claim present.
 		return nil
@@ -617,20 +615,20 @@ func (r *claimResolver) expand(ctx context.Context, c claims) error {
 		// This is maybe an aggregated claim (ep.JWT != "").
 		return nil
 	}
-	return r.resolve(ctx, ep, c)
+	return r.resolve(ctx, ep, c, claim)
 }
 
 // resolve requests distributed claims from all endpoints passed in,
 // and inserts the lookup results into allClaims.
-func (r *claimResolver) resolve(ctx context.Context, endpoint endpoint, allClaims claims) error {
+func (r *claimResolver) resolve(ctx context.Context, endpoint endpoint, allClaims claims, claim string) error {
 	// TODO: cache resolved claims.
 	jwt, err := getClaimJWT(ctx, r.client, endpoint.URL, endpoint.AccessToken)
 	if err != nil {
-		return fmt.Errorf("while getting distributed claim %q: %v", r.claim, err)
+		return fmt.Errorf("while getting distributed claim %q: %v", claim, err)
 	}
 	untrustedIss, err := untrustedIssuer(jwt)
 	if err != nil {
-		return fmt.Errorf("getting untrusted issuer from endpoint %v failed for claim %q: %v", endpoint.URL, r.claim, err)
+		return fmt.Errorf("getting untrusted issuer from endpoint %v failed for claim %q: %v", endpoint.URL, claim, err)
 	}
 	v, err := r.Verifier(untrustedIss)
 	if err != nil {
@@ -642,13 +640,13 @@ func (r *claimResolver) resolve(ctx context.Context, endpoint endpoint, allClaim
 	}
 	var distClaims claims
 	if err := t.Claims(&distClaims); err != nil {
-		return fmt.Errorf("could not parse distributed claims for claim %v: %v", r.claim, err)
+		return fmt.Errorf("could not parse distributed claims for claim %v: %v", claim, err)
 	}
-	value, ok := distClaims[r.claim]
+	value, ok := distClaims[claim]
 	if !ok {
-		return fmt.Errorf("jwt returned by distributed claim endpoint %q did not contain claim: %v", endpoint.URL, r.claim)
+		return fmt.Errorf("jwt returned by distributed claim endpoint %q did not contain claim: %v", endpoint.URL, claim)
 	}
-	allClaims[r.claim] = value
+	allClaims[claim] = value
 	return nil
 }
 
@@ -703,7 +701,7 @@ func (a *jwtAuthenticator) AuthenticateToken(ctx context.Context, token string) 
 		return nil, false, fmt.Errorf("oidc: parse claims: %v", err)
 	}
 	if a.resolver != nil {
-		if err := a.resolver.expand(ctx, c); err != nil {
+		if err := a.resolver.expand(ctx, c, a.groupsClaim); err != nil {
 			return nil, false, fmt.Errorf("oidc: could not expand distributed claims: %v", err)
 		}
 	}
@@ -854,16 +852,15 @@ func (a *jwtAuthenticator) getUsername(ctx context.Context, c claims, claimsValu
 }
 
 func (a *jwtAuthenticator) getGroups(ctx context.Context, c claims, claimsValue *lazy.MapValue) ([]string, error) {
-	groupsClaim := a.jwtAuthenticator.ClaimMappings.Groups.Claim
-	if len(groupsClaim) > 0 {
-		if _, ok := c[groupsClaim]; ok {
+	if len(a.groupsClaim) > 0 {
+		if _, ok := c[a.groupsClaim]; ok {
 			// Some admins want to use string claims like "role" as the group value.
 			// Allow the group claim to be a single string instead of an array.
 			//
 			// See: https://github.com/kubernetes/kubernetes/issues/33290
 			var groups stringOrArray
-			if err := c.unmarshalClaim(groupsClaim, &groups); err != nil {
-				return nil, fmt.Errorf("oidc: parse groups claim %q: %w", groupsClaim, err)
+			if err := c.unmarshalClaim(a.groupsClaim, &groups); err != nil {
+				return nil, fmt.Errorf("oidc: parse groups claim %q: %w", a.groupsClaim, err)
 			}
 
 			prefix := a.jwtAuthenticator.ClaimMappings.Groups.Prefix
@@ -873,7 +870,7 @@ func (a *jwtAuthenticator) getGroups(ctx context.Context, c claims, claimsValue 
 				}
 			}
 
-			return []string(groups), nil
+			return groups, nil
 		}
 	}
 
