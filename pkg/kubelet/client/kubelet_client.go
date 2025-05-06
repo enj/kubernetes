@@ -19,19 +19,19 @@ package client
 import (
 	"context"
 	"crypto/tls"
-	"encoding/base32"
 	"fmt"
 	"net"
 	"net/http"
 	"slices"
 	"strconv"
-	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/net/http2"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/httpstream/wsstream"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/server/egressselector"
@@ -85,29 +85,29 @@ type ConnectionInfoGetter interface {
 	GetConnectionInfo(ctx context.Context, nodeName types.NodeName) (*ConnectionInfo, error)
 }
 
-type reqHostRewrite struct {
-	commonName    string
-	connCacheKey  string
-	tlsServerName string
-	tcpDialAddr   string
+type reqCtxKeyType int
+
+const (
+	reqTLSConnKey reqCtxKeyType = iota
+	reqCommonNameKey
+)
+
+func withTLSConn(ctx context.Context, tlsConn *tls.Conn) context.Context {
+	return context.WithValue(ctx, reqTLSConnKey, tlsConn)
 }
 
-type reqHostRewriteAndH1 struct {
-	hostRewrite reqHostRewrite
-	onlyH1      bool
+func tlsConnFrom(ctx context.Context) (*tls.Conn, bool) {
+	tlsConn, ok := ctx.Value(reqTLSConnKey).(*tls.Conn)
+	return tlsConn, ok
 }
 
-type reqHostRewriteKeyType int
-
-const reqHostRewriteKey reqHostRewriteKeyType = iota
-
-func withReqHostRewrite(ctx context.Context, hostRewrite reqHostRewrite, onlyH1 bool) context.Context {
-	return context.WithValue(ctx, reqHostRewriteKey, reqHostRewriteAndH1{hostRewrite: hostRewrite, onlyH1: onlyH1})
+func withCommonName(ctx context.Context, commonName string) context.Context {
+	return context.WithValue(ctx, reqCommonNameKey, commonName)
 }
 
-func reqHostRewriteFrom(ctx context.Context) (reqHostRewrite, bool, bool) {
-	hostRewriteAndH1, ok := ctx.Value(reqHostRewriteKey).(reqHostRewriteAndH1)
-	return hostRewriteAndH1.hostRewrite, hostRewriteAndH1.onlyH1, ok
+func commonNameFrom(ctx context.Context) (string, bool) {
+	commonName, ok := ctx.Value(reqCommonNameKey).(string)
+	return commonName, ok
 }
 
 // MakeTransport creates a secure RoundTripper for HTTP Transport.
@@ -257,7 +257,9 @@ func (k *NodeConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeNa
 
 	rt := k.transport
 	if k.validateNodeName {
-		rt = withValidateNodeName(rt, string(nodeName), hostname, portStr)
+		rt = &withValueRoundTripper{delegate: rt, with: func(ctx context.Context) context.Context {
+			return withCommonName(ctx, "system:node:"+string(nodeName))
+		}}
 	}
 
 	return &ConnectionInfo{
@@ -269,62 +271,92 @@ func (k *NodeConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeNa
 	}, nil
 }
 
-func withValidateNodeName(delegate http.RoundTripper, nodeName, hostname, port string) http.RoundTripper {
-	// TODO should we hash the hostname before encoding it?
-	base32Hostname := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString([]byte(hostname)))
-	return &validateNodeNameRoundTripper{
-		delegate: delegate,
-		hostRewrite: reqHostRewrite{
-			commonName: "system:node:" + nodeName,
-			// nodeName cannot contain ; or : due to ValidateNodeName
-			// hostname could be anything so we lowercase base32 encode it -> it also cannot contain ; or :
-			// therefore we know this is an unambiguous cache key that passes httpguts.ValidHostHeader and net.SplitHostPort
-			connCacheKey:  net.JoinHostPort(nodeName+";"+base32Hostname, port),
-			tlsServerName: hostname,
-			tcpDialAddr:   net.JoinHostPort(hostname, port),
-		},
-	}
-}
-
 var _ utilnet.RoundTripperWrapper = &validateNodeNameRoundTripper{}
 
 type validateNodeNameRoundTripper struct {
-	delegate    http.RoundTripper
-	hostRewrite reqHostRewrite
+	delegate http.RoundTripper
 }
 
-func (r *validateNodeNameRoundTripper) WrappedRoundTripper() http.RoundTripper {
-	return r.delegate
+func (v *validateNodeNameRoundTripper) WrappedRoundTripper() http.RoundTripper {
+	return v.delegate
 }
 
-func (r *validateNodeNameRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.URL.Scheme != "https" {
-		return nil, fmt.Errorf(`%q must use scheme "https", got %q`, r.hostRewrite.commonName, req.URL.Scheme)
-	}
-	if req.URL.Host != r.hostRewrite.tcpDialAddr {
-		return nil, fmt.Errorf("%q must use host %q, got %q", r.hostRewrite.commonName, r.hostRewrite.tcpDialAddr, req.URL.Host)
+func (v *validateNodeNameRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	ctx := req.Context()
+
+	tlsConn, ok := tlsConnFrom(ctx)
+	if !ok {
+		return nil, fmt.Errorf("failed to get TLS conn from context")
 	}
 
-	onlyH1 := wsstream.IsWebSocketRequest(req) // matches *http.Request.requiresHTTP1
-	ctx := withReqHostRewrite(req.Context(), r.hostRewrite, onlyH1)
-	req = req.Clone(ctx) // so we can mutate the request URL
-	// make sure the "Host" header / ":authority" pseudo-header field
-	// is set so that servers can correctly perform host based routing.
-	if len(req.Host) == 0 {
-		req.Host = r.hostRewrite.tcpDialAddr
+	commonName, ok := commonNameFrom(ctx)
+	if !ok {
+		return nil, fmt.Errorf("failed to get TLS conn from context")
 	}
-	// override targetAddr used by *http.Transport.connectMethodForRequest which directly
-	// controls the cache key used by *http.Transport.getConn and *http.Transport.dialConn.
-	// we undo this rewrite in *http.Transport.DialTLSContext by passing in the original
-	// value to *http.Transport.DialContext.  DialTLSContext maintains the regular TLS
-	// verification semantics by setting *tls.Config.ServerName to the same value that
-	// *http.persistConn.addTLS would have set if we did not rewrite the host value here.
-	// this also works for http2 requests as http.http2authorityAddr uses this same value
-	// to determine the http2ClientConnPool.GetClientConn input which is used as the map
-	// key for tracking and re-using http.http2ClientConn values.
-	req.URL.Host = r.hostRewrite.connCacheKey
 
-	return r.delegate.RoundTrip(req)
+	if err := validateNodeName(tlsConn.ConnectionState(), commonName); err != nil {
+		return nil, err
+	}
+
+	return v.delegate.RoundTrip(req)
+}
+
+var _ http2.ClientConnPool = &validateNodeNameClientConnPool{}
+
+type validateNodeNameClientConnPool struct {
+	delegate http2.ClientConnPool
+}
+
+func (v *validateNodeNameClientConnPool) GetClientConn(req *http.Request, addr string) (*http2.ClientConn, error) {
+	commonName, ok := commonNameFrom(req.Context())
+	if !ok {
+		return nil, fmt.Errorf("failed to get TLS conn from context")
+	}
+
+	clientConn, err := v.delegate.GetClientConn(req, addr)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validateNodeName(clientConn.State(), commonName); err != nil {
+		_, _ = clientConn.RoundTrip(new(http.Request)) // release the stream reservation per ClientConnPool docs
+		return nil, err
+	}
+
+	return clientConn, nil
+}
+
+func (v *validateNodeNameClientConnPool) MarkDead(clientConn *http2.ClientConn) {
+	v.delegate.MarkDead(clientConn)
+}
+
+// add the extra kubelet common name check based on ValidateKubeletServingCSR
+func validateNodeName(cs tls.ConnectionState, commonName string) error {
+	leaf := cs.PeerCertificates[0]
+	if leaf.Subject.CommonName != commonName {
+		return fmt.Errorf("invalid node serving cert common name; expected %q, got %q", commonName, leaf.Subject.CommonName)
+	}
+	if !slices.Equal(leaf.Subject.Organization, nodeOrganization) {
+		return fmt.Errorf("invalid node serving cert organization; expected %q, got %q", nodeOrganization, leaf.Subject.Organization)
+	}
+	return nil
+}
+
+var _ utilnet.RoundTripperWrapper = &withValueRoundTripper{}
+
+type withValueRoundTripper struct {
+	delegate http.RoundTripper
+	with     func(context.Context) context.Context
+}
+
+func (w *withValueRoundTripper) WrappedRoundTripper() http.RoundTripper {
+	return w.delegate
+}
+
+func (w *withValueRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	ctx := w.with(req.Context())
+	req = req.WithContext(ctx)
+	return w.delegate.RoundTrip(req)
 }
 
 var nodeOrganization = []string{user.NodesGroup}
@@ -334,49 +366,49 @@ func mutateTransportToValidateNodeName(baseRT http.RoundTripper) error {
 	if err != nil {
 		return fmt.Errorf("failed to get *http.Transport for transport: %w", err)
 	}
-	if rt.DialTLSContext != nil || rt.DialContext == nil || rt.TLSHandshakeTimeout == 0 ||
-		rt.TLSClientConfig == nil || len(rt.TLSClientConfig.ServerName) != 0 || rt.TLSClientConfig.VerifyConnection != nil {
+
+	const h1 = "http/1.1"
+
+	if rt.DialTLSContext != nil || rt.TLSNextProto[h1] != nil || rt.TLSNextProto[http2.NextProtoTLS] == nil {
 		return fmt.Errorf("*http.Transport has invalid state: %#v", rt) // sanity check client-go internals that we rely on
 	}
-	// mutate the underlying *http.Transport in-place
-	rt.DialTLSContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		if network != "tcp" {
-			return nil, fmt.Errorf("only tcp connections are supported")
-		}
-		hostRewrite, onlyH1, ok := reqHostRewriteFrom(ctx)
+
+	h1NoDialRT := rt.Clone()
+	h1NoDialRT.DialTLSContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		tlsConn, ok := tlsConnFrom(ctx)
 		if !ok {
-			return nil, fmt.Errorf("failed to get dial rewrite from context")
+			return nil, fmt.Errorf("failed to get TLS conn from context")
 		}
-		// TODO this check enforces that proxy URL is not set, does that make sense?
-		// TODO maybe we should overwrite the proxy func to always return nil?  http.ProxyURL(nil)
-		if address != hostRewrite.connCacheKey {
-			return nil, fmt.Errorf("rewrite of %q->%q failed, got unexpected address %q (possibly caused by unsupported HTTPS_PROXY)", hostRewrite.connCacheKey, hostRewrite.tcpDialAddr, address)
-		}
-		plainConn, err := rt.DialContext(ctx, "tcp", hostRewrite.tcpDialAddr) // make the TCP connection to the original host
-		if err != nil {
-			return nil, fmt.Errorf("failed to make TCP connection: %w", err)
-		}
-		tlsConfig := rt.TLSClientConfig.Clone()                           // shallow clone so we can mutate it per connection
-		tlsConfig.ServerName = hostRewrite.tlsServerName                  // maintain the existing SAN check via *x509.Certificate.VerifyHostname
-		tlsConfig.VerifyConnection = func(cs tls.ConnectionState) error { // add the extra kubelet common name check based on ValidateKubeletServingCSR
-			leaf := cs.PeerCertificates[0]
-			if leaf.Subject.CommonName != hostRewrite.commonName {
-				return fmt.Errorf("invalid node serving cert common name; expected %q, got %q", hostRewrite.commonName, leaf.Subject.CommonName)
-			}
-			if !slices.Equal(leaf.Subject.Organization, nodeOrganization) {
-				return fmt.Errorf("invalid node serving cert organization; expected %q, got %q", nodeOrganization, leaf.Subject.Organization)
-			}
-			return nil
-		}
-		if onlyH1 {
-			tlsConfig.NextProtos = nil // copied from *http.persistConn.addTLS
-		}
-		tlsConn, err := addTLS(ctx, plainConn, tlsConfig, rt.TLSHandshakeTimeout) // ensure TLSHandshakeTimeout is honored
-		if err != nil {
-			return nil, err
-		}
-		return tlsConn, nil
+		return &hideTLSConn{Conn: tlsConn}, nil
 	}
+	h1AlwaysValidateRT := &validateNodeNameRoundTripper{delegate: h1NoDialRT}
+
+	// mutate the underlying *http.Transport in-place
+	rt.TLSNextProto[h1] = func(_ string, tlsConn *tls.Conn) http.RoundTripper {
+		return &withValueRoundTripper{delegate: h1AlwaysValidateRT, with: func(ctx context.Context) context.Context {
+			// note that this assumes that this TLS conn is always used, which is true for http1 but not for http2
+			// TODO make sure this does not leak TLS conn
+			return withTLSConn(ctx, tlsConn)
+		}}
+	}
+
+	var h2Lock sync.Mutex
+	h2Alpn := rt.TLSNextProto[http2.NextProtoTLS]
+	rt.TLSNextProto[http2.NextProtoTLS] = func(authority string, tlsConn *tls.Conn) http.RoundTripper {
+		h2Lock.Lock()
+		defer h2Lock.Unlock()
+
+		h2Rt := h2Alpn(authority, tlsConn)
+		h2Transport, ok := h2Rt.(*http2.Transport)
+		if !ok || h2Transport.ConnPool == nil {
+			return erringRoundTripper{err: fmt.Errorf("invalid *http2.Transport: %T", h2Rt)}
+		}
+
+		h2Transport.ConnPool
+	}
+
+	// TODO this check enforces that proxy URL is not set, does that make sense?
+	// TODO maybe we should overwrite the proxy func to always return nil?  http.ProxyURL(nil)
 	return nil
 }
 
@@ -391,37 +423,11 @@ func httpTransportFor(rt http.RoundTripper) (*http.Transport, error) {
 	}
 }
 
-// tlsHandshakeTimeoutError and addTLS below are copied with modifications from *http.persistConn.addTLS.
-// we lose the exact timings of the tracing TLSHandshakeStart and TLSHandshakeDone hooks
-// but not calling them in addTLS seems better than calling them multiple times for the same TLS connection.
-// we need to copy addTLS to preserve the non-blocking cancellation logic for *http.Transport.TLSHandshakeTimeout.
-
-type tlsHandshakeTimeoutError struct{}
-
-func (tlsHandshakeTimeoutError) Timeout() bool   { return true }
-func (tlsHandshakeTimeoutError) Temporary() bool { return true }
-func (tlsHandshakeTimeoutError) Error() string   { return "net/http: TLS handshake timeout" }
-
-func addTLS(ctx context.Context, plainConn net.Conn, tlsConfig *tls.Config, tlsHandshakeTimeout time.Duration) (*tls.Conn, error) {
-	tlsConn := tls.Client(plainConn, tlsConfig)
-	errc := make(chan error, 2)
-	// for canceling TLS handshake
-	timer := time.AfterFunc(tlsHandshakeTimeout, func() {
-		errc <- tlsHandshakeTimeoutError{}
-	})
-	go func() {
-		err := tlsConn.HandshakeContext(ctx)
-		timer.Stop()
-		errc <- err
-	}()
-	if err := <-errc; err != nil {
-		_ = plainConn.Close()
-		if err == (tlsHandshakeTimeoutError{}) {
-			// Now that we have closed the connection,
-			// wait for the call to HandshakeContext to return.
-			<-errc
-		}
-		return nil, err
-	}
-	return tlsConn, nil
+type hideTLSConn struct {
+	net.Conn
 }
+
+type erringRoundTripper struct{ err error }
+
+func (rt erringRoundTripper) RoundTripErr() error                             { return rt.err }
+func (rt erringRoundTripper) RoundTrip(*http.Request) (*http.Response, error) { return nil, rt.err }

@@ -136,7 +136,7 @@ func TestMakeInsecureTransport(t *testing.T) {
 
 func TestValidateNodeName(t *testing.T) {
 	const nodeName = "my-node-1"
-	kubeletServer := newKubeletServer(t, nodeName)
+	kubeletServer := newKubeletServer(t, nodeName, false)
 
 	nodeGetter := NodeGetterFunc(func(ctx context.Context, name string, options metav1.GetOptions) (*corev1.Node, error) {
 		return &corev1.Node{
@@ -240,7 +240,7 @@ type fakeKubeletServer struct {
 	port       int32
 }
 
-func newKubeletServer(tb testing.TB, nodeName string) *fakeKubeletServer {
+func newKubeletServer(tb testing.TB, nodeName string, http2 bool) *fakeKubeletServer {
 	tb.Helper()
 
 	signingCert, signingKey := createCA(tb)
@@ -250,7 +250,7 @@ func newKubeletServer(tb testing.TB, nodeName string) *fakeKubeletServer {
 	mux := http.NewServeMux()
 	testServer := httptest.NewUnstartedServer(mux)
 
-	testServer.EnableHTTP2 = true // TODO test both with http1 and http2
+	testServer.EnableHTTP2 = http2 // TODO test both with http1 and http2
 
 	testServer.TLS = &tls.Config{
 		Certificates: []tls.Certificate{servingCert},
