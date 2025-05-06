@@ -37,6 +37,7 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/net/http2"
+
 	"k8s.io/klog/v2"
 	netutils "k8s.io/utils/net"
 )
@@ -134,7 +135,7 @@ func SetTransportDefaults(t *http.Transport) *http.Transport {
 	if s := os.Getenv("DISABLE_HTTP2"); len(s) > 0 {
 		klog.Info("HTTP2 has been explicitly disabled")
 	} else if allowsHTTP2(t) {
-		if err := configureHTTP2Transport(t); err != nil {
+		if _, err := ConfigureHTTP2Transport(t); err != nil {
 			klog.Warningf("Transport failed http2 configuration: %v", err)
 		}
 	}
@@ -171,10 +172,10 @@ func pingTimeoutSeconds() int {
 	return ret
 }
 
-func configureHTTP2Transport(t *http.Transport) error {
+func ConfigureHTTP2Transport(t *http.Transport) (*http2.Transport, error) {
 	t2, err := http2.ConfigureTransports(t)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// The following enables the HTTP/2 connection health check added in
 	// https://github.com/golang/net/pull/55. The health check detects and
@@ -186,7 +187,7 @@ func configureHTTP2Transport(t *http.Transport) error {
 	// https://github.com/kubernetes/kubernetes/issues/87615.
 	t2.ReadIdleTimeout = time.Duration(readIdleTimeoutSeconds()) * time.Second
 	t2.PingTimeout = time.Duration(pingTimeoutSeconds()) * time.Second
-	return nil
+	return t2, nil
 }
 
 func allowsHTTP2(t *http.Transport) bool {

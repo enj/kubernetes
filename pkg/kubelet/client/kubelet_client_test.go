@@ -49,7 +49,7 @@ func TestMakeTransportInvalid(t *testing.T) {
 		},
 	}
 
-	rt, err := MakeTransport(config)
+	rt, err := makeSecureTransport(config, nil)
 	if err == nil {
 		t.Errorf("Expected an error")
 	}
@@ -70,7 +70,7 @@ func TestMakeTransportValid(t *testing.T) {
 		},
 	}
 
-	rt, err := MakeTransport(config)
+	rt, err := makeSecureTransport(config, nil)
 	if err != nil {
 		t.Errorf("Not expecting an error %#v", err)
 	}
@@ -109,7 +109,7 @@ func TestMakeInsecureTransport(t *testing.T) {
 		},
 	}
 
-	rt, err := MakeInsecureTransport(config)
+	rt, err := makeInsecureTransport(config)
 	if err != nil {
 		t.Errorf("Not expecting an error #%v", err)
 	}
@@ -135,8 +135,15 @@ func TestMakeInsecureTransport(t *testing.T) {
 }
 
 func TestValidateNodeName(t *testing.T) {
+	t.Run("http2=false", func(t *testing.T) { testValidateNodeName(t, false) })
+	t.Run("http2=true", func(t *testing.T) { testValidateNodeName(t, true) })
+}
+
+func testValidateNodeName(t *testing.T, http2 bool) {
+	t.Helper()
+
 	const nodeName = "my-node-1"
-	kubeletServer := newKubeletServer(t, nodeName, false)
+	kubeletServer := newKubeletServer(t, nodeName, http2)
 
 	nodeGetter := NodeGetterFunc(func(ctx context.Context, name string, options metav1.GetOptions) (*corev1.Node, error) {
 		return &corev1.Node{
@@ -250,7 +257,7 @@ func newKubeletServer(tb testing.TB, nodeName string, http2 bool) *fakeKubeletSe
 	mux := http.NewServeMux()
 	testServer := httptest.NewUnstartedServer(mux)
 
-	testServer.EnableHTTP2 = http2 // TODO test both with http1 and http2
+	testServer.EnableHTTP2 = http2
 
 	testServer.TLS = &tls.Config{
 		Certificates: []tls.Certificate{servingCert},

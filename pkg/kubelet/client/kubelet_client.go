@@ -22,10 +22,11 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"reflect"
 	"slices"
 	"strconv"
-	"sync"
 	"time"
+	"unsafe"
 
 	"golang.org/x/net/http2"
 
@@ -85,43 +86,18 @@ type ConnectionInfoGetter interface {
 	GetConnectionInfo(ctx context.Context, nodeName types.NodeName) (*ConnectionInfo, error)
 }
 
-type reqCtxKeyType int
-
-const (
-	reqTLSConnKey reqCtxKeyType = iota
-	reqCommonNameKey
-)
-
-func withTLSConn(ctx context.Context, tlsConn *tls.Conn) context.Context {
-	return context.WithValue(ctx, reqTLSConnKey, tlsConn)
+// makeSecureTransport creates a secure RoundTripper for HTTP Transport.
+func makeSecureTransport(config *KubeletClientConfig, nextProtos []string) (http.RoundTripper, error) {
+	return makeTransport(config, false, nextProtos)
 }
 
-func tlsConnFrom(ctx context.Context) (*tls.Conn, bool) {
-	tlsConn, ok := ctx.Value(reqTLSConnKey).(*tls.Conn)
-	return tlsConn, ok
-}
-
-func withCommonName(ctx context.Context, commonName string) context.Context {
-	return context.WithValue(ctx, reqCommonNameKey, commonName)
-}
-
-func commonNameFrom(ctx context.Context) (string, bool) {
-	commonName, ok := ctx.Value(reqCommonNameKey).(string)
-	return commonName, ok
-}
-
-// MakeTransport creates a secure RoundTripper for HTTP Transport.
-func MakeTransport(config *KubeletClientConfig) (http.RoundTripper, error) {
-	return makeTransport(config, false)
-}
-
-// MakeInsecureTransport creates an insecure RoundTripper for HTTP Transport.
-func MakeInsecureTransport(config *KubeletClientConfig) (http.RoundTripper, error) {
-	return makeTransport(config, true)
+// makeInsecureTransport creates an insecure RoundTripper for HTTP Transport.
+func makeInsecureTransport(config *KubeletClientConfig) (http.RoundTripper, error) {
+	return makeTransport(config, true, nil)
 }
 
 // makeTransport creates a RoundTripper for HTTP Transport.
-func makeTransport(config *KubeletClientConfig, insecureSkipTLSVerify bool) (http.RoundTripper, error) {
+func makeTransport(config *KubeletClientConfig, insecureSkipTLSVerify bool, nextProtos []string) (http.RoundTripper, error) {
 	// do the insecureSkipTLSVerify on the pre-transport *before* we go get a potentially cached connection.
 	// transportConfig always produces a new struct pointer.
 	transportConfig := config.transportConfig()
@@ -142,6 +118,9 @@ func makeTransport(config *KubeletClientConfig, insecureSkipTLSVerify bool) (htt
 			transportConfig.DialHolder = &transport.DialHolder{Dial: dialer}
 		}
 	}
+
+	transportConfig.TLS.NextProtos = nextProtos
+
 	return transport.New(transportConfig)
 }
 
@@ -203,7 +182,11 @@ type NodeConnectionInfoGetter struct {
 
 // NewNodeConnectionInfoGetter creates a new NodeConnectionInfoGetter.
 func NewNodeConnectionInfoGetter(nodes NodeGetter, config KubeletClientConfig) (ConnectionInfoGetter, error) {
-	transport, err := MakeTransport(&config)
+	var nextProtos []string
+	if config.TLSClientConfig.ValidateNodeName {
+		nextProtos = []string{h1} // we configure http2 manually ourselves in mutateTransportToValidateNodeName
+	}
+	transport, err := makeSecureTransport(&config, nextProtos)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +196,7 @@ func NewNodeConnectionInfoGetter(nodes NodeGetter, config KubeletClientConfig) (
 		}
 	}
 
-	insecureSkipTLSVerifyTransport, err := MakeInsecureTransport(&config)
+	insecureSkipTLSVerifyTransport, err := makeInsecureTransport(&config)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +226,7 @@ func (k *NodeConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeNa
 	}
 
 	// Find a kubelet-reported address, using preferred address type
-	hostname, err := nodeutil.GetPreferredNodeAddress(node, k.preferredAddressTypes)
+	host, err := nodeutil.GetPreferredNodeAddress(node, k.preferredAddressTypes)
 	if err != nil {
 		return nil, err
 	}
@@ -253,19 +236,18 @@ func (k *NodeConnectionInfoGetter) GetConnectionInfo(ctx context.Context, nodeNa
 	if port <= 0 {
 		port = k.defaultPort
 	}
-	portStr := strconv.Itoa(port)
 
 	rt := k.transport
 	if k.validateNodeName {
-		rt = &withValueRoundTripper{delegate: rt, with: func(ctx context.Context) context.Context {
+		rt = &withValueRoundTripper{delegate: rt, withValue: func(ctx context.Context) context.Context {
 			return withCommonName(ctx, "system:node:"+string(nodeName))
 		}}
 	}
 
 	return &ConnectionInfo{
 		Scheme:                         k.scheme,
-		Hostname:                       hostname,
-		Port:                           portStr,
+		Hostname:                       host,
+		Port:                           strconv.Itoa(port),
 		Transport:                      rt,
 		InsecureSkipTLSVerifyTransport: k.insecureSkipTLSVerifyTransport,
 	}, nil
@@ -307,7 +289,7 @@ type validateNodeNameClientConnPool struct {
 	delegate http2.ClientConnPool
 }
 
-func (v *validateNodeNameClientConnPool) GetClientConn(req *http.Request, addr string) (*http2.ClientConn, error) {
+func (v *validateNodeNameClientConnPool) GetClientConn(req *http.Request, addr string) (_ *http2.ClientConn, out error) {
 	commonName, ok := commonNameFrom(req.Context())
 	if !ok {
 		return nil, fmt.Errorf("failed to get TLS conn from context")
@@ -317,9 +299,21 @@ func (v *validateNodeNameClientConnPool) GetClientConn(req *http.Request, addr s
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if out == nil {
+			return
+		}
+		// on any error, release the stream reservation per http2.ClientConnPool docs
+		_, _ = clientConn.RoundTrip(new(http.Request))
+	}()
 
-	if err := validateNodeName(clientConn.State(), commonName); err != nil {
-		_, _ = clientConn.RoundTrip(new(http.Request)) // release the stream reservation per ClientConnPool docs
+	// TODO ask Go maintainers if they are okay exposing this field via a NetConn method like tls.Conn has
+	tlsConn, ok := clientConnNetConn(clientConn).(*tls.Conn)
+	if !ok {
+		return nil, fmt.Errorf("failed to get TLS conn from client conn: %T", clientConn)
+	}
+
+	if err := validateNodeName(tlsConn.ConnectionState(), commonName); err != nil {
 		return nil, err
 	}
 
@@ -329,6 +323,8 @@ func (v *validateNodeNameClientConnPool) GetClientConn(req *http.Request, addr s
 func (v *validateNodeNameClientConnPool) MarkDead(clientConn *http2.ClientConn) {
 	v.delegate.MarkDead(clientConn)
 }
+
+var nodeOrganization = []string{user.NodesGroup}
 
 // add the extra kubelet common name check based on ValidateKubeletServingCSR
 func validateNodeName(cs tls.ConnectionState, commonName string) error {
@@ -345,8 +341,8 @@ func validateNodeName(cs tls.ConnectionState, commonName string) error {
 var _ utilnet.RoundTripperWrapper = &withValueRoundTripper{}
 
 type withValueRoundTripper struct {
-	delegate http.RoundTripper
-	with     func(context.Context) context.Context
+	delegate  http.RoundTripper
+	withValue func(context.Context) context.Context
 }
 
 func (w *withValueRoundTripper) WrappedRoundTripper() http.RoundTripper {
@@ -354,12 +350,12 @@ func (w *withValueRoundTripper) WrappedRoundTripper() http.RoundTripper {
 }
 
 func (w *withValueRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	ctx := w.with(req.Context())
+	ctx := w.withValue(req.Context())
 	req = req.WithContext(ctx)
 	return w.delegate.RoundTrip(req)
 }
 
-var nodeOrganization = []string{user.NodesGroup}
+const h1 = "http/1.1"
 
 func mutateTransportToValidateNodeName(baseRT http.RoundTripper) error {
 	rt, err := httpTransportFor(baseRT)
@@ -367,44 +363,43 @@ func mutateTransportToValidateNodeName(baseRT http.RoundTripper) error {
 		return fmt.Errorf("failed to get *http.Transport for transport: %w", err)
 	}
 
-	const h1 = "http/1.1"
-
-	if rt.DialTLSContext != nil || rt.TLSNextProto[h1] != nil || rt.TLSNextProto[http2.NextProtoTLS] == nil {
+	if rt.DialTLSContext != nil || rt.TLSNextProto[h1] != nil || rt.TLSNextProto[http2.NextProtoTLS] != nil {
 		return fmt.Errorf("*http.Transport has invalid state: %#v", rt) // sanity check client-go internals that we rely on
 	}
 
-	h1NoDialRT := rt.Clone()
-	h1NoDialRT.DialTLSContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+	h2, err := utilnet.ConfigureHTTP2Transport(rt) // this mutates rt and sets up the http2 transport
+	if err != nil {
+		return fmt.Errorf("failed to configure http2 transport: %w", err)
+	}
+	if h2.ConnPool == nil {
+		return fmt.Errorf("invalid *http2.Transport: %#v", h2)
+	}
+	// mutate the underlying *http2.Transport in-place
+	// TODO go needs to export clientConnPoolIdleCloser's closeIdleConnections method so other pools can actually close idle connections
+	h2.ConnPool = &validateNodeNameClientConnPool{delegate: h2.ConnPool}
+
+	// mimic what std lib does for http2 but for http1 where the "outer"
+	// transport does the dial and the "inner" transport uses/manages it
+	h1NoDial := rt.Clone()
+	h1NoDial.DialTLSContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
 		tlsConn, ok := tlsConnFrom(ctx)
 		if !ok {
 			return nil, fmt.Errorf("failed to get TLS conn from context")
 		}
-		return &hideTLSConn{Conn: tlsConn}, nil
+		return &hideTLSConn{Conn: tlsConn}, nil // prevent std lib from treating this as a TLS conn "twice"
 	}
-	h1AlwaysValidateRT := &validateNodeNameRoundTripper{delegate: h1NoDialRT}
+	h1NoDial.DialContext = func(_ context.Context, _, _ string) (net.Conn, error) {
+		return nil, fmt.Errorf("tcp dial not supported")
+	}
+	h1ValidateCN := &validateNodeNameRoundTripper{delegate: h1NoDial}
 
 	// mutate the underlying *http.Transport in-place
 	rt.TLSNextProto[h1] = func(_ string, tlsConn *tls.Conn) http.RoundTripper {
-		return &withValueRoundTripper{delegate: h1AlwaysValidateRT, with: func(ctx context.Context) context.Context {
+		return &withValueRoundTripper{delegate: h1ValidateCN, withValue: func(ctx context.Context) context.Context {
 			// note that this assumes that this TLS conn is always used, which is true for http1 but not for http2
 			// TODO make sure this does not leak TLS conn
 			return withTLSConn(ctx, tlsConn)
 		}}
-	}
-
-	var h2Lock sync.Mutex
-	h2Alpn := rt.TLSNextProto[http2.NextProtoTLS]
-	rt.TLSNextProto[http2.NextProtoTLS] = func(authority string, tlsConn *tls.Conn) http.RoundTripper {
-		h2Lock.Lock()
-		defer h2Lock.Unlock()
-
-		h2Rt := h2Alpn(authority, tlsConn)
-		h2Transport, ok := h2Rt.(*http2.Transport)
-		if !ok || h2Transport.ConnPool == nil {
-			return erringRoundTripper{err: fmt.Errorf("invalid *http2.Transport: %T", h2Rt)}
-		}
-
-		h2Transport.ConnPool
 	}
 
 	// TODO this check enforces that proxy URL is not set, does that make sense?
@@ -424,10 +419,41 @@ func httpTransportFor(rt http.RoundTripper) (*http.Transport, error) {
 }
 
 type hideTLSConn struct {
-	net.Conn
+	*tls.Conn
 }
 
-type erringRoundTripper struct{ err error }
+func clientConnNetConn(clientConn *http2.ClientConn) net.Conn {
+	return getPrivateField[net.Conn](clientConn, "tconn")
+}
 
-func (rt erringRoundTripper) RoundTripErr() error                             { return rt.err }
-func (rt erringRoundTripper) RoundTrip(*http.Request) (*http.Response, error) { return nil, rt.err }
+// getPrivateField is some dark magic to get a private field
+func getPrivateField[T any](obj any, fieldName string) T {
+	field := reflect.ValueOf(obj).Elem().FieldByName(fieldName)
+	ptr := (*T)(unsafe.Pointer(field.UnsafeAddr()))
+	return *ptr
+}
+
+type reqCtxKeyType int
+
+const (
+	reqTLSConnKey reqCtxKeyType = iota
+	reqCommonNameKey
+)
+
+func withTLSConn(ctx context.Context, tlsConn *tls.Conn) context.Context {
+	return context.WithValue(ctx, reqTLSConnKey, tlsConn)
+}
+
+func tlsConnFrom(ctx context.Context) (*tls.Conn, bool) {
+	tlsConn, ok := ctx.Value(reqTLSConnKey).(*tls.Conn)
+	return tlsConn, ok
+}
+
+func withCommonName(ctx context.Context, commonName string) context.Context {
+	return context.WithValue(ctx, reqCommonNameKey, commonName)
+}
+
+func commonNameFrom(ctx context.Context) (string, bool) {
+	commonName, ok := ctx.Value(reqCommonNameKey).(string)
+	return commonName, ok
+}
