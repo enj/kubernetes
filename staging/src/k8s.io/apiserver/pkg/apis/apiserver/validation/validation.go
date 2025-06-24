@@ -122,6 +122,7 @@ func validateIssuer(issuer api.Issuer, disallowedIssuers sets.Set[string], fldPa
 	allErrs = append(allErrs, validateIssuerDiscoveryURL(issuer.URL, issuer.DiscoveryURL, fldPath.Child("discoveryURL"), structuredAuthnFeatureEnabled)...)
 	allErrs = append(allErrs, validateAudiences(issuer.Audiences, issuer.AudienceMatchPolicy, fldPath.Child("audiences"), fldPath.Child("audienceMatchPolicy"), structuredAuthnFeatureEnabled)...)
 	allErrs = append(allErrs, validateCertificateAuthority(issuer.CertificateAuthority, fldPath.Child("certificateAuthority"))...)
+	allErrs = append(allErrs, validateEgressSelector(issuer.EgressSelectorType, fldPath.Child("egressSelectorType"), structuredAuthnFeatureEnabled)...)
 
 	return allErrs
 }
@@ -225,6 +226,31 @@ func validateCertificateAuthority(certificateAuthority string, fldPath *field.Pa
 	_, err := cert.NewPoolFromBytes([]byte(certificateAuthority))
 	if err != nil {
 		allErrs = append(allErrs, field.Invalid(fldPath, "<omitted>", err.Error()))
+	}
+
+	return allErrs
+}
+
+// TODO does egress selector need a new feature gate of its own?
+// TODO should we try to validate that a issuer set to a kubernetes service is not used with the control plane selector type?
+// TODO should we try to validate that the egress config actually has the matching selector type configured?
+// TODO unit test
+func validateEgressSelector(selectorType api.EgressSelectorType, fldPath *field.Path, structuredAuthnFeatureEnabled bool) field.ErrorList {
+	var allErrs field.ErrorList
+
+	if len(selectorType) == 0 {
+		return allErrs
+	}
+
+	if !structuredAuthnFeatureEnabled {
+		allErrs = append(allErrs, field.Invalid(fldPath, selectorType, "egress selector is not supported when StructuredAuthenticationConfiguration feature gate is disabled"))
+	}
+
+	switch selectorType {
+	case api.EgressSelectorControlPlane, api.EgressSelectorCluster:
+		// valid
+	default:
+		allErrs = append(allErrs, field.Invalid(fldPath, selectorType, "egress selector must be either ControlPlane or Cluster"))
 	}
 
 	return allErrs
