@@ -84,7 +84,7 @@ type Options struct {
 	// PEM encoded root certificate contents of the provider.  Mutually exclusive with Client.
 	CAContentProvider CAContentProvider
 
-	// TODO.  Mutually exclusive with Client.
+	// EgressLookup allows for optional opt-in egress configuration via a custom dialer.  Mutually exclusive with Client.
 	EgressLookup egressselector.Lookup
 
 	// Optional http.Client used to make all requests to the remote issuer.  Mutually exclusive with CAContentProvider.
