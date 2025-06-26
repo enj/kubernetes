@@ -299,8 +299,7 @@ func New(lifecycleCtx context.Context, opts Options) (AuthenticatorTokenWithHeal
 			klog.Info("OIDC: No x509 certificates provided, will use host's root CA set")
 		}
 
-		// TODO unit test
-		// TODO integration test?
+		// TODO integration test
 		var customDial net.DialFunc
 		switch et := opts.JWTAuthenticator.Issuer.EgressSelectorType; et {
 		case "":
