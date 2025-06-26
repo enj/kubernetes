@@ -234,7 +234,6 @@ func validateCertificateAuthority(certificateAuthority string, fldPath *field.Pa
 // TODO does egress selector need a new feature gate of its own?
 // TODO should we try to validate that a issuer set to a kubernetes service is not used with the control plane selector type?
 // TODO should we try to validate that the egress config actually has the matching selector type configured?
-// TODO unit test
 func validateEgressSelector(selectorType api.EgressSelectorType, fldPath *field.Path, structuredAuthnFeatureEnabled bool) field.ErrorList {
 	var allErrs field.ErrorList
 

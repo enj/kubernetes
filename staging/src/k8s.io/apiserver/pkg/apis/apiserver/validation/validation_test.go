@@ -32,19 +32,24 @@ import (
 	"k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/apimachinery/pkg/util/version"
 	api "k8s.io/apiserver/pkg/apis/apiserver"
 	authenticationcel "k8s.io/apiserver/pkg/authentication/cel"
 	authorizationcel "k8s.io/apiserver/pkg/authorization/cel"
+	"k8s.io/apiserver/pkg/features"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	certutil "k8s.io/client-go/util/cert"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/utils/pointer"
 )
 
 func TestValidateAuthenticationConfiguration(t *testing.T) {
 	testCases := []struct {
-		name              string
-		in                *api.AuthenticationConfiguration
-		disallowedIssuers []string
-		want              string
+		name                           string
+		in                             *api.AuthenticationConfiguration
+		disallowedIssuers              []string
+		structuredAuthnFeatureOverride *bool
+		want                           string
 	}{
 		{
 			name: "jwt authenticator is empty",
@@ -272,6 +277,91 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 			},
 			disallowedIssuers: []string{"a", "b", "https://issuer-url", "c"},
 			want:              `jwt[0].issuer.url: Invalid value: "https://issuer-url": URL must not overlap with disallowed issuers: [a b c https://issuer-url]`,
+		},
+		{
+			name: "valid authentication configuration with invalid egress type",
+			in: &api.AuthenticationConfiguration{
+				JWT: []api.JWTAuthenticator{
+					{
+						Issuer: api.Issuer{
+							URL:                "https://issuer-url",
+							Audiences:          []string{"audience"},
+							EgressSelectorType: "panda",
+						},
+						ClaimValidationRules: []api.ClaimValidationRule{
+							{
+								Claim:         "foo",
+								RequiredValue: "bar",
+							},
+						},
+						ClaimMappings: api.ClaimMappings{
+							Username: api.PrefixedClaimOrExpression{
+								Claim:  "sub",
+								Prefix: pointer.String("prefix"),
+							},
+						},
+					},
+				},
+			},
+			disallowedIssuers: []string{"a", "b", "c"},
+			want:              `jwt[0].issuer.egressSelectorType: Invalid value: "panda": egress selector must be either ControlPlane or Cluster`,
+		},
+		{
+			name: "valid authentication configuration with valid egress type with feature disabled",
+			in: &api.AuthenticationConfiguration{
+				JWT: []api.JWTAuthenticator{
+					{
+						Issuer: api.Issuer{
+							URL:                "https://issuer-url",
+							Audiences:          []string{"audience"},
+							EgressSelectorType: "ControlPlane",
+						},
+						ClaimValidationRules: []api.ClaimValidationRule{
+							{
+								Claim:         "foo",
+								RequiredValue: "bar",
+							},
+						},
+						ClaimMappings: api.ClaimMappings{
+							Username: api.PrefixedClaimOrExpression{
+								Claim:  "sub",
+								Prefix: pointer.String("prefix"),
+							},
+						},
+					},
+				},
+			},
+			disallowedIssuers:              []string{"a", "b", "c"},
+			structuredAuthnFeatureOverride: pointer.Bool(false),
+			want:                           `jwt[0].issuer.egressSelectorType: Invalid value: "ControlPlane": egress selector is not supported when StructuredAuthenticationConfiguration feature gate is disabled`,
+		},
+		{
+			name: "valid authentication configuration with valid egress type",
+			in: &api.AuthenticationConfiguration{
+				JWT: []api.JWTAuthenticator{
+					{
+						Issuer: api.Issuer{
+							URL:                "https://issuer-url",
+							Audiences:          []string{"audience"},
+							EgressSelectorType: "Cluster",
+						},
+						ClaimValidationRules: []api.ClaimValidationRule{
+							{
+								Claim:         "foo",
+								RequiredValue: "bar",
+							},
+						},
+						ClaimMappings: api.ClaimMappings{
+							Username: api.PrefixedClaimOrExpression{
+								Claim:  "sub",
+								Prefix: pointer.String("prefix"),
+							},
+						},
+					},
+				},
+			},
+			disallowedIssuers: []string{"a", "b", "c"},
+			want:              "",
 		},
 		{
 			name: "valid authentication configuration that uses unverified email",
@@ -665,6 +755,10 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.structuredAuthnFeatureOverride != nil {
+				featuregatetesting.SetFeatureGateEmulationVersionDuringTest(t, utilfeature.DefaultFeatureGate, version.MustParse("1.33")) // go back to when the feature could be disabled
+				featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StructuredAuthenticationConfiguration, *tt.structuredAuthnFeatureOverride)
+			}
 			got := ValidateAuthenticationConfiguration(authenticationcel.NewDefaultCompiler(), tt.in, tt.disallowedIssuers).ToAggregate()
 			if d := cmp.Diff(tt.want, errString(got)); d != "" {
 				t.Fatalf("AuthenticationConfiguration validation mismatch (-want +got):\n%s", d)
