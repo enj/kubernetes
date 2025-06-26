@@ -992,6 +992,52 @@ jwt:
 				Groups:   []string{"system:authenticated"},
 			},
 		},
+		{
+			name: "egress proxy is ok",
+			authConfigFn: func(t *testing.T, issuerURL, caCert string) string {
+				return fmt.Sprintf(`
+apiVersion: apiserver.config.k8s.io/v1
+kind: AuthenticationConfiguration
+jwt:
+- issuer:
+    url: %s
+    egressSelectorType: Cluster
+    audiences:
+    - %s
+    - another-audience
+    audienceMatchPolicy: MatchAny
+    certificateAuthority: |
+        %s
+  claimMappings:
+    username:
+      expression: "'k8s-' + claims.sub"
+`, issuerURL, defaultOIDCClientID, indentCertificateAuthority(caCert))
+			},
+			configureInfrastructure: configureTestInfrastructure[*rsa.PrivateKey, *rsa.PublicKey],
+			configureOIDCServerBehaviour: func(t *testing.T, oidcServer *utilsoidc.TestServer, signingPrivateKey *rsa.PrivateKey) {
+				idTokenLifetime := time.Second * 1200
+				oidcServer.TokenHandler().EXPECT().Token().RunAndReturn(utilsoidc.TokenHandlerBehaviorReturningPredefinedJWT(
+					t,
+					signingPrivateKey,
+					map[string]interface{}{
+						"iss": oidcServer.URL(),
+						"sub": defaultOIDCClaimedUsername,
+						"aud": defaultOIDCClientID,
+						"exp": time.Now().Add(idTokenLifetime).Unix(),
+					},
+					defaultStubAccessToken,
+					defaultStubRefreshToken,
+				)).Times(1)
+			},
+			configureClient: configureClientFetchingOIDCCredentials,
+			assertErrFn: func(t *testing.T, errorToCheck error) {
+				assert.NoError(t, errorToCheck)
+			},
+			wantUser: &authenticationv1.UserInfo{
+				Username: "k8s-john_doe",
+				Groups:   []string{"system:authenticated"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1789,6 +1835,22 @@ func startTestAPIServerForOIDC[L utilsoidc.JosePublicKey](t *testing.T, c apiSer
 	var customFlags []string
 	if len(c.authenticationConfigYAML) > 0 {
 		customFlags = []string{fmt.Sprintf("--authentication-config=%s", writeTempFile(t, c.authenticationConfigYAML))}
+		if strings.Contains(c.authenticationConfigYAML, "egressSelectorType: Cluster") {
+			udsName := filepath.Join(t.TempDir(), "uds")
+			go runEgressProxy(t, udsName)
+			egressConfig := fmt.Sprintf(`
+apiVersion: apiserver.k8s.io/v1beta1
+kind: EgressSelectorConfiguration
+egressSelections:
+- name: cluster
+  connection:
+    proxyProtocol: HTTPConnect
+    transport:
+      uds:
+        udsName: %s
+`, udsName)
+			customFlags = append(customFlags, fmt.Sprintf("--egress-selector-config-file=%s", writeTempFile(t, egressConfig)))
+		}
 	} else {
 		customFlags = []string{
 			fmt.Sprintf("--oidc-issuer-url=%s", c.oidcURL),
