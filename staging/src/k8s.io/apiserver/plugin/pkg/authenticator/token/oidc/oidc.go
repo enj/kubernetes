@@ -299,23 +299,22 @@ func New(lifecycleCtx context.Context, opts Options) (AuthenticatorTokenWithHeal
 			klog.Info("OIDC: No x509 certificates provided, will use host's root CA set")
 		}
 
+		// TODO unit test
+		// TODO integration test?
 		var customDial net.DialFunc
-		switch opts.JWTAuthenticator.Issuer.EgressSelectorType {
+		switch et := opts.JWTAuthenticator.Issuer.EgressSelectorType; et {
 		case "":
 			// valid but nothing to do
 		case apiserver.EgressSelectorControlPlane:
-			if opts.EgressLookup == nil {
-				return nil, fmt.Errorf("oidc: egress lookup required with egress selector type %q", opts.JWTAuthenticator.Issuer.EgressSelectorType)
-			}
-			customDial, err = opts.EgressLookup(egressselector.ControlPlane.AsNetworkContext()) // TODO
+			customDial, err = egressLookupForType(opts.EgressLookup, egressselector.ControlPlane)
 		case apiserver.EgressSelectorCluster:
-			if opts.EgressLookup == nil {
-				return nil, fmt.Errorf("oidc: egress lookup required with egress selector type %q", opts.JWTAuthenticator.Issuer.EgressSelectorType)
-			}
-			customDial = nil // TODO
+			customDial, err = egressLookupForType(opts.EgressLookup, egressselector.Cluster)
 		default:
 			// this should be impossible as validation should catch this at an earlier point
-			return nil, fmt.Errorf("oidc: unknown egress selector type %q", opts.JWTAuthenticator.Issuer.EgressSelectorType)
+			return nil, fmt.Errorf("oidc: unknown egress selector type %q", et)
+		}
+		if err != nil {
+			return nil, err
 		}
 
 		// Copied from http.DefaultTransport.
@@ -432,6 +431,22 @@ func New(lifecycleCtx context.Context, opts Options) (AuthenticatorTokenWithHeal
 	}
 
 	return newInstrumentedAuthenticator(issuerURL, authn), nil
+}
+
+func egressLookupForType(egressLookup egressselector.Lookup, egressSelector egressselector.EgressType) (net.DialFunc, error) {
+	if egressLookup == nil {
+		return nil, fmt.Errorf("oidc: egress lookup required with egress selector type %q", egressSelector)
+	}
+	customDial, err := egressLookup(egressSelector.AsNetworkContext())
+	if err != nil {
+		return nil, fmt.Errorf("oidc: egress lookup for %q failed: %v", egressSelector, err)
+	}
+	// we are stricter than other egress lookups because this is opt-in config
+	// we expect the user who is configuring the JWT authenticator to keep it in sync with the egress configuration
+	if customDial == nil {
+		return nil, fmt.Errorf("oidc: egress lookup for %q is not configured", egressSelector)
+	}
+	return customDial, nil
 }
 
 type errorHolder struct {
