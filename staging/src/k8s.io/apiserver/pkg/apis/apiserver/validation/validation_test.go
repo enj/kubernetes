@@ -304,7 +304,7 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 				},
 			},
 			disallowedIssuers: []string{"a", "b", "c"},
-			want:              `jwt[0].issuer.egressSelectorType: Invalid value: "panda": egress selector must be either ControlPlane or Cluster`,
+			want:              `jwt[0].issuer.egressSelectorType: Invalid value: "panda": egress selector must be either controlplane or cluster`,
 		},
 		{
 			name: "valid authentication configuration with valid egress type with feature disabled",
@@ -314,7 +314,7 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 						Issuer: api.Issuer{
 							URL:                "https://issuer-url",
 							Audiences:          []string{"audience"},
-							EgressSelectorType: "ControlPlane",
+							EgressSelectorType: "controlplane",
 						},
 						ClaimValidationRules: []api.ClaimValidationRule{
 							{
@@ -333,7 +333,7 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 			},
 			disallowedIssuers:              []string{"a", "b", "c"},
 			structuredAuthnFeatureOverride: pointer.Bool(false),
-			want:                           `jwt[0].issuer.egressSelectorType: Invalid value: "ControlPlane": egress selector is not supported when StructuredAuthenticationConfiguration feature gate is disabled`,
+			want:                           `jwt[0].issuer.egressSelectorType: Invalid value: "controlplane": egress selector is not supported when StructuredAuthenticationConfiguration feature gate is disabled`,
 		},
 		{
 			name: "valid authentication configuration with valid egress type",
@@ -343,7 +343,7 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 						Issuer: api.Issuer{
 							URL:                "https://issuer-url",
 							Audiences:          []string{"audience"},
-							EgressSelectorType: "Cluster",
+							EgressSelectorType: "cluster",
 						},
 						ClaimValidationRules: []api.ClaimValidationRule{
 							{

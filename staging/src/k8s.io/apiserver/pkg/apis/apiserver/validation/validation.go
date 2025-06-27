@@ -249,7 +249,7 @@ func validateEgressSelector(selectorType api.EgressSelectorType, fldPath *field.
 	case api.EgressSelectorControlPlane, api.EgressSelectorCluster:
 		// valid
 	default:
-		allErrs = append(allErrs, field.Invalid(fldPath, selectorType, "egress selector must be either ControlPlane or Cluster"))
+		allErrs = append(allErrs, field.Invalid(fldPath, selectorType, "egress selector must be either controlplane or cluster"))
 	}
 
 	return allErrs
