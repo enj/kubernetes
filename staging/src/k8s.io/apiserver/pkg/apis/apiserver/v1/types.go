@@ -213,10 +213,10 @@ type EgressSelectorType string
 
 const (
 	// EgressSelectorControlPlane is the EgressSelectorType for traffic intended to go to the control plane.
-	EgressSelectorControlPlane EgressSelectorType = "ControlPlane"
+	EgressSelectorControlPlane EgressSelectorType = "controlplane"
 
 	// EgressSelectorCluster is the EgressSelectorType for traffic intended to go to the system being managed by Kubernetes.
-	EgressSelectorCluster EgressSelectorType = "Cluster"
+	EgressSelectorCluster EgressSelectorType = "cluster"
 )
 
 // ClaimValidationRule provides the configuration for a single claim validation rule.

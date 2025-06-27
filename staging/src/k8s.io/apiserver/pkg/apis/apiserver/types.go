@@ -248,9 +248,9 @@ const (
 type EgressSelectorType string
 
 const (
-	EgressSelectorControlPlane EgressSelectorType = "ControlPlane"
+	EgressSelectorControlPlane EgressSelectorType = "controlplane"
 
-	EgressSelectorCluster EgressSelectorType = "Cluster"
+	EgressSelectorCluster EgressSelectorType = "cluster"
 )
 
 // ClaimValidationRule provides the configuration for a single claim validation rule.
