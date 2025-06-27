@@ -298,12 +298,12 @@ type Issuer struct {
 
 	// egressSelectorType is an indicator of which egress selection should be used for sending all traffic related
 	// to this issuer (discovery, JWKS, distributed claims, etc).  If unspecified, no custom dialer is used.
-	// When specified, the valid choices are "ControlPlane" and "Cluster".  These correspond to the associated
+	// When specified, the valid choices are "controlplane" and "cluster".  These correspond to the associated
 	// values in the --egress-selector-config-file.
 	//
-	// - ControlPlane: for traffic intended to go to the control plane.
+	// - controlplane: for traffic intended to go to the control plane.
 	//
-	// - Cluster: for traffic intended to go to the system being managed by Kubernetes.
+	// - cluster: for traffic intended to go to the system being managed by Kubernetes.
 	//
 	// +optional
 	EgressSelectorType EgressSelectorType `json:"egressSelectorType,omitempty"`
