@@ -3465,7 +3465,7 @@ func TestToken(t *testing.T) {
 					Issuer: apiserver.Issuer{
 						URL:                "https://auth.example.com",
 						Audiences:          []string{"my-client"},
-						EgressSelectorType: "Etcd",
+						EgressSelectorType: "etcd",
 					},
 					ClaimMappings: apiserver.ClaimMappings{
 						Username: apiserver.PrefixedClaimOrExpression{
@@ -3511,7 +3511,7 @@ func TestToken(t *testing.T) {
 					"qux"
 				]
 			}`, valid.Unix()),
-			wantInitErr: `issuer.egressSelectorType: Invalid value: "Etcd": egress selector must be either ControlPlane or Cluster`,
+			wantInitErr: `issuer.egressSelectorType: Invalid value: "etcd": egress selector must be either controlplane or cluster`,
 		},
 		{
 			name: "valid egress type with error",
@@ -3578,7 +3578,7 @@ func TestToken(t *testing.T) {
 					Issuer: apiserver.Issuer{
 						URL:                "https://auth.example.com",
 						Audiences:          []string{"my-client"},
-						EgressSelectorType: "ControlPlane",
+						EgressSelectorType: "controlplane",
 					},
 					ClaimMappings: apiserver.ClaimMappings{
 						Username: apiserver.PrefixedClaimOrExpression{
@@ -3636,7 +3636,7 @@ func TestToken(t *testing.T) {
 					Issuer: apiserver.Issuer{
 						URL:                "https://auth.example.com",
 						Audiences:          []string{"my-client"},
-						EgressSelectorType: "ControlPlane",
+						EgressSelectorType: "controlplane",
 					},
 					ClaimMappings: apiserver.ClaimMappings{
 						Username: apiserver.PrefixedClaimOrExpression{
@@ -3689,7 +3689,7 @@ func TestToken(t *testing.T) {
 					Issuer: apiserver.Issuer{
 						URL:                "https://auth.example.com",
 						Audiences:          []string{"my-client"},
-						EgressSelectorType: "ControlPlane",
+						EgressSelectorType: "controlplane",
 					},
 					ClaimMappings: apiserver.ClaimMappings{
 						Username: apiserver.PrefixedClaimOrExpression{
@@ -3744,7 +3744,7 @@ func TestToken(t *testing.T) {
 					Issuer: apiserver.Issuer{
 						URL:                "https://auth.example.com",
 						Audiences:          []string{"my-client"},
-						EgressSelectorType: "ControlPlane",
+						EgressSelectorType: "controlplane",
 					},
 					ClaimMappings: apiserver.ClaimMappings{
 						Username: apiserver.PrefixedClaimOrExpression{
