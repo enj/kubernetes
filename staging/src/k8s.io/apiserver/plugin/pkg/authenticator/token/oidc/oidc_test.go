@@ -3520,7 +3520,7 @@ func TestToken(t *testing.T) {
 					Issuer: apiserver.Issuer{
 						URL:                "https://auth.example.com",
 						Audiences:          []string{"my-client"},
-						EgressSelectorType: "Cluster",
+						EgressSelectorType: "cluster",
 					},
 					ClaimMappings: apiserver.ClaimMappings{
 						Username: apiserver.PrefixedClaimOrExpression{
@@ -3786,7 +3786,7 @@ func TestToken(t *testing.T) {
 						URL:                "https://auth.example.com",
 						DiscoveryURL:       "{{.URL}}/.well-known/openid-configuration",
 						Audiences:          []string{"my-client"},
-						EgressSelectorType: "Cluster",
+						EgressSelectorType: "cluster",
 					},
 					ClaimMappings: apiserver.ClaimMappings{
 						Username: apiserver.PrefixedClaimOrExpression{
