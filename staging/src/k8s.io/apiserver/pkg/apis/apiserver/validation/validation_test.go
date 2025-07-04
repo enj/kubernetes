@@ -45,11 +45,13 @@ import (
 
 func TestValidateAuthenticationConfiguration(t *testing.T) {
 	testCases := []struct {
-		name                           string
-		in                             *api.AuthenticationConfiguration
-		disallowedIssuers              []string
-		structuredAuthnFeatureOverride *bool
-		want                           string
+		name                                         string
+		in                                           *api.AuthenticationConfiguration
+		disallowedIssuers                            []string
+		structuredAuthnFeatureOverride               *bool
+		structuredAuthnEgressSelectorFeatureOverride *bool
+		gaOnly                                       bool
+		want                                         string
 	}{
 		{
 			name: "jwt authenticator is empty",
@@ -307,7 +309,7 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 			want:              `jwt[0].issuer.egressSelectorType: Invalid value: "panda": egress selector must be either controlplane or cluster`,
 		},
 		{
-			name: "valid authentication configuration with valid egress type with feature disabled",
+			name: "valid authentication configuration with valid egress type with StructuredAuthenticationConfiguration feature disabled",
 			in: &api.AuthenticationConfiguration{
 				JWT: []api.JWTAuthenticator{
 					{
@@ -333,7 +335,70 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 			},
 			disallowedIssuers:              []string{"a", "b", "c"},
 			structuredAuthnFeatureOverride: pointer.Bool(false),
-			want:                           `jwt[0].issuer.egressSelectorType: Invalid value: "controlplane": egress selector is not supported when StructuredAuthenticationConfiguration feature gate is disabled`,
+			want: "[" +
+				`jwt[0].issuer.egressSelectorType: Invalid value: "controlplane": egress selector is not supported when StructuredAuthenticationConfiguration feature gate is disabled` +
+				", " +
+				// this feature did not exist in v1.33 so it is automatically disabled as well
+				`jwt[0].issuer.egressSelectorType: Invalid value: "controlplane": egress selector is not supported when StructuredAuthenticationConfigurationEgressSelector feature gate is disabled` +
+				"]",
+		},
+		{
+			name: "valid authentication configuration with valid egress type with StructuredAuthenticationConfigurationEgressSelector feature disabled",
+			in: &api.AuthenticationConfiguration{
+				JWT: []api.JWTAuthenticator{
+					{
+						Issuer: api.Issuer{
+							URL:                "https://issuer-url",
+							Audiences:          []string{"audience"},
+							EgressSelectorType: "controlplane",
+						},
+						ClaimValidationRules: []api.ClaimValidationRule{
+							{
+								Claim:         "foo",
+								RequiredValue: "bar",
+							},
+						},
+						ClaimMappings: api.ClaimMappings{
+							Username: api.PrefixedClaimOrExpression{
+								Claim:  "sub",
+								Prefix: pointer.String("prefix"),
+							},
+						},
+					},
+				},
+			},
+			disallowedIssuers: []string{"a", "b", "c"},
+			structuredAuthnEgressSelectorFeatureOverride: pointer.Bool(false),
+			want: `jwt[0].issuer.egressSelectorType: Invalid value: "controlplane": egress selector is not supported when StructuredAuthenticationConfigurationEgressSelector feature gate is disabled`,
+		},
+		{
+			name: "valid authentication configuration with valid egress type with GA features only",
+			in: &api.AuthenticationConfiguration{
+				JWT: []api.JWTAuthenticator{
+					{
+						Issuer: api.Issuer{
+							URL:                "https://issuer-url",
+							Audiences:          []string{"audience"},
+							EgressSelectorType: "controlplane",
+						},
+						ClaimValidationRules: []api.ClaimValidationRule{
+							{
+								Claim:         "foo",
+								RequiredValue: "bar",
+							},
+						},
+						ClaimMappings: api.ClaimMappings{
+							Username: api.PrefixedClaimOrExpression{
+								Claim:  "sub",
+								Prefix: pointer.String("prefix"),
+							},
+						},
+					},
+				},
+			},
+			disallowedIssuers: []string{"a", "b", "c"},
+			gaOnly:            true,
+			want:              `jwt[0].issuer.egressSelectorType: Invalid value: "controlplane": egress selector is not supported when StructuredAuthenticationConfigurationEgressSelector feature gate is disabled`,
 		},
 		{
 			name: "valid authentication configuration with valid egress type",
@@ -758,6 +823,13 @@ func TestValidateAuthenticationConfiguration(t *testing.T) {
 			if tt.structuredAuthnFeatureOverride != nil {
 				featuregatetesting.SetFeatureGateEmulationVersionDuringTest(t, utilfeature.DefaultFeatureGate, version.MustParse("1.33")) // go back to when the feature could be disabled
 				featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StructuredAuthenticationConfiguration, *tt.structuredAuthnFeatureOverride)
+			}
+			if tt.structuredAuthnEgressSelectorFeatureOverride != nil {
+				featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.StructuredAuthenticationConfigurationEgressSelector, *tt.structuredAuthnEgressSelectorFeatureOverride)
+			}
+			if tt.gaOnly {
+				featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, "AllAlpha", false)
+				featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, "AllBeta", false)
 			}
 			got := ValidateAuthenticationConfiguration(authenticationcel.NewDefaultCompiler(), tt.in, tt.disallowedIssuers).ToAggregate()
 			if d := cmp.Diff(tt.want, errString(got)); d != "" {
