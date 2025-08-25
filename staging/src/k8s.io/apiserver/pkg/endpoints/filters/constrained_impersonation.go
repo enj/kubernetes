@@ -1,0 +1,211 @@
+/*
+Copyright 2025 The Kubernetes Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package filters
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+
+	authenticationv1 "k8s.io/api/authentication/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apiserver/pkg/audit"
+	"k8s.io/apiserver/pkg/authentication/user"
+	"k8s.io/apiserver/pkg/authorization/authorizer"
+	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
+	"k8s.io/apiserver/pkg/endpoints/request"
+	"k8s.io/apiserver/pkg/server/httplog"
+	"k8s.io/utils/lru"
+)
+
+func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer, s runtime.NegotiatedSerializer) http.Handler {
+	tracker := newImpersonationModesTracker(a)
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		ctx := req.Context()
+
+		wantedUser, err := processImpersonationHeaders(req.Header)
+		if err != nil {
+			responsewriters.InternalError(w, req, err)
+			return
+		}
+		if wantedUser == nil {
+			handler.ServeHTTP(w, req)
+			return
+		}
+		attributes, err := GetAuthorizerAttributes(ctx)
+		if err != nil {
+			responsewriters.InternalError(w, req, err)
+			return
+		}
+
+		impersonatedUser, err := tracker.getImpersonatedUser(wantedUser, attributes)
+		if err != nil {
+			forbidden(attributes, w, req, err, s)
+			return
+		}
+
+		req = req.WithContext(request.WithUser(ctx, impersonatedUser))
+		httplog.LogOf(req, w).Addf("%v is impersonating %v", userString(attributes.GetUser()), userString(impersonatedUser))
+		audit.LogImpersonatedUser(audit.WithAuditContext(ctx), impersonatedUser)
+
+		handler.ServeHTTP(w, req)
+	})
+}
+
+type impersonationMode func(*user.DefaultInfo, authorizer.Attributes) (user.Info, error)
+
+func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
+	return []impersonationMode{
+		legacyImpersonationMode(a), // TODO add the rest
+	}
+}
+
+func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
+	return func(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
+
+	}
+}
+
+func processImpersonationHeaders(headers http.Header) (*user.DefaultInfo, error) {
+	wantedUser := &user.DefaultInfo{}
+
+	wantedUser.Name = headers.Get(authenticationv1.ImpersonateUserHeader)
+	hasUser := len(wantedUser.Name) > 0
+
+	wantedUser.UID = headers.Get(authenticationv1.ImpersonateUIDHeader)
+	hasUID := len(wantedUser.UID) > 0
+
+	hasGroups := false
+	for _, group := range headers[authenticationv1.ImpersonateGroupHeader] {
+		hasGroups = true
+		wantedUser.Groups = append(wantedUser.Groups, group)
+	}
+
+	hasUserExtra := false
+	for headerName, values := range headers {
+		if !strings.HasPrefix(headerName, authenticationv1.ImpersonateUserExtraHeaderPrefix) {
+			continue
+		}
+
+		hasUserExtra = true
+		extraKey := unescapeExtraKey(strings.ToLower(headerName[len(authenticationv1.ImpersonateUserExtraHeaderPrefix):]))
+
+		if wantedUser.Extra == nil {
+			wantedUser.Extra = map[string][]string{}
+		}
+		wantedUser.Extra[extraKey] = append(wantedUser.Extra[extraKey], values...)
+	}
+
+	if !hasUser && (hasUID || hasGroups || hasUserExtra) {
+		return nil, fmt.Errorf("requested %#v without impersonating a user name", wantedUser)
+	}
+
+	if !hasUser {
+		return nil, nil
+	}
+
+	// clear all the impersonation headers from the request to prevent downstream layers from knowing that impersonation was used
+	// we do not want anything outside of file trying to behave differently based on if impersonation was used
+	headers.Del(authenticationv1.ImpersonateUserHeader)
+	headers.Del(authenticationv1.ImpersonateGroupHeader)
+	headers.Del(authenticationv1.ImpersonateUIDHeader)
+	for headerName := range headers {
+		if strings.HasPrefix(headerName, authenticationv1.ImpersonateUserExtraHeaderPrefix) {
+			headers.Del(headerName)
+		}
+	}
+
+	return wantedUser, nil
+}
+
+type impersonationModesTracker struct {
+	modes []impersonationMode
+	cache *modeIndexCache
+}
+
+func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTracker {
+	return &impersonationModesTracker{
+		modes: allImpersonationModes(a),
+		cache: newModeIndexCache(),
+	}
+}
+
+func (t *impersonationModesTracker) getImpersonatedUser(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
+	errs := []error{errors.New("all impersonation modes failed")}
+
+	modeIdx := t.cache.get(attributes) // TODO add support for fancier cache that maps attributes+wantedUser to impersonatedUser
+	if modeIdx != -1 {
+		impersonatedUser, err := t.modes[modeIdx](wantedUser, attributes)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if impersonatedUser != nil {
+			return impersonatedUser, nil
+		}
+	}
+
+	for i, mode := range t.modes {
+		if i == modeIdx {
+			continue // skip already attempted mode
+		}
+
+		impersonatedUser, err := mode(wantedUser, attributes)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if impersonatedUser == nil {
+			continue
+		}
+		t.cache.set(attributes, i)
+		return impersonatedUser, nil
+	}
+
+	return nil, utilerrors.NewAggregate(errs)
+}
+
+type modeIndexCache struct {
+	cache *lru.Cache
+}
+
+func (c *modeIndexCache) get(attributes authorizer.Attributes) int {
+	idx, ok := c.cache.Get(attributes.GetUser().GetName())
+	if !ok {
+		return -1
+	}
+	return idx.(int)
+}
+
+func (c *modeIndexCache) set(attributes authorizer.Attributes, value int) {
+	c.cache.Add(attributes.GetUser().GetName(), value)
+}
+
+func newModeIndexCache() *modeIndexCache {
+	return &modeIndexCache{
+		cache: lru.New(1024),
+	}
+}
+
+func forbidden(attributes authorizer.Attributes, w http.ResponseWriter, req *http.Request, err error, s runtime.NegotiatedSerializer) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	gvr := schema.GroupVersionResource{Group: attributes.GetAPIGroup(), Version: attributes.GetAPIVersion(), Resource: attributes.GetResource()}
+	responsewriters.ErrorNegotiated(apierrors.NewForbidden(gvr.GroupResource(), attributes.GetName(), err), s, gvr.GroupVersion(), w, req)
+}
