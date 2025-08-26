@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
@@ -129,6 +130,12 @@ func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
 			}
 		}
 
+		if actualUser.Name == user.Anonymous {
+			ensureGroup(&actualUser, user.AllUnauthenticated)
+		} else {
+			ensureGroup(&actualUser, user.AllAuthenticated)
+		}
+
 		return &actualUser, nil
 	}
 }
@@ -162,6 +169,18 @@ func checkAuthorization(ctx context.Context, a authorizer.Authorizer, attributes
 	}
 
 	return responsewriters.ForbiddenStatusError(attributes, msg)
+}
+
+func ensureGroup(u *user.DefaultInfo, group string) {
+	if slices.Contains(u.Groups, group) {
+		return
+	}
+
+	// do not mutate a slice that we did not create
+	groups := make([]string, 0, len(u.Groups)+1)
+	groups = append(groups, u.Groups...)
+	groups = append(groups, group)
+	u.Groups = groups
 }
 
 func processImpersonationHeaders(headers http.Header) (*user.DefaultInfo, error) {
@@ -229,7 +248,7 @@ func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTr
 }
 
 func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
-	errs := []error{errors.New("all impersonation modes failed")}
+	var errs []error
 
 	modeIdx := t.cache.get(attributes) // TODO add support for fancier cache that maps attributes+wantedUser to impersonatedUser
 	if modeIdx != -1 {
@@ -259,7 +278,12 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 		return impersonatedUser, nil
 	}
 
-	return nil, utilerrors.NewAggregate(errs)
+	if err := utilerrors.NewAggregate(errs); err != nil {
+		return nil, err
+	}
+
+	// this should not happen, but make sure we fail closed when no impersonation mode succeeded
+	return nil, errors.New("all impersonation modes failed")
 }
 
 type modeIndexCache struct {
