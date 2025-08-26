@@ -17,22 +17,26 @@ limitations under the License.
 package filters
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apiserver/pkg/audit"
+	"k8s.io/apiserver/pkg/authentication/serviceaccount"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/server/httplog"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/lru"
 )
 
@@ -56,8 +60,9 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 			return
 		}
 
-		impersonatedUser, err := tracker.getImpersonatedUser(wantedUser, attributes)
+		impersonatedUser, err := tracker.getImpersonatedUser(ctx, wantedUser, attributes)
 		if err != nil {
+			klog.V(4).InfoS("Forbidden", "URI", req.RequestURI, "err", err)
 			forbidden(attributes, w, req, err, s)
 			return
 		}
@@ -70,7 +75,7 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 	})
 }
 
-type impersonationMode func(*user.DefaultInfo, authorizer.Attributes) (user.Info, error)
+type impersonationMode func(context.Context, *user.DefaultInfo, authorizer.Attributes) (user.Info, error)
 
 func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 	return []impersonationMode{
@@ -79,9 +84,84 @@ func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 }
 
 func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return func(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
+	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
+		requestor := attributes.GetUser()
+		actualUser := *wantedUser
 
+		usernameAttributes := legacyImpersonationAttributes(requestor, corev1.SchemeGroupVersion, "users", wantedUser.Name)
+		if namespace, name, err := serviceaccount.SplitUsername(wantedUser.Name); err == nil {
+			usernameAttributes.Resource = "serviceaccounts"
+			usernameAttributes.Namespace = namespace
+			usernameAttributes.Name = name
+
+			if len(wantedUser.Groups) == 0 {
+				// if groups aren't specified for a service account, we know the groups because it is a fixed mapping.  Add them
+				actualUser.Groups = serviceaccount.MakeGroupNames(namespace)
+			}
+		}
+		if err := checkAuthorization(ctx, a, usernameAttributes); err != nil {
+			return nil, err
+		}
+
+		if len(wantedUser.UID) > 0 {
+			uidAttributes := legacyImpersonationAttributes(requestor, authenticationv1.SchemeGroupVersion, "uids", wantedUser.UID)
+			if err := checkAuthorization(ctx, a, uidAttributes); err != nil {
+				return nil, err
+			}
+		}
+
+		groupAttributes := legacyImpersonationAttributes(requestor, corev1.SchemeGroupVersion, "groups", "")
+		for _, group := range wantedUser.Groups {
+			groupAttributes.Name = group
+			if err := checkAuthorization(ctx, a, groupAttributes); err != nil {
+				return nil, err
+			}
+		}
+
+		extraAttributes := legacyImpersonationAttributes(requestor, authenticationv1.SchemeGroupVersion, "userextras", "")
+		for key, values := range wantedUser.Extra {
+			extraAttributes.Subresource = key
+			for _, value := range values {
+				extraAttributes.Name = value
+				if err := checkAuthorization(ctx, a, extraAttributes); err != nil {
+					return nil, err
+				}
+			}
+		}
+
+		return &actualUser, nil
 	}
+}
+
+func legacyImpersonationAttributes(requestor user.Info, gv schema.GroupVersion, resource, name string) *authorizer.AttributesRecord {
+	return &authorizer.AttributesRecord{
+		User:            requestor,
+		Verb:            "impersonate",
+		APIGroup:        gv.Group,
+		APIVersion:      gv.Version,
+		Resource:        resource,
+		Name:            name,
+		ResourceRequest: true,
+	}
+}
+
+func checkAuthorization(ctx context.Context, a authorizer.Authorizer, attributes authorizer.Attributes) error {
+	authorized, reason, err := a.Authorize(ctx, attributes)
+
+	// an authorizer like RBAC could encounter evaluation errors and still allow the request, so authorizer decision is checked before error here.
+	if authorized == authorizer.DecisionAllow {
+		return nil
+	}
+
+	msg := reason
+	switch {
+	case err != nil && len(reason) > 0:
+		msg = fmt.Sprintf("%v: %s", err, reason)
+	case err != nil:
+		msg = err.Error()
+	}
+
+	return responsewriters.ForbiddenStatusError(attributes, msg)
 }
 
 func processImpersonationHeaders(headers http.Header) (*user.DefaultInfo, error) {
@@ -148,12 +228,12 @@ func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTr
 	}
 }
 
-func (t *impersonationModesTracker) getImpersonatedUser(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
+func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
 	errs := []error{errors.New("all impersonation modes failed")}
 
 	modeIdx := t.cache.get(attributes) // TODO add support for fancier cache that maps attributes+wantedUser to impersonatedUser
 	if modeIdx != -1 {
-		impersonatedUser, err := t.modes[modeIdx](wantedUser, attributes)
+		impersonatedUser, err := t.modes[modeIdx](ctx, wantedUser, attributes)
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -167,7 +247,7 @@ func (t *impersonationModesTracker) getImpersonatedUser(wantedUser *user.Default
 			continue // skip already attempted mode
 		}
 
-		impersonatedUser, err := mode(wantedUser, attributes)
+		impersonatedUser, err := mode(ctx, wantedUser, attributes)
 		if err != nil {
 			errs = append(errs, err)
 			continue
