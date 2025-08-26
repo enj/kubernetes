@@ -80,17 +80,37 @@ type impersonationMode func(context.Context, *user.DefaultInfo, authorizer.Attri
 
 func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 	return []impersonationMode{
+		userInfoImpersonationMode(a),
 		legacyImpersonationMode(a), // TODO add the rest
 	}
 }
 
+func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
+	userInfoCheck := buildImpersonationMode(a, "impersonate:user-info", authenticationv1.SchemeGroupVersion)
+	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
+		// nodes and service accounts cannot be impersonated in this mode
+		// TODO ignore nodes
+		if _, _, ok := isServiceAccountUsername(wantedUser.Name); ok {
+			return nil, nil
+		}
+		if err := checkAuthorization(ctx, a, &impersonateOnAttributes{Attributes: attributes}); err != nil {
+			return nil, err
+		}
+		return userInfoCheck(ctx, wantedUser, attributes)
+	}
+}
+
 func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
+	return buildImpersonationMode(a, "impersonate", corev1.SchemeGroupVersion)
+}
+
+func buildImpersonationMode(a authorizer.Authorizer, verb string, gv schema.GroupVersion) impersonationMode {
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
 		requestor := attributes.GetUser()
 		actualUser := *wantedUser
 
-		usernameAttributes := legacyImpersonationAttributes(requestor, corev1.SchemeGroupVersion, "users", wantedUser.Name)
-		if namespace, name, err := serviceaccount.SplitUsername(wantedUser.Name); err == nil {
+		usernameAttributes := impersonationAttributes(requestor, gv, verb, "users", wantedUser.Name)
+		if namespace, name, ok := isServiceAccountUsername(wantedUser.Name); ok {
 			usernameAttributes.Resource = "serviceaccounts"
 			usernameAttributes.Namespace = namespace
 			usernameAttributes.Name = name
@@ -105,13 +125,13 @@ func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
 		}
 
 		if len(wantedUser.UID) > 0 {
-			uidAttributes := legacyImpersonationAttributes(requestor, authenticationv1.SchemeGroupVersion, "uids", wantedUser.UID)
+			uidAttributes := impersonationAttributes(requestor, authenticationv1.SchemeGroupVersion, verb, "uids", wantedUser.UID)
 			if err := checkAuthorization(ctx, a, uidAttributes); err != nil {
 				return nil, err
 			}
 		}
 
-		groupAttributes := legacyImpersonationAttributes(requestor, corev1.SchemeGroupVersion, "groups", "")
+		groupAttributes := impersonationAttributes(requestor, gv, verb, "groups", "")
 		for _, group := range wantedUser.Groups {
 			groupAttributes.Name = group
 			if err := checkAuthorization(ctx, a, groupAttributes); err != nil {
@@ -119,7 +139,7 @@ func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
 			}
 		}
 
-		extraAttributes := legacyImpersonationAttributes(requestor, authenticationv1.SchemeGroupVersion, "userextras", "")
+		extraAttributes := impersonationAttributes(requestor, authenticationv1.SchemeGroupVersion, verb, "userextras", "")
 		for key, values := range wantedUser.Extra {
 			extraAttributes.Subresource = key
 			for _, value := range values {
@@ -140,16 +160,24 @@ func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	}
 }
 
-func legacyImpersonationAttributes(requestor user.Info, gv schema.GroupVersion, resource, name string) *authorizer.AttributesRecord {
+func impersonationAttributes(requestor user.Info, gv schema.GroupVersion, verb, resource, name string) *authorizer.AttributesRecord {
 	return &authorizer.AttributesRecord{
 		User:            requestor,
-		Verb:            "impersonate",
+		Verb:            verb,
 		APIGroup:        gv.Group,
 		APIVersion:      gv.Version,
 		Resource:        resource,
 		Name:            name,
 		ResourceRequest: true,
 	}
+}
+
+type impersonateOnAttributes struct {
+	authorizer.Attributes
+}
+
+func (i *impersonateOnAttributes) GetVerb() string {
+	return "impersonate-on:" + i.Attributes.GetVerb()
 }
 
 func checkAuthorization(ctx context.Context, a authorizer.Authorizer, attributes authorizer.Attributes) error {
@@ -181,6 +209,11 @@ func ensureGroup(u *user.DefaultInfo, group string) {
 	groups = append(groups, u.Groups...)
 	groups = append(groups, group)
 	u.Groups = groups
+}
+
+func isServiceAccountUsername(username string) (namespace, name string, ok bool) {
+	namespace, name, err := serviceaccount.SplitUsername(username)
+	return namespace, name, err == nil
 }
 
 func processImpersonationHeaders(headers http.Header) (*user.DefaultInfo, error) {
