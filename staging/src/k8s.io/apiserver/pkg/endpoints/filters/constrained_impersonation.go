@@ -38,6 +38,7 @@ import (
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/server/httplog"
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/apis/core/validation"
 	"k8s.io/utils/lru"
 )
 
@@ -89,7 +90,9 @@ func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	userInfoCheck := buildImpersonationMode(a, "impersonate:user-info", authenticationv1.SchemeGroupVersion)
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
 		// nodes and service accounts cannot be impersonated in this mode
-		// TODO ignore nodes
+		if _, ok := isNodeUsername(wantedUser.Name); ok {
+			return nil, nil
+		}
 		if _, _, ok := isServiceAccountUsername(wantedUser.Name); ok {
 			return nil, nil
 		}
@@ -214,6 +217,18 @@ func ensureGroup(u *user.DefaultInfo, group string) {
 func isServiceAccountUsername(username string) (namespace, name string, ok bool) {
 	namespace, name, err := serviceaccount.SplitUsername(username)
 	return namespace, name, err == nil
+}
+
+func isNodeUsername(username string) (string, bool) {
+	const nodeUsernamePrefix = "system:node:"
+	if !strings.HasPrefix(username, nodeUsernamePrefix) {
+		return "", false
+	}
+	name := strings.TrimPrefix(username, nodeUsernamePrefix)
+	if len(validation.ValidateNodeName(name, false)) != 0 {
+		return "", false
+	}
+	return name, false
 }
 
 func processImpersonationHeaders(headers http.Header) (*user.DefaultInfo, error) {
