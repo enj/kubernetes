@@ -89,7 +89,7 @@ func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 }
 
 func nodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	userInfoCheck := buildImpersonationMode(a, "impersonate:node", authenticationv1.SchemeGroupVersion)
+	userInfoCheck := buildImpersonationMode(a, "impersonate:node", authenticationv1.SchemeGroupVersion, true)
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
 		if _, ok := isNodeUsername(wantedUser.Name); !ok {
 			return nil, nil
@@ -102,7 +102,7 @@ func nodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 }
 
 func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	userInfoCheck := buildImpersonationMode(a, "impersonate:serviceaccount", authenticationv1.SchemeGroupVersion)
+	userInfoCheck := buildImpersonationMode(a, "impersonate:serviceaccount", authenticationv1.SchemeGroupVersion, false)
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
 		if _, _, ok := isServiceAccountUsername(wantedUser.Name); !ok {
 			return nil, nil
@@ -115,7 +115,7 @@ func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode 
 }
 
 func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	userInfoCheck := buildImpersonationMode(a, "impersonate:user-info", authenticationv1.SchemeGroupVersion)
+	userInfoCheck := buildImpersonationMode(a, "impersonate:user-info", authenticationv1.SchemeGroupVersion, false)
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
 		// nodes and service accounts cannot be impersonated in this mode
 		if _, ok := isNodeUsername(wantedUser.Name); ok {
@@ -132,10 +132,10 @@ func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
 }
 
 func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildImpersonationMode(a, "impersonate", corev1.SchemeGroupVersion)
+	return buildImpersonationMode(a, "impersonate", corev1.SchemeGroupVersion, false)
 }
 
-func buildImpersonationMode(a authorizer.Authorizer, verb string, gv schema.GroupVersion) impersonationMode {
+func buildImpersonationMode(a authorizer.Authorizer, verb string, gv schema.GroupVersion, supportsNodeImpersonation bool) impersonationMode {
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
 		requestor := attributes.GetUser()
 		actualUser := *wantedUser
@@ -149,6 +149,17 @@ func buildImpersonationMode(a authorizer.Authorizer, verb string, gv schema.Grou
 			if len(wantedUser.Groups) == 0 {
 				// if groups aren't specified for a service account, we know the groups because it is a fixed mapping.  Add them
 				actualUser.Groups = serviceaccount.MakeGroupNames(namespace)
+			}
+		}
+		// TODO node as a first class concept in impersonation is new, how strict do we want to be?
+		if supportsNodeImpersonation {
+			if name, ok := isNodeUsername(wantedUser.Name); ok {
+				usernameAttributes.Resource = "nodes"
+				usernameAttributes.Name = name
+
+				if len(wantedUser.Groups) == 0 {
+					actualUser.Groups = []string{user.NodesGroup}
+				}
 			}
 		}
 		if err := checkAuthorization(ctx, a, usernameAttributes); err != nil {
