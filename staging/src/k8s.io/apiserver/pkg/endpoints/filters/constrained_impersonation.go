@@ -81,8 +81,22 @@ type impersonationMode func(context.Context, *user.DefaultInfo, authorizer.Attri
 
 func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 	return []impersonationMode{
+		serviceAccountImpersonationMode(a),
 		userInfoImpersonationMode(a),
 		legacyImpersonationMode(a), // TODO add the rest
+	}
+}
+
+func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode {
+	userInfoCheck := buildImpersonationMode(a, "impersonate:serviceaccount", authenticationv1.SchemeGroupVersion)
+	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
+		if _, _, ok := isServiceAccountUsername(wantedUser.Name); !ok {
+			return nil, nil
+		}
+		if err := checkAuthorization(ctx, a, &impersonateOnAttributes{Attributes: attributes}); err != nil {
+			return nil, err
+		}
+		return userInfoCheck(ctx, wantedUser, attributes)
 	}
 }
 
