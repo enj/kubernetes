@@ -81,10 +81,24 @@ type impersonationMode func(context.Context, *user.DefaultInfo, authorizer.Attri
 
 func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 	return []impersonationMode{
+		scheduledNodeImpersonationMode(a),
 		nodeImpersonationMode(a),
 		serviceAccountImpersonationMode(a),
 		userInfoImpersonationMode(a),
-		legacyImpersonationMode(a), // TODO add the rest
+		legacyImpersonationMode(a),
+	}
+}
+
+func scheduledNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
+	userInfoCheck := buildImpersonationMode(a, "impersonate:scheduled-node", authenticationv1.SchemeGroupVersion, true)
+	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
+		if !requesterScheduledOnNode(attributes.GetUser(), wantedUser.Name) {
+			return nil, nil
+		}
+		if err := checkAuthorization(ctx, a, &impersonateOnAttributes{Attributes: attributes}); err != nil {
+			return nil, err
+		}
+		return userInfoCheck(ctx, wantedUser, attributes)
 	}
 }
 
@@ -268,6 +282,28 @@ func isNodeUsername(username string) (string, bool) {
 		return "", false
 	}
 	return name, false
+}
+
+func requesterScheduledOnNode(u user.Info, username string) bool {
+	nodeName, ok := isNodeUsername(username)
+	if !ok {
+		return false
+	}
+	if _, _, ok := isServiceAccountUsername(u.GetName()); !ok {
+		return false
+	}
+	if len(getExtraValue(u, serviceaccount.PodNameKey)) == 0 {
+		return false
+	}
+	return getExtraValue(u, serviceaccount.NodeNameKey) == nodeName
+}
+
+func getExtraValue(u user.Info, key string) string {
+	values := u.GetExtra()[key]
+	if len(values) != 1 {
+		return ""
+	}
+	return values[0]
 }
 
 func processImpersonationHeaders(headers http.Header) (*user.DefaultInfo, error) {
