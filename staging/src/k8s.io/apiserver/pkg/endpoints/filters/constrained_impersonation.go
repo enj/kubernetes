@@ -91,7 +91,7 @@ func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 }
 
 func scheduledNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildConstrainedImpersonationMode(a, "impersonate:scheduled-node", true,
+	return buildConstrainedImpersonationMode(a, "impersonate:scheduled-node",
 		func(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) bool {
 			return requesterScheduledOnNode(attributes.GetUser(), wantedUser.Name)
 		},
@@ -99,7 +99,7 @@ func scheduledNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 }
 
 func nodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildConstrainedImpersonationMode(a, "impersonate:node", true,
+	return buildConstrainedImpersonationMode(a, "impersonate:node",
 		func(wantedUser *user.DefaultInfo, _ authorizer.Attributes) bool {
 			_, ok := isNodeUsername(wantedUser.Name)
 			return ok
@@ -108,7 +108,7 @@ func nodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 }
 
 func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildConstrainedImpersonationMode(a, "impersonate:serviceaccount", false,
+	return buildConstrainedImpersonationMode(a, "impersonate:serviceaccount",
 		func(wantedUser *user.DefaultInfo, _ authorizer.Attributes) bool {
 			_, _, ok := isServiceAccountUsername(wantedUser.Name)
 			return ok
@@ -117,9 +117,11 @@ func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode 
 }
 
 func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildConstrainedImpersonationMode(a, "impersonate:user-info", false,
+	return buildConstrainedImpersonationMode(a, "impersonate:user-info",
 		func(wantedUser *user.DefaultInfo, _ authorizer.Attributes) bool {
-			// nodes and service accounts cannot be impersonated in this mode
+			// nodes and service accounts cannot be impersonated in this mode.
+			// the user-info bucket is reserved for the "other" users, that is,
+			// users that do not have an explicit schema defined by Kube.
 			if _, ok := isNodeUsername(wantedUser.Name); ok {
 				return false
 			}
@@ -132,11 +134,11 @@ func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
 }
 
 func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildImpersonationMode(a, "impersonate", corev1.SchemeGroupVersion, false)
+	return buildImpersonationMode(a, "impersonate", false)
 }
 
-func buildConstrainedImpersonationMode(a authorizer.Authorizer, verb string, supportsNodeImpersonation bool, f filter) impersonationMode {
-	check := buildImpersonationMode(a, verb, authenticationv1.SchemeGroupVersion, supportsNodeImpersonation)
+func buildConstrainedImpersonationMode(a authorizer.Authorizer, verb string, f filter) impersonationMode {
+	check := buildImpersonationMode(a, verb, true)
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
 		if !f(wantedUser, attributes) {
 			return nil, nil
@@ -148,12 +150,27 @@ func buildConstrainedImpersonationMode(a authorizer.Authorizer, verb string, sup
 	}
 }
 
-func buildImpersonationMode(a authorizer.Authorizer, verb string, gv schema.GroupVersion, supportsNodeImpersonation bool) impersonationMode {
+func buildImpersonationMode(a authorizer.Authorizer, verb string, isConstrainedImpersonation bool) impersonationMode {
+	usernameAndGroupGV := authenticationv1.SchemeGroupVersion
+	if !isConstrainedImpersonation {
+		usernameAndGroupGV = corev1.SchemeGroupVersion
+	}
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
 		requestor := attributes.GetUser()
 		actualUser := *wantedUser
 
-		usernameAttributes := impersonationAttributes(requestor, gv, verb, "users", wantedUser.Name)
+		usernameAttributes := impersonationAttributes(requestor, usernameAndGroupGV, verb, "users", wantedUser.Name)
+		// TODO node as a first class concept in impersonation is new, how strict do we want to be?
+		if isConstrainedImpersonation {
+			if name, ok := isNodeUsername(wantedUser.Name); ok {
+				usernameAttributes.Resource = "nodes"
+				usernameAttributes.Name = name
+
+				if len(wantedUser.Groups) == 0 {
+					actualUser.Groups = []string{user.NodesGroup}
+				}
+			}
+		}
 		if namespace, name, ok := isServiceAccountUsername(wantedUser.Name); ok {
 			usernameAttributes.Resource = "serviceaccounts"
 			usernameAttributes.Namespace = namespace
@@ -162,17 +179,6 @@ func buildImpersonationMode(a authorizer.Authorizer, verb string, gv schema.Grou
 			if len(wantedUser.Groups) == 0 {
 				// if groups aren't specified for a service account, we know the groups because it is a fixed mapping.  Add them
 				actualUser.Groups = serviceaccount.MakeGroupNames(namespace)
-			}
-		}
-		// TODO node as a first class concept in impersonation is new, how strict do we want to be?
-		if supportsNodeImpersonation {
-			if name, ok := isNodeUsername(wantedUser.Name); ok {
-				usernameAttributes.Resource = "nodes"
-				usernameAttributes.Name = name
-
-				if len(wantedUser.Groups) == 0 {
-					actualUser.Groups = []string{user.NodesGroup}
-				}
 			}
 		}
 		if err := checkAuthorization(ctx, a, usernameAttributes); err != nil {
@@ -186,7 +192,8 @@ func buildImpersonationMode(a authorizer.Authorizer, verb string, gv schema.Grou
 			}
 		}
 
-		groupAttributes := impersonationAttributes(requestor, gv, verb, "groups", "")
+		// TODO treat system:masters differently in constrained impersonation?
+		groupAttributes := impersonationAttributes(requestor, usernameAndGroupGV, verb, "groups", "")
 		for _, group := range wantedUser.Groups {
 			groupAttributes.Name = group
 			if err := checkAuthorization(ctx, a, groupAttributes); err != nil {
