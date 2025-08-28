@@ -78,6 +78,7 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 }
 
 type impersonationMode func(context.Context, *user.DefaultInfo, authorizer.Attributes) (user.Info, error)
+type filter func(*user.DefaultInfo, authorizer.Attributes) bool
 
 func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 	return []impersonationMode{
@@ -90,63 +91,61 @@ func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 }
 
 func scheduledNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	userInfoCheck := buildImpersonationMode(a, "impersonate:scheduled-node", authenticationv1.SchemeGroupVersion, true)
-	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
-		if !requesterScheduledOnNode(attributes.GetUser(), wantedUser.Name) {
-			return nil, nil
-		}
-		if err := checkAuthorization(ctx, a, &impersonateOnAttributes{Attributes: attributes}); err != nil {
-			return nil, err
-		}
-		return userInfoCheck(ctx, wantedUser, attributes)
-	}
+	return buildConstrainedImpersonationMode(a, "impersonate:scheduled-node", true,
+		func(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) bool {
+			return requesterScheduledOnNode(attributes.GetUser(), wantedUser.Name)
+		},
+	)
 }
 
 func nodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	userInfoCheck := buildImpersonationMode(a, "impersonate:node", authenticationv1.SchemeGroupVersion, true)
-	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
-		if _, ok := isNodeUsername(wantedUser.Name); !ok {
-			return nil, nil
-		}
-		if err := checkAuthorization(ctx, a, &impersonateOnAttributes{Attributes: attributes}); err != nil {
-			return nil, err
-		}
-		return userInfoCheck(ctx, wantedUser, attributes)
-	}
+	return buildConstrainedImpersonationMode(a, "impersonate:node", true,
+		func(wantedUser *user.DefaultInfo, _ authorizer.Attributes) bool {
+			_, ok := isNodeUsername(wantedUser.Name)
+			return ok
+		},
+	)
 }
 
 func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	userInfoCheck := buildImpersonationMode(a, "impersonate:serviceaccount", authenticationv1.SchemeGroupVersion, false)
-	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
-		if _, _, ok := isServiceAccountUsername(wantedUser.Name); !ok {
-			return nil, nil
-		}
-		if err := checkAuthorization(ctx, a, &impersonateOnAttributes{Attributes: attributes}); err != nil {
-			return nil, err
-		}
-		return userInfoCheck(ctx, wantedUser, attributes)
-	}
+	return buildConstrainedImpersonationMode(a, "impersonate:serviceaccount", false,
+		func(wantedUser *user.DefaultInfo, _ authorizer.Attributes) bool {
+			_, _, ok := isServiceAccountUsername(wantedUser.Name)
+			return ok
+		},
+	)
 }
 
 func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	userInfoCheck := buildImpersonationMode(a, "impersonate:user-info", authenticationv1.SchemeGroupVersion, false)
-	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
-		// nodes and service accounts cannot be impersonated in this mode
-		if _, ok := isNodeUsername(wantedUser.Name); ok {
-			return nil, nil
-		}
-		if _, _, ok := isServiceAccountUsername(wantedUser.Name); ok {
-			return nil, nil
-		}
-		if err := checkAuthorization(ctx, a, &impersonateOnAttributes{Attributes: attributes}); err != nil {
-			return nil, err
-		}
-		return userInfoCheck(ctx, wantedUser, attributes)
-	}
+	return buildConstrainedImpersonationMode(a, "impersonate:user-info", false,
+		func(wantedUser *user.DefaultInfo, _ authorizer.Attributes) bool {
+			// nodes and service accounts cannot be impersonated in this mode
+			if _, ok := isNodeUsername(wantedUser.Name); ok {
+				return false
+			}
+			if _, _, ok := isServiceAccountUsername(wantedUser.Name); ok {
+				return false
+			}
+			return true
+		},
+	)
 }
 
 func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return buildImpersonationMode(a, "impersonate", corev1.SchemeGroupVersion, false)
+}
+
+func buildConstrainedImpersonationMode(a authorizer.Authorizer, verb string, supportsNodeImpersonation bool, f filter) impersonationMode {
+	check := buildImpersonationMode(a, verb, authenticationv1.SchemeGroupVersion, supportsNodeImpersonation)
+	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
+		if !f(wantedUser, attributes) {
+			return nil, nil
+		}
+		if err := checkAuthorization(ctx, a, &impersonateOnAttributes{Attributes: attributes}); err != nil {
+			return nil, err
+		}
+		return check(ctx, wantedUser, attributes)
+	}
 }
 
 func buildImpersonationMode(a authorizer.Authorizer, verb string, gv schema.GroupVersion, supportsNodeImpersonation bool) impersonationMode {
