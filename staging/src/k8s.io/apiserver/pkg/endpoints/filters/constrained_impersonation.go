@@ -93,7 +93,7 @@ func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 func scheduledNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return buildConstrainedImpersonationMode(a, "impersonate:scheduled-node",
 		func(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) bool {
-			return requesterScheduledOnNode(attributes.GetUser(), wantedUser.Name)
+			return requesterScheduledOnNode(attributes.GetUser(), wantedUser.Name) // TODO decide if other fields being set makes this filter skip
 		},
 	)
 }
@@ -101,7 +101,7 @@ func scheduledNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 func nodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return buildConstrainedImpersonationMode(a, "impersonate:node",
 		func(wantedUser *user.DefaultInfo, _ authorizer.Attributes) bool {
-			_, ok := isNodeUsername(wantedUser.Name)
+			_, ok := isNodeUsername(wantedUser.Name) // TODO decide if other fields being set makes this filter skip
 			return ok
 		},
 	)
@@ -110,7 +110,7 @@ func nodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return buildConstrainedImpersonationMode(a, "impersonate:serviceaccount",
 		func(wantedUser *user.DefaultInfo, _ authorizer.Attributes) bool {
-			_, _, ok := isServiceAccountUsername(wantedUser.Name)
+			_, _, ok := isServiceAccountUsername(wantedUser.Name) // TODO decide if other fields being set makes this filter skip
 			return ok
 		},
 	)
