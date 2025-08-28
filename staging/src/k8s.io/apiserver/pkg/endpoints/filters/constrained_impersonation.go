@@ -385,7 +385,7 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 		if err != nil {
 			errs = append(errs, err)
 		}
-		if impersonatedUser != nil {
+		if err == nil && impersonatedUser != nil {
 			return impersonatedUser, nil
 		}
 	}
