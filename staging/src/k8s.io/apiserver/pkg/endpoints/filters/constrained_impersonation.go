@@ -71,7 +71,7 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 
 		req = req.WithContext(request.WithUser(ctx, impersonatedUser))
 		httplog.LogOf(req, w).Addf("%v is impersonating %v", userString(attributes.GetUser()), userString(impersonatedUser))
-		audit.LogImpersonatedUser(audit.WithAuditContext(ctx), impersonatedUser)
+		audit.LogImpersonatedUser(audit.WithAuditContext(ctx), impersonatedUser) // TODO update this to include extra audit metadata
 
 		handler.ServeHTTP(w, req)
 	})
@@ -415,6 +415,12 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 	return nil, errors.New("all impersonation modes failed")
 }
 
+// modeIndexCache is a simple username -> impersonation mode cache that is based on the assumption
+// that a particular user is likely to use a single mode of impersonation for all impersonated requests
+// that they make.  it remembers which impersonation mode was last successful for a username, and tries
+// that mode first for future impersonation checks.  this makes it so that the amortized cost of legacy
+// impersonation remains the same, and the cost of constrained impersonation is one extra authorization
+// check in additional to the existing checks of regular impersonation.
 type modeIndexCache struct {
 	cache *lru.Cache
 }
