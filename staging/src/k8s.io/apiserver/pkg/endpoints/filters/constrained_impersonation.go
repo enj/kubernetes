@@ -78,7 +78,7 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 }
 
 type impersonationMode func(context.Context, *user.DefaultInfo, authorizer.Attributes) (user.Info, error)
-type filter func(*user.DefaultInfo, authorizer.Attributes) bool
+type constrainedImpersonationModeFilter func(*user.DefaultInfo, authorizer.Attributes) bool
 
 func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 	return []impersonationMode{
@@ -137,7 +137,7 @@ func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return buildImpersonationMode(a, "impersonate", false)
 }
 
-func buildConstrainedImpersonationMode(a authorizer.Authorizer, verb string, f filter) impersonationMode {
+func buildConstrainedImpersonationMode(a authorizer.Authorizer, verb string, f constrainedImpersonationModeFilter) impersonationMode {
 	check := buildImpersonationMode(a, verb, true)
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
 		if !f(wantedUser, attributes) {
@@ -298,10 +298,8 @@ func requesterScheduledOnNode(u user.Info, username string) bool {
 	if _, _, ok := isServiceAccountUsername(u.GetName()); !ok {
 		return false
 	}
-	if len(getExtraValue(u, serviceaccount.PodNameKey)) == 0 {
-		return false
-	}
-	return getExtraValue(u, serviceaccount.NodeNameKey) == nodeName
+	return len(getExtraValue(u, serviceaccount.PodNameKey)) != 0 &&
+		getExtraValue(u, serviceaccount.NodeNameKey) == nodeName
 }
 
 func getExtraValue(u user.Info, key string) string {
