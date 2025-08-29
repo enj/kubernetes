@@ -29,6 +29,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/cache"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apiserver/pkg/audit"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
@@ -363,21 +364,33 @@ func processImpersonationHeaders(headers http.Header) (*user.DefaultInfo, error)
 }
 
 type impersonationModesTracker struct {
-	modes []impersonationMode
-	cache *modeIndexCache
+	modes    []impersonationMode
+	idxCache *modeIndexCache
+	impCache *impersonationCache
 }
 
 func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTracker {
 	return &impersonationModesTracker{
-		modes: allImpersonationModes(a),
-		cache: newModeIndexCache(),
+		modes:    allImpersonationModes(a),
+		idxCache: newModeIndexCache(),
+		impCache: newImpersonationCache(),
 	}
 }
 
-func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
+func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (outUser user.Info, outErr error) {
 	var errs []error
 
-	modeIdx := t.cache.get(attributes) // TODO add support for fancier cache that maps attributes+wantedUser to impersonatedUser
+	if impersonatedUser := t.impCache.get(wantedUser, attributes); impersonatedUser != nil {
+		return impersonatedUser, nil
+	}
+	defer func() {
+		if outErr != nil || outUser == nil {
+			return
+		}
+		t.impCache.set(wantedUser, attributes, outUser)
+	}()
+
+	modeIdx := t.idxCache.get(attributes)
 	if modeIdx != -1 {
 		impersonatedUser, err := t.modes[modeIdx](ctx, wantedUser, attributes)
 		if err != nil {
@@ -401,7 +414,7 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 		if impersonatedUser == nil {
 			continue
 		}
-		t.cache.set(attributes, i)
+		t.idxCache.set(attributes, i)
 		return impersonatedUser, nil
 	}
 
@@ -438,6 +451,23 @@ func (c *modeIndexCache) set(attributes authorizer.Attributes, value int) {
 func newModeIndexCache() *modeIndexCache {
 	return &modeIndexCache{
 		cache: lru.New(1024),
+	}
+}
+
+type impersonationCache struct {
+	cache *cache.Expiring
+}
+
+func (c *impersonationCache) get(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) user.Info {
+}
+
+func (c *impersonationCache) set(wantedUser *user.DefaultInfo, attributes authorizer.Attributes, impersonatedUser user.Info) {
+
+}
+
+func newImpersonationCache() *impersonationCache {
+	return &impersonationCache{
+		cache: cache.NewExpiring(),
 	}
 }
 
