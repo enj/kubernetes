@@ -182,3 +182,16 @@ const (
 	// to allow or deny an action.
 	DecisionNoOpinion
 )
+
+func (d Decision) String() string {
+	switch d {
+	case DecisionDeny:
+		return "deny"
+	case DecisionAllow:
+		return "allow"
+	case DecisionNoOpinion:
+		return "no opinion"
+	default:
+		return "unknown"
+	}
+}
