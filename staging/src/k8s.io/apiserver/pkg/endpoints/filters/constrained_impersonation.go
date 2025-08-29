@@ -18,15 +18,21 @@ package filters
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
+	"sort"
 	"strings"
+	"time"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/cache"
@@ -450,7 +456,7 @@ func (c *modeIndexCache) set(attributes authorizer.Attributes, value int) {
 
 func newModeIndexCache() *modeIndexCache {
 	return &modeIndexCache{
-		cache: lru.New(1024),
+		cache: lru.New(1024), // hardcode a reasonably large size
 	}
 }
 
@@ -459,10 +465,110 @@ type impersonationCache struct {
 }
 
 func (c *impersonationCache) get(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) user.Info {
+	key := getImpersonationCacheKey(wantedUser, attributes)
+	impersonatedUser, ok := c.cache.Get(key)
+	if !ok {
+		return nil
+	}
+	return impersonatedUser.(user.Info)
 }
 
 func (c *impersonationCache) set(wantedUser *user.DefaultInfo, attributes authorizer.Attributes, impersonatedUser user.Info) {
+	key := getImpersonationCacheKey(wantedUser, attributes)
+	c.cache.Set(key, impersonatedUser, 10*time.Second) // hardcode the same short TTL as used by TokenSuccessCacheTTL
+}
 
+// The attribute accessors known to cache key construction. If this fails to compile, the cache
+// implementation may need to be updated.
+var _ authorizer.Attributes = (interface {
+	GetUser() user.Info
+	GetVerb() string
+	IsReadOnly() bool
+	GetNamespace() string
+	GetResource() string
+	GetSubresource() string
+	GetName() string
+	GetAPIGroup() string
+	GetAPIVersion() string
+	IsResourceRequest() bool
+	GetPath() string
+	GetFieldSelector() (fields.Requirements, error)
+	GetLabelSelector() (labels.Requirements, error)
+})(nil)
+
+// The user info accessors known to cache key construction. If this fails to compile, the cache
+// implementation may need to be updated.
+var _ user.Info = (interface {
+	GetName() string
+	GetUID() string
+	GetGroups() []string
+	GetExtra() map[string][]string
+})(nil)
+
+type impersonationCacheKey struct {
+	WantedUser    *user.DefaultInfo
+	Attributes    authorizer.AttributesRecord
+	LabelSelector string
+}
+
+func getImpersonationCacheKey(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) string {
+	// TODO this is a modified copy from the caching authz code,
+	//  IMO a better approach would be to just use cryptobyte to build the key
+	serializableAttributes := impersonationCacheKey{
+		WantedUser: wantedUser,
+		Attributes: authorizer.AttributesRecord{
+			Verb:            attributes.GetVerb(),
+			Namespace:       attributes.GetNamespace(),
+			APIGroup:        attributes.GetAPIGroup(),
+			APIVersion:      attributes.GetAPIVersion(),
+			Resource:        attributes.GetResource(),
+			Subresource:     attributes.GetSubresource(),
+			Name:            attributes.GetName(),
+			ResourceRequest: attributes.IsResourceRequest(),
+			Path:            attributes.GetPath(),
+		},
+	}
+	// in the error case, we won't honor this field selector, so the cache doesn't need it.
+	if fieldSelector, err := attributes.GetFieldSelector(); len(fieldSelector) > 0 {
+		serializableAttributes.Attributes.FieldSelectorRequirements, serializableAttributes.Attributes.FieldSelectorParsingErr = fieldSelector, err
+	}
+	if labelSelector, _ := attributes.GetLabelSelector(); len(labelSelector) > 0 {
+		// the labels requirements have private elements so those don't help us serialize to a unique key
+		serializableAttributes.LabelSelector = labelSelector.String()
+	}
+
+	if u := attributes.GetUser(); u != nil {
+		di := &user.DefaultInfo{
+			Name: u.GetName(),
+			UID:  u.GetUID(),
+		}
+
+		// Differently-ordered groups or extras could cause otherwise-equivalent checks to
+		// have distinct cache keys.
+		if groups := u.GetGroups(); len(groups) > 0 {
+			di.Groups = make([]string, len(groups))
+			copy(di.Groups, groups)
+			sort.Strings(di.Groups)
+		}
+
+		if extra := u.GetExtra(); len(extra) > 0 {
+			di.Extra = make(map[string][]string, len(extra))
+			for k, vs := range extra {
+				vdupe := make([]string, len(vs))
+				copy(vdupe, vs)
+				sort.Strings(vdupe)
+				di.Extra[k] = vdupe
+			}
+		}
+
+		serializableAttributes.Attributes.User = di
+	}
+
+	h := sha256.New() // reduce the size of the cache key to keep the overall cache size small
+	if err := json.NewEncoder(h).Encode(serializableAttributes); err != nil {
+		panic(err) // this should never happen in practice
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
 func newImpersonationCache() *impersonationCache {
