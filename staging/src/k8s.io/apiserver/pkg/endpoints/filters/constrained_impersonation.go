@@ -50,7 +50,20 @@ import (
 )
 
 func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer, s runtime.NegotiatedSerializer) http.Handler {
-	tracker := newImpersonationModesTracker(a)
+	tracker := newImpersonationModesTracker(
+		authorizer.AuthorizerFunc(func(ctx context.Context, attributes authorizer.Attributes) (authorizer.Decision, string, error) {
+			decision, reason, err := a.Authorize(ctx, attributes)
+			if klog.V(6).Enabled() {
+				klog.V(6).InfoS("Impersonation authorization check",
+					"attributes", attributes,
+					"decision", decision,
+					"reason", reason,
+					"err", err,
+				)
+			}
+			return decision, reason, err
+		}),
+	)
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		ctx := req.Context()
 
