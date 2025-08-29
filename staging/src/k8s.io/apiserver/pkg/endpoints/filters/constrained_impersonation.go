@@ -111,7 +111,7 @@ func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 }
 
 func scheduledNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildConstrainedImpersonationMode(a, "impersonate:scheduled-node",
+	return buildConstrainedImpersonationMode(a, "scheduled-node",
 		func(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) bool {
 			return onlyUsernameSet(wantedUser) && requesterScheduledOnNode(attributes.GetUser(), wantedUser.Name)
 		},
@@ -119,7 +119,7 @@ func scheduledNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 }
 
 func nodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildConstrainedImpersonationMode(a, "impersonate:node",
+	return buildConstrainedImpersonationMode(a, "node",
 		func(wantedUser *user.DefaultInfo, _ authorizer.Attributes) bool {
 			if !onlyUsernameSet(wantedUser) {
 				return false
@@ -131,7 +131,7 @@ func nodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 }
 
 func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildConstrainedImpersonationMode(a, "impersonate:serviceaccount",
+	return buildConstrainedImpersonationMode(a, "serviceaccount",
 		func(wantedUser *user.DefaultInfo, _ authorizer.Attributes) bool {
 			if !onlyUsernameSet(wantedUser) {
 				return false
@@ -143,7 +143,7 @@ func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode 
 }
 
 func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildConstrainedImpersonationMode(a, "impersonate:user-info",
+	return buildConstrainedImpersonationMode(a, "user-info",
 		func(wantedUser *user.DefaultInfo, _ authorizer.Attributes) bool {
 			// nodes and service accounts cannot be impersonated in this mode.
 			// the user-info bucket is reserved for the "other" users, that is,
@@ -163,13 +163,13 @@ func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return buildImpersonationMode(a, "impersonate", false)
 }
 
-func buildConstrainedImpersonationMode(a authorizer.Authorizer, verb string, f constrainedImpersonationModeFilter) impersonationMode {
-	check := buildImpersonationMode(a, verb, true)
+func buildConstrainedImpersonationMode(a authorizer.Authorizer, mode string, f constrainedImpersonationModeFilter) impersonationMode {
+	check := buildImpersonationMode(a, "impersonate:"+mode, true)
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
 		if !f(wantedUser, attributes) {
 			return nil, nil
 		}
-		if err := checkAuthorization(ctx, a, &impersonateOnAttributes{Attributes: attributes}); err != nil {
+		if err := checkAuthorization(ctx, a, &impersonateOnAttributes{mode: mode, Attributes: attributes}); err != nil {
 			return nil, err
 		}
 		return check(ctx, wantedUser, attributes)
@@ -261,11 +261,12 @@ func impersonationAttributes(requestor user.Info, gv schema.GroupVersion, verb, 
 }
 
 type impersonateOnAttributes struct {
+	mode string
 	authorizer.Attributes
 }
 
 func (i *impersonateOnAttributes) GetVerb() string {
-	return "impersonate-on:" + i.Attributes.GetVerb()
+	return "impersonate-on:" + i.mode + ":" + i.Attributes.GetVerb()
 }
 
 func checkAuthorization(ctx context.Context, a authorizer.Authorizer, attributes authorizer.Attributes) error {
