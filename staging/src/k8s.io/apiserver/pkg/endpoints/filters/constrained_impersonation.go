@@ -194,7 +194,21 @@ func buildImpersonationMode(a authorizer.Authorizer, verb string, isConstrainedI
 	if !isConstrainedImpersonation {
 		usernameAndGroupGV = corev1.SchemeGroupVersion
 	}
-	return func(ctx context.Context, wantedUser *user.DefaultInfo, requestor user.Info) (user.Info, error) {
+	// the inner cache covers the impersonation checks that are not dependent on the request info
+	impCache := newImpersonationCache()
+	return func(ctx context.Context, wantedUser *user.DefaultInfo, requestor user.Info) (outUser user.Info, outErr error) {
+		// fake attributes that just contain the requestor to allow us to reuse the cache implementation
+		attributes := authorizer.AttributesRecord{User: requestor}
+		if impersonatedUser := impCache.get(wantedUser, attributes); impersonatedUser != nil {
+			return impersonatedUser, nil
+		}
+		defer func() {
+			if outErr != nil || outUser == nil {
+				return
+			}
+			impCache.set(wantedUser, attributes, outUser)
+		}()
+
 		actualUser := *wantedUser
 
 		usernameAttributes := impersonationAttributes(requestor, usernameAndGroupGV, verb, "users", wantedUser.Name)
@@ -422,6 +436,8 @@ func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTr
 func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (outUser user.Info, outErr error) {
 	var errs []error
 
+	// this outer cache covers the all the impersonation checks,
+	// including those that need the request info, i.e. for constrained impersonation
 	if impersonatedUser := t.impCache.get(wantedUser, attributes); impersonatedUser != nil {
 		return impersonatedUser, nil
 	}
@@ -432,6 +448,8 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 		t.impCache.set(wantedUser, attributes, outUser)
 	}()
 
+	// try the last successful mode first to reduce the amortized cost of impersonation
+	// we attempt all modes unless we short-circuit due to a successful impersonation
 	modeIdx := t.idxCache.get(attributes)
 	if modeIdx != -1 {
 		impersonatedUser, err := t.modes[modeIdx](ctx, wantedUser, attributes)
