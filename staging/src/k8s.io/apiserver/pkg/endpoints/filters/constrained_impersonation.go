@@ -83,6 +83,10 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 			responsewriters.InternalError(w, req, err)
 			return
 		}
+		if attributes.GetUser() == nil {
+			responsewriters.InternalError(w, req, errors.New("no User found in the context"))
+			return
+		}
 
 		impersonatedUser, err := tracker.getImpersonatedUser(ctx, wantedUser, attributes)
 		if err != nil {

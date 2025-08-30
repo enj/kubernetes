@@ -102,10 +102,9 @@ func GetAuthorizerAttributes(ctx context.Context) (authorizer.Attributes, error)
 	attribs := authorizer.AttributesRecord{}
 
 	user, ok := request.UserFrom(ctx)
-	if !ok {
-		return nil, errors.New("no User found in the context")
+	if ok {
+		attribs.User = user
 	}
-	attribs.User = user
 
 	requestInfo, found := request.RequestInfoFrom(ctx)
 	if !found {
