@@ -50,22 +50,7 @@ import (
 )
 
 func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer, s runtime.NegotiatedSerializer) http.Handler {
-	tracker := newImpersonationModesTracker(
-		authorizer.AuthorizerFunc(func(ctx context.Context, attributes authorizer.Attributes) (authorizer.Decision, string, error) {
-			decision, reason, err := a.Authorize(ctx, attributes)
-			if klog.V(6).Enabled() {
-				klog.V(6).InfoS("Impersonation authorization check",
-					// impersonation is all about verb magic and the dump of the attributes may not make it obvious due to private fields
-					"verb", attributes.GetVerb(),
-					"attributes", attributes,
-					"decision", decision,
-					"reason", reason,
-					"err", err,
-				)
-			}
-			return decision, reason, err
-		}),
-	)
+	tracker := newImpersonationModesTracker(a)
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		ctx := req.Context()
 
@@ -426,8 +411,22 @@ type impersonationModesTracker struct {
 }
 
 func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTracker {
+	loggingAuthorizer := authorizer.AuthorizerFunc(func(ctx context.Context, attributes authorizer.Attributes) (authorizer.Decision, string, error) {
+		decision, reason, err := a.Authorize(ctx, attributes)
+		if klog.V(6).Enabled() {
+			klog.V(6).InfoS("Impersonation authorization check",
+				// impersonation is all about verb magic and the dump of the attributes may not make it obvious due to private fields
+				"verb", attributes.GetVerb(),
+				"attributes", attributes,
+				"decision", decision,
+				"reason", reason,
+				"err", err,
+			)
+		}
+		return decision, reason, err
+	})
 	return &impersonationModesTracker{
-		modes:    allImpersonationModes(a),
+		modes:    allImpersonationModes(loggingAuthorizer),
 		idxCache: newModeIndexCache(),
 		impCache: newImpersonationCache(),
 	}
