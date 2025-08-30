@@ -83,7 +83,8 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 			responsewriters.InternalError(w, req, err)
 			return
 		}
-		if attributes.GetUser() == nil {
+		requestor := attributes.GetUser()
+		if requestor == nil {
 			responsewriters.InternalError(w, req, errors.New("no User found in the context"))
 			return
 		}
@@ -96,7 +97,7 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 		}
 
 		req = req.WithContext(request.WithUser(ctx, impersonatedUser))
-		httplog.LogOf(req, w).Addf("%v is impersonating %v", userString(attributes.GetUser()), userString(impersonatedUser))
+		httplog.LogOf(req, w).Addf("%v is impersonating %v", userString(requestor), userString(impersonatedUser))
 		audit.LogImpersonatedUser(audit.WithAuditContext(ctx), impersonatedUser) // TODO update this to include extra audit metadata
 
 		handler.ServeHTTP(w, req)
@@ -104,7 +105,8 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 }
 
 type impersonationMode func(context.Context, *user.DefaultInfo, authorizer.Attributes) (user.Info, error)
-type constrainedImpersonationModeFilter func(*user.DefaultInfo, authorizer.Attributes) bool
+type impersonationModeUserCheck func(context.Context, *user.DefaultInfo, user.Info) (user.Info, error)
+type constrainedImpersonationModeFilter func(*user.DefaultInfo, user.Info) bool
 
 func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 	return []impersonationMode{
@@ -118,15 +120,15 @@ func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 
 func scheduledNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return buildConstrainedImpersonationMode(a, "scheduled-node",
-		func(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) bool {
-			return onlyUsernameSet(wantedUser) && requesterScheduledOnNode(attributes.GetUser(), wantedUser.Name)
+		func(wantedUser *user.DefaultInfo, requestor user.Info) bool {
+			return onlyUsernameSet(wantedUser) && requesterScheduledOnNode(requestor, wantedUser.Name)
 		},
 	)
 }
 
 func nodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return buildConstrainedImpersonationMode(a, "node",
-		func(wantedUser *user.DefaultInfo, _ authorizer.Attributes) bool {
+		func(wantedUser *user.DefaultInfo, _ user.Info) bool {
 			if !onlyUsernameSet(wantedUser) {
 				return false
 			}
@@ -138,7 +140,7 @@ func nodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 
 func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return buildConstrainedImpersonationMode(a, "serviceaccount",
-		func(wantedUser *user.DefaultInfo, _ authorizer.Attributes) bool {
+		func(wantedUser *user.DefaultInfo, _ user.Info) bool {
 			if !onlyUsernameSet(wantedUser) {
 				return false
 			}
@@ -150,7 +152,7 @@ func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode 
 
 func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return buildConstrainedImpersonationMode(a, "user-info",
-		func(wantedUser *user.DefaultInfo, _ authorizer.Attributes) bool {
+		func(wantedUser *user.DefaultInfo, _ user.Info) bool {
 			// nodes and service accounts cannot be impersonated in this mode.
 			// the user-info bucket is reserved for the "other" users, that is,
 			// users that do not have an explicit schema defined by Kube.
@@ -166,29 +168,33 @@ func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
 }
 
 func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildImpersonationMode(a, "impersonate", false)
+	check := buildImpersonationMode(a, "impersonate", false)
+	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
+		requestor := attributes.GetUser()
+		return check(ctx, wantedUser, requestor)
+	}
 }
 
 func buildConstrainedImpersonationMode(a authorizer.Authorizer, mode string, f constrainedImpersonationModeFilter) impersonationMode {
 	check := buildImpersonationMode(a, "impersonate:"+mode, true)
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
-		if !f(wantedUser, attributes) {
+		requestor := attributes.GetUser()
+		if !f(wantedUser, requestor) {
 			return nil, nil
 		}
 		if err := checkAuthorization(ctx, a, &impersonateOnAttributes{mode: mode, Attributes: attributes}); err != nil {
 			return nil, err
 		}
-		return check(ctx, wantedUser, attributes)
+		return check(ctx, wantedUser, requestor)
 	}
 }
 
-func buildImpersonationMode(a authorizer.Authorizer, verb string, isConstrainedImpersonation bool) impersonationMode {
+func buildImpersonationMode(a authorizer.Authorizer, verb string, isConstrainedImpersonation bool) impersonationModeUserCheck {
 	usernameAndGroupGV := authenticationv1.SchemeGroupVersion
 	if !isConstrainedImpersonation {
 		usernameAndGroupGV = corev1.SchemeGroupVersion
 	}
-	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
-		requestor := attributes.GetUser()
+	return func(ctx context.Context, wantedUser *user.DefaultInfo, requestor user.Info) (user.Info, error) {
 		actualUser := *wantedUser
 
 		usernameAttributes := impersonationAttributes(requestor, usernameAndGroupGV, verb, "users", wantedUser.Name)
@@ -323,16 +329,16 @@ func isNodeUsername(username string) (string, bool) {
 	return name, true
 }
 
-func requesterScheduledOnNode(u user.Info, username string) bool {
+func requesterScheduledOnNode(requestor user.Info, username string) bool {
 	nodeName, ok := isNodeUsername(username)
 	if !ok {
 		return false
 	}
-	if _, _, ok := isServiceAccountUsername(u.GetName()); !ok {
+	if _, _, ok := isServiceAccountUsername(requestor.GetName()); !ok {
 		return false
 	}
-	return len(getExtraValue(u, serviceaccount.PodNameKey)) != 0 &&
-		getExtraValue(u, serviceaccount.NodeNameKey) == nodeName
+	return len(getExtraValue(requestor, serviceaccount.PodNameKey)) != 0 &&
+		getExtraValue(requestor, serviceaccount.NodeNameKey) == nodeName
 }
 
 func getExtraValue(u user.Info, key string) string {
@@ -567,32 +573,31 @@ func getImpersonationCacheKey(wantedUser *user.DefaultInfo, attributes authorize
 		serializableAttributes.LabelSelector = labelSelector.String()
 	}
 
-	if u := attributes.GetUser(); u != nil {
-		di := &user.DefaultInfo{
-			Name: u.GetName(),
-			UID:  u.GetUID(),
-		}
-
-		// Differently-ordered groups or extras could cause otherwise-equivalent checks to
-		// have distinct cache keys.
-		if groups := u.GetGroups(); len(groups) > 0 {
-			di.Groups = make([]string, len(groups))
-			copy(di.Groups, groups)
-			sort.Strings(di.Groups)
-		}
-
-		if extra := u.GetExtra(); len(extra) > 0 {
-			di.Extra = make(map[string][]string, len(extra))
-			for k, vs := range extra {
-				vdupe := make([]string, len(vs))
-				copy(vdupe, vs)
-				sort.Strings(vdupe)
-				di.Extra[k] = vdupe
-			}
-		}
-
-		serializableAttributes.Attributes.User = di
+	requestor := attributes.GetUser()
+	di := &user.DefaultInfo{
+		Name: requestor.GetName(),
+		UID:  requestor.GetUID(),
 	}
+
+	// Differently-ordered groups or extras could cause otherwise-equivalent checks to
+	// have distinct cache keys.
+	if groups := requestor.GetGroups(); len(groups) > 0 {
+		di.Groups = make([]string, len(groups))
+		copy(di.Groups, groups)
+		sort.Strings(di.Groups)
+	}
+
+	if extra := requestor.GetExtra(); len(extra) > 0 {
+		di.Extra = make(map[string][]string, len(extra))
+		for k, vs := range extra {
+			vdupe := make([]string, len(vs))
+			copy(vdupe, vs)
+			sort.Strings(vdupe)
+			di.Extra[k] = vdupe
+		}
+	}
+
+	serializableAttributes.Attributes.User = di
 
 	h := sha256.New() // reduce the size of the cache key to keep the overall cache size small
 	if err := json.NewEncoder(h).Encode(serializableAttributes); err != nil {
