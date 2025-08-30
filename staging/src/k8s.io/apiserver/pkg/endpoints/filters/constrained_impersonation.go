@@ -175,11 +175,11 @@ func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	}
 }
 
-func buildConstrainedImpersonationMode(a authorizer.Authorizer, mode string, f constrainedImpersonationModeFilter) impersonationMode {
+func buildConstrainedImpersonationMode(a authorizer.Authorizer, mode string, filter constrainedImpersonationModeFilter) impersonationMode {
 	check := buildImpersonationMode(a, "impersonate:"+mode, true)
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
 		requestor := attributes.GetUser()
-		if !f(wantedUser, requestor) {
+		if !filter(wantedUser, requestor) {
 			return nil, nil
 		}
 		if err := checkAuthorization(ctx, a, &impersonateOnAttributes{mode: mode, Attributes: attributes}); err != nil {
