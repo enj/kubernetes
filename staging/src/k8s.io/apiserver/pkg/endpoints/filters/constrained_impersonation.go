@@ -104,9 +104,9 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 	})
 }
 
-type impersonationMode func(context.Context, *user.DefaultInfo, authorizer.Attributes) (user.Info, error)
-type impersonationModeUserCheck func(context.Context, *user.DefaultInfo, user.Info) (user.Info, error)
-type constrainedImpersonationModeFilter func(*user.DefaultInfo, user.Info) bool
+type impersonationMode func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error)
+type impersonationModeUserCheck func(ctx context.Context, wantedUser *user.DefaultInfo, requestor user.Info) (user.Info, error)
+type constrainedImpersonationModeFilter func(wantedUser *user.DefaultInfo, requestor user.Info) bool
 
 func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 	return []impersonationMode{
