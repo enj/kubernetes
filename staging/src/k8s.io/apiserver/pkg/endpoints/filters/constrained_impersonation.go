@@ -153,7 +153,7 @@ func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
 }
 
 func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	check := buildImpersonationMode(a, "impersonate", false)
+	check := buildImpersonationModeUserCheck(a, "impersonate", false)
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
 		requestor := attributes.GetUser()
 		return check(ctx, wantedUser, requestor)
@@ -161,7 +161,7 @@ func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
 }
 
 func buildConstrainedImpersonationMode(a authorizer.Authorizer, mode string, filter constrainedImpersonationModeFilter) impersonationMode {
-	check := buildImpersonationMode(a, "impersonate:"+mode, true)
+	check := buildImpersonationModeUserCheck(a, "impersonate:"+mode, true)
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (user.Info, error) {
 		requestor := attributes.GetUser()
 		if !filter(wantedUser, requestor) {
@@ -174,7 +174,7 @@ func buildConstrainedImpersonationMode(a authorizer.Authorizer, mode string, fil
 	}
 }
 
-func buildImpersonationMode(a authorizer.Authorizer, verb string, isConstrainedImpersonation bool) impersonationModeUserCheck {
+func buildImpersonationModeUserCheck(a authorizer.Authorizer, verb string, isConstrainedImpersonation bool) impersonationModeUserCheck {
 	usernameAndGroupGV := authenticationv1.SchemeGroupVersion
 	if !isConstrainedImpersonation {
 		usernameAndGroupGV = corev1.SchemeGroupVersion
