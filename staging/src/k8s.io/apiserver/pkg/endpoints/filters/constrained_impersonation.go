@@ -414,7 +414,7 @@ func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTr
 	loggingAuthorizer := authorizer.AuthorizerFunc(func(ctx context.Context, attributes authorizer.Attributes) (authorizer.Decision, string, error) {
 		decision, reason, err := a.Authorize(ctx, attributes)
 		if klog.V(6).Enabled() {
-			klog.V(6).InfoS("Impersonation authorization check",
+			klog.V(6).InfoSDepth(3, "Impersonation authorization check",
 				// impersonation is all about verb magic and the dump of the attributes may not make it obvious due to private fields
 				"verb", attributes.GetVerb(),
 				"attributes", attributes,
