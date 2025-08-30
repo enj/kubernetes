@@ -320,7 +320,7 @@ func isNodeUsername(username string) (string, bool) {
 	if len(validation.ValidateNodeName(name, false)) != 0 {
 		return "", false
 	}
-	return name, false
+	return name, true
 }
 
 func requesterScheduledOnNode(u user.Info, username string) bool {
