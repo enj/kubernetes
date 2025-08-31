@@ -509,7 +509,7 @@ func (c *modeIndexCache) set(attributes authorizer.Attributes, value int) {
 
 func newModeIndexCache() *modeIndexCache {
 	return &modeIndexCache{
-		cache: lru.New(1024), // hardcode a reasonably large size
+		cache: lru.New(1024), // hardcode a reasonably large size so we can remember many users without leaking memory
 	}
 }
 
