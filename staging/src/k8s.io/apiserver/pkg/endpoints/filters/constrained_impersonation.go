@@ -28,6 +28,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/crypto/cryptobyte"
+
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -37,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/cache"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/audit"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
 	"k8s.io/apiserver/pkg/authentication/user"
@@ -626,6 +629,56 @@ func getImpersonationCacheKey(wantedUser *user.DefaultInfo, attributes authorize
 		panic(err) // this should never happen in practice
 	}
 	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+type cacheKeyBuilder struct {
+	builder *cryptobyte.Builder
+}
+
+func newCacheKeyBuilder() *cacheKeyBuilder { // TODO move and share with kubelet credential provider
+	return &cacheKeyBuilder{builder: cryptobyte.NewBuilder(make([]byte, 0, 256))} // start with a reasonable size to avoid too many allocations
+}
+
+func (c *cacheKeyBuilder) addString(value string) *cacheKeyBuilder {
+	c.builder.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+		b.AddBytes([]byte(value))
+	})
+	return c
+}
+
+func (c *cacheKeyBuilder) addStringSlice(values []string) *cacheKeyBuilder {
+	c.builder.AddUint32(uint32(len(values)))
+	for _, v := range values {
+		c.addString(v)
+	}
+	return c
+}
+
+func (c *cacheKeyBuilder) addExtra(extra map[string][]string) *cacheKeyBuilder {
+	c.builder.AddUint32(uint32(len(extra)))
+	for _, key := range sets.StringKeySet(extra).List() {
+		c.addString(key)
+		c.addStringSlice(extra[key])
+	}
+	return c
+}
+
+func (c *cacheKeyBuilder) addBool(value bool) *cacheKeyBuilder {
+	var b byte
+	if value {
+		b = 1
+	}
+	c.builder.AddUint8(b)
+	return c
+}
+
+func (c *cacheKeyBuilder) build() (string, error) {
+	key, err := c.builder.Bytes()
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(key) // reduce the size of the cache key to keep the overall cache size small
+	return fmt.Sprintf("%x", hash[:]), nil
 }
 
 func newImpersonationCache() *impersonationCache {
