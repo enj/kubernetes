@@ -132,7 +132,7 @@ func (ac *AuditContext) ProcessEventStage(ctx context.Context, stage auditintern
 	return processed
 }
 
-func (ac *AuditContext) LogImpersonatedUser(user user.Info) {
+func (ac *AuditContext) LogImpersonatedUser(user user.Info, constraint string) {
 	ac.visitEvent(func(ev *auditinternal.Event) {
 		if ev == nil || ev.Level.Less(auditinternal.LevelMetadata) {
 			return
