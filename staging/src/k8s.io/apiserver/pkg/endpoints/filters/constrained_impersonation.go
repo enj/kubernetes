@@ -624,12 +624,18 @@ func addUser(b *cacheKeyBuilder, u user.Info) {
 			addString(u.GetName()).
 			addString(u.GetUID()).
 			addStringSlice(u.GetGroups()).
-			addExtra(u.GetExtra())
+			addLengthPrefixed(func(b *cacheKeyBuilder) {
+				extra := u.GetExtra()
+				for _, key := range sets.StringKeySet(extra).List() {
+					b.addString(key)
+					b.addStringSlice(extra[key])
+				}
+			})
 	})
 }
 
 type cacheKeyBuilder struct {
-	builder *cryptobyte.Builder
+	builder *cryptobyte.Builder // TODO decide if we want to use a sync.Pool for the underlying buffer
 }
 
 func newCacheKeyBuilder() *cacheKeyBuilder { // TODO move and share with kubelet credential provider
@@ -644,19 +650,11 @@ func (c *cacheKeyBuilder) addString(value string) *cacheKeyBuilder {
 }
 
 func (c *cacheKeyBuilder) addStringSlice(values []string) *cacheKeyBuilder {
-	c.builder.AddUint32(uint32(len(values)))
-	for _, v := range values {
-		c.addString(v)
-	}
-	return c
-}
-
-func (c *cacheKeyBuilder) addExtra(extra map[string][]string) *cacheKeyBuilder {
-	c.builder.AddUint32(uint32(len(extra)))
-	for _, key := range sets.StringKeySet(extra).List() {
-		c.addString(key)
-		c.addStringSlice(extra[key])
-	}
+	c.addLengthPrefixed(func(c *cacheKeyBuilder) {
+		for _, v := range values {
+			c.addString(v)
+		}
+	})
 	return c
 }
 
@@ -671,12 +669,11 @@ func (c *cacheKeyBuilder) addBool(value bool) *cacheKeyBuilder {
 
 type builderContinuation func(child *cacheKeyBuilder)
 
-func (c *cacheKeyBuilder) addLengthPrefixed(f builderContinuation) *cacheKeyBuilder {
+func (c *cacheKeyBuilder) addLengthPrefixed(f builderContinuation) {
 	c.builder.AddUint32LengthPrefixed(func(b *cryptobyte.Builder) {
 		c := &cacheKeyBuilder{builder: b}
 		f(c)
 	})
-	return c
 }
 
 func (c *cacheKeyBuilder) build() (string, error) {
@@ -684,6 +681,7 @@ func (c *cacheKeyBuilder) build() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// TODO decide if we want to use hmac.New(sha256.New, randomCacheKey) with a sync.Pool like the cached token authenticator
 	hash := sha256.Sum256(key) // reduce the size of the cache key to keep the overall cache size small
 	return fmt.Sprintf("%x", hash[:]), nil
 }
