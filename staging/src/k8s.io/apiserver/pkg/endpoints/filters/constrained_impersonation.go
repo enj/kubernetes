@@ -19,12 +19,10 @@ package filters
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -39,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/cache"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/audit"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
@@ -526,7 +525,11 @@ type impersonationCache struct {
 }
 
 func (c *impersonationCache) get(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) *impersonatedUserInfo {
-	key := getImpersonationCacheKey(wantedUser, attributes)
+	key, err := buildImpersonationCacheKey(wantedUser, attributes)
+	if err != nil {
+		utilruntime.HandleError(fmt.Errorf("failed to build impersonation cache key: %w", err))
+		return nil
+	}
 	impersonatedUser, ok := c.cache.Get(key)
 	if !ok {
 		return nil
@@ -535,8 +538,12 @@ func (c *impersonationCache) get(wantedUser *user.DefaultInfo, attributes author
 }
 
 func (c *impersonationCache) set(wantedUser *user.DefaultInfo, attributes authorizer.Attributes, impersonatedUser *impersonatedUserInfo) {
-	key := getImpersonationCacheKey(wantedUser, attributes)
-	c.cache.Set(key, impersonatedUser, 10*time.Second) // hardcode the same short TTL as used by TokenSuccessCacheTTL
+	key, err := buildImpersonationCacheKey(wantedUser, attributes)
+	if err != nil {
+		utilruntime.HandleError(fmt.Errorf("failed to build impersonation cache key: %w", err))
+		return
+	}
+	c.cache.Set(key, impersonatedUser, 10*time.Second)
 }
 
 // The attribute accessors known to cache key construction. If this fails to compile, the cache
@@ -566,69 +573,59 @@ var _ user.Info = (interface {
 	GetExtra() map[string][]string
 })(nil)
 
-type impersonationCacheKey struct {
-	WantedUser    *user.DefaultInfo
-	Attributes    authorizer.AttributesRecord
-	LabelSelector string
+func buildImpersonationCacheKey(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (string, error) {
+	fieldSelector, err := attributes.GetFieldSelector()
+	if err != nil {
+		return "", err // if we do not fully understand the attributes, just skip caching altogether
+	}
+
+	labelSelector, err := attributes.GetLabelSelector()
+	if err != nil {
+		return "", err // if we do not fully understand the attributes, just skip caching altogether
+	}
+
+	b := newCacheKeyBuilder()
+
+	addUser(b, wantedUser)
+	addUser(b, attributes.GetUser())
+
+	b.addLengthPrefixed(func(b *cacheKeyBuilder) {
+		b.
+			addString(attributes.GetVerb()).
+			addBool(attributes.IsReadOnly()).
+			addString(attributes.GetNamespace()).
+			addString(attributes.GetResource()).
+			addString(attributes.GetSubresource()).
+			addString(attributes.GetName()).
+			addString(attributes.GetAPIGroup()).
+			addString(attributes.GetAPIVersion()).
+			addBool(attributes.IsResourceRequest()).
+			addString(attributes.GetPath())
+	})
+
+	b.addLengthPrefixed(func(b *cacheKeyBuilder) {
+		for _, req := range fieldSelector {
+			b.addStringSlice([]string{req.Field, string(req.Operator), req.Value})
+		}
+	})
+
+	b.addLengthPrefixed(func(b *cacheKeyBuilder) {
+		for _, req := range labelSelector {
+			b.addString(req.String())
+		}
+	})
+
+	return b.build()
 }
 
-func getImpersonationCacheKey(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) string {
-	// TODO this is a modified copy from the caching authz code,
-	//  IMO a better approach would be to just use cryptobyte to build the key
-	serializableAttributes := impersonationCacheKey{
-		WantedUser: wantedUser,
-		Attributes: authorizer.AttributesRecord{
-			Verb:            attributes.GetVerb(),
-			Namespace:       attributes.GetNamespace(),
-			APIGroup:        attributes.GetAPIGroup(),
-			APIVersion:      attributes.GetAPIVersion(),
-			Resource:        attributes.GetResource(),
-			Subresource:     attributes.GetSubresource(),
-			Name:            attributes.GetName(),
-			ResourceRequest: attributes.IsResourceRequest(),
-			Path:            attributes.GetPath(),
-		},
-	}
-	// in the error case, we won't honor this field selector, so the cache doesn't need it.
-	if fieldSelector, err := attributes.GetFieldSelector(); len(fieldSelector) > 0 {
-		serializableAttributes.Attributes.FieldSelectorRequirements, serializableAttributes.Attributes.FieldSelectorParsingErr = fieldSelector, err
-	}
-	if labelSelector, _ := attributes.GetLabelSelector(); len(labelSelector) > 0 {
-		// the labels requirements have private elements so those don't help us serialize to a unique key
-		serializableAttributes.LabelSelector = labelSelector.String()
-	}
-
-	requestor := attributes.GetUser()
-	di := &user.DefaultInfo{
-		Name: requestor.GetName(),
-		UID:  requestor.GetUID(),
-	}
-
-	// Differently-ordered groups or extras could cause otherwise-equivalent checks to
-	// have distinct cache keys.
-	if groups := requestor.GetGroups(); len(groups) > 0 {
-		di.Groups = make([]string, len(groups))
-		copy(di.Groups, groups)
-		sort.Strings(di.Groups)
-	}
-
-	if extra := requestor.GetExtra(); len(extra) > 0 {
-		di.Extra = make(map[string][]string, len(extra))
-		for k, vs := range extra {
-			vdupe := make([]string, len(vs))
-			copy(vdupe, vs)
-			sort.Strings(vdupe)
-			di.Extra[k] = vdupe
-		}
-	}
-
-	serializableAttributes.Attributes.User = di
-
-	h := sha256.New() // reduce the size of the cache key to keep the overall cache size small
-	if err := json.NewEncoder(h).Encode(serializableAttributes); err != nil {
-		panic(err) // this should never happen in practice
-	}
-	return fmt.Sprintf("%x", h.Sum(nil))
+func addUser(b *cacheKeyBuilder, u user.Info) {
+	b.addLengthPrefixed(func(b *cacheKeyBuilder) {
+		b.
+			addString(u.GetName()).
+			addString(u.GetUID()).
+			addStringSlice(u.GetGroups()).
+			addExtra(u.GetExtra())
+	})
 }
 
 type cacheKeyBuilder struct {
@@ -640,7 +637,7 @@ func newCacheKeyBuilder() *cacheKeyBuilder { // TODO move and share with kubelet
 }
 
 func (c *cacheKeyBuilder) addString(value string) *cacheKeyBuilder {
-	c.builder.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
+	c.builder.AddUint32LengthPrefixed(func(b *cryptobyte.Builder) {
 		b.AddBytes([]byte(value))
 	})
 	return c
@@ -669,6 +666,16 @@ func (c *cacheKeyBuilder) addBool(value bool) *cacheKeyBuilder {
 		b = 1
 	}
 	c.builder.AddUint8(b)
+	return c
+}
+
+type builderContinuation func(child *cacheKeyBuilder)
+
+func (c *cacheKeyBuilder) addLengthPrefixed(f builderContinuation) *cacheKeyBuilder {
+	c.builder.AddUint32LengthPrefixed(func(b *cryptobyte.Builder) {
+		c := &cacheKeyBuilder{builder: b}
+		f(c)
+	})
 	return c
 }
 
