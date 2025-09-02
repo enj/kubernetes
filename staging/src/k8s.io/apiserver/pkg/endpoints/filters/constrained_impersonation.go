@@ -643,8 +643,8 @@ func newCacheKeyBuilder() *cacheKeyBuilder { // TODO move and share with kubelet
 }
 
 func (c *cacheKeyBuilder) addString(value string) *cacheKeyBuilder {
-	c.builder.AddUint32LengthPrefixed(func(b *cryptobyte.Builder) {
-		b.AddBytes([]byte(value))
+	c.addLengthPrefixed(func(c *cacheKeyBuilder) {
+		c.builder.AddBytes([]byte(value))
 	})
 	return c
 }
