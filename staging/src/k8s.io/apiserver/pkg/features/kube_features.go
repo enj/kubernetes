@@ -355,7 +355,7 @@ var defaultVersionedKubernetesFeatureGates = map[featuregate.Feature]featuregate
 	},
 
 	ConstrainedImpersonation: {
-		{Version: version.MustParse("1.35"), Default: false, PreRelease: featuregate.Alpha},
+		{Version: version.MustParse("1.34"), Default: false, PreRelease: featuregate.Alpha}, // TODO this should be 1.35
 	},
 
 	CoordinatedLeaderElection: {
