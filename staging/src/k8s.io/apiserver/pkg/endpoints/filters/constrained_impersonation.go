@@ -485,7 +485,7 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 	}
 
 	if err := utilerrors.NewAggregate(errs); err != nil {
-		return nil, err
+		return nil, err // TODO decide if we just want to return the first (or maybe last) error
 	}
 
 	// this should not happen, but make sure we fail closed when no impersonation mode succeeded

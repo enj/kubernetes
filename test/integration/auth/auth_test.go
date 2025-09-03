@@ -1076,9 +1076,11 @@ func TestConstrainedImpersonation(t *testing.T) {
 		"node1":   {Name: "system:node:node1", Groups: []string{user.NodesGroup}},
 		"serviceaccount1": {Name: "system:serviceaccount:default:sa1", Extra: map[string][]string{
 			"authentication.kubernetes.io/node-name": {"node1"},
+			"authentication.kubernetes.io/pod-name":  {"pod1"},
 		}},
 		"serviceaccount2": {Name: "system:serviceaccount:default:sa2", Extra: map[string][]string{
 			"authentication.kubernetes.io/node-name": {"node2"},
+			"authentication.kubernetes.io/pod-name":  {"pod2"},
 		}},
 	})))
 
@@ -1124,8 +1126,11 @@ func TestConstrainedImpersonation(t *testing.T) {
 		}
 
 		if diff := cmp.Diff(
-			`users.authentication.k8s.io "alice" is forbidden: `+
-				`User "bob" cannot impersonate:user-info resource "users" in API group "authentication.k8s.io" at the cluster scope`,
+			`pods is forbidden: [`+
+				`pods is forbidden: User "bob" cannot impersonate-on:user-info:list resource "pods" in API group "" at the cluster scope`+
+				`, `+
+				`users "alice" is forbidden: User "bob" cannot impersonate resource "users" in API group "" at the cluster scope`+
+				`]`,
 			err.Error(),
 		); diff != "" {
 			t.Fatalf("forbidden error different than expected, -got, +want:\n %s", diff)
@@ -1145,7 +1150,10 @@ func TestConstrainedImpersonation(t *testing.T) {
 
 		if diff := cmp.Diff(
 			`pods is forbidden: `+
-				`User "bob" cannot impersonate-on:list resource "pods" in API group "" at the cluster scope`,
+				`[pods is forbidden: User "bob" cannot impersonate-on:user-info:list resource "pods" in API group "" at the cluster scope`+
+				`, `+
+				`users "alice" is forbidden: User "bob" cannot impersonate resource "users" in API group "" at the cluster scope`+
+				`]`,
 			err.Error(),
 		); diff != "" {
 			t.Fatalf("forbidden error different than expected, -got, +want:\n %s", diff)
@@ -1153,7 +1161,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 
 		// with impersonate-on:list permission added, bob can list but not watch pods.
 		authutil.GrantUserAuthorization(t, ctx, superuserClient, "bob", rbacv1.PolicyRule{
-			Verbs:     []string{"impersonate-on:list"},
+			Verbs:     []string{"impersonate-on:user-info:list"},
 			APIGroups: []string{""},
 			Resources: []string{"pods"},
 		})
@@ -1174,7 +1182,6 @@ func TestConstrainedImpersonation(t *testing.T) {
 		impersonatorClientConfig.BearerToken = "bob"
 		impersonatorClientConfig.Impersonate = rest.ImpersonationConfig{
 			UserName: "system:node:node1",
-			Groups:   []string{user.NodesGroup},
 		}
 
 		client := clientset.NewForConfigOrDie(impersonatorClientConfig)
@@ -1184,8 +1191,11 @@ func TestConstrainedImpersonation(t *testing.T) {
 		}
 
 		if diff := cmp.Diff(
-			`nodes.authentication.k8s.io "node1" is forbidden: `+
-				`User "bob" cannot impersonate:node resource "nodes" in API group "authentication.k8s.io" at the cluster scope`,
+			`pods is forbidden: [`+
+				`pods is forbidden: User "bob" cannot impersonate-on:node:list resource "pods" in API group "" at the cluster scope`+
+				`, `+
+				`users "system:node:node1" is forbidden: User "bob" cannot impersonate resource "users" in API group "" at the cluster scope`+
+				`]`,
 			err.Error(),
 		); diff != "" {
 			t.Fatalf("forbidden error different than expected, -got, +want:\n %s", diff)
@@ -1199,7 +1209,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 			Resources: []string{"users"},
 		})
 		authutil.GrantUserAuthorization(t, ctx, superuserClient, "bob", rbacv1.PolicyRule{
-			Verbs:     []string{"impersonate-on:list"},
+			Verbs:     []string{"impersonate-on:node:list"},
 			APIGroups: []string{""},
 			Resources: []string{"pods"},
 		})
@@ -1210,8 +1220,11 @@ func TestConstrainedImpersonation(t *testing.T) {
 		}
 
 		if diff := cmp.Diff(
-			`nodes.authentication.k8s.io "node1" is forbidden: `+
-				`User "bob" cannot impersonate:node resource "nodes" in API group "authentication.k8s.io" at the cluster scope`,
+			`pods is forbidden: [`+
+				`nodes.authentication.k8s.io "node1" is forbidden: User "bob" cannot impersonate:node resource "nodes" in API group "authentication.k8s.io" at the cluster scope`+
+				`, `+
+				`users "system:node:node1" is forbidden: User "bob" cannot impersonate resource "users" in API group "" at the cluster scope`+
+				`]`,
 			err.Error(),
 		); diff != "" {
 			t.Fatalf("forbidden error different than expected, -got, +want:\n %s", diff)
@@ -1234,7 +1247,6 @@ func TestConstrainedImpersonation(t *testing.T) {
 		impersonatorClientConfig.BearerToken = "serviceaccount2"
 		impersonatorClientConfig.Impersonate = rest.ImpersonationConfig{
 			UserName: "system:node:node1",
-			Groups:   []string{user.NodesGroup},
 		}
 
 		client := clientset.NewForConfigOrDie(impersonatorClientConfig)
@@ -1246,7 +1258,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 			Resources: []string{"nodes"},
 		})
 		authutil.GrantUserAuthorization(t, ctx, superuserClient, "system:serviceaccount:default:sa2", rbacv1.PolicyRule{
-			Verbs:     []string{"impersonate-on:list"},
+			Verbs:     []string{"impersonate-on:scheduled-node:list"},
 			APIGroups: []string{""},
 			Resources: []string{"pods"},
 		})
@@ -1257,8 +1269,11 @@ func TestConstrainedImpersonation(t *testing.T) {
 		}
 
 		if diff := cmp.Diff(
-			`nodes.authentication.k8s.io "node1" is forbidden: `+
-				`User "system:serviceaccount:default:sa2" cannot impersonate:node resource "nodes" in API group "authentication.k8s.io" at the cluster scope`,
+			`pods is forbidden: [`+
+				`pods is forbidden: User "system:serviceaccount:default:sa2" cannot impersonate-on:node:list resource "pods" in API group "" at the cluster scope`+
+				`, `+
+				`users "system:node:node1" is forbidden: User "system:serviceaccount:default:sa2" cannot impersonate resource "users" in API group "" at the cluster scope`+
+				`]`,
 			err.Error(),
 		); diff != "" {
 			t.Fatalf("forbidden error different than expected, -got, +want:\n %s", diff)
@@ -1274,7 +1289,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 			Resources: []string{"nodes"},
 		})
 		authutil.GrantUserAuthorization(t, ctx, superuserClient, "system:serviceaccount:default:sa1", rbacv1.PolicyRule{
-			Verbs:     []string{"impersonate-on:list"},
+			Verbs:     []string{"impersonate-on:scheduled-node:list"},
 			APIGroups: []string{""},
 			Resources: []string{"pods"},
 		})
@@ -1323,6 +1338,7 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 		"node1":   {Name: "system:node:node1", Groups: []string{user.NodesGroup}},
 		"serviceaccount1": {Name: "system:serviceaccount:default:sa1", Extra: map[string][]string{
 			"authentication.kubernetes.io/node-name": {"node1"},
+			"authentication.kubernetes.io/pod-name":  {"pod1"},
 		}},
 	})))
 
@@ -1361,7 +1377,7 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 			Resources: []string{"users"},
 		})
 		authutil.GrantUserAuthorization(t, ctx, superuserClient, "bob", rbacv1.PolicyRule{
-			Verbs:     []string{"impersonate-on:list"},
+			Verbs:     []string{"impersonate-on:user-info:list"},
 			APIGroups: []string{""},
 			Resources: []string{"pods"},
 		})
@@ -1405,7 +1421,7 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 			Resources: []string{"nodes"},
 		})
 		authutil.GrantUserAuthorization(t, ctx, superuserClient, "system:serviceaccount:default:sa1", rbacv1.PolicyRule{
-			Verbs:     []string{"impersonate-on:list"},
+			Verbs:     []string{"impersonate-on:scheduled-node:list"},
 			APIGroups: []string{""},
 			Resources: []string{"pods"},
 		})
@@ -1414,7 +1430,6 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 		impersonatorClientConfig.BearerToken = "serviceaccount1"
 		impersonatorClientConfig.Impersonate = rest.ImpersonationConfig{
 			UserName: "system:node:node1",
-			Groups:   []string{user.NodesGroup},
 		}
 
 		client := clientset.NewForConfigOrDie(impersonatorClientConfig)
