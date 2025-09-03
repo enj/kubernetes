@@ -543,7 +543,7 @@ func (c *impersonationCache) set(wantedUser *user.DefaultInfo, attributes author
 		utilruntime.HandleError(fmt.Errorf("failed to build impersonation cache key: %w", err))
 		return
 	}
-	c.cache.Set(key, impersonatedUser, 10*time.Second)
+	c.cache.Set(key, impersonatedUser, 10*time.Second) // hardcode the same short TTL as used by TokenSuccessCacheTTL
 }
 
 // The attribute accessors known to cache key construction. If this fails to compile, the cache
