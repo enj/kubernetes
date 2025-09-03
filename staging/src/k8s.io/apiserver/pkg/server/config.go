@@ -1030,7 +1030,7 @@ func DefaultBuildHandlerChain(apiHandler http.Handler, c *Config) http.Handler {
 	}
 
 	handler = filterlatency.TrackCompleted(handler)
-	if c.FeatureGate.Enabled(genericfeatures.APIServerTracing) { // TODO fix to actual gate
+	if c.FeatureGate.Enabled(genericfeatures.ConstrainedImpersonation) {
 		handler = genericapifilters.WithConstrainedImpersonation(handler, c.Authorization.Authorizer, c.Serializer)
 		handler = filterlatency.TrackStarted(handler, c.TracerProvider, "constrainedimpersonation")
 	} else {
