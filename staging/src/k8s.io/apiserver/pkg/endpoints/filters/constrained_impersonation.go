@@ -584,10 +584,19 @@ func buildImpersonationCacheKey(wantedUser *user.DefaultInfo, attributes authori
 		return "", err // if we do not fully understand the attributes, just skip caching altogether
 	}
 
-	b := newCacheKeyBuilder()
+	requestor := attributes.GetUser()
+
+	// the chance of a hash collision is impractically small, but the only way that would lead to a
+	// privilege escalation is if you could get the cache key of a different user.  if you somehow
+	// get a collision with your own username, you already have that permission since we only set
+	// values in the cache after a successful impersonation.  Thus, we include the requestor
+	// username in the cache key.  It is safe to assume that a user has no control over their own
+	// username since that is controlled by the authenticator.  Even though many of the other inputs
+	// are under the control of the requestor, they cannot explode the cache due to the hashing.
+	b := newCacheKeyBuilder(requestor.GetName())
 
 	addUser(b, wantedUser)
-	addUser(b, attributes.GetUser())
+	addUser(b, requestor)
 
 	b.addLengthPrefixed(func(b *cacheKeyBuilder) {
 		b.
@@ -635,11 +644,12 @@ func addUser(b *cacheKeyBuilder, u user.Info) {
 }
 
 type cacheKeyBuilder struct {
-	builder *cryptobyte.Builder // TODO decide if we want to use a sync.Pool for the underlying buffer
+	namespace string              // in the programming sense, not the Kubernetes concept
+	builder   *cryptobyte.Builder // TODO decide if we want to use a sync.Pool for the underlying buffer
 }
 
-func newCacheKeyBuilder() *cacheKeyBuilder { // TODO move and share with kubelet credential provider
-	return &cacheKeyBuilder{builder: cryptobyte.NewBuilder(make([]byte, 0, 256))} // start with a reasonable size to avoid too many allocations
+func newCacheKeyBuilder(namespace string) *cacheKeyBuilder { // TODO move and share with kubelet credential provider
+	return &cacheKeyBuilder{namespace: namespace, builder: cryptobyte.NewBuilder(make([]byte, 0, 256))} // start with a reasonable size to avoid too many allocations
 }
 
 func (c *cacheKeyBuilder) addString(value string) *cacheKeyBuilder {
@@ -671,7 +681,7 @@ type builderContinuation func(child *cacheKeyBuilder)
 
 func (c *cacheKeyBuilder) addLengthPrefixed(f builderContinuation) {
 	c.builder.AddUint32LengthPrefixed(func(b *cryptobyte.Builder) {
-		c := &cacheKeyBuilder{builder: b}
+		c := &cacheKeyBuilder{namespace: c.namespace, builder: b}
 		f(c)
 	})
 }
@@ -683,7 +693,7 @@ func (c *cacheKeyBuilder) build() (string, error) {
 	}
 	// TODO decide if we want to use hmac.New(sha256.New, randomCacheKey) with a sync.Pool like the cached token authenticator
 	hash := sha256.Sum256(key) // reduce the size of the cache key to keep the overall cache size small
-	return fmt.Sprintf("%x", hash[:]), nil
+	return fmt.Sprintf("%x/%s", hash[:], c.namespace), nil
 }
 
 func newImpersonationCache() *impersonationCache {
