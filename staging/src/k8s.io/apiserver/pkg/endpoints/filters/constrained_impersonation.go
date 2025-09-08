@@ -649,7 +649,7 @@ type cacheKeyBuilder struct {
 }
 
 func newCacheKeyBuilder(namespace string) *cacheKeyBuilder { // TODO move and share with kubelet credential provider
-	return &cacheKeyBuilder{namespace: namespace, builder: cryptobyte.NewBuilder(make([]byte, 0, 256))} // start with a reasonable size to avoid too many allocations
+	return &cacheKeyBuilder{namespace: namespace, builder: cryptobyte.NewBuilder(make([]byte, 0, 384))} // start with a reasonable size to avoid too many allocations
 }
 
 func (c *cacheKeyBuilder) addString(value string) *cacheKeyBuilder {
