@@ -97,6 +97,10 @@ type Event struct {
 	// Impersonated user information.
 	// +optional
 	ImpersonatedUser *authnv1.UserInfo
+
+	// TODO AuthenticationMetadata struct { ImpersonationConstraint string }
+	// TODO just don't pollute output
+
 	// Source IPs, from where the request originated and intermediate proxies.
 	// The source IPs are listed from (in order):
 	// 1. X-Forwarded-For request header IPs

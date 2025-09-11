@@ -77,7 +77,7 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 		}
 
 		impersonatedUser, err := tracker.getImpersonatedUser(ctx, wantedUser, attributes)
-		if err != nil {
+		if err != nil { // TODO just return the first most specific error for constrained impersonation
 			klog.V(4).InfoS("Forbidden", "URI", req.RequestURI, "err", err)
 			forbidden(attributes, w, req, err, s)
 			return
@@ -111,7 +111,7 @@ func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 }
 
 func scheduledNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildConstrainedImpersonationMode(a, "scheduled-node",
+	return buildConstrainedImpersonationMode(a, "scheduled-node", // TODO make this associated-node
 		func(wantedUser *user.DefaultInfo, requestor user.Info) bool {
 			return onlyUsernameSet(wantedUser) && requesterScheduledOnNode(requestor, wantedUser.Name)
 		},
@@ -119,7 +119,7 @@ func scheduledNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 }
 
 func nodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildConstrainedImpersonationMode(a, "node",
+	return buildConstrainedImpersonationMode(a, "node", // TODO rename this to arbitrary-node
 		func(wantedUser *user.DefaultInfo, _ user.Info) bool {
 			if !onlyUsernameSet(wantedUser) {
 				return false
@@ -186,6 +186,7 @@ func buildImpersonationModeUserCheck(a authorizer.Authorizer, verb string, isCon
 	if !isConstrainedImpersonation {
 		usernameAndGroupGV = corev1.SchemeGroupVersion
 	}
+	// TODO add more detailed comments here
 	// the inner cache covers the impersonation checks that are not dependent on the request info
 	impCache := newImpersonationCache()
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, requestor user.Info) (outUser *impersonatedUserInfo, outErr error) {
@@ -262,7 +263,7 @@ func buildImpersonationModeUserCheck(a authorizer.Authorizer, verb string, isCon
 			ensureGroup(&actualUser, user.AllAuthenticated)
 		}
 
-		return &impersonatedUserInfo{user: &actualUser, constraint: verb}, nil
+		return &impersonatedUserInfo{user: &actualUser, constraint: verb}, nil // TODO fix for legacy impersonation
 	}
 }
 
@@ -343,7 +344,7 @@ func requesterScheduledOnNode(requestor user.Info, username string) bool {
 	if _, _, ok := isServiceAccountUsername(requestor.GetName()); !ok {
 		return false
 	}
-	return len(getExtraValue(requestor, serviceaccount.PodNameKey)) != 0 &&
+	return len(getExtraValue(requestor, serviceaccount.PodNameKey)) != 0 && // TODO drop pod name
 		getExtraValue(requestor, serviceaccount.NodeNameKey) == nodeName
 }
 
@@ -525,7 +526,7 @@ type impersonationCache struct {
 }
 
 func (c *impersonationCache) get(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) *impersonatedUserInfo {
-	key, err := buildImpersonationCacheKey(wantedUser, attributes)
+	key, err := buildImpersonationCacheKey(wantedUser, attributes) // TODO lazy as needed construction per request
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("failed to build impersonation cache key: %w", err))
 		return nil
@@ -593,7 +594,7 @@ func buildImpersonationCacheKey(wantedUser *user.DefaultInfo, attributes authori
 	// username in the cache key.  It is safe to assume that a user has no control over their own
 	// username since that is controlled by the authenticator.  Even though many of the other inputs
 	// are under the control of the requestor, they cannot explode the cache due to the hashing.
-	b := newCacheKeyBuilder(requestor.GetName())
+	b := newCacheKeyBuilder(requestor.GetName()) // TODO maybe limit number of cache entries for a given user
 
 	addUser(b, wantedUser)
 	addUser(b, requestor)
