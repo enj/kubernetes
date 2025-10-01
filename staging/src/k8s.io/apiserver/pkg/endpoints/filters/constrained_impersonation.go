@@ -110,6 +110,7 @@ func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 	}
 }
 
+// TODO make another mode that like this one that does caching better for daemonsets
 func scheduledNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return buildConstrainedImpersonationMode(a, "scheduled-node", // TODO make this associated-node
 		func(wantedUser *user.DefaultInfo, requestor user.Info) bool {
