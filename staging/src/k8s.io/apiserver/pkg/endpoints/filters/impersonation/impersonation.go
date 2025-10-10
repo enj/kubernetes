@@ -110,14 +110,14 @@ func WithImpersonation(handler http.Handler, a authorizer.Authorizer, s runtime.
 
 			default:
 				klog.V(4).InfoS("unknown impersonation request type", "request", impersonationRequest)
-				responsewriters.Forbidden(ctx, actingAsAttributes, w, req, fmt.Sprintf("unknown impersonation request type: %v", impersonationRequest), s)
+				responsewriters.Forbidden(actingAsAttributes, w, req, fmt.Sprintf("unknown impersonation request type: %v", impersonationRequest), s)
 				return
 			}
 
 			decision, reason, err := a.Authorize(ctx, actingAsAttributes)
 			if err != nil || decision != authorizer.DecisionAllow {
 				klog.V(4).InfoS("Forbidden", "URI", req.RequestURI, "reason", reason, "err", err)
-				responsewriters.Forbidden(ctx, actingAsAttributes, w, req, reason, s)
+				responsewriters.Forbidden(actingAsAttributes, w, req, reason, s)
 				return
 			}
 		}

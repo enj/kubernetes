@@ -30,13 +30,11 @@ import (
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/cache"
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/audit"
@@ -80,9 +78,9 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 		}
 
 		impersonatedUser, err := tracker.getImpersonatedUser(ctx, wantedUser, attributes)
-		if err != nil { // TODO just return the first most specific error for constrained impersonation
+		if err != nil {
 			klog.V(4).InfoS("Forbidden", "URI", req.RequestURI, "err", err)
-			forbidden(attributes, w, req, err, s)
+			responsewriters.RespondWithError(attributes, w, req, err, s)
 			return
 		}
 
@@ -445,8 +443,6 @@ func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTr
 }
 
 func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (outUser *impersonatedUserInfo, outErr error) {
-	var errs []error
-
 	// this outer cache covers the all the impersonation checks,
 	// including those that need the request info, i.e. for constrained impersonation
 	if impersonatedUser := t.impCache.get(wantedUser, attributes); impersonatedUser != nil {
@@ -459,17 +455,17 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 		t.impCache.set(wantedUser, attributes, outUser)
 	}()
 
+	var firstErr error
+
 	// try the last successful mode first to reduce the amortized cost of impersonation
 	// we attempt all modes unless we short-circuit due to a successful impersonation
 	modeIdx := t.idxCache.get(attributes)
 	if modeIdx != -1 {
 		impersonatedUser, err := t.modes[modeIdx](ctx, wantedUser, attributes)
-		if err != nil {
-			errs = append(errs, err)
-		}
 		if err == nil && impersonatedUser != nil {
 			return impersonatedUser, nil
 		}
+		firstErr = err
 	}
 
 	for i, mode := range t.modes {
@@ -479,7 +475,9 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 
 		impersonatedUser, err := mode(ctx, wantedUser, attributes)
 		if err != nil {
-			errs = append(errs, err)
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
 		if impersonatedUser == nil {
@@ -489,8 +487,8 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 		return impersonatedUser, nil
 	}
 
-	if err := utilerrors.NewAggregate(errs); err != nil {
-		return nil, err // TODO decide if we just want to return the first (or maybe last) error
+	if firstErr != nil {
+		return nil, firstErr
 	}
 
 	// this should not happen, but make sure we fail closed when no impersonation mode succeeded
@@ -705,10 +703,4 @@ func newImpersonationCache() *impersonationCache {
 	return &impersonationCache{
 		cache: cache.NewExpiring(),
 	}
-}
-
-func forbidden(attributes authorizer.Attributes, w http.ResponseWriter, req *http.Request, err error, s runtime.NegotiatedSerializer) {
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	gvr := schema.GroupVersionResource{Group: attributes.GetAPIGroup(), Version: attributes.GetAPIVersion(), Resource: attributes.GetResource()}
-	responsewriters.ErrorNegotiated(apierrors.NewForbidden(gvr.GroupResource(), attributes.GetName(), err), s, gvr.GroupVersion(), w, req)
 }

@@ -1124,11 +1124,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 		}
 
 		if diff := cmp.Diff(
-			`pods is forbidden: [`+
-				`pods is forbidden: User "bob" cannot impersonate-on:user-info:list resource "pods" in API group "" at the cluster scope`+
-				`, `+
-				`users "alice" is forbidden: User "bob" cannot impersonate resource "users" in API group "" at the cluster scope`+
-				`]`,
+			`pods is forbidden: User "bob" cannot impersonate-on:user-info:list resource "pods" in API group "" at the cluster scope`,
 			err.Error(),
 		); diff != "" {
 			t.Fatalf("forbidden error different than expected, -got, +want:\n %s", diff)
@@ -1147,11 +1143,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 		}
 
 		if diff := cmp.Diff(
-			`pods is forbidden: `+
-				`[pods is forbidden: User "bob" cannot impersonate-on:user-info:list resource "pods" in API group "" at the cluster scope`+
-				`, `+
-				`users "alice" is forbidden: User "bob" cannot impersonate resource "users" in API group "" at the cluster scope`+
-				`]`,
+			`pods is forbidden: User "bob" cannot impersonate-on:user-info:list resource "pods" in API group "" at the cluster scope`,
 			err.Error(),
 		); diff != "" {
 			t.Fatalf("forbidden error different than expected, -got, +want:\n %s", diff)
@@ -1189,11 +1181,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 		}
 
 		if diff := cmp.Diff(
-			`pods is forbidden: [`+
-				`pods is forbidden: User "bob" cannot impersonate-on:arbitrary-node:list resource "pods" in API group "" at the cluster scope`+
-				`, `+
-				`users "system:node:node1" is forbidden: User "bob" cannot impersonate resource "users" in API group "" at the cluster scope`+
-				`]`,
+			`pods is forbidden: User "bob" cannot impersonate-on:arbitrary-node:list resource "pods" in API group "" at the cluster scope`,
 			err.Error(),
 		); diff != "" {
 			t.Fatalf("forbidden error different than expected, -got, +want:\n %s", diff)
@@ -1218,11 +1206,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 		}
 
 		if diff := cmp.Diff(
-			`pods is forbidden: [`+
-				`nodes.authentication.k8s.io "node1" is forbidden: User "bob" cannot impersonate:arbitrary-node resource "nodes" in API group "authentication.k8s.io" at the cluster scope`+
-				`, `+
-				`users "system:node:node1" is forbidden: User "bob" cannot impersonate resource "users" in API group "" at the cluster scope`+
-				`]`,
+			`nodes.authentication.k8s.io "node1" is forbidden: User "bob" cannot impersonate:arbitrary-node resource "nodes" in API group "authentication.k8s.io" at the cluster scope`,
 			err.Error(),
 		); diff != "" {
 			t.Fatalf("forbidden error different than expected, -got, +want:\n %s", diff)
@@ -1267,11 +1251,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 		}
 
 		if diff := cmp.Diff(
-			`pods is forbidden: [`+
-				`pods is forbidden: User "system:serviceaccount:default:sa2" cannot impersonate-on:arbitrary-node:list resource "pods" in API group "" at the cluster scope`+
-				`, `+
-				`users "system:node:node1" is forbidden: User "system:serviceaccount:default:sa2" cannot impersonate resource "users" in API group "" at the cluster scope`+
-				`]`,
+			`pods is forbidden: User "system:serviceaccount:default:sa2" cannot impersonate-on:arbitrary-node:list resource "pods" in API group "" at the cluster scope`,
 			err.Error(),
 		); diff != "" {
 			t.Fatalf("forbidden error different than expected, -got, +want:\n %s", diff)
