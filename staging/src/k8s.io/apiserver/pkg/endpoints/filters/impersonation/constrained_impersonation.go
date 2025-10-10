@@ -243,7 +243,6 @@ func buildImpersonationModeUserCheck(a authorizer.Authorizer, verb string, isCon
 			}
 		}
 
-		// TODO treat system:masters differently in constrained impersonation?
 		groupAttributes := impersonationAttributes(requestor, usernameAndGroupGV, verb, "groups", "")
 		for _, group := range wantedUser.Groups {
 			groupAttributes.Name = group
