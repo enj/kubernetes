@@ -105,7 +105,7 @@ type constrainedImpersonationModeFilter func(wantedUser *user.DefaultInfo, reque
 
 func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 	return []impersonationMode{
-		scheduledNodeImpersonationMode(a),
+		associatedNodeImpersonationMode(a),
 		nodeImpersonationMode(a),
 		serviceAccountImpersonationMode(a),
 		userInfoImpersonationMode(a),
@@ -114,10 +114,10 @@ func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 }
 
 // TODO make another mode that like this one that does caching better for daemonsets
-func scheduledNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildConstrainedImpersonationMode(a, "scheduled-node", // TODO make this associated-node
+func associatedNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
+	return buildConstrainedImpersonationMode(a, "associated-node",
 		func(wantedUser *user.DefaultInfo, requestor user.Info) bool {
-			return onlyUsernameSet(wantedUser) && requesterScheduledOnNode(requestor, wantedUser.Name)
+			return onlyUsernameSet(wantedUser) && requesterAssociatedWithNode(requestor, wantedUser.Name)
 		},
 	)
 }
@@ -342,7 +342,7 @@ func isNodeUsername(username string) (string, bool) {
 	return name, true
 }
 
-func requesterScheduledOnNode(requestor user.Info, username string) bool {
+func requesterAssociatedWithNode(requestor user.Info, username string) bool {
 	nodeName, ok := isNodeUsername(username)
 	if !ok {
 		return false
@@ -350,8 +350,7 @@ func requesterScheduledOnNode(requestor user.Info, username string) bool {
 	if _, _, ok := isServiceAccountUsername(requestor.GetName()); !ok {
 		return false
 	}
-	return len(getExtraValue(requestor, serviceaccount.PodNameKey)) != 0 && // TODO drop pod name
-		getExtraValue(requestor, serviceaccount.NodeNameKey) == nodeName
+	return getExtraValue(requestor, serviceaccount.NodeNameKey) == nodeName
 }
 
 func getExtraValue(u user.Info, key string) string {

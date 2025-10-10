@@ -1076,11 +1076,9 @@ func TestConstrainedImpersonation(t *testing.T) {
 		"node1":   {Name: "system:node:node1", Groups: []string{user.NodesGroup}},
 		"serviceaccount1": {Name: "system:serviceaccount:default:sa1", Extra: map[string][]string{
 			"authentication.kubernetes.io/node-name": {"node1"},
-			"authentication.kubernetes.io/pod-name":  {"pod1"},
 		}},
 		"serviceaccount2": {Name: "system:serviceaccount:default:sa2", Extra: map[string][]string{
 			"authentication.kubernetes.io/node-name": {"node2"},
-			"authentication.kubernetes.io/pod-name":  {"pod2"},
 		}},
 	})))
 
@@ -1253,12 +1251,12 @@ func TestConstrainedImpersonation(t *testing.T) {
 
 		// with permissions added, it cannot list pods since sa on the node2 instead of node1.
 		authutil.GrantUserAuthorization(t, ctx, superuserClient, "system:serviceaccount:default:sa2", rbacv1.PolicyRule{
-			Verbs:     []string{"impersonate:scheduled-node"},
+			Verbs:     []string{"impersonate:associated-node"},
 			APIGroups: []string{"authentication.k8s.io"},
 			Resources: []string{"nodes"},
 		})
 		authutil.GrantUserAuthorization(t, ctx, superuserClient, "system:serviceaccount:default:sa2", rbacv1.PolicyRule{
-			Verbs:     []string{"impersonate-on:scheduled-node:list"},
+			Verbs:     []string{"impersonate-on:associated-node:list"},
 			APIGroups: []string{""},
 			Resources: []string{"pods"},
 		})
@@ -1284,12 +1282,12 @@ func TestConstrainedImpersonation(t *testing.T) {
 
 		client = clientset.NewForConfigOrDie(impersonatorClientConfig)
 		authutil.GrantUserAuthorization(t, ctx, superuserClient, "system:serviceaccount:default:sa1", rbacv1.PolicyRule{
-			Verbs:     []string{"impersonate:scheduled-node"},
+			Verbs:     []string{"impersonate:associated-node"},
 			APIGroups: []string{"authentication.k8s.io"},
 			Resources: []string{"nodes"},
 		})
 		authutil.GrantUserAuthorization(t, ctx, superuserClient, "system:serviceaccount:default:sa1", rbacv1.PolicyRule{
-			Verbs:     []string{"impersonate-on:scheduled-node:list"},
+			Verbs:     []string{"impersonate-on:associated-node:list"},
 			APIGroups: []string{""},
 			Resources: []string{"pods"},
 		})
@@ -1338,7 +1336,6 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 		"node1":   {Name: "system:node:node1", Groups: []string{user.NodesGroup}},
 		"serviceaccount1": {Name: "system:serviceaccount:default:sa1", Extra: map[string][]string{
 			"authentication.kubernetes.io/node-name": {"node1"},
-			"authentication.kubernetes.io/pod-name":  {"pod1"},
 		}},
 	})))
 
@@ -1416,12 +1413,12 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 
 	t.Run("serviceaccount impersonating a node", func(t *testing.T) {
 		authutil.GrantUserAuthorization(t, ctx, superuserClient, "system:serviceaccount:default:sa1", rbacv1.PolicyRule{
-			Verbs:     []string{"impersonate:scheduled-node"},
+			Verbs:     []string{"impersonate:associated-node"},
 			APIGroups: []string{"authentication.k8s.io"},
 			Resources: []string{"nodes"},
 		})
 		authutil.GrantUserAuthorization(t, ctx, superuserClient, "system:serviceaccount:default:sa1", rbacv1.PolicyRule{
-			Verbs:     []string{"impersonate-on:scheduled-node:list"},
+			Verbs:     []string{"impersonate-on:associated-node:list"},
 			APIGroups: []string{""},
 			Resources: []string{"pods"},
 		})
