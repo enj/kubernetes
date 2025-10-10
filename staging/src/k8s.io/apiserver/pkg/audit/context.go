@@ -146,6 +146,12 @@ func (ac *AuditContext) LogImpersonatedUser(user user.Info, constraint string) {
 		for k, v := range user.GetExtra() {
 			ev.ImpersonatedUser.Extra[k] = authnv1.ExtraValue(v)
 		}
+		if len(constraint) > 0 {
+			if ev.AuthenticationMetadata == nil {
+				ev.AuthenticationMetadata = &auditinternal.AuthenticationMetadata{}
+			}
+			ev.AuthenticationMetadata.ImpersonationConstraint = constraint
+		}
 	})
 }
 

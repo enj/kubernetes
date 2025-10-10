@@ -87,7 +87,7 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 
 		req = req.WithContext(request.WithUser(ctx, impersonatedUser.user))
 		httplog.LogOf(req, w).Addf("%v is impersonating %v", userString(requestor), userString(impersonatedUser.user))
-		audit.LogImpersonatedUser(audit.WithAuditContext(ctx), impersonatedUser.user, impersonatedUser.constraint) // TODO is impersonationConstraint part of ImpersonatedUser or a separate field in audit?
+		audit.LogImpersonatedUser(audit.WithAuditContext(ctx), impersonatedUser.user, impersonatedUser.constraint)
 
 		handler.ServeHTTP(w, req)
 	})
@@ -186,8 +186,10 @@ func buildConstrainedImpersonationMode(a authorizer.Authorizer, mode string, fil
 
 func buildImpersonationModeUserCheck(a authorizer.Authorizer, verb string, isConstrainedImpersonation bool) impersonationModeUserCheck {
 	usernameAndGroupGV := authenticationv1.SchemeGroupVersion
+	constraint := verb
 	if !isConstrainedImpersonation {
 		usernameAndGroupGV = corev1.SchemeGroupVersion
+		constraint = ""
 	}
 	// TODO add more detailed comments here
 	// the inner cache covers the impersonation checks that are not dependent on the request info
@@ -266,7 +268,7 @@ func buildImpersonationModeUserCheck(a authorizer.Authorizer, verb string, isCon
 			ensureGroup(&actualUser, user.AllAuthenticated)
 		}
 
-		return &impersonatedUserInfo{user: &actualUser, constraint: verb}, nil // TODO fix for legacy impersonation
+		return &impersonatedUserInfo{user: &actualUser, constraint: constraint}, nil
 	}
 }
 
