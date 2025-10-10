@@ -1244,6 +1244,7 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
 		"k8s.io/apimachinery/pkg/runtime.Unknown":                                                               schema_k8sio_apimachinery_pkg_runtime_Unknown(ref),
 		"k8s.io/apimachinery/pkg/util/intstr.IntOrString":                                                       schema_apimachinery_pkg_util_intstr_IntOrString(ref),
 		"k8s.io/apimachinery/pkg/version.Info":                                                                  schema_k8sio_apimachinery_pkg_version_Info(ref),
+		"k8s.io/apiserver/pkg/apis/audit/v1.AuthenticationMetadata":                                             schema_pkg_apis_audit_v1_AuthenticationMetadata(ref),
 		"k8s.io/apiserver/pkg/apis/audit/v1.Event":                                                              schema_pkg_apis_audit_v1_Event(ref),
 		"k8s.io/apiserver/pkg/apis/audit/v1.EventList":                                                          schema_pkg_apis_audit_v1_EventList(ref),
 		"k8s.io/apiserver/pkg/apis/audit/v1.GroupResources":                                                     schema_pkg_apis_audit_v1_GroupResources(ref),
@@ -64200,6 +64201,25 @@ func schema_k8sio_apimachinery_pkg_version_Info(ref common.ReferenceCallback) co
 	}
 }
 
+func schema_pkg_apis_audit_v1_AuthenticationMetadata(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Type: []string{"object"},
+				Properties: map[string]spec.Schema{
+					"impersonationConstraint": {
+						SchemaProps: spec.SchemaProps{
+							Description: "ImpersonationConstraint is the verb associated with the constrained impersonation mode that was used to authorize the ImpersonatedUser associated with this audit event.  It is only set when constrained impersonation was used.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 func schema_pkg_apis_audit_v1_Event(ref common.ReferenceCallback) common.OpenAPIDefinition {
 	return common.OpenAPIDefinition{
 		Schema: spec.Schema{
@@ -64272,6 +64292,12 @@ func schema_pkg_apis_audit_v1_Event(ref common.ReferenceCallback) common.OpenAPI
 						SchemaProps: spec.SchemaProps{
 							Description: "Impersonated user information.",
 							Ref:         ref("k8s.io/api/authentication/v1.UserInfo"),
+						},
+					},
+					"authenticationMetadata": {
+						SchemaProps: spec.SchemaProps{
+							Description: "AuthenticationMetadata contains details about how the request was authenticated.",
+							Ref:         ref("k8s.io/apiserver/pkg/apis/audit/v1.AuthenticationMetadata"),
 						},
 					},
 					"sourceIPs": {
@@ -64358,7 +64384,7 @@ func schema_pkg_apis_audit_v1_Event(ref common.ReferenceCallback) common.OpenAPI
 			},
 		},
 		Dependencies: []string{
-			"k8s.io/api/authentication/v1.UserInfo", "k8s.io/apimachinery/pkg/apis/meta/v1.MicroTime", "k8s.io/apimachinery/pkg/apis/meta/v1.Status", "k8s.io/apimachinery/pkg/runtime.Unknown", "k8s.io/apiserver/pkg/apis/audit/v1.ObjectReference"},
+			"k8s.io/api/authentication/v1.UserInfo", "k8s.io/apimachinery/pkg/apis/meta/v1.MicroTime", "k8s.io/apimachinery/pkg/apis/meta/v1.Status", "k8s.io/apimachinery/pkg/runtime.Unknown", "k8s.io/apiserver/pkg/apis/audit/v1.AuthenticationMetadata", "k8s.io/apiserver/pkg/apis/audit/v1.ObjectReference"},
 	}
 }
 
