@@ -106,7 +106,7 @@ type constrainedImpersonationModeFilter func(wantedUser *user.DefaultInfo, reque
 func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 	return []impersonationMode{
 		associatedNodeImpersonationMode(a),
-		nodeImpersonationMode(a),
+		arbitraryNodeImpersonationMode(a),
 		serviceAccountImpersonationMode(a),
 		userInfoImpersonationMode(a),
 		legacyImpersonationMode(a),
@@ -122,8 +122,8 @@ func associatedNodeImpersonationMode(a authorizer.Authorizer) impersonationMode 
 	)
 }
 
-func nodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildConstrainedImpersonationMode(a, "node", // TODO rename this to arbitrary-node
+func arbitraryNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
+	return buildConstrainedImpersonationMode(a, "arbitrary-node",
 		func(wantedUser *user.DefaultInfo, _ user.Info) bool {
 			if !onlyUsernameSet(wantedUser) {
 				return false

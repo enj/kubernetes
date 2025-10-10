@@ -1190,7 +1190,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 
 		if diff := cmp.Diff(
 			`pods is forbidden: [`+
-				`pods is forbidden: User "bob" cannot impersonate-on:node:list resource "pods" in API group "" at the cluster scope`+
+				`pods is forbidden: User "bob" cannot impersonate-on:arbitrary-node:list resource "pods" in API group "" at the cluster scope`+
 				`, `+
 				`users "system:node:node1" is forbidden: User "bob" cannot impersonate resource "users" in API group "" at the cluster scope`+
 				`]`,
@@ -1207,7 +1207,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 			Resources: []string{"users"},
 		})
 		authutil.GrantUserAuthorization(t, ctx, superuserClient, "bob", rbacv1.PolicyRule{
-			Verbs:     []string{"impersonate-on:node:list"},
+			Verbs:     []string{"impersonate-on:arbitrary-node:list"},
 			APIGroups: []string{""},
 			Resources: []string{"pods"},
 		})
@@ -1219,7 +1219,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 
 		if diff := cmp.Diff(
 			`pods is forbidden: [`+
-				`nodes.authentication.k8s.io "node1" is forbidden: User "bob" cannot impersonate:node resource "nodes" in API group "authentication.k8s.io" at the cluster scope`+
+				`nodes.authentication.k8s.io "node1" is forbidden: User "bob" cannot impersonate:arbitrary-node resource "nodes" in API group "authentication.k8s.io" at the cluster scope`+
 				`, `+
 				`users "system:node:node1" is forbidden: User "bob" cannot impersonate resource "users" in API group "" at the cluster scope`+
 				`]`,
@@ -1229,7 +1229,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 		}
 
 		authutil.GrantUserAuthorization(t, ctx, superuserClient, "bob", rbacv1.PolicyRule{
-			Verbs:     []string{"impersonate:node"},
+			Verbs:     []string{"impersonate:arbitrary-node"},
 			APIGroups: []string{"authentication.k8s.io"},
 			Resources: []string{"nodes"},
 		})
@@ -1268,7 +1268,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 
 		if diff := cmp.Diff(
 			`pods is forbidden: [`+
-				`pods is forbidden: User "system:serviceaccount:default:sa2" cannot impersonate-on:node:list resource "pods" in API group "" at the cluster scope`+
+				`pods is forbidden: User "system:serviceaccount:default:sa2" cannot impersonate-on:arbitrary-node:list resource "pods" in API group "" at the cluster scope`+
 				`, `+
 				`users "system:node:node1" is forbidden: User "system:serviceaccount:default:sa2" cannot impersonate resource "users" in API group "" at the cluster scope`+
 				`]`,
