@@ -92,7 +92,7 @@ type Event struct {
 	ImpersonatedUser *authnv1.UserInfo `json:"impersonatedUser,omitempty" protobuf:"bytes,7,opt,name=impersonatedUser"`
 	// AuthenticationMetadata contains details about how the request was authenticated.
 	// +optional
-	AuthenticationMetadata *AuthenticationMetadata `json:"authenticationMetadata,omitempty" protobuf:"bytes,16,opt,name=authenticationMetadata"`
+	AuthenticationMetadata *AuthenticationMetadata `json:"authenticationMetadata,omitempty" protobuf:"bytes,17,opt,name=authenticationMetadata"`
 	// Source IPs, from where the request originated and intermediate proxies.
 	// The source IPs are listed from (in order):
 	// 1. X-Forwarded-For request header IPs
