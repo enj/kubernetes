@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package filters
+package impersonation
 
 import (
 	"context"
@@ -43,6 +43,7 @@ import (
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
+	"k8s.io/apiserver/pkg/endpoints/filters"
 	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/server/httplog"
@@ -67,7 +68,7 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 			handler.ServeHTTP(w, req)
 			return
 		}
-		attributes, err := GetAuthorizerAttributes(ctx)
+		attributes, err := filters.GetAuthorizerAttributes(ctx)
 		if err != nil {
 			responsewriters.InternalError(w, req, err)
 			return
