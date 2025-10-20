@@ -61,12 +61,13 @@ func newModeIndexCache() *modeIndexCache {
 	}
 }
 
+// TODO add comment
 type impersonationCache struct {
 	cache *cache.Expiring
 }
 
-func (c *impersonationCache) get(k *impersonationCacheKey) *impersonatedUserInfo {
-	key, err := k.stringKey()
+func (c *impersonationCache) get(k *impersonationCacheKey, skipAttributes bool) *impersonatedUserInfo {
+	key, err := k.key(skipAttributes)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("failed to build impersonation cache key: %w", err))
 		return nil
@@ -78,13 +79,19 @@ func (c *impersonationCache) get(k *impersonationCacheKey) *impersonatedUserInfo
 	return impersonatedUser.(*impersonatedUserInfo)
 }
 
-func (c *impersonationCache) set(k *impersonationCacheKey, impersonatedUser *impersonatedUserInfo) {
-	key, err := k.stringKey()
+func (c *impersonationCache) set(k *impersonationCacheKey, skipAttributes bool, impersonatedUser *impersonatedUserInfo) {
+	key, err := k.key(skipAttributes)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("failed to build impersonation cache key: %w", err))
 		return
 	}
 	c.cache.Set(key, impersonatedUser, 10*time.Second) // hardcode the same short TTL as used by TokenSuccessCacheTTL
+}
+
+func newImpersonationCache() *impersonationCache {
+	return &impersonationCache{
+		cache: cache.NewExpiring(),
+	}
 }
 
 // The attribute accessors known to cache key construction. If this fails to compile, the cache
@@ -119,28 +126,55 @@ type impersonationCacheKey struct {
 	attributes authorizer.Attributes
 
 	// lazily calculated values at point of use
-	key string
-	err error
+	keyAttr string
+	errAttr error
+	keyUser string
+	errUser error
 }
 
-func (k *impersonationCacheKey) stringKey() (out string, outErr error) {
-	if len(k.key) != 0 || k.err != nil {
-		return k.key, k.err
+func (k *impersonationCacheKey) key(skipAttributes bool) (string, error) {
+	if skipAttributes {
+		return k.keyWithoutAttributes()
+	}
+	return k.keyWithAttributes()
+}
+
+func (k *impersonationCacheKey) keyWithAttributes() (out string, outErr error) {
+	if len(k.keyAttr) != 0 || k.errAttr != nil {
+		return k.keyAttr, k.errAttr
 	}
 
-	defer func() { k.key, k.err = out, outErr }()
+	defer func() { k.keyAttr, k.errAttr = out, outErr }()
 
-	fieldSelector, err := k.attributes.GetFieldSelector()
-	if err != nil {
-		return "", err // if we do not fully understand the attributes, just skip caching altogether
+	return buildKey(k.wantedUser, k.attributes)
+}
+
+func (k *impersonationCacheKey) keyWithoutAttributes() (out string, outErr error) {
+	if len(k.keyUser) != 0 || k.errUser != nil {
+		return k.keyUser, k.errUser
 	}
 
-	labelSelector, err := k.attributes.GetLabelSelector()
-	if err != nil {
-		return "", err // if we do not fully understand the attributes, just skip caching altogether
-	}
+	defer func() { k.keyUser, k.errUser = out, outErr }()
 
+	// fake attributes that just contain the requestor to allow us to reuse buildKey
 	requestor := k.attributes.GetUser()
+	attributes := authorizer.AttributesRecord{User: requestor}
+
+	return buildKey(k.wantedUser, attributes)
+}
+
+func buildKey(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (string, error) {
+	fieldSelector, err := attributes.GetFieldSelector()
+	if err != nil {
+		return "", err // if we do not fully understand the attributes, just skip caching altogether
+	}
+
+	labelSelector, err := attributes.GetLabelSelector()
+	if err != nil {
+		return "", err // if we do not fully understand the attributes, just skip caching altogether
+	}
+
+	requestor := attributes.GetUser()
 
 	// the chance of a hash collision is impractically small, but the only way that would lead to a
 	// privilege escalation is if you could get the cache key of a different user.  if you somehow
@@ -151,21 +185,21 @@ func (k *impersonationCacheKey) stringKey() (out string, outErr error) {
 	// are under the control of the requestor, they cannot explode the cache due to the hashing.
 	b := newCacheKeyBuilder(requestor.GetName()) // TODO maybe limit number of cache entries for a given user
 
-	addUser(b, k.wantedUser)
+	addUser(b, wantedUser)
 	addUser(b, requestor)
 
 	b.addLengthPrefixed(func(b *cacheKeyBuilder) {
 		b.
-			addString(k.attributes.GetVerb()).
-			addBool(k.attributes.IsReadOnly()).
-			addString(k.attributes.GetNamespace()).
-			addString(k.attributes.GetResource()).
-			addString(k.attributes.GetSubresource()).
-			addString(k.attributes.GetName()).
-			addString(k.attributes.GetAPIGroup()).
-			addString(k.attributes.GetAPIVersion()).
-			addBool(k.attributes.IsResourceRequest()).
-			addString(k.attributes.GetPath())
+			addString(attributes.GetVerb()).
+			addBool(attributes.IsReadOnly()).
+			addString(attributes.GetNamespace()).
+			addString(attributes.GetResource()).
+			addString(attributes.GetSubresource()).
+			addString(attributes.GetName()).
+			addString(attributes.GetAPIGroup()).
+			addString(attributes.GetAPIVersion()).
+			addBool(attributes.IsResourceRequest()).
+			addString(attributes.GetPath())
 	})
 
 	b.addLengthPrefixed(func(b *cacheKeyBuilder) {
@@ -250,10 +284,4 @@ func (c *cacheKeyBuilder) build() (string, error) {
 	// TODO decide if we want to use hmac.New(sha256.New, randomCacheKey) with a sync.Pool like the cached token authenticator
 	hash := sha256.Sum256(key) // reduce the size of the cache key to keep the overall cache size small
 	return fmt.Sprintf("%x/%s", hash[:], c.namespace), nil
-}
-
-func newImpersonationCache() *impersonationCache {
-	return &impersonationCache{
-		cache: cache.NewExpiring(),
-	}
 }

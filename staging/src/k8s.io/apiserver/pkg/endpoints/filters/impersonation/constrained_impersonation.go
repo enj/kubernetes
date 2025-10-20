@@ -161,14 +161,14 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 	// this outer cache covers the all the impersonation checks,
 	// including those that need the request info, i.e. for constrained impersonation
 	key := &impersonationCacheKey{wantedUser: wantedUser, attributes: attributes}
-	if impersonatedUser := t.impCache.get(key); impersonatedUser != nil {
+	if impersonatedUser := t.impCache.get(key, false); impersonatedUser != nil {
 		return impersonatedUser, nil
 	}
 	defer func() {
 		if outErr != nil || outUser == nil {
 			return
 		}
-		t.impCache.set(key, outUser)
+		t.impCache.set(key, false, outUser)
 	}()
 
 	var firstErr error
@@ -177,7 +177,7 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 	// we attempt all modes unless we short-circuit due to a successful impersonation
 	modeIdx := t.idxCache.get(attributes)
 	if modeIdx != -1 {
-		impersonatedUser, err := t.modes[modeIdx](ctx, wantedUser, attributes)
+		impersonatedUser, err := t.modes[modeIdx](ctx, key, wantedUser, attributes)
 		if err == nil && impersonatedUser != nil {
 			return impersonatedUser, nil
 		}
@@ -189,7 +189,7 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 			continue // skip already attempted mode
 		}
 
-		impersonatedUser, err := mode(ctx, wantedUser, attributes)
+		impersonatedUser, err := mode(ctx, key, wantedUser, attributes)
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err

@@ -37,7 +37,7 @@ type impersonatedUserInfo struct {
 	constraint string // the verb used in the impersonationModeUserCheck that allowed this user to be impersonated
 }
 
-type impersonationMode func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error)
+type impersonationMode func(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error)
 type constrainedImpersonationModeFilter func(wantedUser *user.DefaultInfo, requestor user.Info) bool
 
 func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
@@ -105,15 +105,15 @@ func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
 
 func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	m := newImpersonationModeState(a, "impersonate", false)
-	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
+	return func(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
 		requestor := attributes.GetUser()
-		return m.check(ctx, wantedUser, requestor)
+		return m.check(ctx, key, wantedUser, requestor)
 	}
 }
 
 func buildConstrainedImpersonationMode(a authorizer.Authorizer, mode string, filter constrainedImpersonationModeFilter) impersonationMode {
 	m := newImpersonationModeState(a, "impersonate:"+mode, true)
-	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
+	return func(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
 		requestor := attributes.GetUser()
 		if !filter(wantedUser, requestor) {
 			return nil, nil
@@ -121,7 +121,7 @@ func buildConstrainedImpersonationMode(a authorizer.Authorizer, mode string, fil
 		if err := checkAuthorization(ctx, a, &impersonateOnAttributes{mode: mode, Attributes: attributes}); err != nil {
 			return nil, err
 		}
-		return m.check(ctx, wantedUser, requestor)
+		return m.check(ctx, key, wantedUser, requestor)
 	}
 }
 
@@ -157,17 +157,15 @@ func newImpersonationModeState(a authorizer.Authorizer, verb string, isConstrain
 	}
 }
 
-func (m *impersonationModeState) check(ctx context.Context, wantedUser *user.DefaultInfo, requestor user.Info) (outUser *impersonatedUserInfo, outErr error) {
-	// fake attributes that just contain the requestor to allow us to reuse the cache implementation
-	k := &impersonationCacheKey{wantedUser: wantedUser, attributes: authorizer.AttributesRecord{User: requestor}}
-	if impersonatedUser := m.cache.get(k); impersonatedUser != nil {
+func (m *impersonationModeState) check(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, requestor user.Info) (outUser *impersonatedUserInfo, outErr error) {
+	if impersonatedUser := m.cache.get(key, true); impersonatedUser != nil {
 		return impersonatedUser, nil
 	}
 	defer func() {
 		if outErr != nil || outUser == nil {
 			return
 		}
-		m.cache.set(k, outUser)
+		m.cache.set(key, true, outUser)
 	}()
 
 	actualUser := *wantedUser
