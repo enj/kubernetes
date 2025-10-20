@@ -114,7 +114,7 @@ func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
 func newConstrainedImpersonationMode(a authorizer.Authorizer, mode string, filter constrainedImpersonationModeFilter) impersonationMode {
 	return (&constrainedImpersonationModeState{
 		state:      newImpersonationModeState(a, "impersonate:"+mode, true),
-		cache:      newImpersonationCache(),
+		cache:      newImpersonationCache(false),
 		authorizer: a,
 		mode:       mode,
 		filter:     filter,
@@ -137,14 +137,14 @@ func (c *constrainedImpersonationModeState) check(ctx context.Context, key *impe
 		return nil, nil
 	}
 
-	if impersonatedUser := c.cache.get(key, false); impersonatedUser != nil {
+	if impersonatedUser := c.cache.get(key); impersonatedUser != nil {
 		return impersonatedUser, nil
 	}
 	defer func() {
 		if outErr != nil || outUser == nil {
 			return
 		}
-		c.cache.set(key, false, outUser)
+		c.cache.set(key, outUser)
 	}()
 
 	if err := checkAuthorization(ctx, c.authorizer, &impersonateOnAttributes{mode: c.mode, Attributes: attributes}); err != nil {
@@ -182,19 +182,19 @@ func newImpersonationModeState(a authorizer.Authorizer, verb string, isConstrain
 
 		usernameAndGroupGV: usernameAndGroupGV,
 		constraint:         constraint,
-		cache:              newImpersonationCache(),
+		cache:              newImpersonationCache(true),
 	}
 }
 
 func (m *impersonationModeState) check(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, requestor user.Info) (outUser *impersonatedUserInfo, outErr error) {
-	if impersonatedUser := m.cache.get(key, true); impersonatedUser != nil {
+	if impersonatedUser := m.cache.get(key); impersonatedUser != nil {
 		return impersonatedUser, nil
 	}
 	defer func() {
 		if outErr != nil || outUser == nil {
 			return
 		}
-		m.cache.set(key, true, outUser)
+		m.cache.set(key, outUser)
 	}()
 
 	actualUser := *wantedUser

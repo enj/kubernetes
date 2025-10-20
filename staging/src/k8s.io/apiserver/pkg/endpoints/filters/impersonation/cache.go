@@ -63,11 +63,12 @@ func newModeIndexCache() *modeIndexCache {
 
 // TODO add comment
 type impersonationCache struct {
-	cache *cache.Expiring
+	cache          *cache.Expiring
+	skipAttributes bool
 }
 
-func (c *impersonationCache) get(k *impersonationCacheKey, skipAttributes bool) *impersonatedUserInfo {
-	key, err := k.key(skipAttributes)
+func (c *impersonationCache) get(k *impersonationCacheKey) *impersonatedUserInfo {
+	key, err := k.key(c.skipAttributes)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("failed to build impersonation cache key: %w", err))
 		return nil
@@ -79,8 +80,8 @@ func (c *impersonationCache) get(k *impersonationCacheKey, skipAttributes bool) 
 	return impersonatedUser.(*impersonatedUserInfo)
 }
 
-func (c *impersonationCache) set(k *impersonationCacheKey, skipAttributes bool, impersonatedUser *impersonatedUserInfo) {
-	key, err := k.key(skipAttributes)
+func (c *impersonationCache) set(k *impersonationCacheKey, impersonatedUser *impersonatedUserInfo) {
+	key, err := k.key(c.skipAttributes)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("failed to build impersonation cache key: %w", err))
 		return
@@ -88,9 +89,10 @@ func (c *impersonationCache) set(k *impersonationCacheKey, skipAttributes bool, 
 	c.cache.Set(key, impersonatedUser, 10*time.Second) // hardcode the same short TTL as used by TokenSuccessCacheTTL
 }
 
-func newImpersonationCache() *impersonationCache {
+func newImpersonationCache(skipAttributes bool) *impersonationCache {
 	return &impersonationCache{
-		cache: cache.NewExpiring(),
+		cache:          cache.NewExpiring(),
+		skipAttributes: skipAttributes,
 	}
 }
 
