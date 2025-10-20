@@ -149,15 +149,17 @@ func buildImpersonationModeUserCheck(a authorizer.Authorizer, verb string, isCon
 		actualUser := *wantedUser
 
 		usernameAttributes := impersonationAttributes(requestor, usernameAndGroupGV, verb, "users", wantedUser.Name)
-		// TODO node as a first class concept in impersonation is new, how strict do we want to be?
 		if isConstrainedImpersonation {
 			if name, ok := isNodeUsername(wantedUser.Name); ok {
 				usernameAttributes.Resource = "nodes"
 				usernameAttributes.Name = name
 
-				if len(wantedUser.Groups) == 0 {
-					actualUser.Groups = []string{user.NodesGroup}
+				// this should be impossible to reach but check just in case
+				if len(wantedUser.Groups) != 0 {
+					return nil, responsewriters.ForbiddenStatusError(usernameAttributes, fmt.Sprintf("when impersonating a node, cannot impersonate groups %q", wantedUser.Groups))
 				}
+
+				actualUser.Groups = []string{user.NodesGroup}
 			}
 		}
 		if namespace, name, ok := isServiceAccountUsername(wantedUser.Name); ok {
