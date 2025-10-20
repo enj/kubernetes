@@ -51,7 +51,10 @@ func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 	}
 }
 
-// TODO make another mode that like this one that does caching better for daemonsets
+// TODO(enj): make another mode that like this one that does caching better for daemonsets
+//  current idea is to make multiple authz checks with the original user extra and a compressed one
+//  if both pass, then the compressed extra can be used to generate the cache key instead
+
 func associatedNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return buildConstrainedImpersonationMode(a, "associated-node",
 		func(wantedUser *user.DefaultInfo, requestor user.Info) bool {
