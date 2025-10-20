@@ -34,7 +34,7 @@ import (
 
 type impersonatedUserInfo struct {
 	user       user.Info
-	constraint string // the verb used in the impersonationModeUserCheck that allowed this user to be impersonated
+	constraint string // the verb used in impersonationModeState.check that allowed this user to be impersonated
 }
 
 type impersonationMode func(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error)
