@@ -38,7 +38,6 @@ type impersonatedUserInfo struct {
 }
 
 type impersonationMode func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error)
-type impersonationModeUserCheck func(ctx context.Context, wantedUser *user.DefaultInfo, requestor user.Info) (*impersonatedUserInfo, error)
 type constrainedImpersonationModeFilter func(wantedUser *user.DefaultInfo, requestor user.Info) bool
 
 func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
@@ -105,15 +104,15 @@ func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
 }
 
 func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	check := buildImpersonationModeUserCheck(a, "impersonate", false)
+	m := newImpersonationModeState(a, "impersonate", false)
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
 		requestor := attributes.GetUser()
-		return check(ctx, wantedUser, requestor)
+		return m.check(ctx, wantedUser, requestor)
 	}
 }
 
 func buildConstrainedImpersonationMode(a authorizer.Authorizer, mode string, filter constrainedImpersonationModeFilter) impersonationMode {
-	check := buildImpersonationModeUserCheck(a, "impersonate:"+mode, true)
+	m := newImpersonationModeState(a, "impersonate:"+mode, true)
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
 		requestor := attributes.GetUser()
 		if !filter(wantedUser, requestor) {
@@ -122,97 +121,118 @@ func buildConstrainedImpersonationMode(a authorizer.Authorizer, mode string, fil
 		if err := checkAuthorization(ctx, a, &impersonateOnAttributes{mode: mode, Attributes: attributes}); err != nil {
 			return nil, err
 		}
-		return check(ctx, wantedUser, requestor)
+		return m.check(ctx, wantedUser, requestor)
 	}
 }
 
-func buildImpersonationModeUserCheck(a authorizer.Authorizer, verb string, isConstrainedImpersonation bool) impersonationModeUserCheck {
+// TODO add comment
+type impersonationModeState struct {
+	authorizer                 authorizer.Authorizer
+	verb                       string
+	isConstrainedImpersonation bool
+
+	usernameAndGroupGV schema.GroupVersion
+	constraint         string
+
+	// TODO add more detailed comments here
+	// the inner cache covers the impersonation checks that are not dependent on the request info
+	cache *impersonationCache
+}
+
+func newImpersonationModeState(a authorizer.Authorizer, verb string, isConstrainedImpersonation bool) *impersonationModeState {
 	usernameAndGroupGV := authenticationv1.SchemeGroupVersion
 	constraint := verb
 	if !isConstrainedImpersonation {
 		usernameAndGroupGV = corev1.SchemeGroupVersion
 		constraint = ""
 	}
-	// TODO add more detailed comments here
-	// the inner cache covers the impersonation checks that are not dependent on the request info
-	impCache := newImpersonationCache()
-	return func(ctx context.Context, wantedUser *user.DefaultInfo, requestor user.Info) (outUser *impersonatedUserInfo, outErr error) {
-		// fake attributes that just contain the requestor to allow us to reuse the cache implementation
-		k := &impersonationCacheKey{wantedUser: wantedUser, attributes: authorizer.AttributesRecord{User: requestor}}
-		if impersonatedUser := impCache.get(k); impersonatedUser != nil {
-			return impersonatedUser, nil
+	return &impersonationModeState{
+		authorizer:                 a,
+		verb:                       verb,
+		isConstrainedImpersonation: isConstrainedImpersonation,
+
+		usernameAndGroupGV: usernameAndGroupGV,
+		constraint:         constraint,
+		cache:              newImpersonationCache(),
+	}
+}
+
+func (m *impersonationModeState) check(ctx context.Context, wantedUser *user.DefaultInfo, requestor user.Info) (outUser *impersonatedUserInfo, outErr error) {
+	// fake attributes that just contain the requestor to allow us to reuse the cache implementation
+	k := &impersonationCacheKey{wantedUser: wantedUser, attributes: authorizer.AttributesRecord{User: requestor}}
+	if impersonatedUser := m.cache.get(k); impersonatedUser != nil {
+		return impersonatedUser, nil
+	}
+	defer func() {
+		if outErr != nil || outUser == nil {
+			return
 		}
-		defer func() {
-			if outErr != nil || outUser == nil {
-				return
-			}
-			impCache.set(k, outUser)
-		}()
+		m.cache.set(k, outUser)
+	}()
 
-		actualUser := *wantedUser
+	actualUser := *wantedUser
 
-		usernameAttributes := impersonationAttributes(requestor, usernameAndGroupGV, verb, "users", wantedUser.Name)
-		if isConstrainedImpersonation {
-			if name, ok := isNodeUsername(wantedUser.Name); ok {
-				usernameAttributes.Resource = "nodes"
-				usernameAttributes.Name = name
-
-				// this should be impossible to reach but check just in case
-				if len(wantedUser.Groups) != 0 {
-					return nil, responsewriters.ForbiddenStatusError(usernameAttributes, fmt.Sprintf("when impersonating a node, cannot impersonate groups %q", wantedUser.Groups))
-				}
-
-				actualUser.Groups = []string{user.NodesGroup}
-			}
-		}
-		if namespace, name, ok := isServiceAccountUsername(wantedUser.Name); ok {
-			usernameAttributes.Resource = "serviceaccounts"
-			usernameAttributes.Namespace = namespace
+	usernameAttributes := impersonationAttributes(requestor, m.usernameAndGroupGV, m.verb, "users", wantedUser.Name)
+	if m.isConstrainedImpersonation {
+		if name, ok := isNodeUsername(wantedUser.Name); ok {
+			usernameAttributes.Resource = "nodes"
 			usernameAttributes.Name = name
 
-			if len(wantedUser.Groups) == 0 {
-				// if groups aren't specified for a service account, we know the groups because it is a fixed mapping.  Add them
-				actualUser.Groups = serviceaccount.MakeGroupNames(namespace)
+			// this should be impossible to reach but check just in case
+			if len(wantedUser.Groups) != 0 {
+				return nil, responsewriters.ForbiddenStatusError(usernameAttributes, fmt.Sprintf("when impersonating a node, cannot impersonate groups %q", wantedUser.Groups))
 			}
+
+			actualUser.Groups = []string{user.NodesGroup}
 		}
-		if err := checkAuthorization(ctx, a, usernameAttributes); err != nil {
+	}
+	if namespace, name, ok := isServiceAccountUsername(wantedUser.Name); ok {
+		usernameAttributes.Resource = "serviceaccounts"
+		usernameAttributes.Namespace = namespace
+		usernameAttributes.Name = name
+
+		if len(wantedUser.Groups) == 0 {
+			// if groups aren't specified for a service account, we know the groups because it is a fixed mapping.  Add them
+			actualUser.Groups = serviceaccount.MakeGroupNames(namespace)
+		}
+	}
+	if err := checkAuthorization(ctx, m.authorizer, usernameAttributes); err != nil {
+		return nil, err
+	}
+
+	if len(wantedUser.UID) > 0 {
+		uidAttributes := impersonationAttributes(requestor, authenticationv1.SchemeGroupVersion, m.verb, "uids", wantedUser.UID)
+		if err := checkAuthorization(ctx, m.authorizer, uidAttributes); err != nil {
 			return nil, err
 		}
-
-		if len(wantedUser.UID) > 0 {
-			uidAttributes := impersonationAttributes(requestor, authenticationv1.SchemeGroupVersion, verb, "uids", wantedUser.UID)
-			if err := checkAuthorization(ctx, a, uidAttributes); err != nil {
-				return nil, err
-			}
-		}
-
-		groupAttributes := impersonationAttributes(requestor, usernameAndGroupGV, verb, "groups", "")
-		for _, group := range wantedUser.Groups {
-			groupAttributes.Name = group
-			if err := checkAuthorization(ctx, a, groupAttributes); err != nil {
-				return nil, err
-			}
-		}
-
-		extraAttributes := impersonationAttributes(requestor, authenticationv1.SchemeGroupVersion, verb, "userextras", "")
-		for key, values := range wantedUser.Extra {
-			extraAttributes.Subresource = key
-			for _, value := range values {
-				extraAttributes.Name = value
-				if err := checkAuthorization(ctx, a, extraAttributes); err != nil {
-					return nil, err
-				}
-			}
-		}
-
-		if actualUser.Name == user.Anonymous {
-			ensureGroup(&actualUser, user.AllUnauthenticated)
-		} else {
-			ensureGroup(&actualUser, user.AllAuthenticated)
-		}
-
-		return &impersonatedUserInfo{user: &actualUser, constraint: constraint}, nil
 	}
+
+	groupAttributes := impersonationAttributes(requestor, m.usernameAndGroupGV, m.verb, "groups", "")
+	for _, group := range wantedUser.Groups {
+		groupAttributes.Name = group
+		if err := checkAuthorization(ctx, m.authorizer, groupAttributes); err != nil {
+			return nil, err
+		}
+	}
+
+	extraAttributes := impersonationAttributes(requestor, authenticationv1.SchemeGroupVersion, m.verb, "userextras", "")
+	for key, values := range wantedUser.Extra {
+		extraAttributes.Subresource = key
+		for _, value := range values {
+			extraAttributes.Name = value
+			if err := checkAuthorization(ctx, m.authorizer, extraAttributes); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if actualUser.Name == user.Anonymous {
+		ensureGroup(&actualUser, user.AllUnauthenticated)
+	} else {
+		ensureGroup(&actualUser, user.AllAuthenticated)
+	}
+
+	return &impersonatedUserInfo{user: &actualUser, constraint: m.constraint}, nil
 }
 
 func impersonationAttributes(requestor user.Info, gv schema.GroupVersion, verb, resource, name string) *authorizer.AttributesRecord {
