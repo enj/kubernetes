@@ -61,7 +61,15 @@ func newModeIndexCache() *modeIndexCache {
 	}
 }
 
-// TODO add comment
+// impersonationCache tracks successful impersonation attempts for a given mode with a short TTL.
+//
+// when skipAttributes is false, it maps [wantedUser, attributes] -> impersonatedUserInfo
+// when skipAttributes is true, it maps [wantedUser, requestor] -> impersonatedUserInfo
+//
+// thus each constrained impersonation mode needs two of these caches:
+// the outer cache sets skipAttributes to false and thus covers the overall impersonation attempt, see constrainedImpersonationModeState.check.
+// the inner cache sets skipAttributes to true and only covers the authorization checks that
+// are not dependent on the specific request being made, see impersonationModeState.check.
 type impersonationCache struct {
 	cache          *cache.Expiring
 	skipAttributes bool
