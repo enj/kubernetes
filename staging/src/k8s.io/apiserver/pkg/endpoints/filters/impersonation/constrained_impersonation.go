@@ -132,7 +132,6 @@ func processImpersonationHeaders(headers http.Header) (*user.DefaultInfo, error)
 type impersonationModesTracker struct {
 	modes    []impersonationMode
 	idxCache *modeIndexCache
-	impCache *impersonationCache
 }
 
 func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTracker {
@@ -153,24 +152,11 @@ func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTr
 	return &impersonationModesTracker{
 		modes:    allImpersonationModes(loggingAuthorizer),
 		idxCache: newModeIndexCache(),
-		impCache: newImpersonationCache(),
 	}
 }
 
 func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (outUser *impersonatedUserInfo, outErr error) {
-	// this outer cache covers the all the impersonation checks,
-	// including those that need the request info, i.e. for constrained impersonation
 	key := &impersonationCacheKey{wantedUser: wantedUser, attributes: attributes}
-	if impersonatedUser := t.impCache.get(key, false); impersonatedUser != nil {
-		return impersonatedUser, nil
-	}
-	defer func() {
-		if outErr != nil || outUser == nil {
-			return
-		}
-		t.impCache.set(key, false, outUser)
-	}()
-
 	var firstErr error
 
 	// try the last successful mode first to reduce the amortized cost of impersonation

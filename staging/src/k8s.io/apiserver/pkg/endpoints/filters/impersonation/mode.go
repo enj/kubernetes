@@ -55,7 +55,7 @@ func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 //  if both pass, then the compressed extra can be used to generate the cache key instead
 
 func associatedNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildConstrainedImpersonationMode(a, "associated-node",
+	return newConstrainedImpersonationMode(a, "associated-node",
 		func(wantedUser *user.DefaultInfo, requestor user.Info) bool {
 			return onlyUsernameSet(wantedUser) && requesterAssociatedWithNode(requestor, wantedUser.Name)
 		},
@@ -63,7 +63,7 @@ func associatedNodeImpersonationMode(a authorizer.Authorizer) impersonationMode 
 }
 
 func arbitraryNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildConstrainedImpersonationMode(a, "arbitrary-node",
+	return newConstrainedImpersonationMode(a, "arbitrary-node",
 		func(wantedUser *user.DefaultInfo, _ user.Info) bool {
 			if !onlyUsernameSet(wantedUser) {
 				return false
@@ -75,7 +75,7 @@ func arbitraryNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 }
 
 func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildConstrainedImpersonationMode(a, "serviceaccount",
+	return newConstrainedImpersonationMode(a, "serviceaccount",
 		func(wantedUser *user.DefaultInfo, _ user.Info) bool {
 			if !onlyUsernameSet(wantedUser) {
 				return false
@@ -87,7 +87,7 @@ func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode 
 }
 
 func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return buildConstrainedImpersonationMode(a, "user-info",
+	return newConstrainedImpersonationMode(a, "user-info",
 		func(wantedUser *user.DefaultInfo, _ user.Info) bool {
 			// nodes and service accounts cannot be impersonated in this mode.
 			// the user-info bucket is reserved for the "other" users, that is,
@@ -111,18 +111,47 @@ func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	}
 }
 
-func buildConstrainedImpersonationMode(a authorizer.Authorizer, mode string, filter constrainedImpersonationModeFilter) impersonationMode {
-	m := newImpersonationModeState(a, "impersonate:"+mode, true)
-	return func(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
-		requestor := attributes.GetUser()
-		if !filter(wantedUser, requestor) {
-			return nil, nil
-		}
-		if err := checkAuthorization(ctx, a, &impersonateOnAttributes{mode: mode, Attributes: attributes}); err != nil {
-			return nil, err
-		}
-		return m.check(ctx, key, wantedUser, requestor)
+func newConstrainedImpersonationMode(a authorizer.Authorizer, mode string, filter constrainedImpersonationModeFilter) impersonationMode {
+	return (&constrainedImpersonationModeState{
+		state:      newImpersonationModeState(a, "impersonate:"+mode, true),
+		cache:      newImpersonationCache(),
+		authorizer: a,
+		mode:       mode,
+		filter:     filter,
+	}).check
+}
+
+// TODO add comment
+type constrainedImpersonationModeState struct {
+	state *impersonationModeState
+	// TODO comment
+	cache      *impersonationCache
+	authorizer authorizer.Authorizer
+	mode       string
+	filter     constrainedImpersonationModeFilter
+}
+
+func (c *constrainedImpersonationModeState) check(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (outUser *impersonatedUserInfo, outErr error) {
+	requestor := attributes.GetUser()
+	if !c.filter(wantedUser, requestor) {
+		return nil, nil
 	}
+
+	if impersonatedUser := c.cache.get(key, false); impersonatedUser != nil {
+		return impersonatedUser, nil
+	}
+	defer func() {
+		if outErr != nil || outUser == nil {
+			return
+		}
+		c.cache.set(key, false, outUser)
+	}()
+
+	if err := checkAuthorization(ctx, c.authorizer, &impersonateOnAttributes{mode: c.mode, Attributes: attributes}); err != nil {
+		return nil, err
+	}
+
+	return c.state.check(ctx, key, wantedUser, requestor)
 }
 
 // TODO add comment
