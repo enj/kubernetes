@@ -160,14 +160,15 @@ func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTr
 func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (outUser *impersonatedUserInfo, outErr error) {
 	// this outer cache covers the all the impersonation checks,
 	// including those that need the request info, i.e. for constrained impersonation
-	if impersonatedUser := t.impCache.get(wantedUser, attributes); impersonatedUser != nil {
+	key := &impersonationCacheKey{wantedUser: wantedUser, attributes: attributes}
+	if impersonatedUser := t.impCache.get(key); impersonatedUser != nil {
 		return impersonatedUser, nil
 	}
 	defer func() {
 		if outErr != nil || outUser == nil {
 			return
 		}
-		t.impCache.set(wantedUser, attributes, outUser)
+		t.impCache.set(key, outUser)
 	}()
 
 	var firstErr error

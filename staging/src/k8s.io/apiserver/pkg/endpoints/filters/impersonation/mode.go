@@ -138,15 +138,15 @@ func buildImpersonationModeUserCheck(a authorizer.Authorizer, verb string, isCon
 	impCache := newImpersonationCache()
 	return func(ctx context.Context, wantedUser *user.DefaultInfo, requestor user.Info) (outUser *impersonatedUserInfo, outErr error) {
 		// fake attributes that just contain the requestor to allow us to reuse the cache implementation
-		attributes := authorizer.AttributesRecord{User: requestor}
-		if impersonatedUser := impCache.get(wantedUser, attributes); impersonatedUser != nil {
+		k := &impersonationCacheKey{wantedUser: wantedUser, attributes: authorizer.AttributesRecord{User: requestor}}
+		if impersonatedUser := impCache.get(k); impersonatedUser != nil {
 			return impersonatedUser, nil
 		}
 		defer func() {
 			if outErr != nil || outUser == nil {
 				return
 			}
-			impCache.set(wantedUser, attributes, outUser)
+			impCache.set(k, outUser)
 		}()
 
 		actualUser := *wantedUser

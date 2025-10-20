@@ -65,8 +65,8 @@ type impersonationCache struct {
 	cache *cache.Expiring
 }
 
-func (c *impersonationCache) get(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) *impersonatedUserInfo {
-	key, err := buildImpersonationCacheKey(wantedUser, attributes) // TODO lazy as needed construction per request
+func (c *impersonationCache) get(k *impersonationCacheKey) *impersonatedUserInfo {
+	key, err := k.stringKey()
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("failed to build impersonation cache key: %w", err))
 		return nil
@@ -78,8 +78,8 @@ func (c *impersonationCache) get(wantedUser *user.DefaultInfo, attributes author
 	return impersonatedUser.(*impersonatedUserInfo)
 }
 
-func (c *impersonationCache) set(wantedUser *user.DefaultInfo, attributes authorizer.Attributes, impersonatedUser *impersonatedUserInfo) {
-	key, err := buildImpersonationCacheKey(wantedUser, attributes)
+func (c *impersonationCache) set(k *impersonationCacheKey, impersonatedUser *impersonatedUserInfo) {
+	key, err := k.stringKey()
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("failed to build impersonation cache key: %w", err))
 		return
@@ -114,18 +114,33 @@ var _ user.Info = (interface {
 	GetExtra() map[string][]string
 })(nil)
 
-func buildImpersonationCacheKey(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (string, error) {
-	fieldSelector, err := attributes.GetFieldSelector()
+type impersonationCacheKey struct {
+	wantedUser *user.DefaultInfo
+	attributes authorizer.Attributes
+
+	// lazily calculated values at point of use
+	key string
+	err error
+}
+
+func (k *impersonationCacheKey) stringKey() (out string, outErr error) {
+	if len(k.key) != 0 || k.err != nil {
+		return k.key, k.err
+	}
+
+	defer func() { k.key, k.err = out, outErr }()
+
+	fieldSelector, err := k.attributes.GetFieldSelector()
 	if err != nil {
 		return "", err // if we do not fully understand the attributes, just skip caching altogether
 	}
 
-	labelSelector, err := attributes.GetLabelSelector()
+	labelSelector, err := k.attributes.GetLabelSelector()
 	if err != nil {
 		return "", err // if we do not fully understand the attributes, just skip caching altogether
 	}
 
-	requestor := attributes.GetUser()
+	requestor := k.attributes.GetUser()
 
 	// the chance of a hash collision is impractically small, but the only way that would lead to a
 	// privilege escalation is if you could get the cache key of a different user.  if you somehow
@@ -136,21 +151,21 @@ func buildImpersonationCacheKey(wantedUser *user.DefaultInfo, attributes authori
 	// are under the control of the requestor, they cannot explode the cache due to the hashing.
 	b := newCacheKeyBuilder(requestor.GetName()) // TODO maybe limit number of cache entries for a given user
 
-	addUser(b, wantedUser)
+	addUser(b, k.wantedUser)
 	addUser(b, requestor)
 
 	b.addLengthPrefixed(func(b *cacheKeyBuilder) {
 		b.
-			addString(attributes.GetVerb()).
-			addBool(attributes.IsReadOnly()).
-			addString(attributes.GetNamespace()).
-			addString(attributes.GetResource()).
-			addString(attributes.GetSubresource()).
-			addString(attributes.GetName()).
-			addString(attributes.GetAPIGroup()).
-			addString(attributes.GetAPIVersion()).
-			addBool(attributes.IsResourceRequest()).
-			addString(attributes.GetPath())
+			addString(k.attributes.GetVerb()).
+			addBool(k.attributes.IsReadOnly()).
+			addString(k.attributes.GetNamespace()).
+			addString(k.attributes.GetResource()).
+			addString(k.attributes.GetSubresource()).
+			addString(k.attributes.GetName()).
+			addString(k.attributes.GetAPIGroup()).
+			addString(k.attributes.GetAPIVersion()).
+			addBool(k.attributes.IsResourceRequest()).
+			addString(k.attributes.GetPath())
 	})
 
 	b.addLengthPrefixed(func(b *cacheKeyBuilder) {
