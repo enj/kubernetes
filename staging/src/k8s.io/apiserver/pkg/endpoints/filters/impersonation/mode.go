@@ -289,7 +289,7 @@ func (m *impersonationModeState) check(ctx context.Context, key *impersonationCa
 				return nil, responsewriters.ForbiddenStatusError(usernameAttributes, fmt.Sprintf("when impersonating a node, cannot impersonate groups %q", wantedUser.Groups))
 			}
 
-			actualUser.Groups = []string{user.NodesGroup}
+			actualUser.Groups = []string{user.NodesGroup} // all nodes have a fixed group list in constrained impersonation
 		}
 	}
 	if namespace, name, ok := isServiceAccountUsername(wantedUser.Name); ok {
@@ -298,7 +298,7 @@ func (m *impersonationModeState) check(ctx context.Context, key *impersonationCa
 		usernameAttributes.Name = name
 
 		if len(wantedUser.Groups) == 0 {
-			// if groups aren't specified for a service account, we know the groups because it is a fixed mapping.  Add them
+			// if groups are not specified for a service account, we know the groups because it is a fixed mapping.  Add them
 			actualUser.Groups = serviceaccount.MakeGroupNames(namespace)
 		}
 	}

@@ -37,6 +37,11 @@ import (
 
 // TODO add metrics
 
+// WithConstrainedImpersonation implements constrained impersonation as described in https://kep.k8s.io/5284
+// It also includes a complete reimplementation of legacy impersonation for backwards compatibility.
+// At a high level, constrained impersonation uses multiple authorization checks to allow for the granular
+// expression of impersonation access.  For example, a service account may be authorized to impersonate the
+// node that it is associated with but only when listing pods.  See the linked KEP for further details.
 func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer, s runtime.NegotiatedSerializer) http.Handler {
 	tracker := newImpersonationModesTracker(a)
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -47,7 +52,7 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 			responsewriters.InternalError(w, req, err)
 			return
 		}
-		if wantedUser == nil {
+		if wantedUser == nil { // impersonation was not attempted so skip to the next handler
 			handler.ServeHTTP(w, req)
 			return
 		}
@@ -129,6 +134,9 @@ func processImpersonationHeaders(headers http.Header) (*user.DefaultInfo, error)
 	return wantedUser, nil
 }
 
+// impersonationModesTracker records which impersonation mode was last successful for a given requestor user.
+// this allows us to check for the more secure constrained impersonation modes first while keeping the overall
+// cost of legacy impersonation unchanged (as we will support legacy impersonation forever).
 type impersonationModesTracker struct {
 	modes    []impersonationMode
 	idxCache *modeIndexCache
@@ -172,7 +180,7 @@ func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTr
 	}
 }
 
-func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (outUser *impersonatedUserInfo, outErr error) {
+func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
 	key := &impersonationCacheKey{wantedUser: wantedUser, attributes: attributes}
 	var firstErr error
 
