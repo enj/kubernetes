@@ -24,7 +24,9 @@ import (
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
@@ -50,16 +52,67 @@ func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 	}
 }
 
-// TODO(enj): make another mode that like this one that does caching better for daemonsets
-//  current idea is to make multiple authz checks with the original user extra and a compressed one
-//  if both pass, then the compressed extra can be used to generate the cache key instead
-
+// TODO add comments
 func associatedNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	return newConstrainedImpersonationMode(a, "associated-node",
+	wrappedAuthorizer := authorizer.AuthorizerFunc(func(ctx context.Context, attributes authorizer.Attributes) (authorizer.Decision, string, error) {
+		if err := checkAuthorization(ctx, a, &associatedNodeImpersonationAttributes{Attributes: attributes}); err != nil {
+			return authorizer.DecisionDeny, "", err
+		}
+		return authorizer.DecisionAllow, "", nil
+	})
+	mode := newConstrainedImpersonationMode(wrappedAuthorizer, "associated-node",
 		func(wantedUser *user.DefaultInfo, requestor user.Info) bool {
 			return onlyUsernameSet(wantedUser) && requesterAssociatedWithNode(requestor, wantedUser.Name)
 		},
 	)
+	return func(ctx context.Context, _ *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
+		key := &impersonationCacheKey{wantedUser: &user.DefaultInfo{Name: "system:node:*"}, attributes: &associatedNodeImpersonationAttributes{Attributes: attributes}}
+		impersonatedUser, err := mode(ctx, key, wantedUser, attributes)
+		if err != nil || impersonatedUser == nil {
+			return nil, err
+		}
+		return &impersonatedUserInfo{
+			user: &associatedNodeImpersonationWantedUserInfo{
+				Info: impersonatedUser.user,
+				name: wantedUser.Name,
+			},
+			constraint: impersonatedUser.constraint,
+		}, nil
+	}
+}
+
+type associatedNodeImpersonationAttributes struct {
+	authorizer.Attributes
+}
+
+func (a *associatedNodeImpersonationAttributes) GetUser() user.Info {
+	return &associatedNodeImpersonationRequestorUserInfo{Info: a.Attributes.GetUser()}
+}
+
+func (a *associatedNodeImpersonationAttributes) GetName() string {
+	if a.GetVerb() == "impersonate:associated-node" {
+		return "*"
+	}
+	return a.Attributes.GetName()
+}
+
+type associatedNodeImpersonationRequestorUserInfo struct {
+	user.Info
+}
+
+func (a *associatedNodeImpersonationRequestorUserInfo) GetExtra() map[string][]string {
+	return map[string][]string{
+		"authentication.kubernetes.io/associated-node-keys": sets.StringKeySet(a.Info.GetExtra()).List(),
+	}
+}
+
+type associatedNodeImpersonationWantedUserInfo struct {
+	user.Info
+	name string
+}
+
+func (a *associatedNodeImpersonationWantedUserInfo) GetName() string {
+	return a.name
 }
 
 func arbitraryNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
@@ -289,6 +342,11 @@ func checkAuthorization(ctx context.Context, a authorizer.Authorizer, attributes
 	// an authorizer like RBAC could encounter evaluation errors and still allow the request, so authorizer decision is checked before error here.
 	if authorized == authorizer.DecisionAllow {
 		return nil
+	}
+
+	// if the authorizer gave us a forbidden error, do not wrap it again
+	if errors.IsForbidden(err) {
+		return err
 	}
 
 	msg := reason
