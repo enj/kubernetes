@@ -347,12 +347,16 @@ func (m *impersonationModeState) authorizeUID(ctx context.Context, requestor use
 	return checkAuthorization(ctx, m.authorizer, uidAttributes)
 }
 
+// manyAuthorizationChecksInLoop is an arbitrary value used in constrained impersonation modes to decide if they
+// should try to perform a single wildcard authorization check instead of making many individual checks in a loop.
+const manyAuthorizationChecksInLoop = 3
+
 func (m *impersonationModeState) authorizeGroups(ctx context.Context, requestor user.Info, groups []string) error {
 	groupAttributes := impersonationAttributes(requestor, m.usernameAndGroupGV, m.verb, "groups", "")
 
 	// if the requestor is trying to impersonate many groups at once, see if they are authorized to impersonate all groups
 	// we only do this in constrained impersonation mode to avoid any behavioral changes with legacy impersonation
-	if m.isConstrainedImpersonation && len(groups) >= 3 {
+	if m.isConstrainedImpersonation && len(groups) >= manyAuthorizationChecksInLoop {
 		groupAttributes.Name = "*"
 		if err := checkAuthorization(ctx, m.authorizer, groupAttributes); err == nil {
 			return nil
@@ -396,13 +400,13 @@ func (m *impersonationModeState) authorizeExtra(ctx context.Context, requestor u
 }
 
 func isLargeExtra(extra map[string][]string) bool {
-	if len(extra) >= 3 {
+	if len(extra) >= manyAuthorizationChecksInLoop {
 		return true
 	}
 	var count int
 	for _, values := range extra {
 		count += len(values)
-		if count >= 3 {
+		if count >= manyAuthorizationChecksInLoop {
 			return true
 		}
 	}
