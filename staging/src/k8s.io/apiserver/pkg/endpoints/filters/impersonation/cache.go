@@ -131,6 +131,9 @@ var _ user.Info = (interface {
 	GetExtra() map[string][]string
 })(nil)
 
+// impersonationCacheKey allows for lazy building of string cache keys based on the inputs.
+// See impersonationCache details above for the semantics around skipAttributes.
+// Note that the same impersonationCacheKey can be used with any value for skipAttributes.
 type impersonationCacheKey struct {
 	wantedUser *user.DefaultInfo
 	attributes authorizer.Attributes
@@ -173,6 +176,8 @@ func (k *impersonationCacheKey) keyWithoutAttributes() (out string, outErr error
 	return buildKey(k.wantedUser, attributes)
 }
 
+// buildKey creates a hashed string key based on the inputs that is namespaced to the requestor.
+// A cryptographically secure hash is used to minimize the chance of collisions.
 func buildKey(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (string, error) {
 	fieldSelector, err := attributes.GetFieldSelector()
 	if err != nil {
@@ -243,13 +248,16 @@ func addUser(b *cacheKeyBuilder, u user.Info) {
 	})
 }
 
+// cacheKeyBuilder adds syntactic sugar on top of cryptobyte.Builder to make it easier to use for complex inputs.
+// TODO move and share with kubelet credential provider
 type cacheKeyBuilder struct {
 	namespace string              // in the programming sense, not the Kubernetes concept
 	builder   *cryptobyte.Builder // TODO decide if we want to use a sync.Pool for the underlying buffer
 }
 
-func newCacheKeyBuilder(namespace string) *cacheKeyBuilder { // TODO move and share with kubelet credential provider
-	return &cacheKeyBuilder{namespace: namespace, builder: cryptobyte.NewBuilder(make([]byte, 0, 384))} // start with a reasonable size to avoid too many allocations
+func newCacheKeyBuilder(namespace string) *cacheKeyBuilder {
+	// start with a reasonable size to avoid too many allocations
+	return &cacheKeyBuilder{namespace: namespace, builder: cryptobyte.NewBuilder(make([]byte, 0, 384))}
 }
 
 func (c *cacheKeyBuilder) addString(value string) *cacheKeyBuilder {
