@@ -402,7 +402,7 @@ func isLargeExtra(extra map[string][]string) bool {
 	var count int
 	for _, values := range extra {
 		count += len(values)
-		if count > 3 {
+		if count >= 3 {
 			return true
 		}
 	}
