@@ -278,58 +278,20 @@ func (m *impersonationModeState) check(ctx context.Context, key *impersonationCa
 
 	actualUser := *wantedUser
 
-	usernameAttributes := impersonationAttributes(requestor, m.usernameAndGroupGV, m.verb, "users", wantedUser.Name)
-	if m.isConstrainedImpersonation {
-		if name, ok := isNodeUsername(wantedUser.Name); ok {
-			usernameAttributes.Resource = "nodes"
-			usernameAttributes.Name = name
-
-			// this should be impossible to reach but check just in case
-			if len(wantedUser.Groups) != 0 {
-				return nil, responsewriters.ForbiddenStatusError(usernameAttributes, fmt.Sprintf("when impersonating a node, cannot impersonate groups %q", wantedUser.Groups))
-			}
-
-			actualUser.Groups = []string{user.NodesGroup} // all nodes have a fixed group list in constrained impersonation
-		}
-	}
-	if namespace, name, ok := isServiceAccountUsername(wantedUser.Name); ok {
-		usernameAttributes.Resource = "serviceaccounts"
-		usernameAttributes.Namespace = namespace
-		usernameAttributes.Name = name
-
-		if len(wantedUser.Groups) == 0 {
-			// if groups are not specified for a service account, we know the groups because it is a fixed mapping.  Add them
-			actualUser.Groups = serviceaccount.MakeGroupNames(namespace)
-		}
-	}
-	if err := checkAuthorization(ctx, m.authorizer, usernameAttributes); err != nil {
+	if err := m.authorizeUsername(ctx, requestor, wantedUser.Name, wantedUser.Groups, &actualUser); err != nil {
 		return nil, err
 	}
 
-	if len(wantedUser.UID) > 0 {
-		uidAttributes := impersonationAttributes(requestor, authenticationv1.SchemeGroupVersion, m.verb, "uids", wantedUser.UID)
-		if err := checkAuthorization(ctx, m.authorizer, uidAttributes); err != nil {
-			return nil, err
-		}
+	if err := m.authorizeUID(ctx, requestor, wantedUser.UID); err != nil {
+		return nil, err
 	}
 
-	groupAttributes := impersonationAttributes(requestor, m.usernameAndGroupGV, m.verb, "groups", "")
-	for _, group := range wantedUser.Groups {
-		groupAttributes.Name = group
-		if err := checkAuthorization(ctx, m.authorizer, groupAttributes); err != nil {
-			return nil, err
-		}
+	if err := m.authorizeGroups(ctx, requestor, wantedUser.Groups); err != nil {
+		return nil, err
 	}
 
-	extraAttributes := impersonationAttributes(requestor, authenticationv1.SchemeGroupVersion, m.verb, "userextras", "")
-	for key, values := range wantedUser.Extra {
-		extraAttributes.Subresource = key
-		for _, value := range values {
-			extraAttributes.Name = value
-			if err := checkAuthorization(ctx, m.authorizer, extraAttributes); err != nil {
-				return nil, err
-			}
-		}
+	if err := m.authorizeExtra(ctx, requestor, wantedUser.Extra); err != nil {
+		return nil, err
 	}
 
 	if actualUser.Name == user.Anonymous {
@@ -341,8 +303,114 @@ func (m *impersonationModeState) check(ctx context.Context, key *impersonationCa
 	return &impersonatedUserInfo{user: &actualUser, constraint: m.constraint}, nil
 }
 
-func impersonationAttributes(requestor user.Info, gv schema.GroupVersion, verb, resource, name string) *authorizer.AttributesRecord {
-	return &authorizer.AttributesRecord{
+func (m *impersonationModeState) authorizeUsername(ctx context.Context, requestor user.Info, username string, wantedUserGroups []string, actualUser *user.DefaultInfo) error {
+	usernameAttributes := impersonationAttributes(requestor, m.usernameAndGroupGV, m.verb, "users", username)
+
+	if m.isConstrainedImpersonation {
+		if name, ok := isNodeUsername(username); ok {
+			usernameAttributes.Resource = "nodes"
+			usernameAttributes.Name = name
+
+			// this should be impossible to reach but check just in case
+			if len(wantedUserGroups) != 0 {
+				return responsewriters.ForbiddenStatusError(usernameAttributes, fmt.Sprintf("when impersonating a node, cannot impersonate groups %q", wantedUserGroups))
+			}
+
+			actualUser.Groups = []string{user.NodesGroup} // all nodes have a fixed group list in constrained impersonation
+		}
+	}
+
+	if namespace, name, ok := isServiceAccountUsername(username); ok {
+		usernameAttributes.Resource = "serviceaccounts"
+		usernameAttributes.Namespace = namespace
+		usernameAttributes.Name = name
+
+		// this should be impossible to reach but check just in case
+		if m.isConstrainedImpersonation && len(wantedUserGroups) != 0 {
+			return responsewriters.ForbiddenStatusError(usernameAttributes, fmt.Sprintf("when impersonating a service account, cannot impersonate groups %q", wantedUserGroups))
+		}
+
+		if len(wantedUserGroups) == 0 {
+			// if groups are not specified for a service account, we know the groups because it is a fixed mapping.  Add them
+			actualUser.Groups = serviceaccount.MakeGroupNames(namespace)
+		}
+	}
+
+	return checkAuthorization(ctx, m.authorizer, usernameAttributes)
+}
+
+func (m *impersonationModeState) authorizeUID(ctx context.Context, requestor user.Info, uid string) error {
+	if len(uid) == 0 {
+		return nil
+	}
+	uidAttributes := impersonationAttributes(requestor, authenticationv1.SchemeGroupVersion, m.verb, "uids", uid)
+	return checkAuthorization(ctx, m.authorizer, uidAttributes)
+}
+
+func (m *impersonationModeState) authorizeGroups(ctx context.Context, requestor user.Info, groups []string) error {
+	groupAttributes := impersonationAttributes(requestor, m.usernameAndGroupGV, m.verb, "groups", "")
+
+	// if the requestor is trying to impersonate many groups at once, see if they are authorized to impersonate all groups
+	// we only do this in constrained impersonation mode to avoid any behavioral changes with legacy impersonation
+	if m.isConstrainedImpersonation && len(groups) >= 3 {
+		groupAttributes.Name = "*"
+		if err := checkAuthorization(ctx, m.authorizer, groupAttributes); err == nil {
+			return nil
+		}
+	}
+
+	for _, group := range groups {
+		groupAttributes.Name = group
+		if err := checkAuthorization(ctx, m.authorizer, groupAttributes); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (m *impersonationModeState) authorizeExtra(ctx context.Context, requestor user.Info, extra map[string][]string) error {
+	extraAttributes := impersonationAttributes(requestor, authenticationv1.SchemeGroupVersion, m.verb, "userextras", "")
+
+	// if the requestor is trying to impersonate many extras at once, see if they are authorized to impersonate all extras
+	// we only do this in constrained impersonation mode to avoid any behavioral changes with legacy impersonation
+	if m.isConstrainedImpersonation && isLargeExtra(extra) {
+		extraAttributes.Subresource = "*"
+		extraAttributes.Name = "*"
+		if err := checkAuthorization(ctx, m.authorizer, extraAttributes); err == nil {
+			return nil
+		}
+	}
+
+	for key, values := range extra {
+		extraAttributes.Subresource = key
+		for _, value := range values {
+			extraAttributes.Name = value
+			if err := checkAuthorization(ctx, m.authorizer, extraAttributes); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func isLargeExtra(extra map[string][]string) bool {
+	if len(extra) >= 3 {
+		return true
+	}
+	var count int
+	for _, values := range extra {
+		count += len(values)
+		if count > 3 {
+			return true
+		}
+	}
+	return false
+}
+
+func impersonationAttributes(requestor user.Info, gv schema.GroupVersion, verb, resource, name string) authorizer.AttributesRecord {
+	return authorizer.AttributesRecord{
 		User:            requestor,
 		Verb:            verb,
 		APIGroup:        gv.Group,
