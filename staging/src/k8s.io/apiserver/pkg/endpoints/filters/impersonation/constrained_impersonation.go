@@ -71,7 +71,7 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 
 		req = req.WithContext(request.WithUser(ctx, impersonatedUser.user))
 		httplog.LogOf(req, w).Addf("%v is impersonating %v", userString(requestor), userString(impersonatedUser.user))
-		audit.LogImpersonatedUser(audit.WithAuditContext(ctx), impersonatedUser.user, impersonatedUser.constraint)
+		audit.LogImpersonatedUser(ctx, impersonatedUser.user, impersonatedUser.constraint)
 
 		handler.ServeHTTP(w, req)
 	})

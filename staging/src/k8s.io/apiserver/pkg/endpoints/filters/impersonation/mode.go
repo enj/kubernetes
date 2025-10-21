@@ -52,9 +52,18 @@ func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 	}
 }
 
-// TODO add comments
+// associatedNodeImpersonationMode allows a requestor service account to impersonate the node that it is
+// associated with.  this is by far the most complex impersonation mode because it caches successful
+// impersonation attempts in a way that results in a high cache hit ratio even when the same service account
+// is used across different pods running on different nodes (i.e. a node agent running as a daemonset).
 func associatedNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
+	// we wrap the authorizer so that we can override the requestor service account's extra values
+	// and the node name used in the authorization check.  this makes our authorization checks match
+	// the exact semantics of our cache key which prevents unexpected privilege escalation on a cache
+	// hit.  see the comment below for the cache key details.
 	wrappedAuthorizer := authorizer.AuthorizerFunc(func(ctx context.Context, attributes authorizer.Attributes) (authorizer.Decision, string, error) {
+		// we use checkAuthorization instead of directly calling the authorizer so we can
+		// make the error message line up with the actual attributes authorized against
 		if err := checkAuthorization(ctx, a, &associatedNodeImpersonationAttributes{Attributes: attributes}); err != nil {
 			return authorizer.DecisionDeny, "", err
 		}
@@ -66,11 +75,21 @@ func associatedNodeImpersonationMode(a authorizer.Authorizer) impersonationMode 
 		},
 	)
 	return func(ctx context.Context, _ *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
+		// ignore the input cache key because the cache semantics for associated-node require custom logic.
+		// we know that by the time this key is used, the filter has already verified that the requestor is
+		// a service account with a node ref that matches the node it is trying to impersonate.
+		// the actual node being impersonated is not relevant to the cache key, so we just use a static wantedUser.
+		// we wrap the attributes so that we can drop the requestor service account's extra values.
+		// this results in the cache key being the same for the same service account across all nodes.
+		// this is only safe because of the aforementioned filter running before the cache lookup happens.
 		key := &impersonationCacheKey{wantedUser: &user.DefaultInfo{Name: "system:node:*"}, attributes: &associatedNodeImpersonationAttributes{Attributes: attributes}}
 		impersonatedUser, err := mode(ctx, key, wantedUser, attributes)
 		if err != nil || impersonatedUser == nil {
 			return nil, err
 		}
+		// at this point, we know that we have a successful associated-node impersonation.
+		// the value could have come from the cache and thus could be for any node, so we wrap the result
+		// here so that the username matches the node associated with the requestor service account.
 		return &impersonatedUserInfo{
 			user: &associatedNodeImpersonationWantedUserInfo{
 				Info: impersonatedUser.user,
@@ -91,7 +110,7 @@ func (a *associatedNodeImpersonationAttributes) GetUser() user.Info {
 
 func (a *associatedNodeImpersonationAttributes) GetName() string {
 	if a.GetVerb() == "impersonate:associated-node" {
-		return "*"
+		return "*" // our cache key ignores the node name, so our authorization check needs to be valid for all node names
 	}
 	return a.Attributes.GetName()
 }
@@ -102,6 +121,11 @@ type associatedNodeImpersonationRequestorUserInfo struct {
 
 func (a *associatedNodeImpersonationRequestorUserInfo) GetExtra() map[string][]string {
 	return map[string][]string{
+		// we know the requestor is a service account with a node ref that matches the node it is trying to impersonate
+		// basically all the extra values would cause cache misses (for example, the node name itself)
+		// so we drop all the extra values but keep the associated key names
+		// the authorizer can trust that we have performed the node association check correctly
+		// the audit log will still contain the full requestor extra fields
 		"authentication.kubernetes.io/associated-node-keys": sets.StringKeySet(a.Info.GetExtra()).List(),
 	}
 }
@@ -186,6 +210,8 @@ type constrainedImpersonationModeState struct {
 
 func (c *constrainedImpersonationModeState) check(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (outUser *impersonatedUserInfo, outErr error) {
 	requestor := attributes.GetUser()
+	// we must call the filter before doing anything because this serves as a sudo authorization check to say "does this mode even apply?"
+	// also the cache key is not always a direct match with wantedUser+attributes, so again, we must call the filter first
 	if !c.filter(wantedUser, requestor) {
 		return nil, nil
 	}
