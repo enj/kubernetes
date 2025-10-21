@@ -137,11 +137,28 @@ type impersonationModesTracker struct {
 func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTracker {
 	loggingAuthorizer := authorizer.AuthorizerFunc(func(ctx context.Context, attributes authorizer.Attributes) (authorizer.Decision, string, error) {
 		decision, reason, err := a.Authorize(ctx, attributes)
-		if klog.V(6).Enabled() {
-			klog.V(6).InfoSDepth(3, "Impersonation authorization check",
-				// impersonation is all about verb magic and the dump of the attributes may not make it obvious due to private fields
+		// build a detailed log of the authorization
+		// make the whole block conditional so we do not do a lot of string-building we will not use
+		if klog.V(5).Enabled() { // same log level that the RBAC authorizer uses for verbose logging
+			u := attributes.GetUser()
+			klog.V(5).InfoSDepth(3, "Impersonation authorization check",
+				// we cannot just pass attributes to the logger as that will not capture the actual result of calling these methods
+				// impersonation makes heavy use of wrapping these methods to add extra logic
+				"username", u.GetName(),
+				"uid", u.GetUID(),
+				"groups", u.GetGroups(),
+				"extra", u.GetExtra(),
+
+				"namespace", attributes.GetNamespace(),
 				"verb", attributes.GetVerb(),
-				"attributes", attributes,
+				"group", attributes.GetAPIGroup(),
+				"version", attributes.GetAPIVersion(),
+				"resource", attributes.GetResource(),
+				"subresource", attributes.GetSubresource(),
+				"name", attributes.GetName(),
+
+				"path", attributes.GetPath(),
+
 				"decision", decision,
 				"reason", reason,
 				"err", err,
