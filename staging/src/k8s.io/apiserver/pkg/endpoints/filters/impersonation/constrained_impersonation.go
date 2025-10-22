@@ -157,6 +157,8 @@ func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTr
 		// make the whole block conditional so we do not do a lot of string-building we will not use
 		if klog.V(5).Enabled() { // same log level that the RBAC authorizer uses for verbose logging
 			u := attributes.GetUser()
+			fieldSelector, _ := attributes.GetFieldSelector()
+			labelSelector, _ := attributes.GetLabelSelector()
 			klog.V(5).InfoSDepth(3, "Impersonation authorization check",
 				// we cannot just pass attributes to the logger as that will not capture the actual result of calling these methods
 				// impersonation makes heavy use of wrapping these methods to add extra logic
@@ -165,6 +167,8 @@ func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTr
 				"groups", u.GetGroups(),
 				"extra", u.GetExtra(),
 
+				"isResourceRequest", attributes.IsResourceRequest(),
+
 				"namespace", attributes.GetNamespace(),
 				"verb", attributes.GetVerb(),
 				"group", attributes.GetAPIGroup(),
@@ -172,6 +176,8 @@ func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTr
 				"resource", attributes.GetResource(),
 				"subresource", attributes.GetSubresource(),
 				"name", attributes.GetName(),
+				"fieldSelector", fieldSelector,
+				"labelSelector", labelSelector,
 
 				"path", attributes.GetPath(),
 
@@ -189,6 +195,7 @@ func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTr
 }
 
 func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
+	// share a single cache key across all modes so that we only lazily build it once
 	key := &impersonationCacheKey{wantedUser: wantedUser, attributes: attributes}
 	var firstErr error
 

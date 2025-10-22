@@ -41,7 +41,7 @@ type impersonatedUserInfo struct {
 
 // impersonationMode is a function that represents a specific impersonation mode
 // it checks if a requester is allowed to make an API request (the attributes) while impersonating a user (the wantedUser)
-// a mode may return a cached result if it supports caching (the input cache key is expected to match wantedUser+attributes)
+// a mode may return a cached result if it supports caching (using the input cache key if appropriate)
 // a nil impersonatedUserInfo is returned if the mode does not support impersonating the wantedUser
 type impersonationMode func(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error)
 
@@ -215,10 +215,15 @@ func newConstrainedImpersonationMode(a authorizer.Authorizer, mode string, filte
 	}).check
 }
 
-// TODO add comment
+// constrainedImpersonationModeState implements the secondary authorization check via impersonate-on:<mode>:<verb> to
+// determine if the requestor is authorized to perform the specific verb when impersonating the wantedUser via mode.
+// if this check succeeds, the primary authorization checks are run, see impersonationModeState for details.
+// if the mode's filter does not match the inputs, the impersonation automatically fails and returns a nil impersonatedUserInfo.
 type constrainedImpersonationModeState struct {
 	state *impersonationModeState
-	// TODO comment
+	// this outer cache covers the overall impersonation for this mode, i.e. a cache hit here short-circuits all checks
+	// skipAttributes is false, i.e. this cache depends on the request being made, not just the user being impersonated by the requestor
+	// it is expected to have a low hit ratio because the requestor is unlikely to make the same request multiple times in a short period
 	cache      *impersonationCache
 	authorizer authorizer.Authorizer
 	mode       string
@@ -250,7 +255,9 @@ func (c *constrainedImpersonationModeState) check(ctx context.Context, key *impe
 	return c.state.check(ctx, key, wantedUser, requestor)
 }
 
-// impersonationModeState TODO
+// impersonationModeState implements the primary authorization checks via the impersonate:<mode> verb for constrained
+// impersonation and the impersonate verb for legacy impersonation.  each field that is set in the wantedUser
+// results in one or more authorization checks to determine if the requestor has access to impersonate that value.
 type impersonationModeState struct {
 	authorizer                 authorizer.Authorizer
 	verb                       string
@@ -259,8 +266,9 @@ type impersonationModeState struct {
 	usernameAndGroupGV schema.GroupVersion
 	constraint         string
 
-	// TODO add more detailed comments here
-	// the inner cache covers the impersonation checks that are not dependent on the request info
+	// this inner cache covers the checks related to the specific fields set in wantedUser
+	// skipAttributes is true, i.e. this cache only depends on the user being impersonated by the requestor
+	// it is expected to have a high hit ratio because the requestor may impersonate the same user for many different requests
 	cache *impersonationCache
 }
 
