@@ -274,15 +274,18 @@ func newImpersonationModeState(a authorizer.Authorizer, verb string, isConstrain
 }
 
 func (m *impersonationModeState) check(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, requestor user.Info) (outUser *impersonatedUserInfo, outErr error) {
-	if impersonatedUser := m.cache.get(key); impersonatedUser != nil {
-		return impersonatedUser, nil
-	}
-	defer func() {
-		if outErr != nil || outUser == nil {
-			return
+	// we only use caching in constrained impersonation mode to avoid any behavioral changes with legacy impersonation
+	if m.isConstrainedImpersonation {
+		if impersonatedUser := m.cache.get(key); impersonatedUser != nil {
+			return impersonatedUser, nil
 		}
-		m.cache.set(key, outUser)
-	}()
+		defer func() {
+			if outErr != nil || outUser == nil {
+				return
+			}
+			m.cache.set(key, outUser)
+		}()
+	}
 
 	actualUser := *wantedUser
 
