@@ -39,10 +39,14 @@ type impersonatedUserInfo struct {
 	constraint string // the verb used in impersonationModeState.check that allowed this user to be impersonated
 }
 
-// impersonationMode TODO
+// impersonationMode is a function that represents a specific impersonation mode
+// it checks if a requester is allowed to make an API request (the attributes) while impersonating a user (the wantedUser)
+// a mode may return a cached result if it supports caching (the input cache key is expected to match wantedUser+attributes)
+// a nil impersonatedUserInfo is returned if the mode does not support impersonating the wantedUser
 type impersonationMode func(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error)
 
-// constrainedImpersonationModeFilter TODO
+// constrainedImpersonationModeFilter is a function that defines if a specific constrained impersonation mode
+// supports the requestor impersonating the wantedUser.  It serves as a sudo authorization check for the mode.
 type constrainedImpersonationModeFilter func(wantedUser *user.DefaultInfo, requestor user.Info) bool
 
 func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
@@ -59,6 +63,7 @@ func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
 // associated with.  this is by far the most complex impersonation mode because it caches successful
 // impersonation attempts in a way that results in a high cache hit ratio even when the same service account
 // is used across different pods running on different nodes (i.e. a node agent running as a daemonset).
+// only the username can be specified by the requester.  all other fields in user.Info are controlled by the API server.
 func associatedNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	// we wrap the authorizer so that we can override the requestor service account's extra values
 	// and the node name used in the authorization check.  this makes our authorization checks match
@@ -143,7 +148,8 @@ func (a *associatedNodeImpersonationWantedUserInfo) GetName() string {
 	return a.name
 }
 
-// arbitraryNodeImpersonationMode TODO
+// arbitraryNodeImpersonationMode implements constrained impersonation for nodes.
+// Only the username can be specified by the requester.  All other fields in user.Info are controlled by the API server.
 func arbitraryNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return newConstrainedImpersonationMode(a, "arbitrary-node",
 		func(wantedUser *user.DefaultInfo, _ user.Info) bool {
@@ -156,7 +162,8 @@ func arbitraryNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	)
 }
 
-// serviceAccountImpersonationMode TODO
+// serviceAccountImpersonationMode implements constrained impersonation for service accounts.
+// Only the username can be specified by the requester.  All other fields in user.Info are controlled by the API server.
 func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return newConstrainedImpersonationMode(a, "serviceaccount",
 		func(wantedUser *user.DefaultInfo, _ user.Info) bool {
@@ -169,7 +176,8 @@ func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode 
 	)
 }
 
-// userInfoImpersonationMode TODO
+// userInfoImpersonationMode implements constrained impersonation for non-node and non-service account users.
+// Unlike the other constrained impersonation modes, it supports impersonating all fields of user.Info.
 func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return newConstrainedImpersonationMode(a, "user-info",
 		func(wantedUser *user.DefaultInfo, _ user.Info) bool {
@@ -187,7 +195,8 @@ func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	)
 }
 
-// legacyImpersonationMode TODO
+// legacyImpersonationMode is a complete reimplementation of the original impersonation mode that has
+// existed in kube since v1.3.  The behavior is expected to be identical to the original implementation.
 func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	m := newImpersonationModeState(a, "impersonate", false)
 	return func(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
