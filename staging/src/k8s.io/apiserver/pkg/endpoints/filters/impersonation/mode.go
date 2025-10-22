@@ -39,7 +39,10 @@ type impersonatedUserInfo struct {
 	constraint string // the verb used in impersonationModeState.check that allowed this user to be impersonated
 }
 
+// impersonationMode TODO
 type impersonationMode func(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error)
+
+// constrainedImpersonationModeFilter TODO
 type constrainedImpersonationModeFilter func(wantedUser *user.DefaultInfo, requestor user.Info) bool
 
 func allImpersonationModes(a authorizer.Authorizer) []impersonationMode {
@@ -126,6 +129,7 @@ func (a *associatedNodeImpersonationRequestorUserInfo) GetExtra() map[string][]s
 		// so we drop all the extra values but keep the associated key names
 		// the authorizer can trust that we have performed the node association check correctly
 		// the audit log will still contain the full requestor extra fields
+		// different bound object ref types can result in different extra keys, and thus a different cache key
 		"authentication.kubernetes.io/associated-node-keys": sets.StringKeySet(a.Info.GetExtra()).List(),
 	}
 }
@@ -139,6 +143,7 @@ func (a *associatedNodeImpersonationWantedUserInfo) GetName() string {
 	return a.name
 }
 
+// arbitraryNodeImpersonationMode TODO
 func arbitraryNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return newConstrainedImpersonationMode(a, "arbitrary-node",
 		func(wantedUser *user.DefaultInfo, _ user.Info) bool {
@@ -151,6 +156,7 @@ func arbitraryNodeImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	)
 }
 
+// serviceAccountImpersonationMode TODO
 func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return newConstrainedImpersonationMode(a, "serviceaccount",
 		func(wantedUser *user.DefaultInfo, _ user.Info) bool {
@@ -163,6 +169,7 @@ func serviceAccountImpersonationMode(a authorizer.Authorizer) impersonationMode 
 	)
 }
 
+// userInfoImpersonationMode TODO
 func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	return newConstrainedImpersonationMode(a, "user-info",
 		func(wantedUser *user.DefaultInfo, _ user.Info) bool {
@@ -180,6 +187,7 @@ func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	)
 }
 
+// legacyImpersonationMode TODO
 func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
 	m := newImpersonationModeState(a, "impersonate", false)
 	return func(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
@@ -233,7 +241,7 @@ func (c *constrainedImpersonationModeState) check(ctx context.Context, key *impe
 	return c.state.check(ctx, key, wantedUser, requestor)
 }
 
-// TODO add comment
+// impersonationModeState TODO
 type impersonationModeState struct {
 	authorizer                 authorizer.Authorizer
 	verb                       string
@@ -352,7 +360,16 @@ func (m *impersonationModeState) authorizeUID(ctx context.Context, requestor use
 const manyAuthorizationChecksInLoop = 3
 
 func (m *impersonationModeState) authorizeGroups(ctx context.Context, requestor user.Info, groups []string) error {
+	if len(groups) == 0 {
+		return nil
+	}
+
 	groupAttributes := impersonationAttributes(requestor, m.usernameAndGroupGV, m.verb, "groups", "")
+
+	// perform extra sanity checks that would be backwards incompatible with legacy impersonation
+	if m.isConstrainedImpersonation && slices.Contains(groups, "") {
+		return responsewriters.ForbiddenStatusError(groupAttributes, "impersonating the empty string group is not allowed")
+	}
 
 	// if the requestor is trying to impersonate many groups at once, see if they are authorized to impersonate all groups
 	// we only do this in constrained impersonation mode to avoid any behavioral changes with legacy impersonation
@@ -374,7 +391,18 @@ func (m *impersonationModeState) authorizeGroups(ctx context.Context, requestor 
 }
 
 func (m *impersonationModeState) authorizeExtra(ctx context.Context, requestor user.Info, extra map[string][]string) error {
+	if len(extra) == 0 {
+		return nil
+	}
+
 	extraAttributes := impersonationAttributes(requestor, authenticationv1.SchemeGroupVersion, m.verb, "userextras", "")
+
+	// perform extra sanity checks that would be backwards incompatible with legacy impersonation
+	if m.isConstrainedImpersonation {
+		if err := validateExtra(extra); err != nil {
+			return responsewriters.ForbiddenStatusError(extraAttributes, err.Error())
+		}
+	}
 
 	// if the requestor is trying to impersonate many extras at once, see if they are authorized to impersonate all extras
 	// we only do this in constrained impersonation mode to avoid any behavioral changes with legacy impersonation
@@ -396,6 +424,21 @@ func (m *impersonationModeState) authorizeExtra(ctx context.Context, requestor u
 		}
 	}
 
+	return nil
+}
+
+func validateExtra(extra map[string][]string) error {
+	for key, values := range extra {
+		if len(key) == 0 {
+			return fmt.Errorf("impersonating the empty string key in extra is not allowed")
+		}
+		if len(values) == 0 {
+			return fmt.Errorf("impersonating empty values in extra is not allowed")
+		}
+		if slices.Contains(values, "") {
+			return fmt.Errorf("impersonating the empty string value in extra is not allowed")
+		}
+	}
 	return nil
 }
 
@@ -425,6 +468,8 @@ func impersonationAttributes(requestor user.Info, gv schema.GroupVersion, verb, 
 	}
 }
 
+// impersonateOnAttributes is a simple wrapper that updates the verb of the attributes to impersonate-on:<mode>:<verb>
+// This allows the expression of "a subject can perform this verb while using this impersonation mode"
 type impersonateOnAttributes struct {
 	mode string
 	authorizer.Attributes

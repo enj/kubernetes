@@ -104,6 +104,14 @@ func processImpersonationHeaders(headers http.Header) (*user.DefaultInfo, error)
 		}
 
 		hasUserExtra = true
+
+		if len(values) == 0 {
+			// this looks a little strange but matches the behavior of buildImpersonationRequests from legacy impersonation
+			// http1 uses textproto.Reader#ReadMIMEHeader which does seem to allow an empty slice for values
+			// http2 uses http.Header#Add which will cause the values slice to always be non-empty
+			continue
+		}
+
 		extraKey := unescapeExtraKey(strings.ToLower(headerName[len(authenticationv1.ImpersonateUserExtraHeaderPrefix):]))
 
 		if wantedUser.Extra == nil {
