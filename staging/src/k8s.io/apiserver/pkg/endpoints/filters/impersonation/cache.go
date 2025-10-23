@@ -46,7 +46,7 @@ type modeIndexCache struct {
 func (c *modeIndexCache) get(attributes authorizer.Attributes) int {
 	idx, ok := c.cache.Get(attributes.GetUser().GetName())
 	if !ok {
-		return -1
+		return -1 // TODO change to (int, bool)
 	}
 	return idx.(int)
 }
@@ -57,6 +57,8 @@ func (c *modeIndexCache) set(attributes authorizer.Attributes, idx int) {
 
 func newModeIndexCache() *modeIndexCache {
 	return &modeIndexCache{
+		// TODO add estimate for size of this cache and should we bump the size?
+		// TODO hash the name
 		cache: lru.New(1024), // hardcode a reasonably large size so we can remember many users without leaking memory
 	}
 }
@@ -167,6 +169,7 @@ func (k *impersonationCacheKey) keyWithoutAttributes() (out string, outErr error
 		return k.keyUser, k.errUser
 	}
 
+	// TODO dont be fancy with defers
 	defer func() { k.keyUser, k.errUser = out, outErr }()
 
 	// fake attributes that just contain the requestor to allow us to reuse buildKey

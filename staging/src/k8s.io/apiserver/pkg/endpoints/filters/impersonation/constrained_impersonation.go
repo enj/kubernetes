@@ -82,6 +82,7 @@ func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer,
 	})
 }
 
+// TODO doc returns user.info based on headers only
 func processImpersonationHeaders(headers http.Header) (*user.DefaultInfo, error) {
 	wantedUser := &user.DefaultInfo{}
 

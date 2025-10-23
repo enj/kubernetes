@@ -79,10 +79,12 @@ func associatedNodeImpersonationMode(a authorizer.Authorizer) impersonationMode 
 	})
 	mode := newConstrainedImpersonationMode(wrappedAuthorizer, "associated-node",
 		func(wantedUser *user.DefaultInfo, requestor user.Info) bool {
-			return onlyUsernameSet(wantedUser) && requesterAssociatedWithNode(requestor, wantedUser.Name)
+			wantedNodeName := wantedUser.Name
+			return onlyUsernameSet(wantedUser) && requesterAssociatedWithNode(requestor, wantedNodeName)
 		},
 	)
 	return func(ctx context.Context, _ *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
+		wantedNodeName := wantedUser.Name
 		// ignore the input cache key because the cache semantics for associated-node require custom logic.
 		// we know that by the time this key is used, the filter has already verified that the requestor is
 		// a service account with a node ref that matches the node it is trying to impersonate.
@@ -91,8 +93,8 @@ func associatedNodeImpersonationMode(a authorizer.Authorizer) impersonationMode 
 		// this results in the cache key being the same for the same service account across all nodes.
 		// this is only safe because of the aforementioned filter running before the cache lookup happens.
 		key := &impersonationCacheKey{wantedUser: &user.DefaultInfo{Name: "system:node:*"}, attributes: &associatedNodeImpersonationAttributes{Attributes: attributes}}
-		impersonatedUser, err := mode(ctx, key, wantedUser, attributes)
-		if err != nil || impersonatedUser == nil {
+		impersonatedNodeWithMaybeIncorrectUsername, err := mode(ctx, key, wantedUser, attributes)
+		if err != nil || impersonatedNodeWithMaybeIncorrectUsername == nil {
 			return nil, err
 		}
 		// at this point, we know that we have a successful associated-node impersonation.
@@ -100,10 +102,10 @@ func associatedNodeImpersonationMode(a authorizer.Authorizer) impersonationMode 
 		// here so that the username matches the node associated with the requestor service account.
 		return &impersonatedUserInfo{
 			user: &associatedNodeImpersonationWantedUserInfo{
-				Info: impersonatedUser.user,
-				name: wantedUser.Name,
+				Info: impersonatedNodeWithMaybeIncorrectUsername.user,
+				name: wantedNodeName,
 			},
-			constraint: impersonatedUser.constraint,
+			constraint: impersonatedNodeWithMaybeIncorrectUsername.constraint,
 		}, nil
 	}
 }
@@ -238,6 +240,7 @@ func (c *constrainedImpersonationModeState) check(ctx context.Context, key *impe
 		return nil, nil
 	}
 
+	// TODO do not use defer
 	if impersonatedUser := c.cache.get(key); impersonatedUser != nil {
 		return impersonatedUser, nil
 	}
@@ -377,7 +380,7 @@ func (m *impersonationModeState) authorizeUID(ctx context.Context, requestor use
 
 // manyAuthorizationChecksInLoop is an arbitrary value used in constrained impersonation modes to decide if they
 // should try to perform a single wildcard authorization check instead of making many individual checks in a loop.
-const manyAuthorizationChecksInLoop = 3
+const manyAuthorizationChecksInLoop = 4
 
 func (m *impersonationModeState) authorizeGroups(ctx context.Context, requestor user.Info, groups []string) error {
 	if len(groups) == 0 {
@@ -387,6 +390,7 @@ func (m *impersonationModeState) authorizeGroups(ctx context.Context, requestor 
 	groupAttributes := impersonationAttributes(requestor, m.usernameAndGroupGV, m.verb, "groups", "")
 
 	// perform extra sanity checks that would be backwards incompatible with legacy impersonation
+	// TODO also disallow system:masters in isConstrainedImpersonation
 	if m.isConstrainedImpersonation && slices.Contains(groups, "") {
 		return responsewriters.ForbiddenStatusError(groupAttributes, "impersonating the empty string group is not allowed")
 	}
