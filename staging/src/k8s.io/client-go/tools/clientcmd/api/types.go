@@ -283,6 +283,21 @@ type ExecConfig struct {
 	// read user instructions might set this to "used by my-program to read user instructions".
 	// +k8s:conversion-gen=false
 	StdinUnavailableMessage string `json:"-"`
+
+	PermissionProvider ExecPermissionProvider `json:"-"`
+}
+
+type AllowlistItem struct {
+	Name string `json:"-"`
+}
+
+type Allowlist struct {
+	List []AllowlistItem `json:"-"`
+}
+
+type ExecPermissionProvider struct {
+	Policy    string          `json:"-"`
+	Allowlist []AllowlistItem `json:"-"`
 }
 
 var _ fmt.Stringer = new(ExecConfig)

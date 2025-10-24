@@ -59,6 +59,15 @@ It looks like you are trying to use a client-go credential plugin that is not in
 To learn more about this feature, consult the documentation available at:
       https://kubernetes.io/docs/reference/access-authn-authz/authentication/#client-go-credential-plugins`
 
+type PluginPolicy string
+
+const (
+	pluginPolicyUndefined PluginPolicy = ""
+	pluginPolicyAllowAll  PluginPolicy = "AllowAll"
+	pluginPolicyDenyAll   PluginPolicy = "DenyAll"
+	pluginPolicyAllowlist PluginPolicy = "Allowlist"
+)
+
 var scheme = runtime.NewScheme()
 var codecs = serializer.NewCodecFactory(scheme)
 
@@ -75,6 +84,13 @@ var (
 		clientauthenticationv1beta1.SchemeGroupVersion.String(): clientauthenticationv1beta1.SchemeGroupVersion,
 		clientauthenticationv1.SchemeGroupVersion.String():      clientauthenticationv1.SchemeGroupVersion,
 	}
+
+	errPolicyDenyAll              = errors.New("plugin policy set to `DenyAll`")
+	errAllowlistEntryNoMatch      = errors.New("allowlist entry is not a match")
+	errAllowlistEntryPathNotFound = errors.New("path of allowlist entry not found")
+	errAllowlistEntryIsEmpty      = errors.New("allowlist entry is empty")
+	errCredPluginNotFound         = errors.New("could not resolve path of exec plugin command")
+	errIllegalPluginPolicy        = errors.New("illegal plugin policy")
 )
 
 func newCache() *cache {
@@ -184,6 +200,8 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 		cluster:            cluster,
 		provideClusterInfo: config.ProvideClusterInfo,
 
+		execPermissionProvider: &config.PermissionProvider,
+
 		installHint: config.InstallHint,
 		sometimes: &sometimes{
 			threshold: 10,
@@ -250,6 +268,9 @@ type Authenticator struct {
 	cluster            *clientauthentication.Cluster
 	provideClusterInfo bool
 
+	// Set by the allowlist config
+	execPermissionProvider *api.ExecPermissionProvider
+
 	// Used to avoid log spew by rate limiting install hint printing. We didn't do
 	// this by interval based rate limiting alone since that way may have prevented
 	// the install hint from showing up for kubectl users.
@@ -279,6 +300,51 @@ type Authenticator struct {
 	// dial is used for clients which do not specify a custom dialer
 	// it is comparable to support TLS config caching
 	dial *transport.DialHolder
+}
+
+// `Allows` determines whether or not the executable specified in its argument
+// may run according to the credential plugin policy. If the plugin is allowed,
+// `nil` is returned. If the plugin is not allowed, an error must be returned
+// explaining why.
+func (a *Authenticator) Allows(cmd string) error {
+	if a.execPermissionProvider == nil {
+		return nil
+	}
+
+	pp := a.execPermissionProvider
+	switch PluginPolicy(pp.Policy) {
+	// Required for backward compatibility
+	case pluginPolicyUndefined:
+		return nil
+	case pluginPolicyAllowAll:
+		return nil
+	case pluginPolicyDenyAll:
+		return fmt.Errorf("plugin %q not allowed: %w", cmd, errPolicyDenyAll)
+	case pluginPolicyAllowlist:
+		return a.checkAllowlist(cmd)
+	default:
+		return fmt.Errorf("%w: %s", errIllegalPluginPolicy, pp.Policy)
+	}
+
+}
+
+func (a *Authenticator) checkAllowlist(cmd string) error {
+	pluginAbsPath, err := exec.LookPath(cmd)
+	if err != nil {
+		return fmt.Errorf("%w: %q", errCredPluginNotFound, cmd)
+	}
+
+	errs := make([]error, 0, len(a.execPermissionProvider.Allowlist))
+	for _, entry := range a.execPermissionProvider.Allowlist {
+		err := itemGreenlights(&entry, pluginAbsPath)
+		if err == nil {
+			return nil
+		}
+
+		errs = append(errs, err)
+	}
+
+	return fmt.Errorf("%q is not permitted by the credential plugin allowlist\n%w", pluginAbsPath, errors.Join(errs...))
 }
 
 type credentials struct {
@@ -441,6 +507,10 @@ func (a *Authenticator) refreshCredsLocked() error {
 		cmd.Stdin = a.stdin
 	}
 
+	if err := a.Allows(a.cmd); err != nil {
+		return err
+	}
+
 	err = cmd.Run()
 	incrementCallsMetric(err)
 	if err != nil {
@@ -544,4 +614,29 @@ func (a *Authenticator) wrapCmdRunErrorLocked(err error) error {
 	default:
 		return fmt.Errorf("exec: %v", err)
 	}
+}
+
+var emptyAllowlistItem = api.AllowlistItem{}
+
+// alEntry MUST be non-nil
+func itemGreenlights(alEntry *api.AllowlistItem, pluginAbsPath string) error {
+	// if no fields are specified, this is a user error. To avoid fail-open
+	// behavior, an empty entry must not allow anything.
+	if *alEntry == emptyAllowlistItem {
+		return errAllowlistEntryIsEmpty
+	}
+
+	if entryName := alEntry.Name; len(entryName) > 0 {
+		entryAbsPath, err := exec.LookPath(entryName)
+		if errors.Is(err, exec.ErrNotFound) {
+			return fmt.Errorf("%w: %s", errAllowlistEntryPathNotFound, entryName)
+		}
+
+		if pluginAbsPath != entryAbsPath {
+			return fmt.Errorf("%w: %s", errAllowlistEntryNoMatch, entryAbsPath)
+		}
+	}
+
+	return nil
+
 }
