@@ -43,43 +43,54 @@ import (
 // expression of impersonation access.  For example, a service account may be authorized to impersonate the
 // node that it is associated with but only when listing pods.  See the linked KEP for further details.
 func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer, s runtime.NegotiatedSerializer) http.Handler {
-	tracker := newImpersonationModesTracker(a)
-	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		ctx := req.Context()
+	return &constrainedImpersonationHandler{
+		handler: handler,
+		tracker: newImpersonationModesTracker(a),
+		s:       s,
+	}
+}
 
-		wantedUser, err := processImpersonationHeaders(req.Header)
-		if err != nil {
-			responsewriters.InternalError(w, req, err)
-			return
-		}
-		if wantedUser == nil { // impersonation was not attempted so skip to the next handler
-			handler.ServeHTTP(w, req)
-			return
-		}
-		attributes, err := filters.GetAuthorizerAttributes(ctx)
-		if err != nil {
-			responsewriters.InternalError(w, req, err)
-			return
-		}
-		requestor := attributes.GetUser()
-		if requestor == nil {
-			responsewriters.InternalError(w, req, errors.New("no User found in the context"))
-			return
-		}
+type constrainedImpersonationHandler struct {
+	handler http.Handler
+	tracker *impersonationModesTracker
+	s       runtime.NegotiatedSerializer
+}
 
-		impersonatedUser, err := tracker.getImpersonatedUser(ctx, wantedUser, attributes)
-		if err != nil {
-			klog.V(4).InfoS("Forbidden", "URI", req.RequestURI, "err", err)
-			responsewriters.RespondWithError(attributes, w, req, err, s)
-			return
-		}
+func (c *constrainedImpersonationHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
 
-		req = req.WithContext(request.WithUser(ctx, impersonatedUser.user))
-		httplog.LogOf(req, w).Addf("%v is impersonating %v", userString(requestor), userString(impersonatedUser.user))
-		audit.LogImpersonatedUser(ctx, impersonatedUser.user, impersonatedUser.constraint)
+	wantedUser, err := processImpersonationHeaders(req.Header)
+	if err != nil {
+		responsewriters.InternalError(w, req, err)
+		return
+	}
+	if wantedUser == nil { // impersonation was not attempted so skip to the next handler
+		c.handler.ServeHTTP(w, req)
+		return
+	}
+	attributes, err := filters.GetAuthorizerAttributes(ctx)
+	if err != nil {
+		responsewriters.InternalError(w, req, err)
+		return
+	}
+	requestor := attributes.GetUser()
+	if requestor == nil {
+		responsewriters.InternalError(w, req, errors.New("no User found in the context"))
+		return
+	}
 
-		handler.ServeHTTP(w, req)
-	})
+	impersonatedUser, err := c.tracker.getImpersonatedUser(ctx, wantedUser, attributes)
+	if err != nil {
+		klog.V(4).InfoS("Forbidden", "URI", req.RequestURI, "err", err)
+		responsewriters.RespondWithError(attributes, w, req, err, c.s)
+		return
+	}
+
+	req = req.WithContext(request.WithUser(ctx, impersonatedUser.user))
+	httplog.LogOf(req, w).Addf("%v is impersonating %v", userString(requestor), userString(impersonatedUser.user))
+	audit.LogImpersonatedUser(ctx, impersonatedUser.user, impersonatedUser.constraint)
+
+	c.handler.ServeHTTP(w, req)
 }
 
 // TODO doc returns user.info based on headers only
@@ -204,7 +215,7 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 	// we attempt all modes unless we short-circuit due to a successful impersonation
 	modeIdx := t.idxCache.get(attributes)
 	if modeIdx != -1 {
-		impersonatedUser, err := t.modes[modeIdx](ctx, key, wantedUser, attributes)
+		impersonatedUser, err := t.modes[modeIdx].check(ctx, key, wantedUser, attributes)
 		if err == nil && impersonatedUser != nil {
 			return impersonatedUser, nil
 		}
@@ -216,7 +227,7 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 			continue // skip already attempted mode
 		}
 
-		impersonatedUser, err := mode(ctx, key, wantedUser, attributes)
+		impersonatedUser, err := mode.check(ctx, key, wantedUser, attributes)
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err

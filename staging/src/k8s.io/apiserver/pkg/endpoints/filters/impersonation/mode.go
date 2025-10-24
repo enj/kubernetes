@@ -43,7 +43,9 @@ type impersonatedUserInfo struct {
 // it checks if a requester is allowed to make an API request (the attributes) while impersonating a user (the wantedUser)
 // a mode may return a cached result if it supports caching (using the input cache key if appropriate)
 // a nil impersonatedUserInfo is returned if the mode does not support impersonating the wantedUser
-type impersonationMode func(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error)
+type impersonationMode interface {
+	check(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error)
+}
 
 // constrainedImpersonationModeFilter is a function that defines if a specific constrained impersonation mode
 // supports the requestor impersonating the wantedUser.  It serves as a sudo authorization check for the mode.
@@ -83,31 +85,37 @@ func associatedNodeImpersonationMode(a authorizer.Authorizer) impersonationMode 
 			return onlyUsernameSet(wantedUser) && requesterAssociatedWithNode(requestor, wantedNodeName)
 		},
 	)
-	return func(ctx context.Context, _ *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
-		wantedNodeName := wantedUser.Name
-		// ignore the input cache key because the cache semantics for associated-node require custom logic.
-		// we know that by the time this key is used, the filter has already verified that the requestor is
-		// a service account with a node ref that matches the node it is trying to impersonate.
-		// the actual node being impersonated is not relevant to the cache key, so we just use a static wantedUser.
-		// we wrap the attributes so that we can drop the requestor service account's extra values.
-		// this results in the cache key being the same for the same service account across all nodes.
-		// this is only safe because of the aforementioned filter running before the cache lookup happens.
-		key := &impersonationCacheKey{wantedUser: &user.DefaultInfo{Name: "system:node:*"}, attributes: &associatedNodeImpersonationAttributes{Attributes: attributes}}
-		impersonatedNodeWithMaybeIncorrectUsername, err := mode(ctx, key, wantedUser, attributes)
-		if err != nil || impersonatedNodeWithMaybeIncorrectUsername == nil {
-			return nil, err
-		}
-		// at this point, we know that we have a successful associated-node impersonation.
-		// the value could have come from the cache and thus could be for any node, so we wrap the result
-		// here so that the username matches the node associated with the requestor service account.
-		return &impersonatedUserInfo{
-			user: &associatedNodeImpersonationWantedUserInfo{
-				Info: impersonatedNodeWithMaybeIncorrectUsername.user,
-				name: wantedNodeName,
-			},
-			constraint: impersonatedNodeWithMaybeIncorrectUsername.constraint,
-		}, nil
+	return &associatedNodeImpersonationCheck{mode: mode}
+}
+
+type associatedNodeImpersonationCheck struct {
+	mode impersonationMode
+}
+
+func (a *associatedNodeImpersonationCheck) check(ctx context.Context, _ *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
+	wantedNodeName := wantedUser.Name
+	// ignore the input cache key because the cache semantics for associated-node require custom logic.
+	// we know that by the time this key is used, the filter has already verified that the requestor is
+	// a service account with a node ref that matches the node it is trying to impersonate.
+	// the actual node being impersonated is not relevant to the cache key, so we just use a static wantedUser.
+	// we wrap the attributes so that we can drop the requestor service account's extra values.
+	// this results in the cache key being the same for the same service account across all nodes.
+	// this is only safe because of the aforementioned filter running before the cache lookup happens.
+	key := &impersonationCacheKey{wantedUser: &user.DefaultInfo{Name: "system:node:*"}, attributes: &associatedNodeImpersonationAttributes{Attributes: attributes}}
+	impersonatedNodeWithMaybeIncorrectUsername, err := a.mode.check(ctx, key, wantedUser, attributes)
+	if err != nil || impersonatedNodeWithMaybeIncorrectUsername == nil {
+		return nil, err
 	}
+	// at this point, we know that we have a successful associated-node impersonation.
+	// the value could have come from the cache and thus could be for any node, so we wrap the result
+	// here so that the username matches the node associated with the requestor service account.
+	return &impersonatedUserInfo{
+		user: &associatedNodeImpersonationWantedUserInfo{
+			Info: impersonatedNodeWithMaybeIncorrectUsername.user,
+			name: wantedNodeName,
+		},
+		constraint: impersonatedNodeWithMaybeIncorrectUsername.constraint,
+	}, nil
 }
 
 type associatedNodeImpersonationAttributes struct {
@@ -200,21 +208,26 @@ func userInfoImpersonationMode(a authorizer.Authorizer) impersonationMode {
 // legacyImpersonationMode is a complete reimplementation of the original impersonation mode that has
 // existed in kube since v1.3.  The behavior is expected to be identical to the original implementation.
 func legacyImpersonationMode(a authorizer.Authorizer) impersonationMode {
-	m := newImpersonationModeState(a, "impersonate", false)
-	return func(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
-		requestor := attributes.GetUser()
-		return m.check(ctx, key, wantedUser, requestor)
-	}
+	return &legacyImpersonationCheck{m: newImpersonationModeState(a, "impersonate", false)}
+}
+
+type legacyImpersonationCheck struct {
+	m *impersonationModeState
+}
+
+func (l *legacyImpersonationCheck) check(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
+	requestor := attributes.GetUser()
+	return l.m.check(ctx, key, wantedUser, requestor)
 }
 
 func newConstrainedImpersonationMode(a authorizer.Authorizer, mode string, filter constrainedImpersonationModeFilter) impersonationMode {
-	return (&constrainedImpersonationModeState{
+	return &constrainedImpersonationModeState{
 		state:      newImpersonationModeState(a, "impersonate:"+mode, true),
 		cache:      newImpersonationCache(false),
 		authorizer: a,
 		mode:       mode,
 		filter:     filter,
-	}).check
+	}
 }
 
 // constrainedImpersonationModeState implements the secondary authorization check via impersonate-on:<mode>:<verb> to
