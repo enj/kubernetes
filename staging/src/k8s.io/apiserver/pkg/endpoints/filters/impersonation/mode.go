@@ -332,7 +332,7 @@ func (m *impersonationModeState) check(ctx context.Context, key *impersonationCa
 
 	if actualUser.Name == user.Anonymous {
 		ensureGroup(&actualUser, user.AllUnauthenticated)
-	} else {
+	} else if !slices.Contains(actualUser.Groups, user.AllUnauthenticated) {
 		ensureGroup(&actualUser, user.AllAuthenticated)
 	}
 
