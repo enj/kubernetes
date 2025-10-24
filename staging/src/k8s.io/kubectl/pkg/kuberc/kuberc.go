@@ -29,7 +29,9 @@ import (
 	"github.com/spf13/pflag"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/util/homedir"
 	"k8s.io/kubectl/pkg/config"
 )
@@ -57,16 +59,34 @@ type PreferencesHandler interface {
 // Preferences stores the kuberc file coming either from environment variable
 // or file from set in flag or the default kuberc path.
 type Preferences struct {
-	getPreferencesFunc func(kuberc string, errOut io.Writer) (*config.Preference, error)
-
-	aliases map[string]struct{}
+	getPreferencesFunc func(kuberc string, errOut io.Writer) (*config.Preference, error) // DefaultGetPreferences
+	aliases            map[string]struct{}
+	permissionProvider *clientcmdapi.ExecPermissionProvider
 }
 
 // NewPreferences returns initialized Prefrences object.
 func NewPreferences() PreferencesHandler {
-	return &Preferences{
+	p := &Preferences{
 		getPreferencesFunc: DefaultGetPreferences,
 		aliases:            make(map[string]struct{}),
+		permissionProvider: &clientcmdapi.ExecPermissionProvider{},
+	}
+
+	return p
+}
+
+func PermissionWrapper(p PreferencesHandler) func(*rest.Config) *rest.Config {
+	pref, ok := p.(*Preferences)
+	if !ok || pref.permissionProvider == nil {
+		return nil
+	}
+
+	return func(c *rest.Config) *rest.Config {
+		if c.ExecProvider != nil {
+			c.ExecProvider.PermissionProvider = *pref.permissionProvider
+		}
+
+		return c
 	}
 }
 
@@ -99,6 +119,10 @@ func (p *Preferences) Apply(rootCmd *cobra.Command, args []string, errOut io.Wri
 		return args, fmt.Errorf("kuberc error %w", err)
 	}
 
+	if p.permissionProvider != nil {
+		p.applyPermProvider(kuberc)
+	}
+
 	if kuberc == nil {
 		return args, nil
 	}
@@ -117,6 +141,22 @@ func (p *Preferences) Apply(rootCmd *cobra.Command, args []string, errOut io.Wri
 		return args, err
 	}
 	return args, nil
+}
+
+func (p *Preferences) applyPermProvider(kuberc *config.Preference) {
+	p.permissionProvider.Policy = kuberc.CredPluginPolicy
+
+	rcAllowlist := kuberc.CredPluginAllowlist
+	if rcAllowlist != nil {
+		allowlist := make([]clientcmdapi.AllowlistItem, 0, len(*rcAllowlist))
+		for _, item := range *kuberc.CredPluginAllowlist {
+			allowlist = append(allowlist, clientcmdapi.AllowlistItem{
+				Name: item.Name,
+			})
+		}
+
+		p.permissionProvider.Allowlist = allowlist
+	}
 }
 
 // applyOverrides finds the command and sets the defaulted flag values in kuberc.
