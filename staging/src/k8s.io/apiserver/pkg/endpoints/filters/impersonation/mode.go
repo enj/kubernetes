@@ -388,7 +388,7 @@ func (m *impersonationModeState) authorizeUID(ctx context.Context, requestor use
 }
 
 // manyAuthorizationChecksInLoop is an arbitrary value used in constrained impersonation modes to decide if they
-// should try to perform a single wildcard authorization check instead of making many individual checks in a loop.
+// should try to perform a single wildcard authorization check before making many individual checks in a loop.
 const manyAuthorizationChecksInLoop = 4
 
 func (m *impersonationModeState) authorizeGroups(ctx context.Context, requestor user.Info, groups []string) error {
@@ -399,9 +399,14 @@ func (m *impersonationModeState) authorizeGroups(ctx context.Context, requestor 
 	groupAttributes := impersonationAttributes(requestor, m.usernameAndGroupGV, m.verb, "groups", "")
 
 	// perform extra sanity checks that would be backwards incompatible with legacy impersonation
-	// TODO also disallow system:masters in isConstrainedImpersonation
-	if m.isConstrainedImpersonation && slices.Contains(groups, "") {
-		return responsewriters.ForbiddenStatusError(groupAttributes, "impersonating the empty string group is not allowed")
+	if m.isConstrainedImpersonation {
+		if slices.Contains(groups, "") {
+			return responsewriters.ForbiddenStatusError(groupAttributes, "impersonating the empty string group is not allowed")
+		}
+		if slices.Contains(groups, user.SystemPrivilegedGroup) {
+			groupAttributes.Name = user.SystemPrivilegedGroup
+			return responsewriters.ForbiddenStatusError(groupAttributes, "impersonating the system:masters group is not allowed")
+		}
 	}
 
 	// if the requestor is trying to impersonate many groups at once, see if they are authorized to impersonate all groups
