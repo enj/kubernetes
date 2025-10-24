@@ -39,7 +39,7 @@ type impersonatedUserInfo struct {
 	constraint string // the verb used in impersonationModeState.check that allowed this user to be impersonated
 }
 
-// impersonationMode is a function that represents a specific impersonation mode
+// impersonationMode is a type that represents a specific impersonation mode
 // it checks if a requester is allowed to make an API request (the attributes) while impersonating a user (the wantedUser)
 // a mode may return a cached result if it supports caching (using the input cache key if appropriate)
 // a nil impersonatedUserInfo is returned if the mode does not support impersonating the wantedUser

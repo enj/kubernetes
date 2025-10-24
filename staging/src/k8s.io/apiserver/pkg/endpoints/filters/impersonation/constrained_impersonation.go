@@ -93,7 +93,9 @@ func (c *constrainedImpersonationHandler) ServeHTTP(w http.ResponseWriter, req *
 	c.handler.ServeHTTP(w, req)
 }
 
-// TODO doc returns user.info based on headers only
+// processImpersonationHeaders converts the impersonation headers in the given input headers
+// into the equivalent user.DefaultInfo.  The resulting user is a raw representation of the
+// input headers, that is, no defaulting or other mutations have been applied to it.
 func processImpersonationHeaders(headers http.Header) (*user.DefaultInfo, error) {
 	wantedUser := &user.DefaultInfo{}
 
@@ -141,10 +143,10 @@ func processImpersonationHeaders(headers http.Header) (*user.DefaultInfo, error)
 	}
 
 	// clear all the impersonation headers from the request to prevent downstream layers from knowing that impersonation was used
-	// we do not want anything outside of file trying to behave differently based on if impersonation was used
+	// we do not want anything outside of this package trying to behave differently based on if impersonation was used
 	headers.Del(authenticationv1.ImpersonateUserHeader)
-	headers.Del(authenticationv1.ImpersonateGroupHeader)
 	headers.Del(authenticationv1.ImpersonateUIDHeader)
+	headers.Del(authenticationv1.ImpersonateGroupHeader)
 	for headerName := range headers {
 		if strings.HasPrefix(headerName, authenticationv1.ImpersonateUserExtraHeaderPrefix) {
 			headers.Del(headerName)
