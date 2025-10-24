@@ -43,23 +43,32 @@ type modeIndexCache struct {
 	cache *lru.Cache
 }
 
-func (c *modeIndexCache) get(attributes authorizer.Attributes) int {
-	idx, ok := c.cache.Get(attributes.GetUser().GetName())
+func (c *modeIndexCache) get(attributes authorizer.Attributes) (int, bool) {
+	idx, ok := c.cache.Get(modeIndexCacheKey(attributes))
 	if !ok {
-		return -1 // TODO change to (int, bool)
+		return 0, false
 	}
-	return idx.(int)
+	return idx.(int), true
 }
 
 func (c *modeIndexCache) set(attributes authorizer.Attributes, idx int) {
-	c.cache.Add(attributes.GetUser().GetName(), idx)
+	c.cache.Add(modeIndexCacheKey(attributes), idx)
+}
+
+func modeIndexCacheKey(attributes authorizer.Attributes) string {
+	key := attributes.GetUser().GetName()
+	// hash the name so our cache size is predicable regardless of the size of usernames
+	// collisions do not matter for this logic as it simply changes the ordering of the modes used
+	hash := sha256.Sum256([]byte(key))
+	return fmt.Sprintf("%x", hash[:])
 }
 
 func newModeIndexCache() *modeIndexCache {
 	return &modeIndexCache{
-		// TODO add estimate for size of this cache and should we bump the size?
-		// TODO hash the name
-		cache: lru.New(1024), // hardcode a reasonably large size so we can remember many users without leaking memory
+		// each entry is roughly ~72 bytes (64 bytes for the hashed key, 8 bytes for value)
+		// thus at even 10k entries, we should use about ~1 MB memory
+		// this hardcoded size allows us to remember many users without leaking memory
+		cache: lru.New(10_000),
 	}
 }
 

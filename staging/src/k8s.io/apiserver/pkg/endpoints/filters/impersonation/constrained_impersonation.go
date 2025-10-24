@@ -213,8 +213,8 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 
 	// try the last successful mode first to reduce the amortized cost of impersonation
 	// we attempt all modes unless we short-circuit due to a successful impersonation
-	modeIdx := t.idxCache.get(attributes)
-	if modeIdx != -1 {
+	modeIdx, modeIdxOk := t.idxCache.get(attributes)
+	if modeIdxOk {
 		impersonatedUser, err := t.modes[modeIdx].check(ctx, key, wantedUser, attributes)
 		if err == nil && impersonatedUser != nil {
 			return impersonatedUser, nil
@@ -223,7 +223,7 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 	}
 
 	for i, mode := range t.modes {
-		if i == modeIdx {
+		if modeIdxOk && i == modeIdx {
 			continue // skip already attempted mode
 		}
 
