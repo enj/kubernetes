@@ -245,7 +245,7 @@ type constrainedImpersonationModeState struct {
 	filter     constrainedImpersonationModeFilter
 }
 
-func (c *constrainedImpersonationModeState) check(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (outUser *impersonatedUserInfo, outErr error) {
+func (c *constrainedImpersonationModeState) check(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
 	requestor := attributes.GetUser()
 	// we must call the filter before doing anything because this serves as a sudo authorization check to say "does this mode even apply?"
 	// also the cache key is not always a direct match with wantedUser+attributes, so again, we must call the filter first
@@ -253,22 +253,20 @@ func (c *constrainedImpersonationModeState) check(ctx context.Context, key *impe
 		return nil, nil
 	}
 
-	// TODO do not use defer
 	if impersonatedUser := c.cache.get(key); impersonatedUser != nil {
 		return impersonatedUser, nil
 	}
-	defer func() {
-		if outErr != nil || outUser == nil {
-			return
-		}
-		c.cache.set(key, outUser)
-	}()
 
 	if err := checkAuthorization(ctx, c.authorizer, &impersonateOnAttributes{mode: c.mode, Attributes: attributes}); err != nil {
 		return nil, err
 	}
 
-	return c.state.check(ctx, key, wantedUser, requestor)
+	impersonatedUser, err := c.state.check(ctx, key, wantedUser, requestor)
+	if err != nil || impersonatedUser == nil {
+		return nil, err
+	}
+	c.cache.set(key, impersonatedUser)
+	return impersonatedUser, nil
 }
 
 // impersonationModeState implements the primary authorization checks via the impersonate:<mode> verb for constrained
@@ -306,18 +304,12 @@ func newImpersonationModeState(a authorizer.Authorizer, verb string, isConstrain
 	}
 }
 
-func (m *impersonationModeState) check(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, requestor user.Info) (outUser *impersonatedUserInfo, outErr error) {
+func (m *impersonationModeState) check(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, requestor user.Info) (*impersonatedUserInfo, error) {
 	// we only use caching in constrained impersonation mode to avoid any behavioral changes with legacy impersonation
 	if m.isConstrainedImpersonation {
 		if impersonatedUser := m.cache.get(key); impersonatedUser != nil {
 			return impersonatedUser, nil
 		}
-		defer func() {
-			if outErr != nil || outUser == nil {
-				return
-			}
-			m.cache.set(key, outUser)
-		}()
 	}
 
 	actualUser := *wantedUser
@@ -344,7 +336,11 @@ func (m *impersonationModeState) check(ctx context.Context, key *impersonationCa
 		ensureGroup(&actualUser, user.AllAuthenticated)
 	}
 
-	return &impersonatedUserInfo{user: &actualUser, constraint: m.constraint}, nil
+	impersonatedUser := &impersonatedUserInfo{user: &actualUser, constraint: m.constraint}
+	if m.isConstrainedImpersonation {
+		m.cache.set(key, impersonatedUser)
+	}
+	return impersonatedUser, nil
 }
 
 func (m *impersonationModeState) authorizeUsername(ctx context.Context, requestor user.Info, username string, wantedUserGroups []string, actualUser *user.DefaultInfo) error {

@@ -154,29 +154,26 @@ func (k *impersonationCacheKey) key(skipAttributes bool) (string, error) {
 	return k.keyWithAttributes()
 }
 
-func (k *impersonationCacheKey) keyWithAttributes() (out string, outErr error) {
+func (k *impersonationCacheKey) keyWithAttributes() (string, error) {
 	if len(k.keyAttr) != 0 || k.errAttr != nil {
 		return k.keyAttr, k.errAttr
 	}
 
-	defer func() { k.keyAttr, k.errAttr = out, outErr }()
-
-	return buildKey(k.wantedUser, k.attributes)
+	k.keyAttr, k.errAttr = buildKey(k.wantedUser, k.attributes)
+	return k.keyAttr, k.errAttr
 }
 
-func (k *impersonationCacheKey) keyWithoutAttributes() (out string, outErr error) {
+func (k *impersonationCacheKey) keyWithoutAttributes() (string, error) {
 	if len(k.keyUser) != 0 || k.errUser != nil {
 		return k.keyUser, k.errUser
 	}
-
-	// TODO dont be fancy with defers
-	defer func() { k.keyUser, k.errUser = out, outErr }()
 
 	// fake attributes that just contain the requestor to allow us to reuse buildKey
 	requestor := k.attributes.GetUser()
 	attributes := authorizer.AttributesRecord{User: requestor}
 
-	return buildKey(k.wantedUser, attributes)
+	k.keyUser, k.errUser = buildKey(k.wantedUser, attributes)
+	return k.keyUser, k.errUser
 }
 
 // buildKey creates a hashed string key based on the inputs that is namespaced to the requestor.
