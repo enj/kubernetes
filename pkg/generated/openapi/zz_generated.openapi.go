@@ -1433,12 +1433,10 @@ func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenA
 		configv1.UtilizationShapePoint{}.OpenAPIModelName():                                                             schema_k8sio_kube_scheduler_config_v1_UtilizationShapePoint(ref),
 		configv1.VolumeBindingArgs{}.OpenAPIModelName():                                                                 schema_k8sio_kube_scheduler_config_v1_VolumeBindingArgs(ref),
 		pkgconfigv1alpha1.AliasOverride{}.OpenAPIModelName():                                                            schema_kubectl_pkg_config_v1alpha1_AliasOverride(ref),
-		pkgconfigv1alpha1.AllowlistItem{}.OpenAPIModelName():                                                            schema_kubectl_pkg_config_v1alpha1_AllowlistItem(ref),
 		pkgconfigv1alpha1.CommandDefaults{}.OpenAPIModelName():                                                          schema_kubectl_pkg_config_v1alpha1_CommandDefaults(ref),
 		pkgconfigv1alpha1.CommandOptionDefault{}.OpenAPIModelName():                                                     schema_kubectl_pkg_config_v1alpha1_CommandOptionDefault(ref),
 		pkgconfigv1alpha1.Preference{}.OpenAPIModelName():                                                               schema_kubectl_pkg_config_v1alpha1_Preference(ref),
 		pkgconfigv1beta1.AliasOverride{}.OpenAPIModelName():                                                             schema_kubectl_pkg_config_v1beta1_AliasOverride(ref),
-		pkgconfigv1beta1.AllowlistItem{}.OpenAPIModelName():                                                             schema_kubectl_pkg_config_v1beta1_AllowlistItem(ref),
 		pkgconfigv1beta1.CommandDefaults{}.OpenAPIModelName():                                                           schema_kubectl_pkg_config_v1beta1_CommandDefaults(ref),
 		pkgconfigv1beta1.CommandOptionDefault{}.OpenAPIModelName():                                                      schema_kubectl_pkg_config_v1beta1_CommandOptionDefault(ref),
 		pkgconfigv1beta1.Preference{}.OpenAPIModelName():                                                                schema_kubectl_pkg_config_v1beta1_Preference(ref),
@@ -69671,27 +69669,6 @@ func schema_kubectl_pkg_config_v1alpha1_AliasOverride(ref common.ReferenceCallba
 	}
 }
 
-func schema_kubectl_pkg_config_v1alpha1_AllowlistItem(ref common.ReferenceCallback) common.OpenAPIDefinition {
-	return common.OpenAPIDefinition{
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "AllowlistItem stores the criteria specified by an entry in the credential plugin allowlist. In order for a binary plugin to be permitted, it must meet all criteria specified within an AllowlistItem.",
-				Type:        []string{"object"},
-				Properties: map[string]spec.Schema{
-					"name": {
-						SchemaProps: spec.SchemaProps{
-							Default: "",
-							Type:    []string{"string"},
-							Format:  "",
-						},
-					},
-				},
-				Required: []string{"name"},
-			},
-		},
-	}
-}
-
 func schema_kubectl_pkg_config_v1alpha1_CommandDefaults(ref common.ReferenceCallback) common.OpenAPIDefinition {
 	return common.OpenAPIDefinition{
 		Schema: spec.Schema{
@@ -69826,19 +69803,20 @@ func schema_kubectl_pkg_config_v1alpha1_Preference(ref common.ReferenceCallback)
 					},
 					"credPluginPolicy": {
 						SchemaProps: spec.SchemaProps{
-							Description: "credPluginAllowlist (the credential plugin allowlist) specifies the conditions under which client-go credential plugins may be executed. If this field is explicitly given the empty list value (`[]`), the user can disallow all plugins. If this field is left unspecified by the user, it will default to `nil`. When the allowlist is `nil`, all binaries will be permited. In order for a credential plugin binary to be allowed, it must match all criteria specified by at least one entry in the allowlist. Curently, the only criteria available is the name of the plugin. Name matching is performed by first resolving the absolute path of both the plugin and the name in the allowlist entry using `exec.LookPath`. It will be called on both, and the resulting strings must be equal.\n\ne.g. credPluginAllowlist: - name: cloud-provider-plugin - name: /usr/local/bin/my-plugin In the above example, the user allows the credential plugins `cloud-provider-plugin` (found somewhere in PATH), and the plugin found at the explicit path `/usr/local/bin/my-plugin`.",
+							Description: "credPluginPolicy specifies the policy governing which, if any, client-go credential plugins may be executed. It MUST be one of { \"\", \"AllowAll\", \"DenyAll\", \"Allowlist\" }. If the policy is \"\", then it falls back to \"AllowAll\" (this is required to maintain backward compatibility). If the policy is DenyAll, no credential plugins may run. If the policy is Allowlist, only those plugins meeting the criteria specified in the `credPluginAllowlist` field may run.",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 					"credPluginAllowlist": {
 						SchemaProps: spec.SchemaProps{
-							Type: []string{"array"},
+							Description: "credPluginAllowlist (the credential plugin allowlist) specifies the conditions under which client-go credential plugins may be executed. If this field is explicitly given the empty list value (`[]`), the user can disallow all plugins. If this field is left unspecified by the user, it will default to `nil`. When the allowlist is `nil`, all binaries will be permited. In order for a credential plugin binary to be allowed, it must match all criteria specified by at least one entry in the allowlist. Curently, the only criteria available is the name of the plugin. Name matching is performed by first resolving the absolute path of both the plugin and the name in the allowlist entry using `exec.LookPath`. It will be called on both, and the resulting strings must be equal.\n\ne.g. credPluginAllowlist: - name: cloud-provider-plugin - name: /usr/local/bin/my-plugin In the above example, the user allows the credential plugins `cloud-provider-plugin` (found somewhere in PATH), and the plugin found at the explicit path `/usr/local/bin/my-plugin`.",
+							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref(pkgconfigv1alpha1.AllowlistItem{}.OpenAPIModelName()),
+										Ref:     ref("k8s.io/client-go/tools/clientcmd/api.AllowlistItem"),
 									},
 								},
 							},
@@ -69849,7 +69827,7 @@ func schema_kubectl_pkg_config_v1alpha1_Preference(ref common.ReferenceCallback)
 			},
 		},
 		Dependencies: []string{
-			pkgconfigv1alpha1.AliasOverride{}.OpenAPIModelName(), pkgconfigv1alpha1.AllowlistItem{}.OpenAPIModelName(), pkgconfigv1alpha1.CommandDefaults{}.OpenAPIModelName()},
+			"k8s.io/client-go/tools/clientcmd/api.AllowlistItem", pkgconfigv1alpha1.AliasOverride{}.OpenAPIModelName(), pkgconfigv1alpha1.CommandDefaults{}.OpenAPIModelName()},
 	}
 }
 
@@ -69941,27 +69919,6 @@ func schema_kubectl_pkg_config_v1beta1_AliasOverride(ref common.ReferenceCallbac
 		},
 		Dependencies: []string{
 			pkgconfigv1beta1.CommandOptionDefault{}.OpenAPIModelName()},
-	}
-}
-
-func schema_kubectl_pkg_config_v1beta1_AllowlistItem(ref common.ReferenceCallback) common.OpenAPIDefinition {
-	return common.OpenAPIDefinition{
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "AllowlistItem stores the criteria specified by an entry in the credential plugin allowlist. In order for a binary plugin to be permitted, it must meet all criteria specified within an AllowlistItem.",
-				Type:        []string{"object"},
-				Properties: map[string]spec.Schema{
-					"name": {
-						SchemaProps: spec.SchemaProps{
-							Default: "",
-							Type:    []string{"string"},
-							Format:  "",
-						},
-					},
-				},
-				Required: []string{"name"},
-			},
-		},
 	}
 }
 
@@ -70099,19 +70056,20 @@ func schema_kubectl_pkg_config_v1beta1_Preference(ref common.ReferenceCallback) 
 					},
 					"credPluginPolicy": {
 						SchemaProps: spec.SchemaProps{
-							Description: "credPluginAllowlist (the credential plugin allowlist) specifies the conditions under which client-go credential plugins may be executed. If this field is explicitly given the empty list value (`[]`), the user can disallow all plugins. If this field is left unspecified by the user, it will default to `nil`. When the allowlist is `nil`, all binaries will be permited. In order for a credential plugin binary to be allowed, it must match all criteria specified by at least one entry in the allowlist. Curently, the only criteria available is the name of the plugin. Name matching is performed by first resolving the absolute path of both the plugin and the name in the allowlist entry using `exec.LookPath`. It will be called on both, and the resulting strings must be equal.\n\ne.g. credPluginAllowlist: - name: cloud-provider-plugin - name: /usr/local/bin/my-plugin In the above example, the user allows the credential plugins `cloud-provider-plugin` (found somewhere in PATH), and the plugin found at the explicit path `/usr/local/bin/my-plugin`.",
+							Description: "credPluginPolicy specifies the policy governing which, if any, client-go credential plugins may be executed. It MUST be one of { \"\", \"AllowAll\", \"DenyAll\", \"Allowlist\" }. If the policy is \"\", then it falls back to \"AllowAll\" (this is required to maintain backward compatibility). If the policy is DenyAll, no credential plugins may run. If the policy is Allowlist, only those plugins meeting the criteria specified in the `credPluginAllowlist` field may run.",
 							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
 					"credPluginAllowlist": {
 						SchemaProps: spec.SchemaProps{
-							Type: []string{"array"},
+							Description: "credPluginAllowlist (the credential plugin allowlist) specifies the conditions under which client-go credential plugins may be executed. If this field is explicitly given the empty list value (`[]`), the user can disallow all plugins. If this field is left unspecified by the user, it will default to `nil`. When the allowlist is `nil`, all binaries will be permited. In order for a credential plugin binary to be allowed, it must match all criteria specified by at least one entry in the allowlist. Curently, the only criteria available is the name of the plugin. Name matching is performed by first resolving the absolute path of both the plugin and the name in the allowlist entry using `exec.LookPath`. It will be called on both, and the resulting strings must be equal.\n\ne.g. credPluginAllowlist: - name: cloud-provider-plugin - name: /usr/local/bin/my-plugin In the above example, the user allows the credential plugins `cloud-provider-plugin` (found somewhere in PATH), and the plugin found at the explicit path `/usr/local/bin/my-plugin`.",
+							Type:        []string{"array"},
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref(pkgconfigv1beta1.AllowlistItem{}.OpenAPIModelName()),
+										Ref:     ref("k8s.io/client-go/tools/clientcmd/api.AllowlistItem"),
 									},
 								},
 							},
@@ -70122,7 +70080,7 @@ func schema_kubectl_pkg_config_v1beta1_Preference(ref common.ReferenceCallback) 
 			},
 		},
 		Dependencies: []string{
-			pkgconfigv1beta1.AliasOverride{}.OpenAPIModelName(), pkgconfigv1beta1.AllowlistItem{}.OpenAPIModelName(), pkgconfigv1beta1.CommandDefaults{}.OpenAPIModelName()},
+			"k8s.io/client-go/tools/clientcmd/api.AllowlistItem", pkgconfigv1beta1.AliasOverride{}.OpenAPIModelName(), pkgconfigv1beta1.CommandDefaults{}.OpenAPIModelName()},
 	}
 }
 

@@ -16,7 +16,10 @@ limitations under the License.
 
 package v1alpha1
 
-import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+)
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
@@ -63,6 +66,15 @@ type Preference struct {
 	// +listType=atomic
 	Aliases []AliasOverride `json:"aliases"`
 
+	// credPluginPolicy specifies the policy governing which, if any, client-go
+	// credential plugins may be executed. It MUST be one of { "", "AllowAll", "DenyAll", "Allowlist" }.
+	// If the policy is "", then it falls back to "AllowAll" (this is required
+	// to maintain backward compatibility). If the policy is DenyAll, no
+	// credential plugins may run. If the policy is Allowlist, only those
+	// plugins meeting the criteria specified in the `credPluginAllowlist`
+	// field may run.
+	CredPluginPolicy clientcmdapi.PluginPolicy `json:"credPluginPolicy,omitempty"`
+
 	// credPluginAllowlist (the credential plugin allowlist) specifies the
 	// conditions under which client-go credential plugins may be executed. If
 	// this field is explicitly given the empty list value (`[]`), the user can
@@ -82,15 +94,7 @@ type Preference struct {
 	// In the above example, the user allows the credential plugins
 	// `cloud-provider-plugin` (found somewhere in PATH), and the plugin found
 	// at the explicit path `/usr/local/bin/my-plugin`.
-	CredPluginPolicy    string           `json:"credPluginPolicy,omitempty"`
-	CredPluginAllowlist *[]AllowlistItem `json:"credPluginAllowlist,omitempty"`
-}
-
-// AllowlistItem stores the criteria specified by an entry in the credential
-// plugin allowlist. In order for a binary plugin to be permitted, it must meet
-// all criteria specified within an AllowlistItem.
-type AllowlistItem struct {
-	Name string `json:"name"`
+	CredPluginAllowlist *[]clientcmdapi.AllowlistItem `json:"credPluginAllowlist,omitempty"`
 }
 
 // AliasOverride stores the alias definitions.

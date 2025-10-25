@@ -29,6 +29,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -53,6 +54,7 @@ var (
 // arguments based on user's kuberc configuration.
 type PreferencesHandler interface {
 	AddFlags(flags *pflag.FlagSet)
+	ApplyAllowlist(*genericclioptions.ConfigFlags)
 	Apply(rootCmd *cobra.Command, args []string, errOut io.Writer) ([]string, error)
 }
 
@@ -61,33 +63,22 @@ type PreferencesHandler interface {
 type Preferences struct {
 	getPreferencesFunc func(kuberc string, errOut io.Writer) (*config.Preference, error) // DefaultGetPreferences
 	aliases            map[string]struct{}
-	permissionProvider *clientcmdapi.ExecPermissionProvider
+	permissionProvider clientcmdapi.ExecPermissionProvider
 }
+
+var _ PreferencesHandler = &Preferences{}
+
+// var _ = ([]clientcmdapi.)
 
 // NewPreferences returns initialized Prefrences object.
 func NewPreferences() PreferencesHandler {
 	p := &Preferences{
 		getPreferencesFunc: DefaultGetPreferences,
 		aliases:            make(map[string]struct{}),
-		permissionProvider: &clientcmdapi.ExecPermissionProvider{},
+		permissionProvider: clientcmdapi.ExecPermissionProvider{},
 	}
 
 	return p
-}
-
-func PermissionWrapper(p PreferencesHandler) func(*rest.Config) *rest.Config {
-	pref, ok := p.(*Preferences)
-	if !ok || pref.permissionProvider == nil {
-		return nil
-	}
-
-	return func(c *rest.Config) *rest.Config {
-		if c.ExecProvider != nil {
-			c.ExecProvider.PermissionProvider = *pref.permissionProvider
-		}
-
-		return c
-	}
 }
 
 type aliasing struct {
@@ -119,10 +110,6 @@ func (p *Preferences) Apply(rootCmd *cobra.Command, args []string, errOut io.Wri
 		return args, fmt.Errorf("kuberc error %w", err)
 	}
 
-	if p.permissionProvider != nil {
-		p.applyPermProvider(kuberc)
-	}
-
 	if kuberc == nil {
 		return args, nil
 	}
@@ -131,6 +118,8 @@ func (p *Preferences) Apply(rootCmd *cobra.Command, args []string, errOut io.Wri
 	if err != nil {
 		return args, err
 	}
+
+	p.applyPermProvider(kuberc)
 
 	args, err = p.applyAliases(rootCmd, kuberc, args, errOut)
 	if err != nil {
@@ -143,20 +132,12 @@ func (p *Preferences) Apply(rootCmd *cobra.Command, args []string, errOut io.Wri
 	return args, nil
 }
 
+// `applyPermProvider` passes the values unaltered to their destination. To
+// prevent excessive coupling, logic to handle those values is further down the
+// stack.
 func (p *Preferences) applyPermProvider(kuberc *config.Preference) {
 	p.permissionProvider.Policy = kuberc.CredPluginPolicy
-
-	rcAllowlist := kuberc.CredPluginAllowlist
-	if rcAllowlist != nil {
-		allowlist := make([]clientcmdapi.AllowlistItem, 0, len(*rcAllowlist))
-		for _, item := range *kuberc.CredPluginAllowlist {
-			allowlist = append(allowlist, clientcmdapi.AllowlistItem{
-				Name: item.Name,
-			})
-		}
-
-		p.permissionProvider.Allowlist = allowlist
-	}
+	p.permissionProvider.Allowlist = *kuberc.CredPluginAllowlist
 }
 
 // applyOverrides finds the command and sets the defaulted flag values in kuberc.
@@ -347,6 +328,16 @@ func (p *Preferences) applyAliases(rootCmd *cobra.Command, kuberc *config.Prefer
 	return args, nil
 }
 
+func (p *Preferences) ApplyAllowlist(configFlags *genericclioptions.ConfigFlags) {
+	configFlags.WithWrapConfigFn(func(c *rest.Config) *rest.Config {
+		if c.ExecProvider != nil {
+			c.ExecProvider.PermissionProvider = p.permissionProvider
+		}
+
+		return c
+	})
+}
+
 // DefaultGetPreferences returns KubeRCConfiguration.
 // If users sets kuberc file explicitly in --kuberc flag, it has the highest
 // priority. If not specified, it looks for in KUBERC environment variable.
@@ -507,6 +498,43 @@ func validate(plugin *config.Preference) error {
 	for _, override := range plugin.Defaults {
 		if err := validateFlag(override.Options); err != nil {
 			return err
+		}
+	}
+
+	if err := validatePluginPolicy(plugin.CredPluginPolicy, plugin.CredPluginAllowlist); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validatePluginPolicy(p clientcmdapi.PluginPolicy, list *[]clientcmdapi.AllowlistItem) error {
+	policy := clientcmdapi.PluginPolicy(p)
+
+	switch policy {
+	case clientcmdapi.PluginPolicyUnspecified, clientcmdapi.PluginPolicyAllowAll, clientcmdapi.PluginPolicyDenyAll:
+		if list != nil {
+			return fmt.Errorf("misconfigured credential plugin allowlist: plugin policy is %q but allowlist is non-nil", policy)
+		}
+		return nil
+	case clientcmdapi.PluginPolicyAllowlist:
+		return validateAllowlist(list)
+	default:
+		return fmt.Errorf("illegal plugin policy: %q", policy)
+	}
+}
+
+func validateAllowlist(list *[]clientcmdapi.AllowlistItem) error {
+	// This will be the case if the user has misspelled the field name for the
+	// allowlist. Because this is a security knob, fail immediately rather than
+	// proceed when the user has made a mistake.
+	if list == nil {
+		return fmt.Errorf("credential plugin policy set to %q, but allowlist is unspecified", clientcmdapi.PluginPolicyAllowlist)
+	}
+
+	for i, item := range *list {
+		if clientcmdapi.AllowlistItem(item) == clientcmdapi.EmptyAllowlistItem {
+			return fmt.Errorf("misconfigured credential plugin allowlist: empy allowlist entry #%d", i)
 		}
 	}
 

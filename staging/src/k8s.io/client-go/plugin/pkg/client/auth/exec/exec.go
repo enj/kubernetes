@@ -62,10 +62,10 @@ To learn more about this feature, consult the documentation available at:
 type PluginPolicy string
 
 const (
-	pluginPolicyUndefined PluginPolicy = ""
-	pluginPolicyAllowAll  PluginPolicy = "AllowAll"
-	pluginPolicyDenyAll   PluginPolicy = "DenyAll"
-	pluginPolicyAllowlist PluginPolicy = "Allowlist"
+	PluginPolicyUndefined PluginPolicy = ""
+	PluginPolicyAllowAll  PluginPolicy = "AllowAll"
+	PluginPolicyDenyAll   PluginPolicy = "DenyAll"
+	PluginPolicyAllowlist PluginPolicy = "Allowlist"
 )
 
 var scheme = runtime.NewScheme()
@@ -86,7 +86,6 @@ var (
 	}
 
 	errPolicyDenyAll              = errors.New("plugin policy set to `DenyAll`")
-	errAllowlistEntryNoMatch      = errors.New("allowlist entry is not a match")
 	errAllowlistEntryPathNotFound = errors.New("path of allowlist entry not found")
 	errAllowlistEntryIsEmpty      = errors.New("allowlist entry is empty")
 	errCredPluginNotFound         = errors.New("could not resolve path of exec plugin command")
@@ -314,13 +313,13 @@ func (a *Authenticator) Allows(cmd string) error {
 	pp := a.execPermissionProvider
 	switch PluginPolicy(pp.Policy) {
 	// Required for backward compatibility
-	case pluginPolicyUndefined:
+	case PluginPolicyUndefined:
 		return nil
-	case pluginPolicyAllowAll:
+	case PluginPolicyAllowAll:
 		return nil
-	case pluginPolicyDenyAll:
+	case PluginPolicyDenyAll:
 		return fmt.Errorf("plugin %q not allowed: %w", cmd, errPolicyDenyAll)
-	case pluginPolicyAllowlist:
+	case PluginPolicyAllowlist:
 		return a.checkAllowlist(cmd)
 	default:
 		return fmt.Errorf("%w: %s", errIllegalPluginPolicy, pp.Policy)
@@ -616,24 +615,18 @@ func (a *Authenticator) wrapCmdRunErrorLocked(err error) error {
 	}
 }
 
-var emptyAllowlistItem = api.AllowlistItem{}
-
 // alEntry MUST be non-nil
 func itemGreenlights(alEntry *api.AllowlistItem, pluginAbsPath string) error {
 	// if no fields are specified, this is a user error. To avoid fail-open
 	// behavior, an empty entry must not allow anything.
-	if *alEntry == emptyAllowlistItem {
+	if *alEntry == api.EmptyAllowlistItem {
 		return errAllowlistEntryIsEmpty
 	}
 
 	if entryName := alEntry.Name; len(entryName) > 0 {
 		entryAbsPath, err := exec.LookPath(entryName)
-		if errors.Is(err, exec.ErrNotFound) {
-			return fmt.Errorf("%w: %s", errAllowlistEntryPathNotFound, entryName)
-		}
-
-		if pluginAbsPath != entryAbsPath {
-			return fmt.Errorf("%w: %s", errAllowlistEntryNoMatch, entryAbsPath)
+		if err != nil || pluginAbsPath != entryAbsPath {
+			return fmt.Errorf("allowlist entry %q is not a match for %q", pluginAbsPath, entryAbsPath)
 		}
 	}
 
