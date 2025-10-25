@@ -76,6 +76,7 @@ var (
 		clientauthenticationv1.SchemeGroupVersion.String():      clientauthenticationv1.SchemeGroupVersion,
 	}
 
+	errInvalidAPIVersion          = errors.New("exec plugin: invalid apiVersion")
 	errPolicyDenyAll              = errors.New("plugin policy set to `DenyAll`")
 	errAllowlistEntryPathNotFound = errors.New("path of allowlist entry not found")
 	errAllowlistEntryIsEmpty      = errors.New("allowlist entry is empty")
@@ -174,7 +175,7 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 
 	gv, ok := apiVersions[config.APIVersion]
 	if !ok {
-		return nil, fmt.Errorf("exec plugin: invalid apiVersion %q", config.APIVersion)
+		return nil, fmt.Errorf("%w %q", errInvalidAPIVersion, config.APIVersion)
 	}
 
 	connTracker := connrotation.NewConnectionTracker()
@@ -182,10 +183,6 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 		(&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		connTracker,
 	)
-
-	if err := validatePluginPolicy(&config.PluginPolicy); err != nil {
-		return nil, fmt.Errorf("exec plugin: permission policy is invalid: %w", err)
-	}
 
 	a := &Authenticator{
 		cmd:                config.Command,
@@ -296,27 +293,32 @@ type Authenticator struct {
 	dial *transport.DialHolder
 }
 
-// `Allows` determines whether or not the executable specified in its argument
+// `allowsPlugin` determines whether or not the executable specified in its argument
 // may run according to the credential plugin policy. If the plugin is allowed,
 // `nil` is returned. If the plugin is not allowed, an error must be returned
 // explaining why.
-func (a *Authenticator) Allows(cmd string) error {
+func (a *Authenticator) allowsPlugin(cmd string) error {
 	if a.execPluginPolicy == nil {
 		return nil
 	}
 
+	// validates policy and allowlist
+	if err := a.validatePluginPolicy(); err != nil {
+		return err
+	}
+
 	switch a.execPluginPolicy.PolicyType {
-	// Required for backward compatibility
 	case api.PluginPolicyUnspecified:
+		// Required for backward compatibility
 		return nil
 	case api.PluginPolicyAllowAll:
 		return nil
 	case api.PluginPolicyDenyAll:
-		return fmt.Errorf("plugin %q not allowed: %w", cmd, errPolicyDenyAll)
+		return fmt.Errorf("plugin %q not allowed: policy set to %w", cmd, errPolicyDenyAll)
 	case api.PluginPolicyAllowlist:
 		return a.checkAllowlist(cmd)
 	default:
-		return fmt.Errorf("%w: %s", errIllegalPluginPolicy, a.execPluginPolicy.PolicyType)
+		panic("unreachable: error will be returned by validatePluginPolicy")
 	}
 
 }
@@ -500,7 +502,7 @@ func (a *Authenticator) refreshCredsLocked() error {
 		cmd.Stdin = a.stdin
 	}
 
-	if err := a.Allows(a.cmd); err != nil {
+	if err := a.allowsPlugin(a.cmd); err != nil {
 		return err
 	}
 
@@ -628,17 +630,17 @@ func itemGreenlights(alEntry *api.AllowlistItem, pluginAbsPath string) error {
 
 }
 
-func validatePluginPolicy(p *api.PluginPolicy) error {
-	switch p.PolicyType {
+func (a *Authenticator) validatePluginPolicy() error {
+	switch a.execPluginPolicy.PolicyType {
 	case api.PluginPolicyUnspecified, api.PluginPolicyAllowAll, api.PluginPolicyDenyAll:
-		if p.Allowlist != nil {
-			return fmt.Errorf("misconfigured credential plugin allowlist: plugin policy is %q but allowlist is non-nil", p.PolicyType)
+		if a.execPluginPolicy.Allowlist != nil {
+			return fmt.Errorf("misconfigured credential plugin allowlist: plugin policy is %q but allowlist is non-nil", a.execPluginPolicy.PolicyType)
 		}
 		return nil
 	case api.PluginPolicyAllowlist:
-		return validateAllowlist(p.Allowlist)
+		return validateAllowlist(a.execPluginPolicy.Allowlist)
 	default:
-		return fmt.Errorf("illegal plugin policy: %q", p.PolicyType)
+		return fmt.Errorf("illegal plugin policy: %q", a.execPluginPolicy.PolicyType)
 	}
 }
 
@@ -648,6 +650,10 @@ func validateAllowlist(list api.Allowlist) error {
 	// proceed when the user has made a mistake.
 	if list == nil {
 		return fmt.Errorf("credential plugin policy set to %q, but allowlist is unspecified", api.PluginPolicyAllowlist)
+	}
+
+	if len(list) == 0 {
+		return fmt.Errorf("credential plugin policy set to %q, but allowlist is empty; use %q policy instead", api.PluginPolicyAllowlist, api.PluginPolicyDenyAll)
 	}
 
 	for i, item := range list {

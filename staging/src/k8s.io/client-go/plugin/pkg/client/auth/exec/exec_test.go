@@ -31,14 +31,19 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/pkg/apis/clientauthentication"
 	"k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/transport"
@@ -841,6 +846,238 @@ func TestRefreshCreds(t *testing.T) {
 			}
 
 			compJSON(t, stderr.Bytes(), []byte(test.wantInput))
+		})
+	}
+}
+
+func TestPluginPolicy(t *testing.T) {
+	tmpDirInPATH := t.TempDir()
+	tmpDirNotInPATH := t.TempDir()
+
+	const guaranteedInPATHBasename = "guaranteed-exists-in-PATH"
+	const guaranteedNotInPATHBasename = "guaranteed-exists-but-not-in-PATH"
+	guaranteedExistsInPATHAbsolutePath := filepath.Join(tmpDirInPATH, guaranteedInPATHBasename)
+	guaranteedExistsNotInPATHAbsolutePath := filepath.Join(tmpDirNotInPATH, guaranteedInPATHBasename)
+
+	err := os.WriteFile(guaranteedExistsInPATHAbsolutePath, []byte("echo \"hello, world!\""), 0o755)
+	require.NoError(t, err, "unexpected error")
+
+	path := os.Getenv("PATH")
+	os.Setenv("PATH", fmt.Sprintf("%s:%s", tmpDirInPATH, path))
+
+	resolved, err := exec.LookPath(guaranteedInPATHBasename)
+	require.NoError(t, err, "unexpected error")
+	require.Equal(t, guaranteedExistsInPATHAbsolutePath, resolved)
+
+	tests := []struct {
+		name          string
+		config        api.ExecConfig
+		wantErr       bool
+		wantErrSubstr string
+	}{
+		{
+			name: "with-allowall-policy-and-nonempty-allowlist",
+			config: api.ExecConfig{
+				PluginPolicy: api.PluginPolicy{
+					PolicyType: api.PluginPolicyAllowAll,
+					Allowlist: api.Allowlist{
+						{Name: "bar"},
+					},
+				},
+			},
+			wantErr:       true,
+			wantErrSubstr: `plugin policy is "AllowAll" but allowlist is non-nil`,
+		},
+		{
+			name: "with-denyall-policy-and-nonempty-allowlist",
+			config: api.ExecConfig{
+				PluginPolicy: api.PluginPolicy{
+					PolicyType: api.PluginPolicyDenyAll,
+					Allowlist: api.Allowlist{
+						{Name: "bar"},
+					},
+				},
+			},
+			wantErr:       true,
+			wantErrSubstr: `plugin policy is "DenyAll" but allowlist is non-nil`,
+		},
+		{
+			name: "with-allowlist-policy-and-empty-allowlist-item",
+			config: api.ExecConfig{
+				PluginPolicy: api.PluginPolicy{
+					PolicyType: api.PluginPolicyAllowlist,
+					Allowlist: api.Allowlist{
+						{Name: "bar"},
+						{},
+					},
+				},
+			},
+			wantErr:       true,
+			wantErrSubstr: `empty allowlist entry`,
+		},
+		{
+			name: "with-allowlist-policy-and-unspecified-allowlist",
+			config: api.ExecConfig{
+				PluginPolicy: api.PluginPolicy{
+					PolicyType: api.PluginPolicyAllowlist,
+					Allowlist:  nil,
+				},
+			},
+			wantErr:       true,
+			wantErrSubstr: `allowlist is unspecified`,
+		},
+		{
+			name: "with-allowlist-policy-and-empty-allowlist-denyall-message",
+			config: api.ExecConfig{
+				PluginPolicy: api.PluginPolicy{
+					PolicyType: api.PluginPolicyAllowlist,
+					Allowlist:  api.Allowlist{},
+				},
+			},
+			wantErr:       true,
+			wantErrSubstr: `use "DenyAll" policy instead`,
+		},
+		{
+			name: "with-allowlist-policy-and-plugin-does-not-exist-absolute-path",
+			config: api.ExecConfig{
+				Command: "/this/path/does/not/exist",
+				PluginPolicy: api.PluginPolicy{
+					PolicyType: api.PluginPolicyAllowlist,
+					Allowlist: api.Allowlist{
+						{Name: "bar"},
+					},
+				},
+			},
+			wantErr:       true,
+			wantErrSubstr: `could not resolve path of exec plugin command`,
+		},
+		{
+			name: "with-allowlist-policy-and-plugin-does-not-exist-basename-only",
+			config: api.ExecConfig{
+				Command: "does not exist",
+				PluginPolicy: api.PluginPolicy{
+					PolicyType: api.PluginPolicyAllowlist,
+					Allowlist: api.Allowlist{
+						{Name: "bar"},
+					},
+				},
+			},
+			wantErr:       true,
+			wantErrSubstr: `could not resolve path of exec plugin command`,
+		},
+		{
+			name: "with-allowlist-policy-and-allowlist-entry-does-not-exist-absolute-path",
+			config: api.ExecConfig{
+				Command: guaranteedInPATHBasename,
+				PluginPolicy: api.PluginPolicy{
+					PolicyType: api.PluginPolicyAllowlist,
+					Allowlist: api.Allowlist{
+						{Name: guaranteedExistsNotInPATHAbsolutePath},
+					},
+				},
+			},
+			wantErr:       true,
+			wantErrSubstr: `is not a match`,
+		},
+		{
+			name: "with-allowlist-policy-and-allowlist-entry-does-not-exist-basename-only",
+			config: api.ExecConfig{
+				Command: guaranteedInPATHBasename,
+				PluginPolicy: api.PluginPolicy{
+					PolicyType: api.PluginPolicyAllowlist,
+					Allowlist: api.Allowlist{
+						{Name: "does not exist"},
+					},
+				},
+			},
+			wantErr:       true,
+			wantErrSubstr: `is not a match`,
+		},
+		{
+			name: "with-allowlist-policy-absolute-paths-dont-match",
+			config: api.ExecConfig{
+				Command: guaranteedExistsInPATHAbsolutePath,
+				PluginPolicy: api.PluginPolicy{
+					PolicyType: api.PluginPolicyAllowlist,
+					Allowlist: api.Allowlist{
+						{Name: "/usr/local/bin/true"},
+						{Name: "/tmp/true"},
+					},
+				},
+			},
+			wantErr:       true,
+			wantErrSubstr: "silly",
+		},
+		{
+			name: "with-allowlist-policy-happy-path-both-basenames",
+			config: api.ExecConfig{
+				Command: guaranteedInPATHBasename,
+				PluginPolicy: api.PluginPolicy{
+					PolicyType: api.PluginPolicyAllowlist,
+					Allowlist: api.Allowlist{
+						{Name: "does not exist"},
+						{Name: "might exit"},
+						{Name: guaranteedInPATHBasename},
+					},
+				},
+			},
+		},
+		{
+			name: "with-allowlist-policy-happy-path-command-is-absolute-allowlist-entry-is-basename",
+			config: api.ExecConfig{
+				Command: "/usr/bin/env",
+				PluginPolicy: api.PluginPolicy{
+					PolicyType: api.PluginPolicyAllowlist,
+					Allowlist: api.Allowlist{
+						{Name: "end"},
+					},
+				},
+			},
+		},
+		{
+			name: "with-allowlist-policy-happy-path-command-is-absolute-allowlist-entry-is-basename",
+			config: api.ExecConfig{
+				Command: "env",
+				PluginPolicy: api.PluginPolicy{
+					PolicyType: api.PluginPolicyAllowlist,
+					Allowlist: api.Allowlist{
+						{Name: "/usr/bin/end"},
+					},
+				},
+			},
+		},
+	}
+
+	// to avoid unrelated errors on authenticator initialization
+	apiVersions[""] = schema.GroupVersion{}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c := test.config
+
+			if c.Command == "" {
+				c.Command = "./testdata/test-plugin.sh"
+			}
+
+			a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &c, &clientauthentication.Cluster{})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			stderr := &bytes.Buffer{}
+			a.stderr = stderr
+			a.environ = func() []string { return nil }
+
+			if err := a.allowsPlugin(test.config.Command); err != nil {
+				if !test.wantErr {
+					t.Errorf("get token %v", err)
+				} else if !strings.Contains(err.Error(), test.wantErrSubstr) {
+					t.Errorf("expected error with substring '%v' got '%v'", test.wantErrSubstr, err.Error())
+				}
+				return
+			}
+			if test.wantErr {
+				t.Fatal("expected allowlist error")
+			}
 		})
 	}
 }
