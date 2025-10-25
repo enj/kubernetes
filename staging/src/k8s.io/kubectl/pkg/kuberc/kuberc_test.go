@@ -31,6 +31,9 @@ import (
 
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"k8s.io/client-go/tools/clientcmd/api"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/kubectl/pkg/config"
 )
 
@@ -2921,4 +2924,42 @@ unknownField: value`,
 			}
 		})
 	}
+}
+
+func TestApplyPluginPolicy(t *testing.T) {
+	rootCmd := &cobra.Command{
+		Use: "root",
+	}
+
+	args := []string{"placeholder", "two"}
+
+	opts := genericclioptions.NewConfigFlags(false)
+	p := NewPreferences()
+	pref, ok := p.(*Preferences)
+	if !ok {
+		t.Fatalf("invalid preference type")
+	}
+
+	pref.getPreferencesFunc = func(_ string, _ io.Writer) (*config.Preference, error) {
+		return &config.Preference{
+			CredPluginPolicy: "foo",
+			CredPluginAllowlist: clientcmdapi.Allowlist{
+				clientcmdapi.AllowlistItem{
+					Name: "bar",
+				},
+				clientcmdapi.AllowlistItem{
+					Name: "baz",
+				},
+			},
+		}, nil
+	}
+
+	pref.ApplyPluginPolicy(opts)
+	pref.Apply(rootCmd, args, io.Discard)
+
+	cfg, err := opts.ToRESTConfig()
+	require.NoError(t, err, "unexpected error")
+	require.Equal(t, api.PolicyType("foo"), cfg.ExecProvider.PluginPolicy.PolicyType)
+	require.Equal(t, "bar", cfg.ExecProvider.PluginPolicy.Allowlist[0].Name)
+	require.Equal(t, "baz", cfg.ExecProvider.PluginPolicy.Allowlist[1].Name)
 }
