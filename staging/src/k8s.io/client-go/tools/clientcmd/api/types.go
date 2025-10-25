@@ -291,13 +291,26 @@ type AllowlistItem struct {
 	Name string `json:"-"`
 }
 
-type Allowlist struct {
-	List []AllowlistItem `json:"-"`
+type ExecPermissionProvider struct {
+	Policy    PluginPolicy    `json:"-"`
+	Allowlist []AllowlistItem `json:"-"`
 }
 
-type ExecPermissionProvider struct {
-	Policy    string          `json:"-"`
-	Allowlist []AllowlistItem `json:"-"`
+type PluginPolicy string
+
+const (
+	PluginPolicyUnspecified PluginPolicy = ""
+	PluginPolicyAllowAll                 = "AllowAll"
+	PluginPolicyDenyAll                  = "DenyAll"
+	PluginPolicyAllowlist                = "Allowlist"
+)
+
+var EmptyAllowlistItem = AllowlistItem{}
+var AllPluginPolicies = []PluginPolicy{
+	PluginPolicyUnspecified,
+	PluginPolicyAllowAll,
+	PluginPolicyDenyAll,
+	PluginPolicyAllowlist,
 }
 
 var _ fmt.Stringer = new(ExecConfig)
