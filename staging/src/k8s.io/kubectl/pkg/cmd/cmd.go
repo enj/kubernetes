@@ -371,7 +371,7 @@ func NewKubectlCommand(o KubectlOptions) *cobra.Command {
 	pref := kuberc.NewPreferences()
 	if !cmdutil.KubeRC.IsDisabled() {
 		pref.AddFlags(flags)
-		pref.ApplyAllowlist(kubeConfigFlags)
+		pref.ApplyPluginPolicy(kubeConfigFlags)
 	}
 
 	matchVersionKubeConfigFlags := cmdutil.NewMatchVersionFlags(kubeConfigFlags)
