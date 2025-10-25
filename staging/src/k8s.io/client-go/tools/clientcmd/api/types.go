@@ -284,34 +284,33 @@ type ExecConfig struct {
 	// +k8s:conversion-gen=false
 	StdinUnavailableMessage string `json:"-"`
 
-	PermissionProvider ExecPermissionProvider `json:"-"`
+	// PluginPolicy
+	// +k8s:conversion-gen=false
+	PluginPolicy PluginPolicy `json:"-"`
 }
 
+// AllowlistItem
 type AllowlistItem struct {
-	Name string `json:"-"`
+	Name string `json:"name,omitempty"`
 }
 
-type ExecPermissionProvider struct {
-	Policy    PluginPolicy    `json:"-"`
-	Allowlist []AllowlistItem `json:"-"`
+type PluginPolicy struct {
+	PolicyType PolicyType `json:"-"`
+	Allowlist  Allowlist  `json:"-"`
 }
 
-type PluginPolicy string
+type Allowlist []AllowlistItem
+
+type PolicyType string
 
 const (
-	PluginPolicyUnspecified PluginPolicy = ""
-	PluginPolicyAllowAll                 = "AllowAll"
-	PluginPolicyDenyAll                  = "DenyAll"
-	PluginPolicyAllowlist                = "Allowlist"
+	PluginPolicyUnspecified PolicyType = ""
+	PluginPolicyAllowAll               = "AllowAll"
+	PluginPolicyDenyAll                = "DenyAll"
+	PluginPolicyAllowlist              = "Allowlist"
 )
 
 var EmptyAllowlistItem = AllowlistItem{}
-var AllPluginPolicies = []PluginPolicy{
-	PluginPolicyUnspecified,
-	PluginPolicyAllowAll,
-	PluginPolicyDenyAll,
-	PluginPolicyAllowlist,
-}
 
 var _ fmt.Stringer = new(ExecConfig)
 var _ fmt.GoStringer = new(ExecConfig)

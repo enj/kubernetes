@@ -114,12 +114,8 @@ func (in *Preference) DeepCopyInto(out *Preference) {
 	}
 	if in.CredPluginAllowlist != nil {
 		in, out := &in.CredPluginAllowlist, &out.CredPluginAllowlist
-		*out = new([]api.AllowlistItem)
-		if **in != nil {
-			in, out := *in, *out
-			*out = make([]api.AllowlistItem, len(*in))
-			copy(*out, *in)
-		}
+		*out = make(api.Allowlist, len(*in))
+		copy(*out, *in)
 	}
 	return
 }

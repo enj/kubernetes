@@ -73,7 +73,7 @@ type Preference struct {
 	// credential plugins may run. If the policy is Allowlist, only those
 	// plugins meeting the criteria specified in the `credPluginAllowlist`
 	// field may run.
-	CredPluginPolicy clientcmdapi.PluginPolicy
+	CredPluginPolicy clientcmdapi.PolicyType
 
 	// credPluginAllowlist (the credential plugin allowlist) specifies the
 	// conditions under which client-go credential plugins may be executed. If
@@ -94,7 +94,7 @@ type Preference struct {
 	// In the above example, the user allows the credential plugins
 	// `cloud-provider-plugin` (found somewhere in PATH), and the plugin found
 	// at the explicit path `/usr/local/bin/my-plugin`.
-	CredPluginAllowlist *[]clientcmdapi.AllowlistItem
+	CredPluginAllowlist clientcmdapi.Allowlist
 }
 
 // AliasOverride stores the alias definitions.
