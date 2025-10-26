@@ -2959,6 +2959,8 @@ func TestApplyPluginPolicy(t *testing.T) {
 
 	cfg, err := opts.ToRESTConfig()
 	require.NoError(t, err, "unexpected error")
+	require.NotNil(t, cfg, "exec config unexpectedly nil")
+	require.NotNil(t, cfg.ExecProvider, "exec config unexpectedly nil")
 	require.Equal(t, clientcmdapi.PolicyType("foo"), cfg.ExecProvider.PluginPolicy.PolicyType)
 	require.Equal(t, "bar", cfg.ExecProvider.PluginPolicy.Allowlist[0].Name)
 	require.Equal(t, "baz", cfg.ExecProvider.PluginPolicy.Allowlist[1].Name)

@@ -305,9 +305,9 @@ type PolicyType string
 
 const (
 	PluginPolicyUnspecified PolicyType = ""
-	PluginPolicyAllowAll               = "AllowAll"
-	PluginPolicyDenyAll                = "DenyAll"
-	PluginPolicyAllowlist              = "Allowlist"
+	PluginPolicyAllowAll    PolicyType = "AllowAll"
+	PluginPolicyDenyAll     PolicyType = "DenyAll"
+	PluginPolicyAllowlist   PolicyType = "Allowlist"
 )
 
 var EmptyAllowlistItem = AllowlistItem{}
