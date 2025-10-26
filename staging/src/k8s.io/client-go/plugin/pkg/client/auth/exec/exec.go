@@ -610,10 +610,10 @@ func (a *Authenticator) wrapCmdRunErrorLocked(err error) error {
 }
 
 // alEntry MUST be non-nil
-func itemGreenlights(alEntry *api.AllowlistItem, pluginAbsPath string) error {
+func itemGreenlights(alEntry *api.AllowlistEntry, pluginAbsPath string) error {
 	// if no fields are specified, this is a user error. To avoid fail-open
 	// behavior, an empty entry must not allow anything.
-	if *alEntry == api.EmptyAllowlistItem {
+	if *alEntry == api.EmptyAllowlistEntry {
 		return errAllowlistEntryIsEmpty
 	}
 
@@ -655,7 +655,7 @@ func validateAllowlist(list api.Allowlist) error {
 	}
 
 	for i, item := range list {
-		if item == api.EmptyAllowlistItem {
+		if item == api.EmptyAllowlistEntry {
 			return fmt.Errorf("misconfigured credential plugin allowlist: empty allowlist entry #%d", i+1)
 		}
 	}

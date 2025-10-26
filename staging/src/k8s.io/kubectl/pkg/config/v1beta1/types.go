@@ -75,17 +75,10 @@ type Preference struct {
 	// field may run.
 	CredPluginPolicy clientcmdapi.PolicyType `json:"credPluginPolicy,omitempty"`
 
-	// credPluginAllowlist (the credential plugin allowlist) specifies the
-	// conditions under which client-go credential plugins may be executed. If
-	// this field is explicitly given the empty list value (`[]`), the user can
-	// disallow all plugins. If this field is left unspecified by the user, it
-	// will default to `nil`. When the allowlist is `nil`, all binaries will be
-	// permited. In order for a credential plugin binary to be allowed, it must
-	// match all criteria specified by at least one entry in the allowlist.
-	// Curently, the only criteria available is the name of the plugin. Name
-	// matching is performed by first resolving the absolute path of both the
-	// plugin and the name in the allowlist entry using `exec.LookPath`. It
-	// will be called on both, and the resulting strings must be equal.
+	// Allowlist is a slice of allowlist entries. If any of them is a match,
+	// then the executable in question may execute. That is, the result is the
+	// logical OR of all entries in the allowlist. This list MUST NOT be
+	// supplied if the policy is not "Allowlist".
 	//
 	// e.g.
 	// credPluginAllowlist:
