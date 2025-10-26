@@ -76,12 +76,10 @@ var (
 		clientauthenticationv1.SchemeGroupVersion.String():      clientauthenticationv1.SchemeGroupVersion,
 	}
 
-	errInvalidAPIVersion          = errors.New("exec plugin: invalid apiVersion")
-	errPolicyDenyAll              = errors.New("plugin policy set to `DenyAll`")
-	errAllowlistEntryPathNotFound = errors.New("path of allowlist entry not found")
-	errAllowlistEntryIsEmpty      = errors.New("allowlist entry is empty")
-	errCredPluginNotFound         = errors.New("could not resolve path of exec plugin command")
-	errIllegalPluginPolicy        = errors.New("illegal plugin policy")
+	errInvalidAPIVersion     = errors.New("exec plugin: invalid apiVersion")
+	errPolicyDenyAll         = errors.New("plugin policy set to `DenyAll`")
+	errAllowlistEntryIsEmpty = errors.New("allowlist entry is empty")
+	errCredPluginNotFound    = errors.New("could not resolve path of exec plugin command")
 )
 
 func newCache() *cache {
