@@ -32,7 +32,6 @@ import (
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
-	"k8s.io/client-go/tools/clientcmd/api"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/kubectl/pkg/config"
 )
@@ -2955,11 +2954,12 @@ func TestApplyPluginPolicy(t *testing.T) {
 	}
 
 	pref.ApplyPluginPolicy(opts)
-	pref.Apply(rootCmd, args, io.Discard)
+	_, err := pref.Apply(rootCmd, args, io.Discard)
+	require.NoError(t, err, "error applying preferences")
 
 	cfg, err := opts.ToRESTConfig()
 	require.NoError(t, err, "unexpected error")
-	require.Equal(t, api.PolicyType("foo"), cfg.ExecProvider.PluginPolicy.PolicyType)
+	require.Equal(t, clientcmdapi.PolicyType("foo"), cfg.ExecProvider.PluginPolicy.PolicyType)
 	require.Equal(t, "bar", cfg.ExecProvider.PluginPolicy.Allowlist[0].Name)
 	require.Equal(t, "baz", cfg.ExecProvider.PluginPolicy.Allowlist[1].Name)
 }
