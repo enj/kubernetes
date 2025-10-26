@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	mathrand "math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -850,211 +851,313 @@ func TestRefreshCreds(t *testing.T) {
 	}
 }
 
+type pluginPolicyTest struct {
+	name             string
+	wantErr          bool
+	wantErrSubstr    string
+	config           api.ExecConfig
+	pluginExists     bool
+	entryExists      bool
+	usePluginAbsPath bool
+	useEntryAbsPath  bool
+	allowlistLength  int
+	policyType       api.PolicyType
+	allowlist        api.Allowlist
+}
+
 func TestPluginPolicy(t *testing.T) {
-	tmpDirInPATH := t.TempDir()
+	wd, err := os.Getwd()
+	require.NoError(t, err, "could not get working directory")
+
 	tmpDirNotInPATH := t.TempDir()
+	testDataDir := filepath.Join(wd, "testdata")
 
-	const guaranteedInPATHBasename = "guaranteed-exists-in-PATH"
-	const guaranteedNotInPATHBasename = "guaranteed-exists-but-not-in-PATH"
-	guaranteedExistsInPATHAbsolutePath := filepath.Join(tmpDirInPATH, guaranteedInPATHBasename)
-	guaranteedExistsNotInPATHAbsolutePath := filepath.Join(tmpDirNotInPATH, guaranteedInPATHBasename)
+	const guaranteedExistsButNotInPATHBasename = "guaranteed-exists-but-not-in-PATH"
+	guaranteedExistsButNotInPATHAbsolutePath := filepath.Join(tmpDirNotInPATH, guaranteedExistsButNotInPATHBasename)
 
-	err := os.WriteFile(guaranteedExistsInPATHAbsolutePath, []byte("echo \"hello, world!\""), 0o755)
+	const existingPluginInPATHBasename = "test-plugin.sh"
+	existingPluginInPATHAbsolutePath := filepath.Join(testDataDir, existingPluginInPATHBasename)
+
+	err = os.WriteFile(guaranteedExistsButNotInPATHAbsolutePath, []byte("echo \"hello, world!\""), 0o755)
 	require.NoError(t, err, "unexpected error")
 
 	path := os.Getenv("PATH")
-	os.Setenv("PATH", fmt.Sprintf("%s:%s", tmpDirInPATH, path))
+	defer os.Setenv("PATH", path)
 
-	resolved, err := exec.LookPath(guaranteedInPATHBasename)
-	require.NoError(t, err, "unexpected error")
-	require.Equal(t, guaranteedExistsInPATHAbsolutePath, resolved)
+	os.Setenv("PATH", fmt.Sprintf("%s:%s", testDataDir, path))
+	resolved, err := exec.LookPath(existingPluginInPATHAbsolutePath)
+	require.NoError(t, err, "existing plugin not in PATH")
+	require.Equal(t, existingPluginInPATHAbsolutePath, resolved)
 
-	tests := []struct {
-		name          string
-		config        api.ExecConfig
-		wantErr       bool
-		wantErrSubstr string
-	}{
-		{
-			name: "with-allowall-policy-and-nonempty-allowlist",
-			config: api.ExecConfig{
-				PluginPolicy: api.PluginPolicy{
-					PolicyType: api.PluginPolicyAllowAll,
-					Allowlist: api.Allowlist{
-						{Name: "bar"},
-					},
-				},
-			},
-			wantErr:       true,
-			wantErrSubstr: `plugin policy is "AllowAll" but allowlist is non-nil`,
-		},
-		{
-			name: "with-denyall-policy-and-nonempty-allowlist",
-			config: api.ExecConfig{
-				PluginPolicy: api.PluginPolicy{
-					PolicyType: api.PluginPolicyDenyAll,
-					Allowlist: api.Allowlist{
-						{Name: "bar"},
-					},
-				},
-			},
-			wantErr:       true,
-			wantErrSubstr: `plugin policy is "DenyAll" but allowlist is non-nil`,
-		},
-		{
-			name: "with-allowlist-policy-and-empty-allowlist-item",
-			config: api.ExecConfig{
-				PluginPolicy: api.PluginPolicy{
-					PolicyType: api.PluginPolicyAllowlist,
-					Allowlist: api.Allowlist{
-						{Name: "bar"},
-						{},
-					},
-				},
-			},
-			wantErr:       true,
-			wantErrSubstr: `empty allowlist entry`,
-		},
-		{
-			name: "with-allowlist-policy-and-unspecified-allowlist",
-			config: api.ExecConfig{
-				PluginPolicy: api.PluginPolicy{
-					PolicyType: api.PluginPolicyAllowlist,
-					Allowlist:  nil,
-				},
-			},
-			wantErr:       true,
-			wantErrSubstr: `allowlist is unspecified`,
-		},
-		{
-			name: "with-allowlist-policy-and-empty-allowlist-denyall-message",
-			config: api.ExecConfig{
-				PluginPolicy: api.PluginPolicy{
-					PolicyType: api.PluginPolicyAllowlist,
-					Allowlist:  api.Allowlist{},
-				},
-			},
-			wantErr:       true,
-			wantErrSubstr: `use "DenyAll" policy instead`,
-		},
-		{
-			name: "with-allowlist-policy-and-plugin-does-not-exist-absolute-path",
-			config: api.ExecConfig{
-				Command: "/this/path/does/not/exist",
-				PluginPolicy: api.PluginPolicy{
-					PolicyType: api.PluginPolicyAllowlist,
-					Allowlist: api.Allowlist{
-						{Name: "bar"},
-					},
-				},
-			},
-			wantErr:       true,
-			wantErrSubstr: `could not resolve path of exec plugin command`,
-		},
-		{
-			name: "with-allowlist-policy-and-plugin-does-not-exist-basename-only",
-			config: api.ExecConfig{
-				Command: "does not exist",
-				PluginPolicy: api.PluginPolicy{
-					PolicyType: api.PluginPolicyAllowlist,
-					Allowlist: api.Allowlist{
-						{Name: "bar"},
-					},
-				},
-			},
-			wantErr:       true,
-			wantErrSubstr: `could not resolve path of exec plugin command`,
-		},
-		{
-			name: "with-allowlist-policy-and-allowlist-entry-does-not-exist-absolute-path",
-			config: api.ExecConfig{
-				Command: guaranteedInPATHBasename,
-				PluginPolicy: api.PluginPolicy{
-					PolicyType: api.PluginPolicyAllowlist,
-					Allowlist: api.Allowlist{
-						{Name: guaranteedExistsNotInPATHAbsolutePath},
-					},
-				},
-			},
-			wantErr:       true,
-			wantErrSubstr: `is not a match`,
-		},
-		{
-			name: "with-allowlist-policy-and-allowlist-entry-does-not-exist-basename-only",
-			config: api.ExecConfig{
-				Command: guaranteedInPATHBasename,
-				PluginPolicy: api.PluginPolicy{
-					PolicyType: api.PluginPolicyAllowlist,
-					Allowlist: api.Allowlist{
-						{Name: "does not exist"},
-					},
-				},
-			},
-			wantErr:       true,
-			wantErrSubstr: `is not a match`,
-		},
-		{
-			name: "with-allowlist-policy-absolute-paths-dont-match",
-			config: api.ExecConfig{
-				Command: guaranteedExistsInPATHAbsolutePath,
-				PluginPolicy: api.PluginPolicy{
-					PolicyType: api.PluginPolicyAllowlist,
-					Allowlist: api.Allowlist{
-						{Name: "/usr/local/bin/true"},
-						{Name: "/tmp/true"},
-					},
-				},
-			},
-			wantErr:       true,
-			wantErrSubstr: "silly",
-		},
-		{
-			name: "with-allowlist-policy-happy-path-both-basenames",
-			config: api.ExecConfig{
-				Command: guaranteedInPATHBasename,
-				PluginPolicy: api.PluginPolicy{
-					PolicyType: api.PluginPolicyAllowlist,
-					Allowlist: api.Allowlist{
-						{Name: "does not exist"},
-						{Name: "might exit"},
-						{Name: guaranteedInPATHBasename},
-					},
-				},
-			},
-		},
-		{
-			name: "with-allowlist-policy-happy-path-command-is-absolute-allowlist-entry-is-basename",
-			config: api.ExecConfig{
-				Command: "/usr/bin/env",
-				PluginPolicy: api.PluginPolicy{
-					PolicyType: api.PluginPolicyAllowlist,
-					Allowlist: api.Allowlist{
-						{Name: "end"},
-					},
-				},
-			},
-		},
-		{
-			name: "with-allowlist-policy-happy-path-command-is-absolute-allowlist-entry-is-basename",
-			config: api.ExecConfig{
-				Command: "env",
-				PluginPolicy: api.PluginPolicy{
-					PolicyType: api.PluginPolicyAllowlist,
-					Allowlist: api.Allowlist{
-						{Name: "/usr/bin/end"},
-					},
-				},
-			},
+	allPermutations := [][2]bool{
+		[2]bool{false, false},
+		[2]bool{false, true},
+		[2]bool{true, false},
+		[2]bool{true, true},
+	}
+
+	allowlistLengths := []int{-1 /*nil*/, 0, 1, 3}
+
+	type matrix struct {
+		exists           [][2]bool
+		absolute         [][2]bool
+		allowlistLengths []int
+		policies         []api.PolicyType
+	}
+
+	m := matrix{
+		exists:           allPermutations,
+		absolute:         allPermutations,
+		allowlistLengths: allowlistLengths,
+		policies: []api.PolicyType{
+			api.PluginPolicyUnspecified,
+			api.PluginPolicyAllowAll,
+			api.PluginPolicyDenyAll,
+			api.PluginPolicyAllowAll,
 		},
 	}
 
+	tests := make([]pluginPolicyTest, 0, len(m.exists)*2+len(m.absolute)*2+len(m.allowlistLengths)+len(m.policies))
+
+	for _, exists := range m.exists {
+		tt := pluginPolicyTest{}
+		tt.pluginExists = exists[0]
+		tt.entryExists = exists[1]
+		for _, absolute := range m.absolute {
+			tt.usePluginAbsPath = absolute[0]
+			tt.useEntryAbsPath = absolute[1]
+
+			for _, l := range m.allowlistLengths {
+				tt.allowlistLength = l
+				if tt.allowlistLength >= 0 {
+					tt.allowlist = make(api.Allowlist, 0, tt.allowlistLength)
+				}
+
+				if tt.allowlistLength >= 1 {
+					var entry api.AllowlistItem
+
+					switch {
+					case tt.entryExists && tt.useEntryAbsPath:
+						entry.Name = existingPluginInPATHAbsolutePath
+					case tt.entryExists && !tt.useEntryAbsPath:
+						entry.Name = existingPluginInPATHBasename
+					case !tt.entryExists && tt.useEntryAbsPath:
+						entry.Name = "/this/path/does/not/exist"
+					case !tt.entryExists && !tt.useEntryAbsPath:
+						entry.Name = "does not exist"
+					default:
+						entry.Name = ""
+					}
+
+					tt.allowlist = append(tt.allowlist, entry)
+				}
+
+				for i := 1; i < tt.allowlistLength; i++ {
+					tt.allowlist = append(tt.allowlist, api.AllowlistItem{Name: fmt.Sprintf("foo-%d", i)})
+				}
+
+				// shuffle the allowlist to guarantee ordering doesn't matter
+				for i := range tt.allowlist {
+					j := mathrand.IntN(i + 1)
+					tt.allowlist[i], tt.allowlist[j] = tt.allowlist[j], tt.allowlist[i]
+				}
+
+				for _, p := range m.policies {
+					tt.policyType = p
+					tt.setName()
+					tt.setExecConfig(existingPluginInPATHAbsolutePath, existingPluginInPATHBasename)
+					tt.setWantErr()
+
+					tests = append(tests, tt)
+					// getPluginPolicyTest(policy, useMultiple, useEntryAbsPath, usePluginAbsPath)
+				}
+			}
+		}
+	}
+
+	// tests = []pluginPolicyTest{
+	// 	{
+	// 		name: "with-allowall-policy-and-nonempty-allowlist",
+	// 		config: api.ExecConfig{
+	// 			PluginPolicy: api.PluginPolicy{
+	// 				PolicyType: api.PluginPolicyAllowAll,
+	// 				Allowlist: api.Allowlist{
+	// 					{Name: "bar"},
+	// 				},
+	// 			},
+	// 		},
+	// 		wantErr:       true,
+	// 		wantErrSubstr: `plugin policy is "AllowAll" but allowlist is non-nil`,
+	// 	},
+	// 	{
+	// 		name: "with-denyall-policy-and-nonempty-allowlist",
+	// 		config: api.ExecConfig{
+	// 			PluginPolicy: api.PluginPolicy{
+	// 				PolicyType: api.PluginPolicyDenyAll,
+	// 				Allowlist: api.Allowlist{
+	// 					{Name: "bar"},
+	// 				},
+	// 			},
+	// 		},
+	// 		wantErr:       true,
+	// 		wantErrSubstr: `plugin policy is "DenyAll" but allowlist is non-nil`,
+	// 	},
+	// 	{
+	// 		name: "with-allowlist-policy-and-empty-allowlist-item",
+	// 		config: api.ExecConfig{
+	// 			PluginPolicy: api.PluginPolicy{
+	// 				PolicyType: api.PluginPolicyAllowlist,
+	// 				Allowlist: api.Allowlist{
+	// 					{Name: "bar"},
+	// 					{},
+	// 				},
+	// 			},
+	// 		},
+	// 		wantErr:       true,
+	// 		wantErrSubstr: `empty allowlist entry`,
+	// 	},
+	// 	{
+	// 		name: "with-allowlist-policy-and-unspecified-allowlist",
+	// 		config: api.ExecConfig{
+	// 			PluginPolicy: api.PluginPolicy{
+	// 				PolicyType: api.PluginPolicyAllowlist,
+	// 				Allowlist:  nil,
+	// 			},
+	// 		},
+	// 		wantErr:       true,
+	// 		wantErrSubstr: `allowlist is unspecified`,
+	// 	},
+	// 	{
+	// 		name: "with-allowlist-policy-and-empty-allowlist-denyall-message",
+	// 		config: api.ExecConfig{
+	// 			PluginPolicy: api.PluginPolicy{
+	// 				PolicyType: api.PluginPolicyAllowlist,
+	// 				Allowlist:  api.Allowlist{},
+	// 			},
+	// 		},
+	// 		wantErr:       true,
+	// 		wantErrSubstr: `use "DenyAll" policy instead`,
+	// 	},
+	// 	{
+	// 		name: "with-allowlist-policy-and-plugin-does-not-exist-absolute-path",
+	// 		config: api.ExecConfig{
+	// 			Command: "/this/path/does/not/exist",
+	// 			PluginPolicy: api.PluginPolicy{
+	// 				PolicyType: api.PluginPolicyAllowlist,
+	// 				Allowlist: api.Allowlist{
+	// 					{Name: "bar"},
+	// 				},
+	// 			},
+	// 		},
+	// 		wantErr:       true,
+	// 		wantErrSubstr: `could not resolve path of exec plugin command`,
+	// 	},
+	// 	{
+	// 		name: "with-allowlist-policy-and-plugin-does-not-exist-basename-only",
+	// 		config: api.ExecConfig{
+	// 			Command: "does not exist",
+	// 			PluginPolicy: api.PluginPolicy{
+	// 				PolicyType: api.PluginPolicyAllowlist,
+	// 				Allowlist: api.Allowlist{
+	// 					{Name: "bar"},
+	// 				},
+	// 			},
+	// 		},
+	// 		wantErr:       true,
+	// 		wantErrSubstr: `could not resolve path of exec plugin command`,
+	// 	},
+	// 	{
+	// 		name: "with-allowlist-policy-and-allowlist-entry-does-not-exist-absolute-path",
+	// 		config: api.ExecConfig{
+	// 			Command: existingPluginInPATHAbsolutePath,
+	// 			PluginPolicy: api.PluginPolicy{
+	// 				PolicyType: api.PluginPolicyAllowlist,
+	// 				Allowlist: api.Allowlist{
+	// 					{Name: exi},
+	// 				},
+	// 			},
+	// 		},
+	// 		wantErr:       true,
+	// 		wantErrSubstr: `is not a match`,
+	// 	},
+	// 	{
+	// 		name: "with-allowlist-policy-and-allowlist-entry-does-not-exist-basename-only",
+	// 		config: api.ExecConfig{
+	// 			Command: guaranteedInPATHBasename,
+	// 			PluginPolicy: api.PluginPolicy{
+	// 				PolicyType: api.PluginPolicyAllowlist,
+	// 				Allowlist: api.Allowlist{
+	// 					{Name: "does not exist"},
+	// 				},
+	// 			},
+	// 		},
+	// 		wantErr:       true,
+	// 		wantErrSubstr: `is not a match`,
+	// 	},
+	// 	{
+	// 		name: "with-allowlist-policy-absolute-paths-dont-match",
+	// 		config: api.ExecConfig{
+	// 			Command: guaranteedExistsInPATHAbsolutePath,
+	// 			PluginPolicy: api.PluginPolicy{
+	// 				PolicyType: api.PluginPolicyAllowlist,
+	// 				Allowlist: api.Allowlist{
+	// 					{Name: "/usr/local/bin/true"},
+	// 					{Name: "/tmp/true"},
+	// 				},
+	// 			},
+	// 		},
+	// 		wantErr:       true,
+	// 		wantErrSubstr: "silly",
+	// 	},
+	// 	{
+	// 		name: "with-allowlist-policy-happy-path-both-basenames",
+	// 		config: api.ExecConfig{
+	// 			Command: guaranteedInPATHBasename,
+	// 			PluginPolicy: api.PluginPolicy{
+	// 				PolicyType: api.PluginPolicyAllowlist,
+	// 				Allowlist: api.Allowlist{
+	// 					{Name: "does not exist"},
+	// 					{Name: "might exit"},
+	// 					{Name: guaranteedInPATHBasename},
+	// 				},
+	// 			},
+	// 		},
+	// 	},
+	// 	{
+	// 		name: "with-allowlist-policy-happy-path-command-is-absolute-allowlist-entry-is-basename",
+	// 		config: api.ExecConfig{
+	// 			Command: "/usr/bin/env",
+	// 			PluginPolicy: api.PluginPolicy{
+	// 				PolicyType: api.PluginPolicyAllowlist,
+	// 				Allowlist: api.Allowlist{
+	// 					{Name: "end"},
+	// 				},
+	// 			},
+	// 		},
+	// 	},
+	// 	{
+	// 		name: "with-allowlist-policy-happy-path-command-is-absolute-allowlist-entry-is-basename",
+	// 		config: api.ExecConfig{
+	// 			Command: "env",
+	// 			PluginPolicy: api.PluginPolicy{
+	// 				PolicyType: api.PluginPolicyAllowlist,
+	// 				Allowlist: api.Allowlist{
+	// 					{Name: "/usr/bin/end"},
+	// 				},
+	// 			},
+	// 		},
+	// 	},
+	// }
+
 	// to avoid unrelated errors on authenticator initialization
 	apiVersions[""] = schema.GroupVersion{}
+
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			c := test.config
 
 			if c.Command == "" {
+				// This command is guaranteed to exist, but not necessarily in PATH
 				c.Command = "./testdata/test-plugin.sh"
 			}
 
@@ -1080,6 +1183,155 @@ func TestPluginPolicy(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (tt *pluginPolicyTest) setWantErr() {
+	tt.wantErr, tt.wantErrSubstr = tt.shouldWantErr()
+}
+
+func (tt *pluginPolicyTest) shouldWantErr() (bool, string) {
+	switch tt.policyType {
+	case api.PluginPolicyUnspecified:
+		if tt.allowlist != nil {
+			return true, "allowlist is non-nil"
+		}
+
+		return false, ""
+	case api.PluginPolicyAllowAll:
+		if tt.allowlist != nil {
+			return true, "allowlist is non-nil"
+		}
+
+		return false, ""
+	case api.PluginPolicyDenyAll:
+		if tt.allowlist != nil {
+			return true, "allowlist is non-nil"
+		}
+
+		return true, "policy set to `DenyAll`"
+	case api.PluginPolicyAllowlist:
+		return tt.shouldWantErrAllowlistPolicy()
+	}
+
+	return true, "illegal policy"
+}
+
+func (tt *pluginPolicyTest) shouldWantErrAllowlistPolicy() (bool, string) {
+	if tt.allowlist == nil {
+		return true, "allowlist policy with nil allowlist"
+	}
+
+	if len(tt.allowlist) == 0 {
+		return true, "allowlist policy with empty allowlist"
+	}
+
+	switch {
+	case tt.pluginExists && tt.entryExists:
+		return false, ""
+	case tt.pluginExists && !tt.entryExists:
+		return true, "plugin exists but not in allowlist"
+	case !tt.pluginExists && tt.entryExists:
+		return true, "plugin doesn't exist"
+	case !tt.pluginExists && !tt.entryExists:
+		return true, "neither plugin nor allowlist exist"
+	}
+
+	return true, "unreachable"
+}
+
+func (tt *pluginPolicyTest) setExecConfig(existingPluginInPATHAbsolutePath string, existingPluginInPATHBasename string) {
+	var cmd string
+
+	switch {
+	case tt.pluginExists && tt.usePluginAbsPath:
+		cmd = existingPluginInPATHAbsolutePath
+	case tt.pluginExists && !tt.usePluginAbsPath:
+		cmd = existingPluginInPATHBasename
+	case !tt.pluginExists && tt.usePluginAbsPath:
+		cmd = "/this/path/does/not/exist"
+	case !tt.pluginExists && !tt.usePluginAbsPath:
+		cmd = "does not exist"
+	default: // verifiably unreachable
+		cmd = "does not exist"
+	}
+
+	tt.config.Command = cmd
+	tt.config.PluginPolicy.PolicyType = tt.policyType
+	tt.config.PluginPolicy.Allowlist = tt.allowlist
+}
+
+func makeExistsString(s string, t bool) string {
+	ne := "nonexistent"
+	if t {
+		ne = "existing"
+	}
+
+	return fmt.Sprintf("%s-%s-path", ne, s)
+}
+
+func makePathString(s string, t bool) string {
+	ba := "basename"
+	if t {
+		ba = "absolute-path"
+	}
+
+	return fmt.Sprintf("%s-%s", ba, s)
+}
+
+func (tt *pluginPolicyTest) setName() {
+	p := string(tt.policyType)
+	if string(tt.policyType) == "" {
+		p = "unspecified"
+	}
+	var lengthStr string
+	switch tt.allowlistLength {
+	case -1:
+		lengthStr = "nil-allowlist"
+	case 0:
+		lengthStr = "empty-allowlist"
+	case 1:
+		lengthStr = "single-entry-allowlist"
+	default:
+		lengthStr = "multiple-entry-allowlist"
+	}
+	pluginExistsString := makeExistsString("plugin", tt.pluginExists)
+	entryExistsString := makeExistsString("entry", tt.entryExists)
+	pluginPathString := makePathString("plugin", tt.usePluginAbsPath)
+	entryPathString := makePathString("entry", tt.useEntryAbsPath)
+	policyString := fmt.Sprintf("with-%s-policy", strings.ToLower(p))
+
+	tt.name = filepath.Join(
+		policyString,
+		lengthStr,
+		pluginExistsString,
+		entryExistsString,
+		pluginPathString,
+		entryPathString,
+	)
+}
+func makeName(length int, policy api.PolicyType, path string, pluginExistsString string, entryExistsString string, pluginPathString string, entryPathString string) string {
+	var l string
+	switch length {
+	case -1:
+		l = "nil-allowlist"
+	case 0:
+		l = "empty-allowlist"
+	case 1:
+		l = "single-entry-allowlist"
+	default:
+		l = "multiple-entry-allowlist"
+	}
+
+	ps := fmt.Sprintf("with-%s-policy", strings.ToLower(string(policy)))
+
+	return filepath.Join(
+		ps,
+		l,
+		pluginExistsString,
+		entryExistsString,
+		pluginPathString,
+		entryPathString,
+	)
 }
 
 func TestRoundTripper(t *testing.T) {
