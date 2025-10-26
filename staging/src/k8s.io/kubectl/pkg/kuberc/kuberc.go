@@ -154,7 +154,9 @@ func (p *Preferences) applyOverrides(rootCmd *cobra.Command, kuberc *config.Pref
 		parsedCmds := strings.Fields(c.Command)
 		overrideCmd, _, err := rootCmd.Find(parsedCmds)
 		if err != nil {
-			fmt.Fprintf(errOut, "Warning: command %q not found to set kuberc override\n", c.Command)
+			if _, err := fmt.Fprintf(errOut, "Warning: command %q not found to set kuberc override\n", c.Command); err != nil {
+				return err
+			}
 			continue
 		}
 		if overrideCmd.Name() != cmd.Name() {
@@ -232,7 +234,9 @@ func (p *Preferences) applyAliases(rootCmd *cobra.Command, kuberc *config.Prefer
 
 		// do not allow shadowing built-ins
 		if _, _, err := rootCmd.Find([]string{alias.Name}); err == nil {
-			fmt.Fprintf(errOut, "Warning: Setting alias %q to a built-in command is not supported\n", alias.Name)
+			if _, err := fmt.Fprintf(errOut, "Warning: Setting alias %q to a built-in command is not supported\n", alias.Name); err != nil {
+				return args, err
+			}
 			break
 		}
 
@@ -331,6 +335,9 @@ func (p *Preferences) applyAliases(rootCmd *cobra.Command, kuberc *config.Prefer
 }
 
 func (p *Preferences) ApplyPluginPolicy(configFlags *genericclioptions.ConfigFlags) {
+	// if p.pluginPolicy.PolicyType == clientcmdapi.PluginPolicyUnspecified {
+	//     p.pluginPolicy.PolicyType = client
+	// }
 	configFlags.WithWrapConfigFn(func(c *rest.Config) *rest.Config {
 		if c.ExecProvider != nil {
 			c.ExecProvider.PluginPolicy = p.pluginPolicy
