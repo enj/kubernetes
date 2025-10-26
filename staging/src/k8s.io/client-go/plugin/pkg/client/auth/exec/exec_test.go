@@ -1041,7 +1041,7 @@ func (tt *pluginPolicyTest) setAllowlist(l int, existingPluginInPATHAbsolutePath
 	}
 
 	for i := 1; i < tt.allowlistLength; i++ {
-		tt.allowlist = append(tt.allowlist, api.AllowlistItem{Name: fmt.Sprintf("foo-%d", i)})
+		tt.allowlist = append(tt.allowlist, api.AllowlistEntry{Name: fmt.Sprintf("foo-%d", i)})
 	}
 
 	// shuffle the allowlist to guarantee ordering doesn't matter
@@ -1051,8 +1051,8 @@ func (tt *pluginPolicyTest) setAllowlist(l int, existingPluginInPATHAbsolutePath
 	}
 }
 
-func (tt *pluginPolicyTest) makeAllowlistEntry(existingPluginInPATHAbsolutePath string, existingPluginInPATHBasename string) api.AllowlistItem {
-	var entry api.AllowlistItem
+func (tt *pluginPolicyTest) makeAllowlistEntry(existingPluginInPATHAbsolutePath string, existingPluginInPATHBasename string) api.AllowlistEntry {
+	var entry api.AllowlistEntry
 
 	switch {
 	case tt.entryExists && tt.useEntryAbsPath:

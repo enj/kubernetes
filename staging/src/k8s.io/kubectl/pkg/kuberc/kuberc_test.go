@@ -2978,10 +2978,10 @@ users:
 		return &config.Preference{
 			CredPluginPolicy: "foo",
 			CredPluginAllowlist: clientcmdapi.Allowlist{
-				clientcmdapi.AllowlistItem{
+				clientcmdapi.AllowlistEntry{
 					Name: "bar",
 				},
-				clientcmdapi.AllowlistItem{
+				clientcmdapi.AllowlistEntry{
 					Name: "baz",
 				},
 			},
