@@ -2926,6 +2926,41 @@ unknownField: value`,
 }
 
 func TestApplyPluginPolicy(t *testing.T) {
+	tmpDir := t.TempDir()
+	kubeconfigData := `
+apiVersion: v1
+clusters:
+- cluster:
+    server: https://example.test:443
+  name: foo
+contexts:
+- context:
+    cluster: foo
+    user: me
+  name: foo
+current-context: foo
+kind: Config
+preferences: {}
+users:
+- name: me
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1beta1
+      args:
+      - get-token
+      - --login
+      command: foo
+      installHint: |2
+
+        kubelogin is not installed which is required to connect to AAD enabled cluster.
+
+        To learn more, please go to https://aka.ms/aks/kubelogin
+      provideClusterInfo: false`
+
+	kubeconfig := filepath.Join(tmpDir, "kubeconfig")
+	err := os.WriteFile(kubeconfig, []byte(kubeconfigData), 0o644)
+	require.NoError(t, err, "writing fake kubeconfig")
+
 	rootCmd := &cobra.Command{
 		Use: "root",
 	}
@@ -2933,11 +2968,11 @@ func TestApplyPluginPolicy(t *testing.T) {
 	args := []string{"placeholder", "two"}
 
 	opts := genericclioptions.NewConfigFlags(false)
+	opts.KubeConfig = &kubeconfig
+
 	p := NewPreferences()
 	pref, ok := p.(*Preferences)
-	if !ok {
-		t.Fatalf("invalid preference type")
-	}
+	require.True(t, ok, "preference type")
 
 	pref.getPreferencesFunc = func(_ string, _ io.Writer) (*config.Preference, error) {
 		return &config.Preference{
@@ -2953,14 +2988,14 @@ func TestApplyPluginPolicy(t *testing.T) {
 		}, nil
 	}
 
-	pref.ApplyPluginPolicy(opts)
-	_, err := pref.Apply(rootCmd, args, io.Discard)
+	p.ApplyPluginPolicy(opts)
+	_, err = p.Apply(rootCmd, args, io.Discard)
 	require.NoError(t, err, "error applying preferences")
 
 	cfg, err := opts.ToRESTConfig()
 	require.NoError(t, err, "unexpected error")
-	require.NotNil(t, cfg, "exec config unexpectedly nil")
-	require.NotNil(t, cfg.ExecProvider, "exec config unexpectedly nil")
+	require.NotNil(t, cfg, "rest config")
+	require.NotNil(t, cfg.ExecProvider, "exec config")
 	require.Equal(t, clientcmdapi.PolicyType("foo"), cfg.ExecProvider.PluginPolicy.PolicyType)
 	require.Equal(t, "bar", cfg.ExecProvider.PluginPolicy.Allowlist[0].Name)
 	require.Equal(t, "baz", cfg.ExecProvider.PluginPolicy.Allowlist[1].Name)
