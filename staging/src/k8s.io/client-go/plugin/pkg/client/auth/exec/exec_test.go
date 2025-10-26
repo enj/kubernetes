@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -931,7 +932,6 @@ func TestPluginPolicy(t *testing.T) {
 
 	path := os.Getenv("PATH")
 	defer os.Setenv("PATH", path)
-	os.Setenv("PATH", fmt.Sprintf("%s:%s", testdataDir, path))
 
 	matrix := pluginPolicyTestMatrix{
 		shouldErrFunc:    shouldErrFunc,
@@ -946,7 +946,8 @@ func TestPluginPolicy(t *testing.T) {
 			api.PolicyType("HIGHLYILLEGAL"),
 		},
 	}
-	tests := matrix.makeTests(testdataDir)
+
+	tests := matrix.makeTests(t, testdataDir, path)
 
 	// to avoid unrelated errors on authenticator initialization
 	apiVersions[""] = schema.GroupVersion{}
@@ -978,10 +979,21 @@ func TestPluginPolicy(t *testing.T) {
 	}
 }
 
-func (m *pluginPolicyTestMatrix) makeTests(testDataDir string) []pluginPolicyTest {
+func (m *pluginPolicyTestMatrix) makeTests(t *testing.T, testdataDir, path string) []pluginPolicyTest {
 	const existingPluginInPATHBasename = "test-plugin.sh"
+	existingPluginInPATHAbsolutePath := filepath.Join(testdataDir, existingPluginInPATHBasename)
 
-	existingPluginInPATHAbsolutePath := filepath.Join(testDataDir, existingPluginInPATHBasename)
+	err := os.Setenv("PATH", fmt.Sprintf("%s:%s", testdataDir, path))
+	require.NoError(t, err, "setting path")
+
+	resolved, err := exec.LookPath(existingPluginInPATHBasename)
+	require.NoError(t, err, "resolving test plugin basename")
+	require.Equal(t, existingPluginInPATHAbsolutePath, resolved)
+
+	resolvedAbs, err := exec.LookPath(existingPluginInPATHAbsolutePath)
+	require.NoError(t, err, "resolving test plugin basename")
+	require.Equal(t, existingPluginInPATHAbsolutePath, resolvedAbs)
+
 	tests := make([]pluginPolicyTest, 0, len(m.exists)*2+len(m.absolute)*2+len(m.allowlistLengths)+len(m.policies))
 
 	var tt *pluginPolicyTest
@@ -1009,6 +1021,7 @@ func (m *pluginPolicyTestMatrix) makeTests(testDataDir string) []pluginPolicyTes
 			}
 		}
 	}
+
 	return tests
 }
 
@@ -1049,50 +1062,6 @@ func (tt *pluginPolicyTest) makeAllowlistEntry(existingPluginInPATHAbsolutePath 
 	}
 
 	return entry
-}
-
-func (tt *pluginPolicyTest) setWantErr() {
-	tt.wantErr, tt.wantErrSubstr = tt.shouldWantErr()
-}
-
-func (tt *pluginPolicyTest) shouldWantErr() (bool, string) {
-	switch tt.policyType {
-	case api.PluginPolicyUnspecified, api.PluginPolicyAllowAll:
-		if tt.allowlist != nil {
-			return true, "allowlist is non-nil"
-		}
-
-		return false, ""
-	case api.PluginPolicyDenyAll:
-		if tt.allowlist != nil {
-			return true, "allowlist is non-nil"
-		}
-
-		return true, "policy set to `DenyAll`"
-	case api.PluginPolicyAllowlist:
-		if tt.allowlist == nil {
-			return true, "allowlist is unspecified"
-		}
-
-		if len(tt.allowlist) == 0 {
-			return true, "allowlist is empty; use \"DenyAll\" policy instead"
-		}
-
-		switch {
-		case tt.pluginExists && tt.entryExists:
-			return false, ""
-		case tt.pluginExists && !tt.entryExists:
-			return true, "is not permitted by the credential plugin allowlist"
-		case !tt.pluginExists && tt.entryExists:
-			return true, "could not resolve path of exec plugin command"
-		case !tt.pluginExists && !tt.entryExists:
-			return true, "could not resolve path of exec plugin command"
-		}
-
-		panic("unreachable")
-	}
-
-	return true, "illegal plugin policy"
 }
 
 func (tt *pluginPolicyTest) getExecConfig(existingPluginInPATHAbsolutePath string, existingPluginInPATHBasename string) *api.ExecConfig {
