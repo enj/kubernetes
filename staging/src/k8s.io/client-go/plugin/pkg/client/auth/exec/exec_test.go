@@ -931,7 +931,11 @@ func TestPluginPolicy(t *testing.T) {
 	testdataDir := filepath.Join(wd, "testdata")
 
 	path := os.Getenv("PATH")
-	defer os.Setenv("PATH", path)
+	defer func() {
+		if err = os.Setenv("PATH", path); err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	matrix := pluginPolicyTestMatrix{
 		shouldErrFunc:    shouldErrFunc,
