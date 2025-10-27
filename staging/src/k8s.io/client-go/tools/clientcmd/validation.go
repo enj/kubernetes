@@ -327,6 +327,7 @@ func validateAuthInfo(authInfoName string, authInfo clientcmdapi.AuthInfo) []err
 		default:
 			validationErrors = append(validationErrors, fmt.Errorf("invalid interactiveMode for %v: %q", authInfoName, authInfo.Exec.InteractiveMode))
 		}
+		// TODO(review): expand the validation here to cover the new field
 	}
 
 	// authPath also provides information for the client to identify the server, so allow multiple auth methods in that case

@@ -436,7 +436,7 @@ func (f *ConfigFlags) WithDiscoveryQPS(discoveryQPS float32) *ConfigFlags {
 
 // WithWrapConfigFn allows providing a wrapper function for the client Config.
 func (f *ConfigFlags) WithWrapConfigFn(wrapConfigFn func(*rest.Config) *rest.Config) *ConfigFlags {
-	f.WrapConfigFn = wrapConfigFn
+	f.WrapConfigFn = wrapConfigFn // TODO(review): fix this to not stomp on WrapConfigFn
 	return f
 }
 

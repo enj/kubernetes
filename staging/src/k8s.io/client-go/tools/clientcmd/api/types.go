@@ -326,18 +326,18 @@ type PluginPolicy struct {
 	Allowlist Allowlist `json:"-"`
 }
 
-type Allowlist []AllowlistEntry
+type Allowlist []AllowlistEntry // TODO(review): drop this type and just use []AllowlistEntry as we do with the other lists in the API types
 
 type PolicyType string
 
 const (
-	PluginPolicyUnspecified PolicyType = ""
+	PluginPolicyUnspecified PolicyType = "" // TODO(review): fix the defaulting so you do not need this empty string case
 	PluginPolicyAllowAll    PolicyType = "AllowAll"
 	PluginPolicyDenyAll     PolicyType = "DenyAll"
 	PluginPolicyAllowlist   PolicyType = "Allowlist"
 )
 
-var EmptyAllowlistEntry = AllowlistEntry{}
+var EmptyAllowlistEntry = AllowlistEntry{} // TODO(review): make this a private var near point of use, it is not part of the API
 
 var _ fmt.Stringer = new(ExecConfig)
 var _ fmt.GoStringer = new(ExecConfig)

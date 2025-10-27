@@ -66,6 +66,7 @@ type Preference struct {
 	// +listType=atomic
 	Aliases []AliasOverride `json:"aliases"`
 
+	// TODO(review): I would probably not define these on the alpha types and force the use of beta to get this feature
 	// credPluginPolicy specifies the policy governing which, if any, client-go
 	// credential plugins may be executed. It MUST be one of { "", "AllowAll", "DenyAll", "Allowlist" }.
 	// If the policy is "", then it falls back to "AllowAll" (this is required

@@ -371,7 +371,7 @@ func NewKubectlCommand(o KubectlOptions) *cobra.Command {
 	pref := kuberc.NewPreferences()
 	if !cmdutil.KubeRC.IsDisabled() {
 		pref.AddFlags(flags)
-		pref.ApplyPluginPolicy(kubeConfigFlags)
+		pref.ApplyPluginPolicy(kubeConfigFlags) // TODO(review): just pass kubeConfigFlags into pref.Apply below instead of splitting it up
 	}
 
 	matchVersionKubeConfigFlags := cmdutil.NewMatchVersionFlags(kubeConfigFlags)
@@ -385,7 +385,7 @@ func NewKubectlCommand(o KubectlOptions) *cobra.Command {
 	// clear the WrapConfigFn before running proxy command.
 	proxyCmd := proxy.NewCmdProxy(f, o.IOStreams)
 	proxyCmd.PreRun = func(cmd *cobra.Command, args []string) {
-		kubeConfigFlags.WrapConfigFn = nil
+		kubeConfigFlags.WrapConfigFn = nil // TODO(review): this looks like it will break your wiring above
 	}
 
 	// Avoid import cycle by setting ValidArgsFunction here instead of in NewCmdGet()

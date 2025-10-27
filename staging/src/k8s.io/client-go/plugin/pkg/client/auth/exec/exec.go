@@ -76,6 +76,7 @@ var (
 		clientauthenticationv1.SchemeGroupVersion.String():      clientauthenticationv1.SchemeGroupVersion,
 	}
 
+	// TODO(review): inline these, they are not used in any errors.Is call and just make the code harder to read
 	errInvalidAPIVersion     = errors.New("exec plugin: invalid apiVersion")
 	errPolicyDenyAll         = errors.New("plugin policy set to `DenyAll`")
 	errAllowlistEntryIsEmpty = errors.New("allowlist entry is empty")
@@ -291,6 +292,7 @@ type Authenticator struct {
 	dial *transport.DialHolder
 }
 
+// TODO(review): move these changes down so they are colocated with the rest of your changes
 // `allowsPlugin` determines whether or not the executable specified in its argument
 // may run according to the credential plugin policy. If the plugin is allowed,
 // `nil` is returned. If the plugin is not allowed, an error must be returned
@@ -300,6 +302,8 @@ func (a *Authenticator) allowsPlugin(cmd string) error {
 		return nil
 	}
 
+	// TODO(review): validation should not happen inline here,
+	//  at this point you should have known good config
 	// validates policy and allowlist
 	if err := a.validatePluginPolicy(); err != nil {
 		return err
@@ -324,7 +328,7 @@ func (a *Authenticator) allowsPlugin(cmd string) error {
 func (a *Authenticator) checkAllowlist(cmd string) error {
 	pluginAbsPath, err := exec.LookPath(cmd)
 	if err != nil {
-		return fmt.Errorf("%w: %q", errCredPluginNotFound, cmd)
+		return fmt.Errorf("%w: %q", errCredPluginNotFound, cmd) // TODO(review): do not swallow the error
 	}
 
 	errs := make([]error, 0, len(a.execPluginPolicy.Allowlist))
@@ -337,6 +341,7 @@ func (a *Authenticator) checkAllowlist(cmd string) error {
 		errs = append(errs, err)
 	}
 
+	// TODO(review): use utilerrors.NewAggregate instead of errors.Join for consistency with kube codebase
 	return fmt.Errorf("%q is not permitted by the credential plugin allowlist\n%w", pluginAbsPath, errors.Join(errs...))
 }
 
@@ -500,8 +505,10 @@ func (a *Authenticator) refreshCredsLocked() error {
 		cmd.Stdin = a.stdin
 	}
 
+	// TODO(review): lazily evaluate this once instead of calling it inline multiple times
+	// TODO(review): do not take a.cmd as input since allowsPlugin is a method on the struct
 	if err := a.allowsPlugin(a.cmd); err != nil {
-		return err
+		return err // TODO(review): add a new metric to cover the success/failure case here
 	}
 
 	err = cmd.Run()
@@ -619,7 +626,7 @@ func itemGreenlights(alEntry *api.AllowlistEntry, pluginAbsPath string) error {
 
 	if entryName := alEntry.Name; len(entryName) > 0 {
 		entryAbsPath, err := exec.LookPath(entryName)
-		if err != nil || pluginAbsPath != entryAbsPath {
+		if err != nil || pluginAbsPath != entryAbsPath { // TODO(review): do not swallow the error
 			return fmt.Errorf("allowlist entry %q is not a match for %q", entryName, pluginAbsPath)
 		}
 	}
@@ -638,7 +645,7 @@ func (a *Authenticator) validatePluginPolicy() error {
 	case api.PluginPolicyAllowlist:
 		return validateAllowlist(a.execPluginPolicy.Allowlist)
 	default:
-		return fmt.Errorf("illegal plugin policy: %q", a.execPluginPolicy.PolicyType)
+		return fmt.Errorf("unknown plugin policy: %q", a.execPluginPolicy.PolicyType)
 	}
 }
 
