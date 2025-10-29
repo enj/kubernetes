@@ -242,7 +242,7 @@ func comparableAttributes(attributes authorizer.Attributes) authorizer.Attribute
 	}
 }
 
-func (c *constrainedImpersonateAuthorizer) assertCache(t *testing.T, requestor, impersonationUser *user.DefaultInfo, expect *expectCache) {
+func (c *constrainedImpersonateAuthorizer) assertCache(t *testing.T, requestor, impersonatedUser *user.DefaultInfo, expect *expectCache) {
 	attrs := authorizer.AttributesRecord{User: requestor}
 	idx, exist := c.constrainedImpersonationHandler.tracker.idxCache.get(attrs)
 	if !expect.modeIndexCached {
@@ -276,23 +276,23 @@ func (c *constrainedImpersonateAuthorizer) assertCache(t *testing.T, requestor, 
 		if err != nil {
 			t.Fatal(err)
 		}
-		assertCacheKey(t, constrainedMode.cache, impersonationUser, attrs, associatedNodeCache)
+		assertCacheKey(t, constrainedMode.cache, impersonatedUser, attrs, associatedNodeCache)
 	}
 
 	if expect.impersonateCached {
 		require.Equal(t, 1, constrainedMode.state.cache.cache.Len())
-		assertCacheKey(t, constrainedMode.state.cache, impersonationUser, attrs, associatedNodeCache)
+		assertCacheKey(t, constrainedMode.state.cache, impersonatedUser, attrs, associatedNodeCache)
 	} else {
 		require.Equal(t, 0, constrainedMode.state.cache.cache.Len())
 	}
 }
 
-func assertCacheKey(t *testing.T, cache *impersonationCache, impersonationUser *user.DefaultInfo, attrs authorizer.Attributes, associatedNodeCache bool) {
+func assertCacheKey(t *testing.T, cache *impersonationCache, impersonatedUser *user.DefaultInfo, attrs authorizer.Attributes, associatedNodeCache bool) {
 	var key *impersonationCacheKey
 	if associatedNodeCache {
 		key = &impersonationCacheKey{wantedUser: &user.DefaultInfo{Name: "system:node:*"}, attributes: &associatedNodeImpersonationAttributes{Attributes: attrs}}
 	} else {
-		key = &impersonationCacheKey{wantedUser: impersonationUser, attributes: attrs}
+		key = &impersonationCacheKey{wantedUser: impersonatedUser, attributes: attrs}
 	}
 	info := cache.get(key)
 	require.True(t, info != nil)
@@ -362,8 +362,18 @@ func (l *legacyImpersonateAttrs) IsResourceRequest() bool {
 
 type expectCache struct {
 	modeIndexCached             bool
-	impersonateCached           bool
 	impersonateOnCachedRequests []*request.RequestInfo
+	impersonateCached           bool
+}
+
+type expectedCache struct {
+	modeIdx map[string]string // user -> mode verb
+	modes   []expectedModeCache
+}
+
+type expectedModeCache struct {
+	outer map[impersonationCacheKey]*user.DefaultInfo
+	inner map[*user.DefaultInfo]*user.DefaultInfo
 }
 
 type testRequest struct {
