@@ -229,7 +229,6 @@ func NewKubectlCommand(o KubectlOptions) *cobra.Command {
 	pref := kuberc.NewPreferences()
 	if !cmdutil.KubeRC.IsDisabled() {
 		pref.AddFlags(flags)
-		pref.ApplyPluginPolicy(kubeConfigFlags)
 	}
 
 	matchVersionKubeConfigFlags := cmdutil.NewMatchVersionFlags(kubeConfigFlags)
@@ -368,7 +367,7 @@ func NewKubectlCommand(o KubectlOptions) *cobra.Command {
 			}
 			return existingPreRunE(cmd, args)
 		}
-		_, err := pref.Apply(cmds, o.Arguments, o.IOStreams.ErrOut)
+		_, err := pref.Apply(cmds, kubeConfigFlags, o.Arguments, o.IOStreams.ErrOut)
 		if err != nil {
 			fmt.Fprintf(o.IOStreams.ErrOut, "error occurred while applying preferences %v\n", err)
 			os.Exit(1)
