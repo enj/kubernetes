@@ -244,12 +244,12 @@ func comparableAttributes(attributes authorizer.Attributes) authorizer.Attribute
 
 func (c *constrainedImpersonateAuthorizer) assertCache(t *testing.T, requestor, impersonationUser *user.DefaultInfo, expect *expectCache) {
 	attrs := authorizer.AttributesRecord{User: requestor}
+	idx, exist := c.constrainedImpersonationHandler.tracker.idxCache.get(attrs)
 	if !expect.modeIndexCached {
-		_, exist := c.constrainedImpersonationHandler.tracker.idxCache.get(attrs)
 		require.False(t, exist)
 		return
 	}
-	idx, exist := c.constrainedImpersonationHandler.tracker.idxCache.get(attrs)
+
 	require.True(t, exist)
 	mode := c.constrainedImpersonationHandler.tracker.modes[idx]
 
@@ -261,25 +261,29 @@ func (c *constrainedImpersonateAuthorizer) assertCache(t *testing.T, requestor, 
 	case *associatedNodeImpersonationCheck:
 		associatedNodeCache = true
 		constrainedMode = typedMode.mode.(*constrainedImpersonationModeState)
-	default:
-		// legacy impersonate
+	case *legacyImpersonationCheck:
+		require.Equal(t, 0, typedMode.m.cache.cache.Len())
 		return
-	}
-
-	if expect.impersonateCached {
-		require.Equal(t, 1, constrainedMode.state.cache.cache.Len())
-		assertCacheKey(t, constrainedMode.state.cache, impersonationUser, attrs, associatedNodeCache)
+	default:
+		t.Fatalf("unexpected mode: %T", typedMode)
 	}
 
 	require.Equal(t, len(expect.impersonateOnCachedRequests), constrainedMode.cache.cache.Len())
 	for _, req := range expect.impersonateOnCachedRequests {
-		reqContext := request.WithRequestInfo(request.NewContext(), req)
+		reqContext := request.WithRequestInfo(context.Background(), req)
 		reqContext = request.WithUser(reqContext, requestor)
 		attrs, err := filters.GetAuthorizerAttributes(reqContext)
 		if err != nil {
 			t.Fatal(err)
 		}
 		assertCacheKey(t, constrainedMode.cache, impersonationUser, attrs, associatedNodeCache)
+	}
+
+	if expect.impersonateCached {
+		require.Equal(t, 1, constrainedMode.state.cache.cache.Len())
+		assertCacheKey(t, constrainedMode.state.cache, impersonationUser, attrs, associatedNodeCache)
+	} else {
+		require.Equal(t, 0, constrainedMode.state.cache.cache.Len())
 	}
 }
 
