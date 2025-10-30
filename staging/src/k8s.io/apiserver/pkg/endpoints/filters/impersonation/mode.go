@@ -45,7 +45,10 @@ type impersonatedUserInfo struct {
 // a nil impersonatedUserInfo is returned if the mode does not support impersonating the wantedUser
 type impersonationMode interface {
 	check(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error)
-	verb() string // only used in unit tests
+
+	// only used in unit tests
+	verb() string
+	caches() (outer, inner *impersonationCache)
 }
 
 // constrainedImpersonationModeFilter is a function that defines if a specific constrained impersonation mode
@@ -121,6 +124,10 @@ func (a *associatedNodeImpersonationCheck) check(ctx context.Context, _ *imperso
 
 func (a *associatedNodeImpersonationCheck) verb() string {
 	return a.mode.verb()
+}
+
+func (a *associatedNodeImpersonationCheck) caches() (*impersonationCache, *impersonationCache) {
+	return a.mode.caches()
 }
 
 type associatedNodeImpersonationAttributes struct {
@@ -229,6 +236,12 @@ func (l *legacyImpersonationCheck) verb() string {
 	return l.m.verb
 }
 
+func (l *legacyImpersonationCheck) caches() (*impersonationCache, *impersonationCache) {
+	// legacy impersonation has no outer layer so just return an empty cache
+	// though an inner cache is present, it is unused
+	return newImpersonationCache(false), l.m.cache
+}
+
 func newConstrainedImpersonationMode(a authorizer.Authorizer, mode string, filter constrainedImpersonationModeFilter) impersonationMode {
 	return &constrainedImpersonationModeState{
 		state:      newImpersonationModeState(a, "impersonate:"+mode, true),
@@ -280,6 +293,10 @@ func (c *constrainedImpersonationModeState) check(ctx context.Context, key *impe
 
 func (c *constrainedImpersonationModeState) verb() string {
 	return c.state.verb
+}
+
+func (c *constrainedImpersonationModeState) caches() (*impersonationCache, *impersonationCache) {
+	return c.cache, c.state.cache
 }
 
 // impersonationModeState implements the primary authorization checks via the impersonate:<mode> verb for constrained
