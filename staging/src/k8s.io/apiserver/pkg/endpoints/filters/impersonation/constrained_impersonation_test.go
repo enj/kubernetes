@@ -22,8 +22,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -32,7 +32,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
-	"k8s.io/apimachinery/pkg/util/cache"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
 	"k8s.io/apiserver/pkg/authentication/user"
@@ -42,17 +41,15 @@ import (
 	"k8s.io/client-go/transport"
 )
 
-type constrainedImpersonateAuthorizer struct {
-	constrainedImpersonationHandler *constrainedImpersonationHandler
+type constrainedImpersonationTest struct {
+	t *testing.T
 
-	// lock guards below fields
-	lock         sync.Mutex
-	checkedAttrs []authorizer.Attributes
+	constrainedImpersonationHandler *constrainedImpersonationHandler
+	checkedAttrs                    []authorizer.Attributes
+	echoCalled                      bool
 }
 
-func (c *constrainedImpersonateAuthorizer) Authorize(ctx context.Context, a authorizer.Attributes) (authorizer.Decision, string, error) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+func (c *constrainedImpersonationTest) Authorize(ctx context.Context, a authorizer.Attributes) (authorizer.Decision, string, error) {
 	c.checkedAttrs = append(c.checkedAttrs, a)
 
 	u := a.GetUser()
@@ -98,11 +95,13 @@ func (c *constrainedImpersonateAuthorizer) Authorize(ctx context.Context, a auth
 	return authorizer.DecisionNoOpinion, "deny by default", nil
 }
 
-func echoUserInfoHandler(t *testing.T) http.HandlerFunc {
+func (c *constrainedImpersonationTest) echoUserInfoHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		c.echoCalled = true
+
 		u, ok := request.UserFrom(req.Context())
 		if !ok {
-			t.Fatal("user not found in request")
+			c.t.Fatal("user not found in request")
 		}
 
 		_ = json.NewEncoder(w).Encode(&user.DefaultInfo{
@@ -113,17 +112,17 @@ func echoUserInfoHandler(t *testing.T) http.HandlerFunc {
 		})
 
 		if _, ok := req.Header[authenticationv1.ImpersonateUserHeader]; ok {
-			t.Fatal("user header still present")
+			c.t.Fatal("user header still present")
 		}
 		if _, ok := req.Header[authenticationv1.ImpersonateUIDHeader]; ok {
-			t.Fatal("uid header still present")
+			c.t.Fatal("uid header still present")
 		}
 		if _, ok := req.Header[authenticationv1.ImpersonateGroupHeader]; ok {
-			t.Fatal("group header still present")
+			c.t.Fatal("group header still present")
 		}
 		for key := range req.Header {
 			if strings.HasPrefix(key, authenticationv1.ImpersonateUserExtraHeaderPrefix) {
-				t.Fatalf("extra header still present: %v", key)
+				c.t.Fatalf("extra header still present: %v", key)
 			}
 		}
 	}
@@ -162,14 +161,14 @@ const (
 	testRequestInfoHeader = "insecure-test-request-info-json"
 )
 
-func (c *constrainedImpersonateAuthorizer) handler(t *testing.T) http.Handler {
+func (c *constrainedImpersonationTest) handler() http.Handler {
 	s := runtime.NewScheme()
 	metav1.AddToGroupVersion(s, metav1.SchemeGroupVersion)
-	addImpersonation := WithConstrainedImpersonation(echoUserInfoHandler(t), c, serializer.NewCodecFactory(s))
+	addImpersonation := WithConstrainedImpersonation(c.echoUserInfoHandler(), c, serializer.NewCodecFactory(s))
 	c.constrainedImpersonationHandler = addImpersonation.(*constrainedImpersonationHandler)
 
-	addAuthentication := authenticationHandler(t, addImpersonation)
-	addRequestInfo := requestInfoHandler(t, addAuthentication)
+	addAuthentication := authenticationHandler(c.t, addImpersonation)
+	addRequestInfo := requestInfoHandler(c.t, addAuthentication)
 	return addRequestInfo
 }
 
@@ -199,16 +198,15 @@ func (t *testRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 	return t.delegate.RoundTrip(r)
 }
 
-func (c *constrainedImpersonateAuthorizer) assertAttributes(t *testing.T, expectedRequest testRequest) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+func (c *constrainedImpersonationTest) assertAttributes(expectedRequest testRequest) {
+	checkedAttrs := c.checkedAttrs
+	c.checkedAttrs = nil
 
-	require.Equal(t, len(expectedRequest.expectedAttributes), len(c.checkedAttrs))
-	defer func() { c.checkedAttrs = nil }()
+	require.Equal(c.t, len(expectedRequest.expectedAttributes), len(checkedAttrs))
 
-	for i := range c.checkedAttrs {
+	for i := range checkedAttrs {
 		want := &addUserAttributes{Attributes: expectedRequest.expectedAttributes[i], user: expectedRequest.expectedAttributesUser}
-		require.Equal(t, comparableAttributes(want), comparableAttributes(c.checkedAttrs[i]))
+		require.Equal(c.t, comparableAttributes(want), comparableAttributes(checkedAttrs[i]))
 	}
 }
 
@@ -242,15 +240,21 @@ func comparableAttributes(attributes authorizer.Attributes) authorizer.Attribute
 	}
 }
 
-func (c *constrainedImpersonateAuthorizer) assertCache(t *testing.T, requestor, impersonatedUser *user.DefaultInfo, expect *expectCache) {
+func (c *constrainedImpersonationTest) assertEchoCalled(expectedCalled bool) {
+	called := c.echoCalled
+	c.echoCalled = false
+	require.Equal(c.t, expectedCalled, called)
+}
+
+func (c *constrainedImpersonationTest) assertCache(requestor, impersonatedUser *user.DefaultInfo, expect *expectCache) {
 	attrs := authorizer.AttributesRecord{User: requestor}
 	idx, exist := c.constrainedImpersonationHandler.tracker.idxCache.get(attrs)
 	if !expect.modeIndexCached {
-		require.False(t, exist)
+		require.False(c.t, exist)
 		return
 	}
 
-	require.True(t, exist)
+	require.True(c.t, exist)
 	mode := c.constrainedImpersonationHandler.tracker.modes[idx]
 
 	var constrainedMode *constrainedImpersonationModeState
@@ -262,28 +266,28 @@ func (c *constrainedImpersonateAuthorizer) assertCache(t *testing.T, requestor, 
 		associatedNodeCache = true
 		constrainedMode = typedMode.mode.(*constrainedImpersonationModeState)
 	case *legacyImpersonationCheck:
-		require.Equal(t, 0, typedMode.m.cache.cache.Len())
+		require.Equal(c.t, 0, typedMode.m.cache.cache.Len())
 		return
 	default:
-		t.Fatalf("unexpected mode: %T", typedMode)
+		c.t.Fatalf("unexpected mode: %T", typedMode)
 	}
 
-	require.Equal(t, len(expect.impersonateOnCachedRequests), constrainedMode.cache.cache.Len())
+	require.Equal(c.t, len(expect.impersonateOnCachedRequests), constrainedMode.cache.cache.Len())
 	for _, req := range expect.impersonateOnCachedRequests {
 		reqContext := request.WithRequestInfo(context.Background(), req)
 		reqContext = request.WithUser(reqContext, requestor)
 		attrs, err := filters.GetAuthorizerAttributes(reqContext)
 		if err != nil {
-			t.Fatal(err)
+			c.t.Fatal(err)
 		}
-		assertCacheKey(t, constrainedMode.cache, impersonatedUser, attrs, associatedNodeCache)
+		assertCacheKey(c.t, constrainedMode.cache, impersonatedUser, attrs, associatedNodeCache)
 	}
 
 	if expect.impersonateCached {
-		require.Equal(t, 1, constrainedMode.state.cache.cache.Len())
-		assertCacheKey(t, constrainedMode.state.cache, impersonatedUser, attrs, associatedNodeCache)
+		require.Equal(c.t, 1, constrainedMode.state.cache.cache.Len())
+		assertCacheKey(c.t, constrainedMode.state.cache, impersonatedUser, attrs, associatedNodeCache)
 	} else {
-		require.Equal(t, 0, constrainedMode.state.cache.cache.Len())
+		require.Equal(c.t, 0, constrainedMode.state.cache.cache.Len())
 	}
 }
 
@@ -296,22 +300,6 @@ func assertCacheKey(t *testing.T, cache *impersonationCache, impersonatedUser *u
 	}
 	info := cache.get(key)
 	require.True(t, info != nil)
-}
-
-// clear called after each test case to clear cache
-func (c *constrainedImpersonateAuthorizer) clear() {
-	c.constrainedImpersonationHandler.tracker.idxCache.cache.Clear()
-	for _, mode := range c.constrainedImpersonationHandler.tracker.modes {
-		switch typedMode := mode.(type) {
-		case *constrainedImpersonationModeState:
-			typedMode.cache.cache = cache.NewExpiring()
-			typedMode.state.cache.cache = cache.NewExpiring()
-		case *associatedNodeImpersonationCheck:
-			constrainedMode := typedMode.mode.(*constrainedImpersonationModeState)
-			constrainedMode.cache.cache = cache.NewExpiring()
-			constrainedMode.state.cache.cache = cache.NewExpiring()
-		}
-	}
 }
 
 type impersonateAttrs struct {
@@ -367,8 +355,8 @@ type expectCache struct {
 }
 
 type expectedCache struct {
-	modeIdx map[string]string // user -> mode verb
-	modes   []expectedModeCache
+	modeIdx map[string]string            // username -> mode verb
+	modes   map[string]expectedModeCache // mode verb -> cache
 }
 
 type expectedModeCache struct {
@@ -777,12 +765,26 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 		},
 	}
 
-	constrainedAuthorizer := &constrainedImpersonateAuthorizer{}
-	server := httptest.NewServer(constrainedAuthorizer.handler(t))
-	defer server.Close()
+	var mux http.ServeMux
+	tests := make([]*constrainedImpersonationTest, len(testCases))
+	handlers := make([]http.Handler, len(testCases))
+	for i := range len(testCases) {
+		mux.Handle("/"+strconv.Itoa(i), http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			handlers[i].ServeHTTP(w, req)
+		}))
+	}
 
-	for _, tc := range testCases {
+	server := httptest.NewServer(&mux)
+	t.Cleanup(server.Close)
+
+	for i, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			test := &constrainedImpersonationTest{t: t}
+			tests[i] = test
+			handlers[i] = test.handler()
+
 			for _, r := range tc.requests {
 				client := &http.Client{
 					Transport: &testRoundTripper{
@@ -800,7 +802,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 					},
 				}
 
-				req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL, nil)
+				req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/"+strconv.Itoa(i), nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -826,6 +828,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 					}
 
 					requireUserInfo(t, r.expectedImpersonatedUser, &actualUser)
+					test.assertEchoCalled(true)
 					require.NotNil(t, r.expectedImpersonatedUser) // sanity check test data
 					require.Empty(t, r.expectedMessage)           // sanity check test data
 				} else {
@@ -834,6 +837,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						t.Errorf("unexpected error: %v, body=\n%s", err, string(body))
 					}
 					require.Equal(t, r.expectedMessage, status.Message)
+					test.assertEchoCalled(false)
 					require.NotEmpty(t, r.expectedMessage)     // sanity check test data
 					require.Nil(t, r.expectedImpersonatedUser) // sanity check test data
 				}
@@ -843,10 +847,9 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 					r.expectedAttributesUser = r.requestor
 				}
 
-				constrainedAuthorizer.assertAttributes(t, r)
-				constrainedAuthorizer.assertCache(t, r.requestor, r.impersonatedUser, r.expectCache)
+				test.assertAttributes(r)
+				test.assertCache(r.requestor, r.impersonatedUser, r.expectCache)
 			}
-			constrainedAuthorizer.clear()
 		})
 	}
 }
