@@ -1,5 +1,5 @@
 /*
-Copyright 2022 The Kubernetes Authors.
+Copyright 2025 The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -14,14 +14,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package transformation
+package testkmsv2provider
 
 import (
 	"testing"
 
-	"k8s.io/kubernetes/test/integration/framework"
+	"k8s.io/kubernetes/test/integration/controlplane/transformation"
 )
 
-func TestMain(m *testing.M) {
-	framework.EtcdMain(m.Run)
+// TestKMSv2Provider is a slow test that relies on global state so it cannot be run in parallel.
+// Thus, it must be the only test in this package.
+func TestKMSv2Provider(t *testing.T) {
+	transformation.TestKMSv2Provider(t)
 }
