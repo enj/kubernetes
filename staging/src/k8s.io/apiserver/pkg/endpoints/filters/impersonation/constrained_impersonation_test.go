@@ -43,6 +43,13 @@ import (
 	"k8s.io/client-go/transport"
 )
 
+// TODO add unit tests for
+//  buildKey
+//  parallel requests
+//  complex authorization that results in partial failure internally but overall success
+//  large number of groups/extra
+//  system:masters constrained impersonation is not allowed
+
 type constrainedImpersonationTest struct {
 	t *testing.T
 
@@ -202,18 +209,10 @@ func (c *constrainedImpersonationTest) assertAttributes(expectedRequest testRequ
 	require.Equal(c.t, len(expectedRequest.expectedAttributes), len(checkedAttrs))
 
 	for i := range checkedAttrs {
-		want := &addUserAttributes{Attributes: expectedRequest.expectedAttributes[i], user: expectedRequest.expectedAttributesUser}
-		require.Equal(c.t, comparableAttributes(want), comparableAttributes(checkedAttrs[i]))
+		// TODO fix the test logic to require the complete attributes instead of combining them here
+		want := withUser(expectedRequest.expectedAttributes[i], expectedRequest.expectedAttributesUser)
+		require.Equal(c.t, want, comparableAttributes(checkedAttrs[i]))
 	}
-}
-
-type addUserAttributes struct { // TODO fix the test logic to not need this
-	authorizer.Attributes
-	user *user.DefaultInfo
-}
-
-func (a *addUserAttributes) GetUser() user.Info {
-	return a.user
 }
 
 func comparableAttributes(attributes authorizer.Attributes) authorizer.AttributesRecord {
@@ -304,13 +303,13 @@ func usernameHash(username string) string {
 
 func (c *constrainedImpersonationTest) checkCacheEntry(cache *impersonationCache, wantedUser *user.DefaultInfo, attributes authorizer.Attributes, expectedUser *user.DefaultInfo, expectedVerb string) {
 	rr := require.New(c.t)
-	keyString, err := buildKey(wantedUser, attributes) // TODO test buildKey
+	keyString, err := buildKey(wantedUser, attributes)
 	rr.NoError(err)
 	val, ok := cache.cache.Get(keyString)
 	rr.True(ok)
 	impersonatedUser := val.(*impersonatedUserInfo)
 	rr.Equal(expectedVerb, impersonatedUser.constraint)
-	rr.Equal(expectedUser, comparableUser(impersonatedUser.user))
+	rr.Equal(expectedUser, impersonatedUser.user)
 	rr.True(strings.HasSuffix(keyString, "/"+attributes.GetUser().GetName()))
 }
 
@@ -342,6 +341,19 @@ func withLegacyImpersonateAttributes(a authorizer.AttributesRecord) authorizer.A
 	a.APIVersion = "v1"
 	a.ResourceRequest = true
 	return a
+}
+
+func withUser(a authorizer.AttributesRecord, u *user.DefaultInfo) authorizer.AttributesRecord {
+	a.User = u
+	return a
+}
+
+func outerCacheKey(wantedUser, requestor *user.DefaultInfo, req *request.RequestInfo) impersonationCacheKey {
+	attributes := withUser(requestInfoToAttributes(req), requestor)
+	return impersonationCacheKey{
+		wantedUser: wantedUser,
+		attributes: &attributes, // use a *authorizer.AttributesRecord so that it can be used in a map key
+	}
 }
 
 type expectedCache struct {
@@ -425,13 +437,7 @@ func associatedNodeTestCase() []testRequest {
 		modes: map[string]expectedModeCache{
 			"impersonate:associated-node": {
 				outer: map[impersonationCacheKey]*user.DefaultInfo{
-					{
-						wantedUser: &user.DefaultInfo{Name: "system:node:*"},
-						attributes: &addUserAttributes{
-							Attributes: requestInfoToAttributes(getSecretRequest),
-							user:       saDefaultOnAnyNode,
-						},
-					}: node1FullUserInfo,
+					outerCacheKey(&user.DefaultInfo{Name: "system:node:*"}, saDefaultOnAnyNode, getSecretRequest): node1FullUserInfo,
 				},
 				inner: map[innerKey]*user.DefaultInfo{
 					{
@@ -447,20 +453,9 @@ func associatedNodeTestCase() []testRequest {
 		modes: map[string]expectedModeCache{
 			"impersonate:associated-node": {
 				outer: map[impersonationCacheKey]*user.DefaultInfo{
-					{
-						wantedUser: &user.DefaultInfo{Name: "system:node:*"},
-						attributes: &addUserAttributes{
-							Attributes: requestInfoToAttributes(getSecretRequest),
-							user:       saDefaultOnAnyNode,
-						},
-					}: node1FullUserInfo,
-					{
-						wantedUser: &user.DefaultInfo{Name: "system:node:*"},
-						attributes: &addUserAttributes{
-							Attributes: requestInfoToAttributes(getPodRequest),
-							user:       saDefaultOnAnyNode,
-						},
-					}: node1FullUserInfo, // even though this request was made on node2, since the inner cache matched it returned a value for node1
+					outerCacheKey(&user.DefaultInfo{Name: "system:node:*"}, saDefaultOnAnyNode, getSecretRequest): node1FullUserInfo,
+					// even though this request was made on node2, since the inner cache matched it returned a value for node1
+					outerCacheKey(&user.DefaultInfo{Name: "system:node:*"}, saDefaultOnAnyNode, getPodRequest): node1FullUserInfo,
 				},
 				inner: cacheWithOnlyNode1Data.modes["impersonate:associated-node"].inner,
 			},
@@ -583,16 +578,6 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 	saImpersonator := &user.DefaultInfo{Name: "sa-impersonater"}
 	nodeImpersonator := &user.DefaultInfo{Name: "node-impersonater"}
 
-	outerCacheKeyFunc := func(wantedUser, impersonator *user.DefaultInfo, req *request.RequestInfo) impersonationCacheKey {
-		return impersonationCacheKey{
-			wantedUser: wantedUser,
-			attributes: &addUserAttributes{
-				Attributes: requestInfoToAttributes(req),
-				user:       impersonator,
-			},
-		}
-	}
-
 	testCases := []struct {
 		name     string
 		requests []testRequest
@@ -609,7 +594,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "users", Name: "anyone"}, "user-info"),
 						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "anyone"}),
 					},
-					expectedCache:   nil, // TODO fix
+					expectedCache:   nil,
 					expectedCode:    http.StatusForbidden,
 					expectedMessage: `users.authentication.k8s.io "anyone" is forbidden: User "tester" cannot impersonate:user-info resource "users" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
 				},
@@ -634,7 +619,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						modes: map[string]expectedModeCache{
 							"impersonate:user-info": {
 								outer: map[impersonationCacheKey]*user.DefaultInfo{
-									outerCacheKeyFunc(anyone, userImpersonator, getPodRequest): anyoneAuthenticated,
+									outerCacheKey(anyone, userImpersonator, getPodRequest): anyoneAuthenticated,
 								},
 								inner: map[innerKey]*user.DefaultInfo{
 									{wantedUser: anyone, requestor: userImpersonator}: anyoneAuthenticated,
@@ -659,8 +644,8 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						modes: map[string]expectedModeCache{
 							"impersonate:user-info": {
 								outer: map[impersonationCacheKey]*user.DefaultInfo{
-									outerCacheKeyFunc(anyone, userImpersonator, getPodRequest):        anyoneAuthenticated,
-									outerCacheKeyFunc(anyone, userImpersonator, getAnotherPodRequest): anyoneAuthenticated,
+									outerCacheKey(anyone, userImpersonator, getPodRequest):        anyoneAuthenticated,
+									outerCacheKey(anyone, userImpersonator, getAnotherPodRequest): anyoneAuthenticated,
 								},
 								inner: map[innerKey]*user.DefaultInfo{
 									{wantedUser: anyone, requestor: userImpersonator}: anyoneAuthenticated,
@@ -685,8 +670,8 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						modes: map[string]expectedModeCache{
 							"impersonate:user-info": {
 								outer: map[impersonationCacheKey]*user.DefaultInfo{
-									outerCacheKeyFunc(anyone, userImpersonator, getPodRequest):        anyoneAuthenticated,
-									outerCacheKeyFunc(anyone, userImpersonator, getAnotherPodRequest): anyoneAuthenticated,
+									outerCacheKey(anyone, userImpersonator, getPodRequest):        anyoneAuthenticated,
+									outerCacheKey(anyone, userImpersonator, getAnotherPodRequest): anyoneAuthenticated,
 								},
 								inner: map[innerKey]*user.DefaultInfo{
 									{wantedUser: anyone, requestor: userImpersonator}: anyoneAuthenticated,
@@ -718,13 +703,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						modes: map[string]expectedModeCache{
 							"impersonate:serviceaccount": {
 								outer: map[impersonationCacheKey]*user.DefaultInfo{
-									{
-										wantedUser: saUser,
-										attributes: &addUserAttributes{
-											Attributes: requestInfoToAttributes(getPodRequest),
-											user:       saImpersonator,
-										},
-									}: saUserAuthenticated,
+									outerCacheKey(saUser, saImpersonator, getPodRequest): saUserAuthenticated,
 								},
 								inner: map[innerKey]*user.DefaultInfo{
 									{
@@ -768,7 +747,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						withImpersonateOnAttributes(createPodRequest, "arbitrary-node"),
 						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:node:node1"}),
 					},
-					expectedCache:   nil, // TODO fix
+					expectedCache:   nil,
 					expectedCode:    http.StatusForbidden,
 					expectedMessage: `pods "foo" is forbidden: User "node-impersonater" cannot impersonate-on:arbitrary-node:create resource "pods" in API group "" in the namespace "bar": deny by default`,
 				},
@@ -793,7 +772,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						modes: map[string]expectedModeCache{
 							"impersonate:arbitrary-node": {
 								outer: map[impersonationCacheKey]*user.DefaultInfo{
-									outerCacheKeyFunc(nodeUser, nodeImpersonator, getPodRequest): nodeUserAuthenticated,
+									outerCacheKey(nodeUser, nodeImpersonator, getPodRequest): nodeUserAuthenticated,
 								},
 								inner: map[innerKey]*user.DefaultInfo{
 									{wantedUser: nodeUser, requestor: nodeImpersonator}: nodeUserAuthenticated,
@@ -826,7 +805,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "scopes", Name: "scope-a"}, "user-info"),
 						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:admin"}),
 					},
-					expectedCache:   nil, // TODO fix
+					expectedCache:   nil,
 					expectedCode:    http.StatusForbidden,
 					expectedMessage: `userextras.authentication.k8s.io "scope-a" is forbidden: User "user-impersonater" cannot impersonate:user-info resource "userextras/scopes" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
 				},
@@ -863,7 +842,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						modes: map[string]expectedModeCache{
 							"impersonate:user-info": {
 								outer: map[impersonationCacheKey]*user.DefaultInfo{
-									outerCacheKeyFunc(
+									outerCacheKey(
 										&user.DefaultInfo{
 											Name:  "system:admin",
 											Extra: map[string][]string{"scopes": {"scope-a", "scope-b"}},
@@ -923,7 +902,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "nodes", Name: "node1"}, "arbitrary-node"),
 						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:node:node1"}),
 					},
-					expectedCache:   nil, // TODO fix
+					expectedCache:   nil,
 					expectedCode:    http.StatusForbidden,
 					expectedMessage: `nodes.authentication.k8s.io "node1" is forbidden: User "user-impersonater" cannot impersonate:arbitrary-node resource "nodes" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
 				},
@@ -979,7 +958,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						modes: map[string]expectedModeCache{
 							"impersonate:user-info": {
 								outer: map[impersonationCacheKey]*user.DefaultInfo{
-									outerCacheKeyFunc(&user.DefaultInfo{Name: "bob"}, userImpersonator, getDeploymentRequest): {
+									outerCacheKey(&user.DefaultInfo{Name: "bob"}, userImpersonator, getDeploymentRequest): {
 										Name:   "bob",
 										Groups: []string{"system:authenticated"},
 									},
@@ -1013,7 +992,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						modes: map[string]expectedModeCache{
 							"impersonate:user-info": {
 								outer: map[impersonationCacheKey]*user.DefaultInfo{
-									outerCacheKeyFunc(&user.DefaultInfo{Name: "bob"}, userImpersonator, getDeploymentRequest): {
+									outerCacheKey(&user.DefaultInfo{Name: "bob"}, userImpersonator, getDeploymentRequest): {
 										Name:   "bob",
 										Groups: []string{"system:authenticated"},
 									},
@@ -1086,7 +1065,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						t.Errorf("unexpected error: %v, body=\n%s", err, string(body))
 					}
 
-					requireUserInfo(t, r.expectedImpersonatedUser, &actualUser)
+					require.Equal(t, r.expectedImpersonatedUser, &actualUser)
 					test.assertEchoCalled(true)
 					require.NotNil(t, r.expectedImpersonatedUser) // sanity check test data
 					require.Empty(t, r.expectedMessage)           // sanity check test data
@@ -1111,10 +1090,4 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 			}
 		})
 	}
-}
-
-func requireUserInfo(t *testing.T, expect *user.DefaultInfo, actual user.Info) {
-	t.Helper()
-
-	require.Equal(t, expect, comparableUser(actual))
 }
