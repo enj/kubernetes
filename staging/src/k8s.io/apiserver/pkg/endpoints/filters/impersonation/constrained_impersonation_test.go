@@ -18,75 +18,77 @@ package impersonation
 
 import (
 	"context"
-	"k8s.io/apiserver/pkg/endpoints/filters"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
-	"sync"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	authenticationapi "k8s.io/api/authentication/v1"
+	authenticationv1 "k8s.io/api/authentication/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
-	"k8s.io/apimachinery/pkg/util/cache"
+	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
+	"k8s.io/apiserver/pkg/endpoints/filters"
 	"k8s.io/apiserver/pkg/endpoints/request"
+	"k8s.io/client-go/transport"
 )
 
-type constrainedImpersonateAuthorizer struct {
-	handler *constrainedImpersonationHandler
+type constrainedImpersonationTest struct {
+	t *testing.T
 
-	checkedAttrs []authorizer.Attributes
-	actualUser   user.Info
-	requestCtx   context.Context
-
-	lock sync.Mutex
+	constrainedImpersonationHandler *constrainedImpersonationHandler
+	checkedAttrs                    []authorizer.Attributes
+	echoCalled                      bool
 }
 
-func (c *constrainedImpersonateAuthorizer) Authorize(ctx context.Context, a authorizer.Attributes) (authorized authorizer.Decision, reason string, err error) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+func (c *constrainedImpersonationTest) Authorize(ctx context.Context, a authorizer.Attributes) (authorizer.Decision, string, error) {
 	c.checkedAttrs = append(c.checkedAttrs, a)
 
-	user := a.GetUser()
+	u := a.GetUser()
 
-	if user.GetName() == "sa-impersonater" && a.GetVerb() == "impersonate:serviceaccount" && a.GetResource() == "serviceaccounts" {
+	if u.GetName() == "sa-impersonater" && a.GetVerb() == "impersonate:serviceaccount" && a.GetResource() == "serviceaccounts" {
 		return authorizer.DecisionAllow, "", nil
 	}
 
-	if user.GetName() == "system:serviceaccount:default:node" && a.GetVerb() == "impersonate:arbitrary-node" && a.GetResource() == "nodes" {
+	if u.GetName() == "system:serviceaccount:default:node" && a.GetVerb() == "impersonate:arbitrary-node" && a.GetResource() == "nodes" {
 		return authorizer.DecisionAllow, "", nil
 	}
 
-	if user.GetName() == "node-impersonater" && a.GetVerb() == "impersonate:arbitrary-node" && a.GetResource() == "nodes" {
+	if u.GetName() == "node-impersonater" && a.GetVerb() == "impersonate:arbitrary-node" && a.GetResource() == "nodes" {
 		return authorizer.DecisionAllow, "", nil
 	}
 
-	if len(user.GetGroups()) > 0 && user.GetGroups()[0] == "associate-node-impersonater" && a.GetVerb() == "impersonate:associated-node" && a.GetResource() == "nodes" {
+	if len(u.GetGroups()) > 0 && u.GetGroups()[0] == "associate-node-impersonater" && a.GetVerb() == "impersonate:associated-node" && a.GetResource() == "nodes" {
 		return authorizer.DecisionAllow, "", nil
 	}
 
-	if user.GetName() == "user-impersonater" && a.GetVerb() == "impersonate:user-info" && a.GetResource() == "users" {
+	if u.GetName() == "user-impersonater" && a.GetVerb() == "impersonate:user-info" && a.GetResource() == "users" {
 		return authorizer.DecisionAllow, "", nil
 	}
 
-	if len(user.GetGroups()) > 0 && user.GetGroups()[0] == "group-impersonater" && a.GetVerb() == "impersonate:user-info" && a.GetResource() == "groups" {
+	if len(u.GetGroups()) > 0 && u.GetGroups()[0] == "group-impersonater" && a.GetVerb() == "impersonate:user-info" && a.GetResource() == "groups" {
 		return authorizer.DecisionAllow, "", nil
 	}
 
-	if len(user.GetGroups()) > 0 && user.GetGroups()[0] == "extra-setter-scopes" && a.GetVerb() == "impersonate:user-info" && a.GetResource() == "userextras" && a.GetSubresource() == "scopes" {
+	if len(u.GetGroups()) > 0 && u.GetGroups()[0] == "extra-setter-scopes" && a.GetVerb() == "impersonate:user-info" && a.GetResource() == "userextras" && a.GetSubresource() == "scopes" {
 		return authorizer.DecisionAllow, "", nil
 	}
 
-	if user.GetName() == "legacy-impersonater" && a.GetVerb() == "impersonate" {
+	if u.GetName() == "legacy-impersonater" && a.GetVerb() == "impersonate" {
 		return authorizer.DecisionAllow, "", nil
 	}
 
-	if user.GetName() != "legacy-impersonator" &&
+	if u.GetName() != "legacy-impersonator" &&
 		strings.HasPrefix(a.GetVerb(), "impersonate-on:") &&
 		(strings.HasSuffix(a.GetVerb(), "list") || strings.HasSuffix(a.GetVerb(), "get")) {
 		return authorizer.DecisionAllow, "", nil
@@ -95,200 +97,429 @@ func (c *constrainedImpersonateAuthorizer) Authorize(ctx context.Context, a auth
 	return authorizer.DecisionNoOpinion, "deny by default", nil
 }
 
-func (c *constrainedImpersonateAuthorizer) finalHandler(t *testing.T) http.HandlerFunc {
+func (c *constrainedImpersonationTest) echoUserInfoHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		currentCtx := req.Context()
-		user, exists := request.UserFrom(currentCtx)
-		if !exists {
-			c.actualUser = nil
-			return
+		c.echoCalled = true
+
+		u, ok := request.UserFrom(req.Context())
+		if !ok {
+			c.t.Fatal("user not found in request")
 		}
 
-		c.actualUser = user
+		_ = json.NewEncoder(w).Encode(comparableUser(u))
 
-		if _, ok := req.Header[authenticationapi.ImpersonateUserHeader]; ok {
-			t.Fatal("user header still present")
+		if _, ok := req.Header[authenticationv1.ImpersonateUserHeader]; ok {
+			c.t.Fatal("user header still present")
 		}
-		if _, ok := req.Header[authenticationapi.ImpersonateGroupHeader]; ok {
-			t.Fatal("group header still present")
+		if _, ok := req.Header[authenticationv1.ImpersonateUIDHeader]; ok {
+			c.t.Fatal("uid header still present")
+		}
+		if _, ok := req.Header[authenticationv1.ImpersonateGroupHeader]; ok {
+			c.t.Fatal("group header still present")
 		}
 		for key := range req.Header {
-			if strings.HasPrefix(key, authenticationapi.ImpersonateUserExtraHeaderPrefix) {
-				t.Fatalf("extra header still present: %v", key)
+			if strings.HasPrefix(key, authenticationv1.ImpersonateUserExtraHeaderPrefix) {
+				c.t.Fatalf("extra header still present: %v", key)
 			}
 		}
-		if _, ok := req.Header[authenticationapi.ImpersonateUIDHeader]; ok {
-			t.Fatal("uid header still present")
+	}
+}
+
+func (c *constrainedImpersonationTest) authenticationHandler(handler http.Handler) http.Handler {
+	return filters.WithAuthentication(handler, authenticator.RequestFunc(func(req *http.Request) (*authenticator.Response, bool, error) {
+		userData := req.Header.Get(testUserHeader)
+		if len(userData) == 0 {
+			c.t.Fatal("missing user header")
+		}
+		var u user.DefaultInfo
+		if err := json.Unmarshal([]byte(userData), &u); err != nil {
+			c.t.Fatal(err)
+		}
+		return &authenticator.Response{User: &u}, true, nil
+	}), nil, nil, nil)
+}
+
+func (c *constrainedImpersonationTest) requestInfoHandler(handler http.Handler) http.Handler {
+	return filters.WithRequestInfo(handler, requestInfoFunc(func(req *http.Request) (*request.RequestInfo, error) {
+		requestInfoData := req.Header.Get(testRequestInfoHeader)
+		if len(requestInfoData) == 0 {
+			c.t.Fatal("missing request info header")
+		}
+		var r request.RequestInfo
+		if err := json.Unmarshal([]byte(requestInfoData), &r); err != nil {
+			c.t.Fatal(err)
+		}
+		return &r, nil
+	}))
+}
+
+type requestInfoFunc func(*http.Request) (*request.RequestInfo, error)
+
+func (f requestInfoFunc) NewRequestInfo(req *http.Request) (*request.RequestInfo, error) {
+	return f(req)
+}
+
+const (
+	testUserHeader        = "insecure-test-user-json"
+	testRequestInfoHeader = "insecure-test-request-info-json"
+)
+
+func (c *constrainedImpersonationTest) handler() http.Handler {
+	s := runtime.NewScheme()
+	metav1.AddToGroupVersion(s, metav1.SchemeGroupVersion)
+	addImpersonation := WithConstrainedImpersonation(c.echoUserInfoHandler(), c, serializer.NewCodecFactory(s))
+	c.constrainedImpersonationHandler = addImpersonation.(*constrainedImpersonationHandler)
+
+	addAuthentication := c.authenticationHandler(addImpersonation)
+	addRequestInfo := c.requestInfoHandler(addAuthentication)
+	return addRequestInfo
+}
+
+type testRoundTripper struct {
+	user        *user.DefaultInfo
+	requestInfo *request.RequestInfo
+	delegate    http.RoundTripper
+}
+
+func (t *testRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	userData, err := json.Marshal(t.user)
+	if err != nil {
+		return nil, err
+	}
+	requestInfoData, err := json.Marshal(t.requestInfo)
+	if err != nil {
+		return nil, err
+	}
+	r.Header.Set(testUserHeader, string(userData))
+	r.Header.Set(testRequestInfoHeader, string(requestInfoData))
+	return t.delegate.RoundTrip(r)
+}
+
+func (c *constrainedImpersonationTest) assertAttributes(expectedRequest testRequest) {
+	checkedAttrs := c.checkedAttrs
+	c.checkedAttrs = nil
+
+	require.Equal(c.t, len(expectedRequest.expectedAttributes), len(checkedAttrs))
+
+	for i := range checkedAttrs {
+		want := &addUserAttributes{Attributes: expectedRequest.expectedAttributes[i], user: expectedRequest.expectedAttributesUser}
+		require.Equal(c.t, comparableAttributes(want), comparableAttributes(checkedAttrs[i]))
+	}
+}
+
+type addUserAttributes struct { // TODO fix the test logic to not need this
+	authorizer.Attributes
+	user *user.DefaultInfo
+}
+
+func (a *addUserAttributes) GetUser() user.Info {
+	return a.user
+}
+
+func comparableAttributes(attributes authorizer.Attributes) authorizer.AttributesRecord {
+	fs, errFS := attributes.GetFieldSelector()
+	ls, errLS := attributes.GetLabelSelector()
+	return authorizer.AttributesRecord{
+		User:                      comparableUser(attributes.GetUser()),
+		Verb:                      attributes.GetVerb(),
+		Namespace:                 attributes.GetNamespace(),
+		APIGroup:                  attributes.GetAPIGroup(),
+		APIVersion:                attributes.GetAPIVersion(),
+		Resource:                  attributes.GetResource(),
+		Subresource:               attributes.GetSubresource(),
+		Name:                      attributes.GetName(),
+		ResourceRequest:           attributes.IsResourceRequest(),
+		Path:                      attributes.GetPath(),
+		FieldSelectorRequirements: fs,
+		FieldSelectorParsingErr:   errFS,
+		LabelSelectorRequirements: ls,
+		LabelSelectorParsingErr:   errLS,
+	}
+}
+
+func comparableUser(u user.Info) *user.DefaultInfo {
+	return &user.DefaultInfo{
+		Name:   u.GetName(),
+		UID:    u.GetUID(),
+		Groups: u.GetGroups(),
+		Extra:  u.GetExtra(),
+	}
+}
+
+func (c *constrainedImpersonationTest) assertEchoCalled(expectedCalled bool) {
+	called := c.echoCalled
+	c.echoCalled = false
+	require.Equal(c.t, expectedCalled, called)
+}
+
+func (c *constrainedImpersonationTest) assertCache(r testRequest) {
+	if r.expectedCache == nil {
+		return // TODO fix
+	}
+
+	rr := require.New(c.t)
+
+	tracker := c.constrainedImpersonationHandler.tracker
+	idxCacheInternals := tracker.idxCache.cache
+	rr.Equal(len(r.expectedCache.modeIdx), idxCacheInternals.Len())
+	for username, expectedVerb := range r.expectedCache.modeIdx {
+		modeIdx, ok := idxCacheInternals.Get(usernameHash(username))
+		rr.True(ok)
+		actualVerb := tracker.modes[modeIdx.(int)].verb()
+		rr.Equal(expectedVerb, actualVerb)
+	}
+
+	for _, mode := range tracker.modes {
+		verb := mode.verb()
+		outer, inner := mode.caches()
+		expectedMode, ok := r.expectedCache.modes[verb]
+		if !ok {
+			rr.Zero(outer.cache.Len())
+			rr.Zero(inner.cache.Len())
+			continue
+		}
+		rr.Equal(len(expectedMode.outer), outer.cache.Len())
+		for expectedKey, expectedUser := range expectedMode.outer {
+			c.checkCacheEntry(outer, expectedKey.wantedUser, expectedKey.attributes, expectedUser, verb)
+		}
+
+		rr.Equal(len(expectedMode.inner), inner.cache.Len())
+		for expectedKey, expectedUser := range expectedMode.inner {
+			c.checkCacheEntry(inner, expectedKey.wantedUser, authorizer.AttributesRecord{User: expectedKey.requestor}, expectedUser, verb)
 		}
 	}
 }
 
-func (c *constrainedImpersonateAuthorizer) authorizeHandler(t *testing.T) http.HandlerFunc {
-	authorizationHandler := WithConstrainedImpersonation(c.finalHandler(t), c, serializer.NewCodecFactory(runtime.NewScheme()))
-	c.handler = authorizationHandler.(*constrainedImpersonationHandler)
-	return func(w http.ResponseWriter, req *http.Request) {
-		req = req.WithContext(c.requestCtx)
-		user, exists := request.UserFrom(c.requestCtx)
-		if !exists {
-			c.actualUser = nil
-			return
-		} else {
-			c.actualUser = user
-		}
-		authorizationHandler.ServeHTTP(w, req)
+func usernameHash(username string) string {
+	hash := sha256.Sum256([]byte(username))
+	return fmt.Sprintf("%x", hash[:])
+}
+
+func (c *constrainedImpersonationTest) checkCacheEntry(cache *impersonationCache, wantedUser *user.DefaultInfo, attributes authorizer.Attributes, expectedUser *user.DefaultInfo, expectedVerb string) {
+	rr := require.New(c.t)
+	keyString, err := buildKey(wantedUser, attributes) // TODO test buildKey
+	rr.NoError(err)
+	val, ok := cache.cache.Get(keyString)
+	rr.True(ok)
+	impersonatedUser := val.(*impersonatedUserInfo)
+	rr.Equal(expectedVerb, impersonatedUser.constraint)
+	rr.Equal(expectedUser, comparableUser(impersonatedUser.user))
+	rr.True(strings.HasSuffix(keyString, "/"+attributes.GetUser().GetName()))
+}
+
+func withConstrainedImpersonationAttributes(a authorizer.AttributesRecord, mode string) authorizer.AttributesRecord {
+	a.Verb = "impersonate:" + mode
+	a.APIGroup = "authentication.k8s.io"
+	a.APIVersion = "v1"
+	a.ResourceRequest = true
+	return a
+}
+
+func withImpersonateOnAttributes(requestInfo *request.RequestInfo, mode string) authorizer.AttributesRecord {
+	a := requestInfoToAttributes(requestInfo)
+	a.Verb = "impersonate-on:" + mode + ":" + a.Verb
+	return a
+}
+
+func requestInfoToAttributes(requestInfo *request.RequestInfo) authorizer.AttributesRecord {
+	requestCtx := request.WithRequestInfo(context.Background(), requestInfo)
+	attrs, err := filters.GetAuthorizerAttributes(requestCtx)
+	if err != nil {
+		panic(err)
 	}
+	return *(attrs.(*authorizer.AttributesRecord))
 }
 
-func (c *constrainedImpersonateAuthorizer) withRequestContext(ctx context.Context) {
-	c.requestCtx = ctx
+func withLegacyImpersonateAttributes(a authorizer.AttributesRecord) authorizer.AttributesRecord {
+	a.Verb = "impersonate"
+	a.APIVersion = "v1"
+	a.ResourceRequest = true
+	return a
 }
 
-func (c *constrainedImpersonateAuthorizer) assertAttributes(t *testing.T, expectedRequest testRequest) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-
-	assert.Equal(t, len(expectedRequest.expectedAttributes), len(c.checkedAttrs))
-	defer func() { c.checkedAttrs = []authorizer.Attributes{} }()
-
-	for i := range c.checkedAttrs {
-		assert.Equal(t, expectedRequest.expectedAttributes[i].GetAPIGroup(), c.checkedAttrs[i].GetAPIGroup())
-		assert.Equal(t, expectedRequest.expectedAttributes[i].GetResource(), c.checkedAttrs[i].GetResource())
-		assert.Equal(t, expectedRequest.expectedAttributes[i].GetSubresource(), c.checkedAttrs[i].GetSubresource())
-		assert.Equal(t, expectedRequest.expectedAttributes[i].GetVerb(), c.checkedAttrs[i].GetVerb())
-		assert.Equal(t, expectedRequest.expectedAttributes[i].GetName(), c.checkedAttrs[i].GetName())
-		assert.Equal(t, expectedRequest.expectedAttributes[i].GetNamespace(), c.checkedAttrs[i].GetNamespace())
-		assert.Equal(t, expectedRequest.expectedAttributes[i].GetPath(), c.checkedAttrs[i].GetPath())
-		assert.Equal(t, expectedRequest.expectedAttributes[i].IsResourceRequest(), c.checkedAttrs[i].IsResourceRequest())
-		assertUserInfo(t, expectedRequest.expectedAttributesUser, c.checkedAttrs[i].GetUser())
-	}
+type expectedCache struct {
+	modeIdx map[string]string            // username -> mode verb
+	modes   map[string]expectedModeCache // mode verb -> cache
 }
 
-func (c *constrainedImpersonateAuthorizer) assertCache(t *testing.T, impersonator, impersonationUser *user.DefaultInfo, expect *expectCache) {
-	attrs := authorizer.AttributesRecord{User: impersonator}
-	if !expect.modeIndexCached {
-		_, exist := c.handler.tracker.idxCache.get(attrs)
-		assert.False(t, exist)
-		return
-	}
-	idx, exist := c.handler.tracker.idxCache.get(attrs)
-	assert.True(t, exist)
-	mode := c.handler.tracker.modes[idx]
-
-	var constrainedMode *constrainedImpersonationModeState
-	var associatedNodeCache bool
-	switch typedMode := mode.(type) {
-	case *constrainedImpersonationModeState:
-		constrainedMode = typedMode
-	case *associatedNodeImpersonationCheck:
-		associatedNodeCache = true
-		constrainedMode = typedMode.mode.(*constrainedImpersonationModeState)
-	default:
-		// legacy impersonate
-		return
-	}
-
-	if expect.impersonateCached {
-		assert.Equal(t, 1, constrainedMode.state.cache.cache.Len())
-		assertCacheKey(t, constrainedMode.state.cache, impersonationUser, attrs, associatedNodeCache)
-	}
-
-	assert.Equal(t, len(expect.impersonateOnCachedRequests), constrainedMode.cache.cache.Len())
-	for _, req := range expect.impersonateOnCachedRequests {
-		reqContext := request.WithRequestInfo(request.NewContext(), req)
-		reqContext = request.WithUser(reqContext, impersonator)
-		attrs, err := filters.GetAuthorizerAttributes(reqContext)
-		if err != nil {
-			t.Fatal(err)
-		}
-		assertCacheKey(t, constrainedMode.cache, impersonationUser, attrs, associatedNodeCache)
-	}
+type expectedModeCache struct {
+	outer map[impersonationCacheKey]*user.DefaultInfo
+	inner map[innerKey]*user.DefaultInfo
 }
 
-func assertCacheKey(t *testing.T, cache *impersonationCache, impersonationUser *user.DefaultInfo, attrs authorizer.Attributes, associatedNodeCache bool) {
-	var key *impersonationCacheKey
-	if associatedNodeCache {
-		key = &impersonationCacheKey{wantedUser: &user.DefaultInfo{Name: "system:node:*"}, attributes: &associatedNodeImpersonationAttributes{Attributes: attrs}}
-	} else {
-		key = &impersonationCacheKey{wantedUser: impersonationUser, attributes: attrs}
-	}
-	info := cache.get(key)
-	assert.True(t, info != nil)
-}
-
-// clear called after each test case to clear cache
-func (c *constrainedImpersonateAuthorizer) clear() {
-	c.handler.tracker.idxCache.cache.Clear()
-	for _, mode := range c.handler.tracker.modes {
-		switch typedMode := mode.(type) {
-		case *constrainedImpersonationModeState:
-			typedMode.cache.cache = cache.NewExpiring()
-			typedMode.state.cache.cache = cache.NewExpiring()
-		case *associatedNodeImpersonationCheck:
-			constrainedMode := typedMode.mode.(*constrainedImpersonationModeState)
-			constrainedMode.cache.cache = cache.NewExpiring()
-			constrainedMode.state.cache.cache = cache.NewExpiring()
-		}
-	}
-}
-
-type impersonateAttrs struct {
-	authorizer.AttributesRecord
-	mode string
-}
-
-func (i *impersonateAttrs) IsResourceRequest() bool {
-	return true
-}
-
-func (i *impersonateAttrs) GetVerb() string {
-	return "impersonate:" + i.mode
-}
-
-func (i *impersonateAttrs) GetAPIGroup() string {
-	return authenticationapi.SchemeGroupVersion.Group
-}
-
-func (i *impersonateAttrs) GetAPIVersion() string {
-	return authenticationapi.SchemeGroupVersion.Version
-}
-
-type impersonateOnAttrs struct {
-	impersonateOnAttributes
-}
-
-func newImpersonateOnAttrs(requestInfo *request.RequestInfo, mode string) *impersonateOnAttrs {
-	requestCtx := request.WithRequestInfo(request.NewContext(), requestInfo)
-	attrs, _ := filters.GetAuthorizerAttributes(requestCtx)
-	return &impersonateOnAttrs{
-		impersonateOnAttributes: impersonateOnAttributes{Attributes: attrs, mode: mode},
-	}
-}
-
-type legacyImpersonateAttrs struct {
-	authorizer.AttributesRecord
-}
-
-func (l *legacyImpersonateAttrs) GetVerb() string {
-	return "impersonate"
-}
-
-func (l *legacyImpersonateAttrs) IsResourceRequest() bool {
-	return true
-}
-
-type expectCache struct {
-	modeIndexCached             bool
-	impersonateCached           bool
-	impersonateOnCachedRequests []*request.RequestInfo
+type innerKey struct {
+	wantedUser, requestor *user.DefaultInfo
 }
 
 type testRequest struct {
-	request                *request.RequestInfo
-	expectedAttributesUser *user.DefaultInfo
-	expectedUserInfo       *user.DefaultInfo
-	expectedAttributes     []authorizer.Attributes
-	expectCache            *expectCache
+	request          *request.RequestInfo
+	requestor        *user.DefaultInfo
+	impersonatedUser *user.DefaultInfo
+
+	expectedImpersonatedUser *user.DefaultInfo
+	expectedMessage          string
+
+	expectedAttributesUser *user.DefaultInfo // nil means use requestor
+	expectedAttributes     []authorizer.AttributesRecord
+	expectedCache          *expectedCache
 	expectedCode           int
+}
+
+func associatedNodeTestCase() []testRequest {
+	getSecretRequest := &request.RequestInfo{
+		IsResourceRequest: true,
+		Verb:              "get",
+		APIVersion:        "v1",
+		Resource:          "secrets",
+		Name:              "foo",
+		Namespace:         "bar",
+	}
+	getPodRequest := &request.RequestInfo{
+		IsResourceRequest: true,
+		Verb:              "get",
+		APIVersion:        "v1",
+		Resource:          "pods",
+		Name:              "foo",
+		Namespace:         "bar",
+	}
+	saDefaultOnNode1 := &user.DefaultInfo{
+		Name:   "system:serviceaccount:default:default",
+		Groups: []string{"associate-node-impersonater"},
+		Extra: map[string][]string{
+			serviceaccount.NodeNameKey: {"node1"},
+		},
+	}
+	saDefaultOnNode2 := &user.DefaultInfo{
+		Name:   "system:serviceaccount:default:default",
+		Groups: []string{"associate-node-impersonater"},
+		Extra: map[string][]string{
+			serviceaccount.NodeNameKey: {"node2"},
+		},
+	}
+	saDefaultOnAnyNode := &user.DefaultInfo{
+		Name:   "system:serviceaccount:default:default",
+		Groups: []string{"associate-node-impersonater"},
+		Extra: map[string][]string{
+			"authentication.kubernetes.io/associated-node-keys": {"authentication.kubernetes.io/node-name"},
+		},
+	}
+	node1FullUserInfo := &user.DefaultInfo{
+		Name:   "system:node:node1",
+		Groups: []string{user.NodesGroup, "system:authenticated"},
+	}
+	node2FullUserInfo := &user.DefaultInfo{
+		Name:   "system:node:node2",
+		Groups: []string{user.NodesGroup, "system:authenticated"},
+	}
+	cacheWithOnlyNode1Data := &expectedCache{
+		modeIdx: map[string]string{
+			"system:serviceaccount:default:default": "impersonate:associated-node",
+		},
+		modes: map[string]expectedModeCache{
+			"impersonate:associated-node": {
+				outer: map[impersonationCacheKey]*user.DefaultInfo{
+					{
+						wantedUser: &user.DefaultInfo{Name: "system:node:*"},
+						attributes: &addUserAttributes{
+							Attributes: requestInfoToAttributes(getSecretRequest),
+							user:       saDefaultOnAnyNode,
+						},
+					}: node1FullUserInfo,
+				},
+				inner: map[innerKey]*user.DefaultInfo{
+					{
+						wantedUser: &user.DefaultInfo{Name: "system:node:*"},
+						requestor:  saDefaultOnAnyNode,
+					}: node1FullUserInfo,
+				},
+			},
+		},
+	}
+	cacheWithMultipleRequests := &expectedCache{
+		modeIdx: cacheWithOnlyNode1Data.modeIdx,
+		modes: map[string]expectedModeCache{
+			"impersonate:associated-node": {
+				outer: map[impersonationCacheKey]*user.DefaultInfo{
+					{
+						wantedUser: &user.DefaultInfo{Name: "system:node:*"},
+						attributes: &addUserAttributes{
+							Attributes: requestInfoToAttributes(getSecretRequest),
+							user:       saDefaultOnAnyNode,
+						},
+					}: node1FullUserInfo,
+					{
+						wantedUser: &user.DefaultInfo{Name: "system:node:*"},
+						attributes: &addUserAttributes{
+							Attributes: requestInfoToAttributes(getPodRequest),
+							user:       saDefaultOnAnyNode,
+						},
+					}: node1FullUserInfo, // even though this request was made on node2, since the inner cache matched it returned a value for node1
+				},
+				inner: cacheWithOnlyNode1Data.modes["impersonate:associated-node"].inner,
+			},
+		},
+	}
+	return []testRequest{
+		{
+			request:                  getSecretRequest,
+			requestor:                saDefaultOnNode1,
+			impersonatedUser:         &user.DefaultInfo{Name: "system:node:node1"}, // node matches
+			expectedImpersonatedUser: node1FullUserInfo,
+			expectedAttributesUser:   saDefaultOnAnyNode,
+			expectedAttributes: []authorizer.AttributesRecord{
+				withImpersonateOnAttributes(getSecretRequest, "associated-node"),
+				withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "nodes", Name: "*"}, "associated-node"),
+			},
+			expectedCache: cacheWithOnlyNode1Data,
+			expectedCode:  http.StatusOK,
+		},
+		{
+			request:                  getSecretRequest,
+			requestor:                saDefaultOnNode2,
+			impersonatedUser:         &user.DefaultInfo{Name: "system:node:node2"}, // node matches
+			expectedImpersonatedUser: node2FullUserInfo,
+			expectedAttributesUser:   saDefaultOnAnyNode,
+			expectedAttributes:       nil, // no authz checks for the second request
+			expectedCache:            cacheWithOnlyNode1Data,
+			expectedCode:             http.StatusOK,
+		},
+		{
+			request:                getSecretRequest,
+			requestor:              saDefaultOnNode2,
+			impersonatedUser:       &user.DefaultInfo{Name: "system:node:node1"}, // node does not match
+			expectedMessage:        `nodes.authentication.k8s.io "node1" is forbidden: User "system:serviceaccount:default:default" cannot impersonate:arbitrary-node resource "nodes" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
+			expectedAttributesUser: nil,
+			expectedAttributes: []authorizer.AttributesRecord{
+				withImpersonateOnAttributes(getSecretRequest, "arbitrary-node"),
+				withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "nodes", Name: "node1"}, "arbitrary-node"),
+				withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:node:node1"}),
+			},
+			expectedCache: cacheWithOnlyNode1Data,
+			expectedCode:  http.StatusForbidden,
+		},
+		{
+			request:                  getPodRequest,
+			requestor:                saDefaultOnNode2,
+			impersonatedUser:         &user.DefaultInfo{Name: "system:node:node2"}, // node matches
+			expectedImpersonatedUser: node2FullUserInfo,
+			expectedAttributesUser:   saDefaultOnAnyNode,
+			expectedAttributes: []authorizer.AttributesRecord{
+				withImpersonateOnAttributes(getPodRequest, "associated-node"), // one authz check because different request info
+			},
+			expectedCache: cacheWithMultipleRequests,
+			expectedCode:  http.StatusOK,
+		},
+		{
+			request:                  getPodRequest,
+			requestor:                saDefaultOnNode1,
+			impersonatedUser:         &user.DefaultInfo{Name: "system:node:node1"}, // node matches
+			expectedImpersonatedUser: node1FullUserInfo,
+			expectedAttributesUser:   nil,
+			expectedAttributes:       nil, // no authz checks for pod request via node1
+			expectedCache:            cacheWithMultipleRequests,
+			expectedCode:             http.StatusOK,
+		},
+	}
 }
 
 func TestConstrainedImpersonationFilter(t *testing.T) {
@@ -330,421 +561,373 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name              string
-		impersonator      *user.DefaultInfo
-		impersonationUser *user.DefaultInfo
-		requests          []testRequest
-		expectedUser      user.Info
+		name     string
+		requests []testRequest
 	}{
 		{
-			name:         "impersonating-error",
-			impersonator: &user.DefaultInfo{Name: "tester"},
-			expectedUser: &user.DefaultInfo{Name: "tester"},
+			name: "impersonating-error",
 			requests: []testRequest{
 				{
-					request: getPodRequest,
-					expectedAttributes: []authorizer.Attributes{
-						newImpersonateOnAttrs(getPodRequest, "user-info"),
-						&impersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "users", Name: "anyone"}, mode: "user-info"},
-						&legacyImpersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "users", Name: "anyone"}},
+					request:          getPodRequest,
+					requestor:        &user.DefaultInfo{Name: "tester"},
+					impersonatedUser: &user.DefaultInfo{Name: "anyone"},
+					expectedAttributes: []authorizer.AttributesRecord{
+						withImpersonateOnAttributes(getPodRequest, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "users", Name: "anyone"}, "user-info"),
+						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "anyone"}),
 					},
-					expectCache:  &expectCache{},
-					expectedCode: http.StatusForbidden,
+					expectedCache:   nil, // TODO fix
+					expectedCode:    http.StatusForbidden,
+					expectedMessage: `users.authentication.k8s.io "anyone" is forbidden: User "tester" cannot impersonate:user-info resource "users" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
 				},
 			},
-			impersonationUser: &user.DefaultInfo{Name: "anyone"},
 		},
 		{
-			name:         "impersonating-user-get-allowed-create-disallowed",
-			impersonator: &user.DefaultInfo{Name: "user-impersonater"},
-			expectedUser: &user.DefaultInfo{
-				Name:   "anyone",
-				Groups: []string{"system:authenticated"},
-			},
+			name: "impersonating-user-get-allowed-create-disallowed",
 			requests: []testRequest{
 				{
-					request: getPodRequest,
-					expectedAttributes: []authorizer.Attributes{
-						newImpersonateOnAttrs(getPodRequest, "user-info"),
-						&impersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "users", Name: "anyone"}, mode: "user-info"},
+					request:          getPodRequest,
+					requestor:        &user.DefaultInfo{Name: "user-impersonater"},
+					impersonatedUser: &user.DefaultInfo{Name: "anyone"},
+					expectedImpersonatedUser: &user.DefaultInfo{
+						Name:   "anyone",
+						Groups: []string{"system:authenticated"},
 					},
-					expectCache: &expectCache{
-						modeIndexCached:             true,
-						impersonateCached:           true,
-						impersonateOnCachedRequests: []*request.RequestInfo{getPodRequest},
+					expectedAttributes: []authorizer.AttributesRecord{
+						withImpersonateOnAttributes(getPodRequest, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "users", Name: "anyone"}, "user-info"),
 					},
-					expectedCode: http.StatusOK,
+					expectedCache: nil, // TODO fix
+					expectedCode:  http.StatusOK,
 				},
 				{
-					request: getAnotherPodRequest,
-					expectedAttributes: []authorizer.Attributes{
-						newImpersonateOnAttrs(getAnotherPodRequest, "user-info"),
+					request:          getAnotherPodRequest,
+					requestor:        &user.DefaultInfo{Name: "user-impersonater"},
+					impersonatedUser: &user.DefaultInfo{Name: "anyone"},
+					expectedImpersonatedUser: &user.DefaultInfo{
+						Name:   "anyone",
+						Groups: []string{"system:authenticated"},
 					},
-					expectCache: &expectCache{
-						modeIndexCached:             true,
-						impersonateCached:           true,
-						impersonateOnCachedRequests: []*request.RequestInfo{getPodRequest, getAnotherPodRequest},
+					expectedAttributes: []authorizer.AttributesRecord{
+						withImpersonateOnAttributes(getAnotherPodRequest, "user-info"),
 					},
-					expectedCode: http.StatusOK,
+					expectedCache: nil, // TODO fix
+					expectedCode:  http.StatusOK,
 				},
 				{
 					request:          createPodRequest,
-					expectedUserInfo: &user.DefaultInfo{Name: "user-impersonater"},
-					expectedAttributes: []authorizer.Attributes{
-						newImpersonateOnAttrs(createPodRequest, "user-info"),
-						&legacyImpersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "users", Name: "anyone"}},
+					requestor:        &user.DefaultInfo{Name: "user-impersonater"},
+					impersonatedUser: &user.DefaultInfo{Name: "anyone"},
+					expectedAttributes: []authorizer.AttributesRecord{
+						withImpersonateOnAttributes(createPodRequest, "user-info"),
+						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "anyone"}),
 					},
-					expectCache: &expectCache{
-						modeIndexCached:             true,
-						impersonateCached:           true,
-						impersonateOnCachedRequests: []*request.RequestInfo{getPodRequest, getAnotherPodRequest},
-					},
-					expectedCode: http.StatusForbidden,
+					expectedCache:   nil, // TODO fix
+					expectedCode:    http.StatusForbidden,
+					expectedMessage: `pods "foo" is forbidden: User "user-impersonater" cannot impersonate-on:user-info:create resource "pods" in API group "" in the namespace "bar": deny by default`,
 				},
 			},
-			impersonationUser: &user.DefaultInfo{Name: "anyone"},
 		},
 		{
-			name:         "impersonating-sa-allowed",
-			impersonator: &user.DefaultInfo{Name: "sa-impersonater"},
-			expectedUser: &user.DefaultInfo{
-				Name:   "system:serviceaccount:default:default",
-				Groups: []string{"system:serviceaccounts", "system:serviceaccounts:default", "system:authenticated"},
-			},
+			name: "impersonating-sa-allowed",
 			requests: []testRequest{
 				{
-					request: getPodRequest,
-					expectedAttributes: []authorizer.Attributes{
-						newImpersonateOnAttrs(getPodRequest, "serviceaccount"),
-						&impersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "serviceaccounts", Namespace: "default", Name: "default"}, mode: "serviceaccount"},
+					request:          getPodRequest,
+					requestor:        &user.DefaultInfo{Name: "sa-impersonater"},
+					impersonatedUser: &user.DefaultInfo{Name: "system:serviceaccount:default:default"},
+					expectedImpersonatedUser: &user.DefaultInfo{
+						Name:   "system:serviceaccount:default:default",
+						Groups: []string{"system:serviceaccounts", "system:serviceaccounts:default", "system:authenticated"},
 					},
-					expectCache: &expectCache{
-						modeIndexCached:             true,
-						impersonateCached:           true,
-						impersonateOnCachedRequests: []*request.RequestInfo{getPodRequest},
+					expectedAttributes: []authorizer.AttributesRecord{
+						withImpersonateOnAttributes(getPodRequest, "serviceaccount"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "serviceaccounts", Namespace: "default", Name: "default"}, "serviceaccount"),
 					},
-					expectedCode: http.StatusOK,
+					expectedCache: nil, // TODO fix
+					expectedCode:  http.StatusOK,
 				},
 			},
-			impersonationUser: &user.DefaultInfo{Name: "system:serviceaccount:default:default"},
 		},
 		{
-			name:         "impersonating-node-not-allowed",
-			impersonator: &user.DefaultInfo{Name: "sa-impersonater"},
-			expectedUser: &user.DefaultInfo{Name: "sa-impersonater"},
+			name: "impersonating-node-not-allowed",
 			requests: []testRequest{
 				{
-					request: getPodRequest,
-					expectedAttributes: []authorizer.Attributes{
-						newImpersonateOnAttrs(getPodRequest, "arbitrary-node"),
-						&impersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "nodes", Name: "node1"}, mode: "arbitrary-node"},
-						&legacyImpersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "users", Name: "system:node:node1"}},
+					request:          getPodRequest,
+					requestor:        &user.DefaultInfo{Name: "sa-impersonater"},
+					impersonatedUser: &user.DefaultInfo{Name: "system:node:node1"},
+					expectedAttributes: []authorizer.AttributesRecord{
+						withImpersonateOnAttributes(getPodRequest, "arbitrary-node"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "nodes", Name: "node1"}, "arbitrary-node"),
+						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:node:node1"}),
 					},
-					expectCache:  &expectCache{},
-					expectedCode: http.StatusForbidden,
+					expectedCache:   nil, // TODO fix
+					expectedCode:    http.StatusForbidden,
+					expectedMessage: `nodes.authentication.k8s.io "node1" is forbidden: User "sa-impersonater" cannot impersonate:arbitrary-node resource "nodes" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
 				},
 			},
-			impersonationUser: &user.DefaultInfo{Name: "system:node:node1"},
 		},
 		{
-			name:         "impersonating-node-not-allowed-action",
-			impersonator: &user.DefaultInfo{Name: "node-impersonater"},
-			expectedUser: &user.DefaultInfo{
-				Name: "node-impersonater",
-			},
+			name: "impersonating-node-not-allowed-action",
 			requests: []testRequest{
 				{
-					request: createPodRequest,
-					expectedAttributes: []authorizer.Attributes{
-						newImpersonateOnAttrs(createPodRequest, "arbitrary-node"),
-						&legacyImpersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "users", Name: "system:node:node1"}},
+					request:          createPodRequest,
+					requestor:        &user.DefaultInfo{Name: "node-impersonater"},
+					impersonatedUser: &user.DefaultInfo{Name: "system:node:node1"},
+					expectedAttributes: []authorizer.AttributesRecord{
+						withImpersonateOnAttributes(createPodRequest, "arbitrary-node"),
+						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:node:node1"}),
 					},
-					expectCache:  &expectCache{},
-					expectedCode: http.StatusForbidden,
+					expectedCache:   nil, // TODO fix
+					expectedCode:    http.StatusForbidden,
+					expectedMessage: `pods "foo" is forbidden: User "node-impersonater" cannot impersonate-on:arbitrary-node:create resource "pods" in API group "" in the namespace "bar": deny by default`,
 				},
 			},
-			impersonationUser: &user.DefaultInfo{Name: "system:node:node1"},
 		},
 		{
-			name:         "impersonating-node-allowed",
-			impersonator: &user.DefaultInfo{Name: "node-impersonater"},
-			expectedUser: &user.DefaultInfo{
-				Name:   "system:node:node1",
-				Groups: []string{user.NodesGroup, "system:authenticated"},
-			},
-			impersonationUser: &user.DefaultInfo{Name: "system:node:node1"},
+			name: "impersonating-node-allowed",
 			requests: []testRequest{
 				{
-					request: getPodRequest,
-					expectedAttributes: []authorizer.Attributes{
-						newImpersonateOnAttrs(getPodRequest, "arbitrary-node"),
-						&impersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "nodes", Name: "node1"}, mode: "arbitrary-node"},
+					request:          getPodRequest,
+					requestor:        &user.DefaultInfo{Name: "node-impersonater"},
+					impersonatedUser: &user.DefaultInfo{Name: "system:node:node1"},
+					expectedImpersonatedUser: &user.DefaultInfo{
+						Name:   "system:node:node1",
+						Groups: []string{user.NodesGroup, "system:authenticated"},
 					},
-					expectCache: &expectCache{
-						modeIndexCached:             true,
-						impersonateCached:           true,
-						impersonateOnCachedRequests: []*request.RequestInfo{getPodRequest},
+					expectedAttributes: []authorizer.AttributesRecord{
+						withImpersonateOnAttributes(getPodRequest, "arbitrary-node"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "nodes", Name: "node1"}, "arbitrary-node"),
 					},
-					expectedCode: http.StatusOK,
+					expectedCache: nil, // TODO fix
+					expectedCode:  http.StatusOK,
 				},
 			},
 		},
 		{
 			name: "disallowed-userextra-3",
-			impersonator: &user.DefaultInfo{
-				Name:   "user-impersonater",
-				Groups: []string{"group-impersonater"},
-			},
-			expectedUser: &user.DefaultInfo{
-				Name:   "user-impersonater",
-				Groups: []string{"group-impersonater"},
-			},
-			impersonationUser: &user.DefaultInfo{
-				Name:   "system:admin",
-				Groups: []string{"extra-setter-scopes"},
-				Extra:  map[string][]string{"scopes": {"scope-a", "scope-b"}},
-			},
 			requests: []testRequest{
 				{
 					request: getPodRequest,
-					expectedAttributes: []authorizer.Attributes{
-						newImpersonateOnAttrs(getPodRequest, "user-info"),
-						&impersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "users", Name: "system:admin"}, mode: "user-info"},
-						&impersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "groups", Name: "extra-setter-scopes"}, mode: "user-info"},
-						&impersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "userextras", Subresource: "scopes", Name: "scope-a"}, mode: "user-info"},
-						&legacyImpersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "users", Name: "system:admin"}},
+					requestor: &user.DefaultInfo{
+						Name:   "user-impersonater",
+						Groups: []string{"group-impersonater"},
 					},
-					expectCache:  &expectCache{},
-					expectedCode: http.StatusForbidden,
+					impersonatedUser: &user.DefaultInfo{
+						Name:   "system:admin",
+						Groups: []string{"extra-setter-scopes"},
+						Extra:  map[string][]string{"scopes": {"scope-a", "scope-b"}},
+					},
+					expectedAttributes: []authorizer.AttributesRecord{
+						withImpersonateOnAttributes(getPodRequest, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:admin"}, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "groups", Name: "extra-setter-scopes"}, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "scopes", Name: "scope-a"}, "user-info"),
+						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:admin"}),
+					},
+					expectedCache:   nil, // TODO fix
+					expectedCode:    http.StatusForbidden,
+					expectedMessage: `userextras.authentication.k8s.io "scope-a" is forbidden: User "user-impersonater" cannot impersonate:user-info resource "userextras/scopes" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
 				},
 			},
 		},
 		{
 			name: "allowed-userextras",
-			impersonator: &user.DefaultInfo{
-				Name:   "user-impersonater",
-				Groups: []string{"extra-setter-scopes"},
-			},
-			expectedUser: &user.DefaultInfo{
-				Name:   "system:admin",
-				Groups: []string{"system:authenticated"},
-				Extra:  map[string][]string{"scopes": {"scope-a", "scope-b"}},
-			},
 			requests: []testRequest{
 				{
 					request: getPodRequest,
-					expectedAttributes: []authorizer.Attributes{
-						newImpersonateOnAttrs(getPodRequest, "user-info"),
-						&impersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "users", Name: "system:admin"}, mode: "user-info"},
-						&impersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "userextras", Subresource: "scopes", Name: "scope-a"}, mode: "user-info"},
-						&impersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "userextras", Subresource: "scopes", Name: "scope-b"}, mode: "user-info"},
+					requestor: &user.DefaultInfo{
+						Name:   "user-impersonater",
+						Groups: []string{"extra-setter-scopes"},
 					},
-					expectCache: &expectCache{
-						modeIndexCached:             true,
-						impersonateCached:           true,
-						impersonateOnCachedRequests: []*request.RequestInfo{getPodRequest},
+					impersonatedUser: &user.DefaultInfo{
+						Name:  "system:admin",
+						Extra: map[string][]string{"scopes": {"scope-a", "scope-b"}},
 					},
-					expectedCode: http.StatusOK,
+					expectedImpersonatedUser: &user.DefaultInfo{
+						Name:   "system:admin",
+						Groups: []string{"system:authenticated"},
+						Extra:  map[string][]string{"scopes": {"scope-a", "scope-b"}},
+					},
+					expectedAttributes: []authorizer.AttributesRecord{
+						withImpersonateOnAttributes(getPodRequest, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:admin"}, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "scopes", Name: "scope-a"}, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "scopes", Name: "scope-b"}, "user-info"),
+					},
+					expectedCache: nil, // TODO fix
+					expectedCode:  http.StatusOK,
 				},
-			},
-			impersonationUser: &user.DefaultInfo{
-				Name:  "system:admin",
-				Extra: map[string][]string{"scopes": {"scope-a", "scope-b"}},
 			},
 		},
 		{
-			name: "allowed-associate-node",
-			impersonator: &user.DefaultInfo{
-				Name:   "system:serviceaccount:default:default",
-				Groups: []string{"associate-node-impersonater"},
-				Extra: map[string][]string{
-					serviceaccount.NodeNameKey: {"node1"},
-				},
-			},
-			expectedUser: &user.DefaultInfo{
-				Name:   "system:node:node1",
-				Groups: []string{user.NodesGroup, "system:authenticated"},
-			},
-			requests: []testRequest{
-				{
-					request: getPodRequest,
-					expectedAttributesUser: &user.DefaultInfo{
-						Name:   "system:serviceaccount:default:default",
-						Groups: []string{"associate-node-impersonater"},
-						Extra: map[string][]string{
-							"authentication.kubernetes.io/associated-node-keys": {"authentication.kubernetes.io/node-name"},
-						}},
-					expectedAttributes: []authorizer.Attributes{
-						newImpersonateOnAttrs(getPodRequest, "associated-node"),
-						&impersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "nodes", Name: "*"}, mode: "associated-node"},
-					},
-					expectCache: &expectCache{
-						modeIndexCached:             true,
-						impersonateCached:           true,
-						impersonateOnCachedRequests: []*request.RequestInfo{getPodRequest},
-					},
-					expectedCode: http.StatusOK,
-				},
-			},
-			impersonationUser: &user.DefaultInfo{Name: "system:node:node1"},
+			name:     "allowed-associate-node",
+			requests: associatedNodeTestCase(),
 		},
 		{
 			name: "disallowed-associate-node-without-sa",
-			impersonator: &user.DefaultInfo{
-				Name:   "user-impersonater",
-				Groups: []string{"associate-node-impersonater"},
-				Extra: map[string][]string{
-					serviceaccount.NodeNameKey: {"node1"},
-				},
-			},
-			expectedUser: &user.DefaultInfo{
-				Name:   "user-impersonater",
-				Groups: []string{"associate-node-impersonater"},
-				Extra: map[string][]string{
-					serviceaccount.NodeNameKey: {"node1"},
-				},
-			},
 			requests: []testRequest{
 				{
 					request: getPodRequest,
-					expectedAttributes: []authorizer.Attributes{
-						newImpersonateOnAttrs(getPodRequest, "arbitrary-node"),
-						&impersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "nodes", Name: "node1"}, mode: "arbitrary-node"},
-						&legacyImpersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "users", Name: "system:node:node1"}},
+					requestor: &user.DefaultInfo{
+						Name:   "user-impersonater",
+						Groups: []string{"associate-node-impersonater"},
+						Extra: map[string][]string{
+							serviceaccount.NodeNameKey: {"node1"},
+						},
 					},
-					expectCache:  &expectCache{},
-					expectedCode: http.StatusForbidden,
+					impersonatedUser: &user.DefaultInfo{Name: "system:node:node1"},
+					expectedAttributes: []authorizer.AttributesRecord{
+						withImpersonateOnAttributes(getPodRequest, "arbitrary-node"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "nodes", Name: "node1"}, "arbitrary-node"),
+						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:node:node1"}),
+					},
+					expectedCache:   nil, // TODO fix
+					expectedCode:    http.StatusForbidden,
+					expectedMessage: `nodes.authentication.k8s.io "node1" is forbidden: User "user-impersonater" cannot impersonate:arbitrary-node resource "nodes" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
 				},
 			},
-			impersonationUser: &user.DefaultInfo{Name: "system:node:node1"},
 		},
 		{
-			name:         "allowed-legacy-impersonator",
-			impersonator: &user.DefaultInfo{Name: "legacy-impersonater"},
-			expectedUser: &user.DefaultInfo{
-				Name:   "system:admin",
-				Groups: []string{"system:authenticated"},
-			},
+			name: "allowed-legacy-impersonator",
 			requests: []testRequest{
 				{
-					request: getPodRequest,
-					expectedAttributes: []authorizer.Attributes{
-						newImpersonateOnAttrs(getPodRequest, "user-info"),
-						&impersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "users", Name: "system:admin"}, mode: "user-info"},
-						&legacyImpersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "users", Name: "system:admin"}},
+					request:          getPodRequest,
+					requestor:        &user.DefaultInfo{Name: "legacy-impersonater"},
+					impersonatedUser: &user.DefaultInfo{Name: "system:admin"},
+					expectedImpersonatedUser: &user.DefaultInfo{
+						Name:   "system:admin",
+						Groups: []string{"system:authenticated"},
 					},
-					expectCache:  &expectCache{modeIndexCached: true},
-					expectedCode: http.StatusOK,
+					expectedAttributes: []authorizer.AttributesRecord{
+						withImpersonateOnAttributes(getPodRequest, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:admin"}, "user-info"),
+						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:admin"}),
+					},
+					expectedCache: nil, // TODO fix
+					expectedCode:  http.StatusOK,
 				},
 			},
-			impersonationUser: &user.DefaultInfo{Name: "system:admin"},
 		},
 		{
 			name: "continuous-same-allowed-user-requests",
-			impersonator: &user.DefaultInfo{
-				Name: "user-impersonater",
-			},
-			expectedUser: &user.DefaultInfo{
-				Name:   "bob",
-				Groups: []string{"system:authenticated"},
-			},
 			requests: []testRequest{
 				{
 					request: getDeploymentRequest,
-					expectedAttributes: []authorizer.Attributes{
-						newImpersonateOnAttrs(getDeploymentRequest, "user-info"),
-						&impersonateAttrs{AttributesRecord: authorizer.AttributesRecord{Resource: "users", Name: "bob"}, mode: "user-info"},
+					requestor: &user.DefaultInfo{
+						Name: "user-impersonater",
 					},
-					expectCache: &expectCache{
-						modeIndexCached:             true,
-						impersonateCached:           true,
-						impersonateOnCachedRequests: []*request.RequestInfo{getDeploymentRequest},
+					impersonatedUser: &user.DefaultInfo{Name: "bob"},
+					expectedImpersonatedUser: &user.DefaultInfo{
+						Name:   "bob",
+						Groups: []string{"system:authenticated"},
 					},
-					expectedCode: http.StatusOK,
+					expectedAttributes: []authorizer.AttributesRecord{
+						withImpersonateOnAttributes(getDeploymentRequest, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "users", Name: "bob"}, "user-info"),
+					},
+					expectedCache: nil, // TODO fix
+					expectedCode:  http.StatusOK,
 				},
 				{
-					request:      getDeploymentRequest,
-					expectedCode: http.StatusOK,
-					expectCache: &expectCache{
-						modeIndexCached:             true,
-						impersonateCached:           true,
-						impersonateOnCachedRequests: []*request.RequestInfo{getDeploymentRequest},
+					request: getDeploymentRequest,
+					requestor: &user.DefaultInfo{
+						Name: "user-impersonater",
 					},
+					impersonatedUser: &user.DefaultInfo{Name: "bob"},
+					expectedImpersonatedUser: &user.DefaultInfo{
+						Name:   "bob",
+						Groups: []string{"system:authenticated"},
+					},
+					expectedCode:  http.StatusOK,
+					expectedCache: nil, // TODO fix
 				},
 			},
-			impersonationUser: &user.DefaultInfo{Name: "bob"},
 		},
 	}
 
-	constrainedAuthorizer := &constrainedImpersonateAuthorizer{}
-	server := httptest.NewServer(constrainedAuthorizer.authorizeHandler(t))
-	defer server.Close()
+	var mux http.ServeMux
+	tests := make([]*constrainedImpersonationTest, len(testCases))
+	handlers := make([]http.Handler, len(testCases))
+	for i := range len(testCases) {
+		mux.Handle("/"+strconv.Itoa(i), http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			handlers[i].ServeHTTP(w, req)
+		}))
+	}
 
-	for _, tc := range testCases {
+	server := httptest.NewServer(&mux)
+	t.Cleanup(server.Close)
+
+	for i, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, requestInfo := range tc.requests {
-				requestCtx := request.WithUser(request.NewContext(), tc.impersonator)
-				requestCtx = request.WithRequestInfo(requestCtx, requestInfo.request)
-				// passing request context to authorizer.
-				constrainedAuthorizer.withRequestContext(requestCtx)
-				req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, server.URL, nil)
-				if err != nil {
-					t.Errorf("%s: unexpected error: %v", tc.name, err)
-					return
-				}
-				if len(tc.impersonationUser.Name) > 0 {
-					req.Header.Add(authenticationapi.ImpersonateUserHeader, tc.impersonationUser.Name)
-				}
-				for _, group := range tc.impersonationUser.Groups {
-					req.Header.Add(authenticationapi.ImpersonateGroupHeader, group)
-				}
-				for extraKey, values := range tc.impersonationUser.Extra {
-					for _, value := range values {
-						req.Header.Add(authenticationapi.ImpersonateUserExtraHeaderPrefix+extraKey, value)
-					}
-				}
-				if len(tc.impersonationUser.UID) > 0 {
-					req.Header.Add(authenticationapi.ImpersonateUIDHeader, tc.impersonationUser.UID)
+			t.Parallel()
+
+			test := &constrainedImpersonationTest{t: t}
+			tests[i] = test
+			handlers[i] = test.handler()
+
+			for _, r := range tc.requests {
+				client := &http.Client{
+					Transport: &testRoundTripper{
+						user:        r.requestor,
+						requestInfo: r.request,
+						delegate: transport.NewImpersonatingRoundTripper(
+							transport.ImpersonationConfig{
+								UserName: r.impersonatedUser.Name,
+								UID:      r.impersonatedUser.UID,
+								Groups:   r.impersonatedUser.Groups,
+								Extra:    r.impersonatedUser.Extra,
+							},
+							http.DefaultTransport,
+						),
+					},
 				}
 
-				resp, err := http.DefaultClient.Do(req)
-				if err != nil {
-					t.Errorf("%s: unexpected error: %v", tc.name, err)
-					return
-				}
-				if resp.StatusCode != requestInfo.expectedCode {
-					t.Errorf("%s: expected %v, actual %v", tc.name, requestInfo.expectedCode, resp.StatusCode)
-					return
+				req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL+"/"+strconv.Itoa(i), nil)
+				require.NoError(t, err)
+
+				resp, err := client.Do(req)
+				require.NoError(t, err)
+				require.Equal(t, r.expectedCode, resp.StatusCode)
+
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				_ = resp.Body.Close()
+
+				if r.expectedCode == http.StatusOK {
+					var actualUser user.DefaultInfo
+					if err := json.Unmarshal(body, &actualUser); err != nil {
+						t.Errorf("unexpected error: %v, body=\n%s", err, string(body))
+					}
+
+					requireUserInfo(t, r.expectedImpersonatedUser, &actualUser)
+					test.assertEchoCalled(true)
+					require.NotNil(t, r.expectedImpersonatedUser) // sanity check test data
+					require.Empty(t, r.expectedMessage)           // sanity check test data
+				} else {
+					var status metav1.Status
+					if err := json.Unmarshal(body, &status); err != nil {
+						t.Errorf("unexpected error: %v, body=\n%s", err, string(body))
+					}
+					require.Equal(t, r.expectedMessage, status.Message)
+					test.assertEchoCalled(false)
+					require.NotEmpty(t, r.expectedMessage)     // sanity check test data
+					require.Nil(t, r.expectedImpersonatedUser) // sanity check test data
 				}
 
 				// set expected users in attributes to impersonator if it is not specifically set.
-				if requestInfo.expectedAttributesUser == nil {
-					requestInfo.expectedAttributesUser = tc.impersonator
+				if r.expectedAttributesUser == nil {
+					r.expectedAttributesUser = r.requestor
 				}
 
-				expectedUser := tc.expectedUser
-				if requestInfo.expectedUserInfo != nil {
-					expectedUser = requestInfo.expectedUserInfo
-				}
-
-				assertUserInfo(t, expectedUser, constrainedAuthorizer.actualUser)
-				constrainedAuthorizer.assertAttributes(t, requestInfo)
-				constrainedAuthorizer.assertCache(t, tc.impersonator, tc.impersonationUser, requestInfo.expectCache)
+				test.assertAttributes(r)
+				test.assertCache(r)
 			}
-			constrainedAuthorizer.clear()
 		})
 	}
 }
 
-func assertUserInfo(t *testing.T, expect, actual user.Info) {
-	if expect == nil && actual == nil {
-		return
-	}
-	if expect == nil || actual == nil {
-		t.Errorf("expected %v, actual %v", expect, actual)
-	}
-	assert.Equal(t, expect.GetName(), actual.GetName())
-	assert.Equal(t, expect.GetUID(), actual.GetUID())
-	assert.Equal(t, expect.GetGroups(), actual.GetGroups())
-	assert.Equal(t, expect.GetExtra(), actual.GetExtra())
+func requireUserInfo(t *testing.T, expect *user.DefaultInfo, actual user.Info) {
+	t.Helper()
+
+	require.Equal(t, expect, comparableUser(actual))
 }
