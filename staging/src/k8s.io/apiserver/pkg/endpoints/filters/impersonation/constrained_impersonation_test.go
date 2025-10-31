@@ -44,11 +44,15 @@ import (
 )
 
 // TODO add unit tests for
-//  buildKey
-//  parallel requests
+//  buildKey (with a dummy hash function)
+//  parallel requests to confirm go routine safety
 //  complex authorization that results in partial failure internally but overall success
 //  large number of groups/extra
 //  system:masters constrained impersonation is not allowed
+//  authorization klog statements
+//  various error branches in handler/header parsing/modes/cache (using coverage)
+//  benchmark allocations, especially in regards to cache key building
+//  close out the expiring cache bug that impacts KMS/maybe this too
 
 type constrainedImpersonationTest struct {
 	t *testing.T
