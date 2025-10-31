@@ -47,12 +47,14 @@ import (
 //  buildKey (with a dummy hash function)
 //  parallel requests to confirm go routine safety
 //  complex authorization that results in partial failure internally but overall success
+//    update test cases expectedAttributes to track the authz result
 //  large number of groups/extra
 //  system:masters constrained impersonation is not allowed
 //  authorization klog statements
 //  various error branches in handler/header parsing/modes/cache (using coverage)
 //  benchmark allocations, especially in regards to cache key building
 //  close out the expiring cache bug that impacts KMS/maybe this too
+//  non-resource requests
 
 type constrainedImpersonationTest struct {
 	t *testing.T
@@ -206,16 +208,22 @@ func (t *testRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
 	return t.delegate.RoundTrip(r)
 }
 
-func (c *constrainedImpersonationTest) assertAttributes(expectedRequest testRequest) {
+func (c *constrainedImpersonationTest) assertAttributes(r testRequest) {
 	checkedAttrs := c.checkedAttrs
 	c.checkedAttrs = nil
 
-	require.Equal(c.t, len(expectedRequest.expectedAttributes), len(checkedAttrs))
+	require.Equal(c.t, len(r.expectedAttributes), len(checkedAttrs))
 
-	for i := range checkedAttrs {
-		// TODO fix the test logic to require the complete attributes instead of combining them here
-		want := withUser(expectedRequest.expectedAttributes[i], expectedRequest.expectedAttributesUser)
-		require.Equal(c.t, want, comparableAttributes(checkedAttrs[i]))
+	// normally all authorization checks are done against the requestor
+	// but in some cases such as associated-node, we check against a slightly different user
+	expectedAttributesUser := r.expectedAttributesUser
+	if expectedAttributesUser == nil {
+		expectedAttributesUser = r.requestor
+	}
+
+	for i := range len(r.expectedAttributes) {
+		expectedAttributes := withUser(r.expectedAttributes[i], expectedAttributesUser)
+		require.Equal(c.t, expectedAttributes, comparableAttributes(checkedAttrs[i]))
 	}
 }
 
@@ -932,9 +940,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						modeIdx: map[string]string{
 							"legacy-impersonater": "impersonate",
 						},
-						modes: map[string]expectedModeCache{
-							"impersonate": {},
-						},
+						modes: nil, // legacy impersonation does not cache
 					},
 					expectedCode: http.StatusOK,
 				},
@@ -979,10 +985,8 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 					expectedCode: http.StatusOK,
 				},
 				{
-					request: getDeploymentRequest,
-					requestor: &user.DefaultInfo{
-						Name: "user-impersonater",
-					},
+					request:          getDeploymentRequest,
+					requestor:        userImpersonator,
 					impersonatedUser: &user.DefaultInfo{Name: "bob"},
 					expectedImpersonatedUser: &user.DefaultInfo{
 						Name:   "bob",
@@ -1082,11 +1086,6 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 					test.assertEchoCalled(false)
 					require.NotEmpty(t, r.expectedMessage)     // sanity check test data
 					require.Nil(t, r.expectedImpersonatedUser) // sanity check test data
-				}
-
-				// set expected users in attributes to impersonator if it is not specifically set.
-				if r.expectedAttributesUser == nil {
-					r.expectedAttributesUser = r.requestor
 				}
 
 				test.assertAttributes(r)

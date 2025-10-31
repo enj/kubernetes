@@ -299,7 +299,7 @@ type builderContinuation func(child *cacheKeyBuilder)
 func (c *cacheKeyBuilder) addLengthPrefixed(f builderContinuation) {
 	c.builder.AddUint32LengthPrefixed(func(b *cryptobyte.Builder) {
 		c := &cacheKeyBuilder{namespace: c.namespace, builder: b}
-		f(c)
+		f(c) // TODO disallow calling build during continuation
 	})
 }
 
