@@ -18,6 +18,7 @@ package authorizer
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"k8s.io/apimachinery/pkg/fields"
@@ -186,12 +187,12 @@ const (
 func (d Decision) String() string {
 	switch d {
 	case DecisionDeny:
-		return "deny"
+		return "Deny"
 	case DecisionAllow:
-		return "allow"
+		return "Allow"
 	case DecisionNoOpinion:
-		return "no opinion"
+		return "NoOpinion"
 	default:
-		return "unknown"
+		return fmt.Sprintf("Unknown (%d)", int(d))
 	}
 }
