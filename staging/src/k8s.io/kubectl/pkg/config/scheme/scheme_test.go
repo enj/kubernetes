@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/apitesting/fuzzer"
 	"k8s.io/apimachinery/pkg/api/apitesting/roundtrip"
 	runtimeserializer "k8s.io/apimachinery/pkg/runtime/serializer"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/kubectl/pkg/config"
 	kubectlfuzzer "k8s.io/kubectl/pkg/config/fuzzer"
 	"sigs.k8s.io/randfill"
@@ -32,7 +33,7 @@ func TestRoundTripTypes(t *testing.T) {
 		return []interface{}{
 			func(s *config.Preference, c randfill.Continue) {
 				c.FillNoCustom(s)
-				s.CredentialPluginPolicy = ""
+				s.CredentialPluginPolicy = clientcmdapi.PluginPolicyAllowAll
 				s.CredentialPluginAllowlist = nil
 			},
 		}
