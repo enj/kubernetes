@@ -289,10 +289,9 @@ type PluginPolicy struct {
 type PolicyType string
 
 const (
-	PluginPolicyUnspecified PolicyType = ""
-	PluginPolicyAllowAll    PolicyType = "AllowAll"
-	PluginPolicyDenyAll     PolicyType = "DenyAll"
-	PluginPolicyAllowlist   PolicyType = "Allowlist"
+	PluginPolicyAllowAll  PolicyType = "AllowAll"
+	PluginPolicyDenyAll   PolicyType = "DenyAll"
+	PluginPolicyAllowlist PolicyType = "Allowlist"
 )
 
 // ExecEnvVar is used for setting environment variables when executing an exec-based

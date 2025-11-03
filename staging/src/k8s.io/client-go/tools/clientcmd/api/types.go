@@ -328,10 +328,9 @@ type PluginPolicy struct {
 type PolicyType string
 
 const (
-	PluginPolicyUnspecified PolicyType = ""
-	PluginPolicyAllowAll    PolicyType = "AllowAll"
-	PluginPolicyDenyAll     PolicyType = "DenyAll"
-	PluginPolicyAllowlist   PolicyType = "Allowlist"
+	PluginPolicyAllowAll  PolicyType = "AllowAll"
+	PluginPolicyDenyAll   PolicyType = "DenyAll"
+	PluginPolicyAllowlist PolicyType = "Allowlist"
 )
 
 var _ fmt.Stringer = new(ExecConfig)

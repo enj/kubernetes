@@ -533,9 +533,5 @@ func validate(plugin *config.Preference) error {
 }
 
 func validatePluginPolicy(plugin *config.Preference) error {
-	policy := plugin.CredentialPluginPolicy
-	if policy == clientcmdapi.PluginPolicyUnspecified {
-		policy = clientcmdapi.PluginPolicyAllowAll
-	}
-	return exec.ValidatePluginPolicy(policy, plugin.CredentialPluginAllowlist)
+	return exec.ValidatePluginPolicy(plugin.CredentialPluginPolicy, plugin.CredentialPluginAllowlist)
 }

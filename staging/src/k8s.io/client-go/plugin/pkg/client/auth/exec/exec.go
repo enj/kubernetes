@@ -574,9 +574,11 @@ func (a *Authenticator) wrapCmdRunErrorLocked(err error) error {
 // `nil` is returned. If the plugin is not allowed, an error must be returned
 // explaining why.
 func (a *Authenticator) allowsPlugin() error {
-	switch a.execPluginPolicy.PolicyType {
-	case api.PluginPolicyUnspecified:
+	if len(a.execPluginPolicy.PolicyType) == 0 {
 		return fmt.Errorf("unspecified plugin policy")
+	}
+
+	switch a.execPluginPolicy.PolicyType {
 	case api.PluginPolicyAllowAll:
 		return nil
 	case api.PluginPolicyDenyAll:
@@ -630,9 +632,11 @@ func itemGreenlights(alEntry *api.AllowlistEntry, pluginAbsPath string) error {
 }
 
 func ValidatePluginPolicy(policy api.PolicyType, allowlist []api.AllowlistEntry) error {
-	switch policy {
-	case api.PluginPolicyUnspecified:
+	if len(policy) == 0 {
 		return fmt.Errorf("unspecified plugin policy")
+	}
+
+	switch policy {
 	case api.PluginPolicyAllowAll, api.PluginPolicyDenyAll:
 		if allowlist != nil {
 			return fmt.Errorf("misconfigured credential plugin allowlist: plugin policy is %q but allowlist is non-nil", policy)
