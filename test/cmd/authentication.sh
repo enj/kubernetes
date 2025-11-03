@@ -190,9 +190,8 @@ EOF
 }
 
 run_allowlist_tests_version() {
-  set_state="${-:+"-$-"}"
-  opts_state="$(set +o)"
-  set +e +o pipefail
+  set +o nounset
+  set +o errexit
 
   cat >"${TMPDIR:-/tmp}/kuberc-deny-all.yaml" <<EOF
 apiVersion: kubectl.config.k8s.io/v1beta1
@@ -224,7 +223,7 @@ EOF
   output8=$(kubectl --kubeconfig="${TMPDIR:-/tmp}/valid_exec_plugin.yaml" --kuberc="${TMPDIR:-/tmp}/kuberc-allowlist-should-fail.yaml" "${kube_flags_without_token[@]:?}" get namespace kube-system -o name 2>&1)
   rc8="$?"
 
-  if tr '\n' ' ' <<<"$output8" | grep -Eq '.*abc123.*foobar.*'; then
+  if kube::test::if_has_string "$output8" "is not permitted by the credential plugin allowlist"; then
     kube::log::status "exec credential plugin not triggered because allowlist does not permit it"
   elif [ "$rc8" -ne 0 ]; then
     kube::log::status "expected allowlist error but did not receive expected error"
@@ -252,8 +251,8 @@ EOF
     exit 1
   fi
 
-  set "$set_state"
-  eval "$opts_state"
+  set -o nounset
+  set -o errexit
 }
 
 run_exec_credentials_interactive_tests() {

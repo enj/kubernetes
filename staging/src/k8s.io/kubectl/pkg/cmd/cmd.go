@@ -220,20 +220,19 @@ func NewKubectlCommand(o KubectlOptions) *cobra.Command {
 
 	flags.BoolVar(&warningsAsErrors, "warnings-as-errors", warningsAsErrors, "Treat warnings received from the server as errors and exit with a non-zero exit code")
 
-	kubeConfigFlags := o.ConfigFlags
-	if kubeConfigFlags == nil {
-		kubeConfigFlags = defaultConfigFlags().WithWarningPrinter(o.IOStreams)
-	}
-	kubeConfigFlags.AddFlags(flags)
-
-	pref := kuberc.NewPreferences()
 	var policyWrapper *func(*rest.Config) *rest.Config
+	pref := kuberc.NewPreferences()
 	if !cmdutil.KubeRC.IsDisabled() {
 		pref.AddFlags(flags)
 		// the `kuberc.PluginPolicyWrapper` function pointer may be initialized
 		// during pref.Apply, or it may be `nil`.
 		policyWrapper = &kuberc.PluginPolicyWrapper
 	}
+	kubeConfigFlags := o.ConfigFlags
+	if kubeConfigFlags == nil {
+		kubeConfigFlags = defaultConfigFlags().WithWarningPrinter(o.IOStreams)
+	}
+	kubeConfigFlags.AddFlags(flags)
 
 	matchVersionKubeConfigFlags := cmdutil.NewMatchVersionFlags(kubeConfigFlags)
 	matchVersionKubeConfigFlags.AddFlags(flags)
