@@ -820,18 +820,24 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 					},
 					impersonatedUser: &user.DefaultInfo{
 						Name:  "system:admin",
-						Extra: map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b"}},
+						Extra: map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b", "5", "4", "3", "2", "1"}},
 					},
 					expectedImpersonatedUser: &user.DefaultInfo{
 						Name:   "system:admin",
 						Groups: []string{"system:authenticated"},
-						Extra:  map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b"}},
+						Extra:  map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b", "5", "4", "3", "2", "1"}},
 					},
 					expectedAttributes: []authorizer.AttributesRecord{
 						withImpersonateOnAttributes(getPodRequest, "user-info"),
 						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:admin"}, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "*", Name: "*"}, "user-info"),
 						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "pandas.io/scopes", Name: "scope-a"}, "user-info"),
 						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "pandas.io/scopes", Name: "scope-b"}, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "pandas.io/scopes", Name: "5"}, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "pandas.io/scopes", Name: "4"}, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "pandas.io/scopes", Name: "3"}, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "pandas.io/scopes", Name: "2"}, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "pandas.io/scopes", Name: "1"}, "user-info"),
 					},
 					expectedCache: &expectedCache{
 						modeIdx: map[string]string{
@@ -843,7 +849,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 									outerCacheKey(
 										&user.DefaultInfo{
 											Name:  "system:admin",
-											Extra: map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b"}},
+											Extra: map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b", "5", "4", "3", "2", "1"}},
 										},
 										&user.DefaultInfo{
 											Name:   "user-impersonater",
@@ -852,14 +858,14 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 										getPodRequest): {
 										Name:   "system:admin",
 										Groups: []string{"system:authenticated"},
-										Extra:  map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b"}},
+										Extra:  map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b", "5", "4", "3", "2", "1"}},
 									},
 								},
 								inner: map[innerKey]*user.DefaultInfo{
 									{
 										wantedUser: &user.DefaultInfo{
 											Name:  "system:admin",
-											Extra: map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b"}},
+											Extra: map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b", "5", "4", "3", "2", "1"}},
 										},
 										requestor: &user.DefaultInfo{
 											Name:   "user-impersonater",
@@ -868,7 +874,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 									}: {
 										Name:   "system:admin",
 										Groups: []string{"system:authenticated"},
-										Extra:  map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b"}},
+										Extra:  map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b", "5", "4", "3", "2", "1"}},
 									},
 								},
 							},
