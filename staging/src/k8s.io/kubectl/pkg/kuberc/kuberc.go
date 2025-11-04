@@ -58,7 +58,6 @@ var (
 // arguments based on user's kuberc configuration.
 type PreferencesHandler interface {
 	AddFlags(flags *pflag.FlagSet)
-	// ApplyPluginPolicy(*genericclioptions.ConfigFlags)
 	Apply(rootCmd *cobra.Command, kubeConfigFlags *genericclioptions.ConfigFlags, args []string, errOut io.Writer) ([]string, error)
 }
 
