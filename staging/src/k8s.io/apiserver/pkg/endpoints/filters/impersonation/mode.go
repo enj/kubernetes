@@ -28,6 +28,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
+	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
@@ -46,9 +48,9 @@ type impersonatedUserInfo struct {
 type impersonationMode interface {
 	check(ctx context.Context, key *impersonationCacheKey, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error)
 
-	// only used in unit tests
-	verb() string
-	caches() (outer, inner *impersonationCache)
+	// all methods below are only used in unit tests
+	verbForTests() string
+	cachesForTests() (outer, inner *impersonationCache)
 }
 
 // constrainedImpersonationModeFilter is a function that defines if a specific constrained impersonation mode
@@ -86,7 +88,7 @@ func associatedNodeImpersonationMode(a authorizer.Authorizer) impersonationMode 
 	mode := newConstrainedImpersonationMode(wrappedAuthorizer, "associated-node",
 		func(wantedUser *user.DefaultInfo, requestor user.Info) bool {
 			wantedNodeName := wantedUser.Name
-			return onlyUsernameSet(wantedUser) && requesterAssociatedWithNode(requestor, wantedNodeName)
+			return onlyUsernameSet(wantedUser) && requesterAssociatedWithRequestedNodeUsername(requestor, wantedNodeName)
 		},
 	)
 	return &associatedNodeImpersonationCheck{mode: mode}
@@ -122,12 +124,12 @@ func (a *associatedNodeImpersonationCheck) check(ctx context.Context, _ *imperso
 	}, nil
 }
 
-func (a *associatedNodeImpersonationCheck) verb() string {
-	return a.mode.verb()
+func (a *associatedNodeImpersonationCheck) verbForTests() string {
+	return a.mode.verbForTests()
 }
 
-func (a *associatedNodeImpersonationCheck) caches() (*impersonationCache, *impersonationCache) {
-	return a.mode.caches()
+func (a *associatedNodeImpersonationCheck) cachesForTests() (*impersonationCache, *impersonationCache) {
+	return a.mode.cachesForTests()
 }
 
 type associatedNodeImpersonationAttributes struct {
@@ -232,11 +234,11 @@ func (l *legacyImpersonationCheck) check(ctx context.Context, key *impersonation
 	return l.m.check(ctx, key, wantedUser, requestor)
 }
 
-func (l *legacyImpersonationCheck) verb() string {
+func (l *legacyImpersonationCheck) verbForTests() string {
 	return l.m.verb
 }
 
-func (l *legacyImpersonationCheck) caches() (*impersonationCache, *impersonationCache) {
+func (l *legacyImpersonationCheck) cachesForTests() (*impersonationCache, *impersonationCache) {
 	// legacy impersonation has no outer layer so just return an empty cache
 	// though an inner cache is present, it is unused
 	return newImpersonationCache(false), l.m.cache
@@ -291,11 +293,11 @@ func (c *constrainedImpersonationModeState) check(ctx context.Context, key *impe
 	return impersonatedUser, nil
 }
 
-func (c *constrainedImpersonationModeState) verb() string {
+func (c *constrainedImpersonationModeState) verbForTests() string {
 	return c.state.verb
 }
 
-func (c *constrainedImpersonationModeState) caches() (*impersonationCache, *impersonationCache) {
+func (c *constrainedImpersonationModeState) cachesForTests() (*impersonationCache, *impersonationCache) {
 	return c.cache, c.state.cache
 }
 
@@ -496,9 +498,16 @@ func (m *impersonationModeState) authorizeExtra(ctx context.Context, requestor u
 }
 
 func validateExtra(extra map[string][]string) error {
+	fp := field.NewPath("extra", "key")
 	for key, values := range extra {
 		if len(key) == 0 {
 			return fmt.Errorf("impersonating the empty string key in extra is not allowed")
+		}
+		if err := utilvalidation.IsDomainPrefixedPath(fp, key).ToAggregate(); err != nil {
+			return fmt.Errorf("impersonating an invalid key in extra is not allowed: %w", err)
+		}
+		if key != strings.ToLower(key) {
+			return fmt.Errorf("impersonating a non-lowercase key in extra is not allowed: %q", key)
 		}
 		if len(values) == 0 {
 			return fmt.Errorf("impersonating empty values in extra is not allowed")
@@ -604,7 +613,7 @@ func isNodeUsername(username string) (string, bool) {
 	return name, true
 }
 
-func requesterAssociatedWithNode(requestor user.Info, username string) bool {
+func requesterAssociatedWithRequestedNodeUsername(requestor user.Info, username string) bool {
 	nodeName, ok := isNodeUsername(username)
 	if !ok {
 		return false

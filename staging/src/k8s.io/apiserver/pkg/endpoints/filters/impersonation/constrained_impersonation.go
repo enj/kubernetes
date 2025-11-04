@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apiserver/pkg/audit"
 	"k8s.io/apiserver/pkg/authentication/user"
@@ -61,7 +62,7 @@ func (c *constrainedImpersonationHandler) ServeHTTP(w http.ResponseWriter, req *
 
 	wantedUser, err := processImpersonationHeaders(req.Header)
 	if err != nil {
-		responsewriters.InternalError(w, req, err)
+		responsewriters.RespondWithError(w, req, err, c.s)
 		return
 	}
 	if wantedUser == nil { // impersonation was not attempted so skip to the next handler
@@ -82,7 +83,7 @@ func (c *constrainedImpersonationHandler) ServeHTTP(w http.ResponseWriter, req *
 	impersonatedUser, err := c.tracker.getImpersonatedUser(ctx, wantedUser, attributes)
 	if err != nil {
 		klog.V(4).InfoS("Forbidden", "URI", req.RequestURI, "err", err)
-		responsewriters.RespondWithError(attributes, w, req, err, c.s)
+		responsewriters.RespondWithError(w, req, err, c.s)
 		return
 	}
 
@@ -135,7 +136,7 @@ func processImpersonationHeaders(headers http.Header) (*user.DefaultInfo, error)
 	}
 
 	if !hasUser && (hasUID || hasGroups || hasUserExtra) {
-		return nil, fmt.Errorf("requested %#v without impersonating a user name", wantedUser)
+		return nil, apierrors.NewBadRequest(fmt.Sprintf("requested %#v without impersonating a user name", wantedUser))
 	}
 
 	if !hasUser {

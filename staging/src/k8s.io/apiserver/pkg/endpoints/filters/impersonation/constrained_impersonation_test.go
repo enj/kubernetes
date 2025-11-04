@@ -93,7 +93,7 @@ func (c *constrainedImpersonationTest) Authorize(ctx context.Context, a authoriz
 		return authorizer.DecisionAllow, "", nil
 	}
 
-	if len(u.GetGroups()) > 0 && u.GetGroups()[0] == "extra-setter-scopes" && a.GetVerb() == "impersonate:user-info" && a.GetResource() == "userextras" && a.GetSubresource() == "scopes" {
+	if len(u.GetGroups()) > 0 && u.GetGroups()[0] == "extra-setter-scopes" && a.GetVerb() == "impersonate:user-info" && a.GetResource() == "userextras" && a.GetSubresource() == "pandas.io/scopes" {
 		return authorizer.DecisionAllow, "", nil
 	}
 
@@ -272,7 +272,7 @@ func (c *constrainedImpersonationTest) assertCache(r testRequest) {
 	if r.expectedCache == nil {
 		rr.Zero(idxCacheInternals.Len())
 		for _, mode := range tracker.modes {
-			outer, inner := mode.caches()
+			outer, inner := mode.cachesForTests()
 			rr.Zero(outer.cache.Len())
 			rr.Zero(inner.cache.Len())
 		}
@@ -283,13 +283,13 @@ func (c *constrainedImpersonationTest) assertCache(r testRequest) {
 	for username, expectedVerb := range r.expectedCache.modeIdx {
 		modeIdx, ok := idxCacheInternals.Get(usernameHash(username))
 		rr.True(ok)
-		actualVerb := tracker.modes[modeIdx.(int)].verb()
+		actualVerb := tracker.modes[modeIdx.(int)].verbForTests()
 		rr.Equal(expectedVerb, actualVerb)
 	}
 
 	for _, mode := range tracker.modes {
-		verb := mode.verb()
-		outer, inner := mode.caches()
+		verb := mode.verbForTests()
+		outer, inner := mode.cachesForTests()
 		expectedMode, ok := r.expectedCache.modes[verb]
 		if !ok {
 			rr.Zero(outer.cache.Len())
@@ -808,18 +808,18 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 					impersonatedUser: &user.DefaultInfo{
 						Name:   "system:admin",
 						Groups: []string{"extra-setter-scopes"},
-						Extra:  map[string][]string{"scopes": {"scope-a", "scope-b"}},
+						Extra:  map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b"}},
 					},
 					expectedAttributes: []authorizer.AttributesRecord{
 						withImpersonateOnAttributes(getPodRequest, "user-info"),
 						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:admin"}, "user-info"),
 						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "groups", Name: "extra-setter-scopes"}, "user-info"),
-						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "scopes", Name: "scope-a"}, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "pandas.io/scopes", Name: "scope-a"}, "user-info"),
 						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:admin"}),
 					},
 					expectedCache:   nil,
 					expectedCode:    http.StatusForbidden,
-					expectedMessage: `userextras.authentication.k8s.io "scope-a" is forbidden: User "user-impersonater" cannot impersonate:user-info resource "userextras/scopes" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
+					expectedMessage: `userextras.authentication.k8s.io "scope-a" is forbidden: User "user-impersonater" cannot impersonate:user-info resource "userextras/pandas.io/scopes" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
 				},
 			},
 		},
@@ -834,18 +834,18 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 					},
 					impersonatedUser: &user.DefaultInfo{
 						Name:  "system:admin",
-						Extra: map[string][]string{"scopes": {"scope-a", "scope-b"}},
+						Extra: map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b"}},
 					},
 					expectedImpersonatedUser: &user.DefaultInfo{
 						Name:   "system:admin",
 						Groups: []string{"system:authenticated"},
-						Extra:  map[string][]string{"scopes": {"scope-a", "scope-b"}},
+						Extra:  map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b"}},
 					},
 					expectedAttributes: []authorizer.AttributesRecord{
 						withImpersonateOnAttributes(getPodRequest, "user-info"),
 						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:admin"}, "user-info"),
-						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "scopes", Name: "scope-a"}, "user-info"),
-						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "scopes", Name: "scope-b"}, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "pandas.io/scopes", Name: "scope-a"}, "user-info"),
+						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "pandas.io/scopes", Name: "scope-b"}, "user-info"),
 					},
 					expectedCache: &expectedCache{
 						modeIdx: map[string]string{
@@ -857,7 +857,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 									outerCacheKey(
 										&user.DefaultInfo{
 											Name:  "system:admin",
-											Extra: map[string][]string{"scopes": {"scope-a", "scope-b"}},
+											Extra: map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b"}},
 										},
 										&user.DefaultInfo{
 											Name:   "user-impersonater",
@@ -866,14 +866,14 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 										getPodRequest): {
 										Name:   "system:admin",
 										Groups: []string{"system:authenticated"},
-										Extra:  map[string][]string{"scopes": {"scope-a", "scope-b"}},
+										Extra:  map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b"}},
 									},
 								},
 								inner: map[innerKey]*user.DefaultInfo{
 									{
 										wantedUser: &user.DefaultInfo{
 											Name:  "system:admin",
-											Extra: map[string][]string{"scopes": {"scope-a", "scope-b"}},
+											Extra: map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b"}},
 										},
 										requestor: &user.DefaultInfo{
 											Name:   "user-impersonater",
@@ -882,7 +882,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 									}: {
 										Name:   "system:admin",
 										Groups: []string{"system:authenticated"},
-										Extra:  map[string][]string{"scopes": {"scope-a", "scope-b"}},
+										Extra:  map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b"}},
 									},
 								},
 							},

@@ -27,6 +27,7 @@ import (
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	"k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apiserver/pkg/audit"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
@@ -43,7 +44,7 @@ func WithImpersonation(handler http.Handler, a authorizer.Authorizer, s runtime.
 		impersonationRequests, err := buildImpersonationRequests(req.Header)
 		if err != nil {
 			klog.V(4).Infof("%v", err)
-			responsewriters.InternalError(w, req, err)
+			responsewriters.RespondWithError(w, req, err, s)
 			return
 		}
 		if len(impersonationRequests) == 0 {
@@ -266,7 +267,7 @@ func buildImpersonationRequests(headers http.Header) ([]v1.ObjectReference, erro
 	}
 
 	if (hasGroups || hasUserExtra || hasUID) && !hasUser {
-		return nil, fmt.Errorf("requested %v without impersonating a user", impersonationRequests)
+		return nil, apierrors.NewBadRequest(fmt.Sprintf("requested %v without impersonating a user", impersonationRequests))
 	}
 
 	return impersonationRequests, nil

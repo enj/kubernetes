@@ -143,7 +143,7 @@ func TestImpersonationFilter(t *testing.T) {
 			expectedUser: &user.DefaultInfo{
 				Name: "tester",
 			},
-			expectedCode: http.StatusInternalServerError,
+			expectedCode: http.StatusBadRequest,
 		},
 		{
 			name: "impersonating-extra-without-user",
@@ -154,7 +154,7 @@ func TestImpersonationFilter(t *testing.T) {
 			expectedUser: &user.DefaultInfo{
 				Name: "tester",
 			},
-			expectedCode: http.StatusInternalServerError,
+			expectedCode: http.StatusBadRequest,
 		},
 		{
 			name: "impersonating-uid-without-user",
@@ -165,7 +165,7 @@ func TestImpersonationFilter(t *testing.T) {
 			expectedUser: &user.DefaultInfo{
 				Name: "tester",
 			},
-			expectedCode: http.StatusInternalServerError,
+			expectedCode: http.StatusBadRequest,
 		},
 		{
 			name: "disallowed-group",
