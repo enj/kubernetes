@@ -36,8 +36,6 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// TODO add metrics
-
 // WithConstrainedImpersonation implements constrained impersonation as described in https://kep.k8s.io/5284
 // It also includes a complete reimplementation of legacy impersonation for backwards compatibility.
 // At a high level, constrained impersonation uses multiple authorization checks to allow for the granular

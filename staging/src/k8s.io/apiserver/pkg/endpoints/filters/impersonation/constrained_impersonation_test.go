@@ -18,7 +18,6 @@ package impersonation
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -42,19 +41,6 @@ import (
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/client-go/transport"
 )
-
-// TODO add unit tests for
-//  buildKey (with a dummy hash function)
-//  parallel requests to confirm go routine safety
-//  complex authorization that results in partial failure internally but overall success
-//    update test cases expectedAttributes to track the authz result
-//  large number of groups/extra
-//  system:masters constrained impersonation is not allowed
-//  authorization klog statements
-//  various error branches in handler/header parsing/modes/cache (using coverage)
-//  benchmark allocations, especially in regards to cache key building
-//  close out the expiring cache bug that impacts KMS/maybe this too
-//  non-resource requests
 
 type constrainedImpersonationTest struct {
 	t *testing.T
@@ -309,8 +295,8 @@ func (c *constrainedImpersonationTest) assertCache(r testRequest) {
 }
 
 func usernameHash(username string) string {
-	hash := sha256.Sum256([]byte(username))
-	return fmt.Sprintf("%x", hash[:])
+	hash := fnvSum128a([]byte(username))
+	return fmt.Sprintf("%x", hash)
 }
 
 func (c *constrainedImpersonationTest) checkCacheEntry(cache *impersonationCache, wantedUser *user.DefaultInfo, attributes authorizer.Attributes, expectedUser *user.DefaultInfo, expectedVerb string) {

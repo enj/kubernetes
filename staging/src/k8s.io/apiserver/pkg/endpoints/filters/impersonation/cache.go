@@ -19,6 +19,7 @@ package impersonation
 import (
 	"crypto/sha256"
 	"fmt"
+	"hash/fnv"
 	"time"
 
 	"golang.org/x/crypto/cryptobyte"
@@ -59,14 +60,21 @@ func modeIndexCacheKey(attributes authorizer.Attributes) string {
 	key := attributes.GetUser().GetName()
 	// hash the name so our cache size is predicable regardless of the size of usernames
 	// collisions do not matter for this logic as it simply changes the ordering of the modes used
-	hash := sha256.Sum256([]byte(key))
-	return fmt.Sprintf("%x", hash[:])
+	hash := fnvSum128a([]byte(key))
+	return fmt.Sprintf("%x", hash)
+}
+
+func fnvSum128a(data []byte) []byte {
+	h := fnv.New128a()
+	h.Write(data)
+	var sum [16]byte
+	return h.Sum(sum[:0])
 }
 
 func newModeIndexCache() *modeIndexCache {
 	return &modeIndexCache{
-		// each entry is roughly ~72 bytes (64 bytes for the hashed key, 8 bytes for value)
-		// thus at even 10k entries, we should use about ~1 MB memory
+		// each entry is roughly ~24 bytes (16 bytes for the hashed key, 8 bytes for value)
+		// thus at even 10k entries, we should use less than 1 MB memory
 		// this hardcoded size allows us to remember many users without leaking memory
 		cache: lru.New(10_000),
 	}
@@ -207,7 +215,7 @@ func buildKey(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (s
 	// username in the cache key.  It is safe to assume that a user has no control over their own
 	// username since that is controlled by the authenticator.  Even though many of the other inputs
 	// are under the control of the requestor, they cannot explode the cache due to the hashing.
-	b := newCacheKeyBuilder(requestor.GetName()) // TODO maybe limit number of cache entries for a given user
+	b := newCacheKeyBuilder(requestor.GetName())
 
 	addUser(b, wantedUser)
 	addUser(b, requestor)
@@ -258,10 +266,9 @@ func addUser(b *cacheKeyBuilder, u user.Info) {
 }
 
 // cacheKeyBuilder adds syntactic sugar on top of cryptobyte.Builder to make it easier to use for complex inputs.
-// TODO move and share with kubelet credential provider
 type cacheKeyBuilder struct {
-	namespace string              // in the programming sense, not the Kubernetes concept
-	builder   *cryptobyte.Builder // TODO decide if we want to use a sync.Pool for the underlying buffer
+	namespace string // in the programming sense, not the Kubernetes concept
+	builder   *cryptobyte.Builder
 }
 
 func newCacheKeyBuilder(namespace string) *cacheKeyBuilder {
@@ -299,7 +306,7 @@ type builderContinuation func(child *cacheKeyBuilder)
 func (c *cacheKeyBuilder) addLengthPrefixed(f builderContinuation) {
 	c.builder.AddUint32LengthPrefixed(func(b *cryptobyte.Builder) {
 		c := &cacheKeyBuilder{namespace: c.namespace, builder: b}
-		f(c) // TODO disallow calling build during continuation
+		f(c)
 	})
 }
 
@@ -308,7 +315,6 @@ func (c *cacheKeyBuilder) build() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// TODO decide if we want to use hmac.New(sha256.New, randomCacheKey) with a sync.Pool like the cached token authenticator
 	hash := sha256.Sum256(key) // reduce the size of the cache key to keep the overall cache size small
 	return fmt.Sprintf("%x/%s", hash[:], c.namespace), nil
 }
