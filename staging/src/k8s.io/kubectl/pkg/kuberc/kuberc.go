@@ -43,10 +43,12 @@ const (
 	KubeRCOriginalCommandAnnotation = "kubectl.kubernetes.io/original-command"
 )
 
+type PluginPolicyWrapperFunc func(*rest.Config) *rest.Config
+
 var (
 	RecommendedConfigDir  = filepath.Join(homedir.HomeDir(), clientcmd.RecommendedHomeDir)
 	RecommendedKubeRCFile = filepath.Join(RecommendedConfigDir, RecommendedKubeRCFileName)
-	PluginPolicyWrapper   func(*rest.Config) *rest.Config
+	PluginPolicyWrapper   PluginPolicyWrapperFunc
 
 	aliasNameRegex = regexp.MustCompile("^[a-zA-Z]+$")
 	shortHandRegex = regexp.MustCompile("^-[a-zA-Z]+$")

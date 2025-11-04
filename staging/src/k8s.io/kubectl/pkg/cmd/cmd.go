@@ -220,7 +220,7 @@ func NewKubectlCommand(o KubectlOptions) *cobra.Command {
 
 	flags.BoolVar(&warningsAsErrors, "warnings-as-errors", warningsAsErrors, "Treat warnings received from the server as errors and exit with a non-zero exit code")
 
-	var policyWrapper *func(*rest.Config) *rest.Config
+	var policyWrapper *kuberc.PluginPolicyWrapperFunc
 	pref := kuberc.NewPreferences()
 	if !cmdutil.KubeRC.IsDisabled() {
 		pref.AddFlags(flags)
