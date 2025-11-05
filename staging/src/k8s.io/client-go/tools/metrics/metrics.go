@@ -63,8 +63,8 @@ type CallsMetric interface {
 }
 
 // CallsMetric counts the success or failure of execution for exec plugins.
-type PolicyMetric interface {
-	// Increment increments a counter per exitCode and callStatus.
+type PolicyCallsMetric interface {
+	// Increment increments a counter per status { "allowed", "denied" }
 	Increment(status string)
 }
 
@@ -107,7 +107,7 @@ var (
 	ExecPluginCalls CallsMetric = noopCalls{}
 	// RequestRetry is the retry metric that tracks the number of
 	// retries sent to the server.
-	ExecPluginPolicy PolicyMetric = noopPolicy{}
+	ExecPluginPolicyCalls PolicyCallsMetric = noopPolicy{}
 	// RequestRetry is the retry metric that tracks the number of
 	// retries sent to the server.
 	RequestRetry RetryMetric = noopRetry{}
@@ -130,7 +130,7 @@ type RegisterOpts struct {
 	RateLimiterLatency    LatencyMetric
 	RequestResult         ResultMetric
 	ExecPluginCalls       CallsMetric
-	ExecPluginPolicy      PolicyMetric
+	ExecPluginPolicyCalls PolicyCallsMetric
 	RequestRetry          RetryMetric
 	TransportCacheEntries TransportCacheMetric
 	TransportCreateCalls  TransportCreateCallsMetric
@@ -167,7 +167,7 @@ func Register(opts RegisterOpts) {
 		if opts.ExecPluginCalls != nil {
 			ExecPluginCalls = opts.ExecPluginCalls
 		}
-		if opts.ExecPluginPolicy != nil {
+		if opts.ExecPluginPolicyCalls != nil {
 			ExecPluginCalls = opts.ExecPluginCalls
 		}
 		if opts.RequestRetry != nil {

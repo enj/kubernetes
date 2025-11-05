@@ -119,9 +119,9 @@ func incrementCallsMetric(err error) {
 
 func incrementPolicyMetric(err error) {
 	if err != nil {
-		metrics.ExecPluginPolicy.Increment(pluginDenied)
+		metrics.ExecPluginPolicyCalls.Increment(pluginDenied)
 		return
 	}
 
-	metrics.ExecPluginPolicy.Increment(pluginAllowed)
+	metrics.ExecPluginPolicyCalls.Increment(pluginAllowed)
 }
