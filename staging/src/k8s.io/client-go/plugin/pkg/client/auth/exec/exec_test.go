@@ -41,7 +41,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/pkg/apis/clientauthentication"
@@ -933,7 +932,9 @@ func TestPluginPolicy(t *testing.T) {
 	}
 
 	wd, err := os.Getwd()
-	require.NoError(t, err, "could not get working directory")
+	if err != nil {
+		t.Fatalf("could not get working directory: %s", err)
+	}
 
 	testdataDir := filepath.Join(wd, "testdata")
 
@@ -964,28 +965,33 @@ func TestPluginPolicy(t *testing.T) {
 			c := test.config
 			a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, c, &clientauthentication.Cluster{})
 			if err != nil {
-				if !test.wantErr {
-					t.Errorf("get token %v", err)
-				} else if !strings.Contains(err.Error(), test.wantErrSubstr) {
-					t.Errorf("expected error with substring '%v' got '%v'", test.wantErrSubstr, err.Error())
-				}
-				return
+				t.Errorf("new authenticator %v", err)
 			}
 
 			stderr := &bytes.Buffer{}
 			a.stderr = stderr
 			a.environ = func() []string { return nil }
 
-			if err := a.allowsPlugin(); err != nil {
+			if err := ValidatePluginPolicy(test.config.PluginPolicy.PolicyType, test.config.PluginPolicy.Allowlist); err != nil {
 				if !test.wantErr {
-					t.Errorf("get token %v", err)
+					t.Errorf("unexpected validation error: %v", err)
 				} else if !strings.Contains(err.Error(), test.wantErrSubstr) {
 					t.Errorf("expected error with substring '%v' got '%v'", test.wantErrSubstr, err.Error())
 				}
 				return
 			}
+
+			if err := a.allowsPlugin(); err != nil {
+				if !test.wantErr {
+					t.Errorf("unexpected allows plugin error: %v", err)
+				} else if !strings.Contains(err.Error(), test.wantErrSubstr) {
+					t.Errorf("expected error with substring '%v' got '%v'", test.wantErrSubstr, err.Error())
+				}
+				return
+			}
+
 			if test.wantErr {
-				t.Fatal("expected allowlist error")
+				t.Fatal("expected allowlist error, but error was nil")
 			}
 		})
 	}
@@ -996,15 +1002,25 @@ func (m *pluginPolicyTestMatrix) makeTests(t *testing.T, testdataDir, path strin
 	existingPluginInPATHAbsolutePath := filepath.Join(testdataDir, existingPluginInPATHBasename)
 
 	err := os.Setenv("PATH", fmt.Sprintf("%s:%s", testdataDir, path))
-	require.NoError(t, err, "setting path")
+	if err != nil {
+		t.Fatalf("error setting PATH: %s", err)
+	}
 
 	resolved, err := exec.LookPath(existingPluginInPATHBasename)
-	require.NoError(t, err, "resolving test plugin basename")
-	require.Equal(t, existingPluginInPATHAbsolutePath, resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if existingPluginInPATHAbsolutePath != resolved {
+		t.Fatalf("test plugin basename resolved incorrectly: did not resolve to %s", existingPluginInPATHAbsolutePath)
+	}
 
 	resolvedAbs, err := exec.LookPath(existingPluginInPATHAbsolutePath)
-	require.NoError(t, err, "resolving test plugin basename")
-	require.Equal(t, existingPluginInPATHAbsolutePath, resolvedAbs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if existingPluginInPATHAbsolutePath != resolvedAbs {
+		t.Fatalf("test plugin absolute path resolved incorrectly: did not resolve to %s", existingPluginInPATHAbsolutePath)
+	}
 
 	tests := make([]pluginPolicyTest, 0, len(m.exists)*2+len(m.absolute)*2+len(m.allowlistLengths)+len(m.policies))
 
@@ -1094,6 +1110,7 @@ func (tt *pluginPolicyTest) getExecConfig(existingPluginInPATHAbsolutePath strin
 
 	config := api.ExecConfig{}
 	config.APIVersion = "client.authentication.k8s.io/v1"
+	config.InteractiveMode = api.IfAvailableExecInteractiveMode
 	config.Command = cmd
 	config.PluginPolicy.PolicyType = tt.policyType
 	config.PluginPolicy.Allowlist = tt.allowlist
@@ -1304,9 +1321,6 @@ func TestAuthorizationHeaderPresentCancelsExecAction(t *testing.T) {
 			a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &api.ExecConfig{
 				Command:    "./testdata/test-plugin.sh",
 				APIVersion: "client.authentication.k8s.io/v1beta1",
-				PluginPolicy: api.PluginPolicy{
-					PolicyType: api.PluginPolicyAllowAll,
-				},
 			}, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -1442,9 +1456,6 @@ func TestConcurrentUpdateTransportConfig(t *testing.T) {
 	c := api.ExecConfig{
 		Command:    "./testdata/test-plugin.sh",
 		APIVersion: "client.authentication.k8s.io/v1beta1",
-		PluginPolicy: api.PluginPolicy{
-			PolicyType: api.PluginPolicyAllowAll,
-		},
 	}
 	a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &c, nil)
 	if err != nil {

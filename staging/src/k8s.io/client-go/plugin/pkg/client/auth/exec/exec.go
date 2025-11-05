@@ -76,13 +76,6 @@ var (
 		clientauthenticationv1beta1.SchemeGroupVersion.String(): clientauthenticationv1beta1.SchemeGroupVersion,
 		clientauthenticationv1.SchemeGroupVersion.String():      clientauthenticationv1.SchemeGroupVersion,
 	}
-
-	errInvalidAPIVersion = errors.New("exec plugin: invalid apiVersion")
-)
-
-const (
-	metricAllowed = "allowed"
-	metricDenied  = "denied"
 )
 
 func newCache() *cache {
@@ -176,7 +169,7 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 
 	gv, ok := apiVersions[config.APIVersion]
 	if !ok {
-		return nil, fmt.Errorf("%w %q", errInvalidAPIVersion, config.APIVersion)
+		return nil, fmt.Errorf("exec plugin: invalid apiVersion %q", config.APIVersion)
 	}
 
 	connTracker := connrotation.NewConnectionTracker()
@@ -185,9 +178,8 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 		connTracker,
 	)
 
-	if err := ValidatePluginPolicy(config.PluginPolicy.PolicyType, config.PluginPolicy.Allowlist); err != nil {
-		return nil, err
-	}
+	var policyOnce sync.Once
+	var errPolicy error
 
 	a := &Authenticator{
 		cmd:                config.Command,
@@ -197,6 +189,12 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 		provideClusterInfo: config.ProvideClusterInfo,
 
 		execPluginPolicy: config.PluginPolicy,
+		validatePolicyFunc: func() error {
+			policyOnce.Do(func() {
+				errPolicy = ValidatePluginPolicy(config.PluginPolicy.PolicyType, config.PluginPolicy.Allowlist)
+			})
+			return errPolicy
+		},
 
 		installHint: config.InstallHint,
 		sometimes: &sometimes{
@@ -264,8 +262,8 @@ type Authenticator struct {
 	cluster            *clientauthentication.Cluster
 	provideClusterInfo bool
 
-	// Set by the allowlist config
-	execPluginPolicy api.PluginPolicy
+	execPluginPolicy   api.PluginPolicy
+	validatePolicyFunc func() error
 
 	// Used to avoid log spew by rate limiting install hint printing. We didn't do
 	// this by interval based rate limiting alone since that way may have prevented
@@ -433,6 +431,10 @@ func (a *Authenticator) refreshCredsLocked() error {
 		return fmt.Errorf("exec plugin cannot support interactive mode: %w", err)
 	}
 
+	if err := a.validatePolicyFunc(); err != nil {
+		return fmt.Errorf("exec plugin has invalid policy: %w", err)
+	}
+
 	cred := &clientauthentication.ExecCredential{
 		Spec: clientauthentication.ExecCredentialSpec{
 			Interactive: interactive,
@@ -458,11 +460,11 @@ func (a *Authenticator) refreshCredsLocked() error {
 		cmd.Stdin = a.stdin
 	}
 
-	if err := a.allowsPlugin(); err != nil {
-		metrics.ExecPluginPolicy.Increment(metricDenied)
+	err = a.allowsPlugin()
+	incrementPolicyMetric(err)
+	if err != nil {
 		return err
 	}
-	metrics.ExecPluginPolicy.Increment(metricAllowed)
 
 	err = cmd.Run()
 	incrementCallsMetric(err)
@@ -569,9 +571,9 @@ func (a *Authenticator) wrapCmdRunErrorLocked(err error) error {
 	}
 }
 
-// `allowsPlugin` determines whether or not the executable specified in its argument
-// may run according to the credential plugin policy. If the plugin is allowed,
-// `nil` is returned. If the plugin is not allowed, an error must be returned
+// `allowsPlugin` determines whether or not the specified executable may run
+// according to the credential plugin policy. If the plugin is allowed, `nil`
+// is returned. If the plugin is not allowed, an error must be returned
 // explaining why.
 func (a *Authenticator) allowsPlugin() error {
 	if len(a.execPluginPolicy.PolicyType) == 0 {
@@ -600,11 +602,12 @@ func (a *Authenticator) checkAllowlist() error {
 	errs := make([]error, 0, len(a.execPluginPolicy.Allowlist))
 	for _, entry := range a.execPluginPolicy.Allowlist {
 		err := itemGreenlights(&entry, pluginAbsPath)
-		if err == nil {
-			return nil
+		if err != nil {
+			errs = append(errs, err)
+			continue
 		}
 
-		errs = append(errs, err)
+		return nil
 	}
 
 	return fmt.Errorf("%q is not permitted by the credential plugin allowlist\n%w", pluginAbsPath, utilerrors.NewAggregate(errs))
@@ -628,7 +631,6 @@ func itemGreenlights(alEntry *api.AllowlistEntry, pluginAbsPath string) error {
 	}
 
 	return nil
-
 }
 
 func ValidatePluginPolicy(policy api.PolicyType, allowlist []api.AllowlistEntry) error {
