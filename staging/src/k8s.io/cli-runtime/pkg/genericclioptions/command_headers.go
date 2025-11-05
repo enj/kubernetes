@@ -19,6 +19,7 @@ package genericclioptions
 import (
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -33,8 +34,9 @@ const (
 // round tripper to add Request headers before delegation. Implements
 // the go standard library "http.RoundTripper" interface.
 type CommandHeaderRoundTripper struct {
-	Delegate http.RoundTripper
-	Headers  map[string]string
+	Delegate   http.RoundTripper
+	Headers    map[string]string
+	IsProxyCmd *atomic.Bool
 }
 
 // CommandHeaderRoundTripper adds Request headers before delegating to standard
@@ -43,9 +45,12 @@ type CommandHeaderRoundTripper struct {
 //
 //	https://github.com/kubernetes/enhancements/tree/master/keps/sig-cli/859-kubectl-headers
 func (c *CommandHeaderRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	for header, value := range c.Headers {
-		req.Header.Set(header, value)
+	if !c.IsProxyCmd.Load() {
+		for header, value := range c.Headers {
+			req.Header.Set(header, value)
+		}
 	}
+
 	return c.Delegate.RoundTrip(req)
 }
 
