@@ -43,12 +43,9 @@ const (
 	KubeRCOriginalCommandAnnotation = "kubectl.kubernetes.io/original-command"
 )
 
-type PluginPolicyWrapperFunc func(*rest.Config) *rest.Config
-
 var (
 	RecommendedConfigDir  = filepath.Join(homedir.HomeDir(), clientcmd.RecommendedHomeDir)
 	RecommendedKubeRCFile = filepath.Join(RecommendedConfigDir, RecommendedKubeRCFileName)
-	PluginPolicyWrapper   PluginPolicyWrapperFunc
 
 	aliasNameRegex = regexp.MustCompile("^[a-zA-Z]+$")
 	shortHandRegex = regexp.MustCompile("^-[a-zA-Z]+$")
@@ -116,9 +113,7 @@ func (p *Preferences) Apply(rootCmd *cobra.Command, kubeConfigFlags *genericclio
 		return args, err
 	}
 
-	if kubeConfigFlags != nil {
-		p.applyPluginPolicy(kubeConfigFlags, kuberc)
-	}
+	p.applyPluginPolicy(kubeConfigFlags, kuberc)
 
 	args, err = p.applyAliases(rootCmd, kuberc, args, errOut)
 	if err != nil {
@@ -135,28 +130,21 @@ func (p *Preferences) Apply(rootCmd *cobra.Command, kubeConfigFlags *genericclio
 // prevent excessive coupling, logic to handle those values is further down the
 // stack.
 func (p *Preferences) applyPluginPolicy(kubeConfigFlags *genericclioptions.ConfigFlags, kuberc *config.Preference) {
-	policy := clientcmdapi.PluginPolicy{
-		PolicyType: kuberc.CredentialPluginPolicy,
-		Allowlist:  kuberc.CredentialPluginAllowlist,
-	}
-
-	existingWrapConfigFn := kubeConfigFlags.WrapConfigFn
-
-	if PluginPolicyWrapper == nil {
-		PluginPolicyWrapper = func(c *rest.Config) *rest.Config {
-			if existingWrapConfigFn != nil {
-				c = existingWrapConfigFn(c)
-			}
-
-			if c.ExecProvider != nil {
-				c.ExecProvider.PluginPolicy = policy
-			}
-
-			return c
+	wrapConfigFn := kubeConfigFlags.WrapConfigFn
+	kubeConfigFlags.WithWrapConfigFn(func(c *rest.Config) *rest.Config {
+		if wrapConfigFn != nil {
+			c = wrapConfigFn(c)
 		}
-	}
 
-	*kubeConfigFlags = *kubeConfigFlags.WithWrapConfigFn(PluginPolicyWrapper)
+		if c.ExecProvider != nil {
+			c.ExecProvider.PluginPolicy = clientcmdapi.PluginPolicy{
+				PolicyType: kuberc.CredentialPluginPolicy,
+				Allowlist:  kuberc.CredentialPluginAllowlist,
+			}
+		}
+
+		return c
+	})
 }
 
 // applyOverrides finds the command and sets the defaulted flag values in kuberc.

@@ -45,7 +45,7 @@ type CommandHeaderRoundTripper struct {
 //
 //	https://github.com/kubernetes/enhancements/tree/master/keps/sig-cli/859-kubectl-headers
 func (c *CommandHeaderRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if !c.IsProxyCmd.Load() {
+	if !c.isProxycmd() {
 		for header, value := range c.Headers {
 			req.Header.Set(header, value)
 		}
@@ -96,4 +96,12 @@ func (c *CommandHeaderRoundTripper) CancelRequest(req *http.Request) {
 	if cr, ok := c.Delegate.(canceler); ok {
 		cr.CancelRequest(req)
 	}
+}
+
+func (c *CommandHeaderRoundTripper) isProxycmd() bool {
+	if c.IsProxyCmd == nil {
+		return false
+	}
+
+	return c.IsProxyCmd.Load()
 }
