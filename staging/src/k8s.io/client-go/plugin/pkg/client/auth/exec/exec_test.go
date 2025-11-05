@@ -808,10 +808,6 @@ func TestRefreshCreds(t *testing.T) {
 				})
 			}
 
-			if c.PluginPolicy.PolicyType == "" {
-				c.PluginPolicy.PolicyType = api.PluginPolicyAllowAll
-			}
-
 			a, err := newAuthenticator(newCache(), func(_ int) bool { return test.isTerminal }, &c, test.cluster)
 			if err != nil {
 				t.Fatal(err)
@@ -867,9 +863,11 @@ type pluginPolicyTest struct {
 	allowlist        []api.AllowlistEntry
 }
 
+type dualBool struct{ plugin, entry bool }
+
 type pluginPolicyTestMatrix struct {
-	exists           []struct{ plugin, entry bool }
-	absolute         []struct{ plugin, entry bool }
+	exists           []dualBool
+	absolute         []dualBool
 	allowlistLengths []int
 	policies         []api.PolicyType
 
@@ -877,51 +875,53 @@ type pluginPolicyTestMatrix struct {
 	shouldErrFunc func(tt *pluginPolicyTest) (bool, string)
 }
 
-var allPermutations = []struct{ plugin, entry bool }{
+var allPermutations = []dualBool{
 	{plugin: false, entry: false},
 	{plugin: false, entry: true},
 	{plugin: true, entry: false},
 	{plugin: true, entry: true},
 }
 
+// TestPluginPolicy tests the functioning of various plugin policies, as well
+// as the the validity of a wide variety of policies.
 func TestPluginPolicy(t *testing.T) {
 	// this is inlined to make highly visible and explicit the logic of which
 	// test configurations should pass and which should fail
-	shouldErrFunc := func(tt *pluginPolicyTest) (bool, string) {
-		if len(tt.policyType) == 0 {
-			return true, "unspecified plugin policy"
-		}
-
-		switch tt.policyType {
-		case api.PluginPolicyAllowAll:
-			if tt.allowlist != nil {
+	shouldErrFunc := func(test *pluginPolicyTest) (bool, string) {
+		switch test.policyType {
+		case "", api.PluginPolicyAllowAll:
+			if test.allowlist != nil { // invalid
 				return true, "allowlist is non-nil"
 			}
 
-			return false, ""
+			if test.pluginExists {
+				return false, ""
+			}
+
+			return true, "not found"
 		case api.PluginPolicyDenyAll:
-			if tt.allowlist != nil {
+			if test.allowlist != nil { // invalid
 				return true, "allowlist is non-nil"
 			}
 
 			return true, `policy set to "DenyAll"`
 		case api.PluginPolicyAllowlist:
-			if tt.allowlist == nil {
+			if test.allowlist == nil { // invalid
 				return true, "allowlist is unspecified"
 			}
 
-			if len(tt.allowlist) == 0 {
+			if len(test.allowlist) == 0 { // invalid
 				return true, "allowlist is empty; use \"DenyAll\" policy instead"
 			}
 
 			switch {
-			case tt.pluginExists && tt.entryExists:
+			case test.pluginExists && test.entryExists:
 				return false, ""
-			case tt.pluginExists && !tt.entryExists:
+			case test.pluginExists && !test.entryExists:
 				return true, "is not permitted by the credential plugin allowlist"
-			case !tt.pluginExists && tt.entryExists:
+			case !test.pluginExists && test.entryExists:
 				return true, "could not resolve path for plugin"
-			case !tt.pluginExists && !tt.entryExists:
+			case !test.pluginExists && !test.entryExists:
 				return true, "could not resolve path for plugin"
 			}
 
@@ -972,16 +972,7 @@ func TestPluginPolicy(t *testing.T) {
 			a.stderr = stderr
 			a.environ = func() []string { return nil }
 
-			if err := ValidatePluginPolicy(test.config.PluginPolicy.PolicyType, test.config.PluginPolicy.Allowlist); err != nil {
-				if !test.wantErr {
-					t.Errorf("unexpected validation error: %v", err)
-				} else if !strings.Contains(err.Error(), test.wantErrSubstr) {
-					t.Errorf("expected error with substring '%v' got '%v'", test.wantErrSubstr, err.Error())
-				}
-				return
-			}
-
-			if err := a.allowsPlugin(); err != nil {
+			if err := a.refreshCredsLocked(); err != nil {
 				if !test.wantErr {
 					t.Errorf("unexpected allows plugin error: %v", err)
 				} else if !strings.Contains(err.Error(), test.wantErrSubstr) {
@@ -1028,21 +1019,18 @@ func (m *pluginPolicyTestMatrix) makeTests(t *testing.T, testdataDir, path strin
 	for _, exists := range m.exists {
 		tt = new(pluginPolicyTest)
 
-		tt.pluginExists = exists.plugin
-		tt.entryExists = exists.entry
+		tt.setExists(exists)
 		for _, absolute := range m.absolute {
-			tt.usePluginAbsPath = absolute.plugin
-			tt.useEntryAbsPath = absolute.entry
+			tt.setAbsolute(absolute)
 
 			for _, length := range m.allowlistLengths {
 				tt.setAllowlist(length, existingPluginInPATHAbsolutePath, existingPluginInPATHBasename)
 
 				for _, p := range m.policies {
 					tt.policyType = p
-
-					tt.name = tt.getName()
-					tt.config = tt.getExecConfig(existingPluginInPATHAbsolutePath, existingPluginInPATHBasename)
-					tt.wantErr, tt.wantErrSubstr = m.shouldErrFunc(tt)
+					tt.setName()
+					tt.setExecConfig(existingPluginInPATHAbsolutePath, existingPluginInPATHBasename)
+					tt.setErrDetails(m)
 
 					tests = append(tests, *tt)
 				}
@@ -1051,6 +1039,20 @@ func (m *pluginPolicyTestMatrix) makeTests(t *testing.T, testdataDir, path strin
 	}
 
 	return tests
+}
+
+func (tt *pluginPolicyTest) setErrDetails(m *pluginPolicyTestMatrix) {
+	tt.wantErr, tt.wantErrSubstr = m.shouldErrFunc(tt)
+}
+
+func (tt *pluginPolicyTest) setAbsolute(absolute dualBool) {
+	tt.usePluginAbsPath = absolute.plugin
+	tt.useEntryAbsPath = absolute.entry
+}
+
+func (tt *pluginPolicyTest) setExists(exists dualBool) {
+	tt.pluginExists = exists.plugin
+	tt.entryExists = exists.entry
 }
 
 func (tt *pluginPolicyTest) setAllowlist(l int, existingPluginInPATHAbsolutePath string, existingPluginInPATHBasename string) {
@@ -1092,7 +1094,7 @@ func (tt *pluginPolicyTest) makeAllowlistEntry(existingPluginInPATHAbsolutePath 
 	return entry
 }
 
-func (tt *pluginPolicyTest) getExecConfig(existingPluginInPATHAbsolutePath string, existingPluginInPATHBasename string) *api.ExecConfig {
+func (tt *pluginPolicyTest) setExecConfig(existingPluginInPATHAbsolutePath string, existingPluginInPATHBasename string) {
 	var cmd string
 
 	switch {
@@ -1109,13 +1111,30 @@ func (tt *pluginPolicyTest) getExecConfig(existingPluginInPATHAbsolutePath strin
 	}
 
 	config := api.ExecConfig{}
+	if strings.HasSuffix(cmd, "test-plugin.sh") {
+		config.Env = append(config.Env, api.ExecEnvVar{
+			Name: "TEST_OUTPUT",
+			Value: `{
+				"kind": "ExecCredential",
+				"apiVersion": "client.authentication.k8s.io/v1",
+				"status": {
+					"token": "foo-bar"
+				}
+			}`,
+		})
+		config.Env = append(config.Env, api.ExecEnvVar{
+			Name:  "TEST_EXIT_CODE",
+			Value: strconv.Itoa(0),
+		})
+	}
+
 	config.APIVersion = "client.authentication.k8s.io/v1"
 	config.InteractiveMode = api.IfAvailableExecInteractiveMode
 	config.Command = cmd
 	config.PluginPolicy.PolicyType = tt.policyType
 	config.PluginPolicy.Allowlist = tt.allowlist
 
-	return &config
+	tt.config = &config
 }
 
 func makeExistsString(s string, t bool) string {
@@ -1136,7 +1155,7 @@ func makePathString(s string, t bool) string {
 	return fmt.Sprintf("%s-%s", ba, s)
 }
 
-func (tt *pluginPolicyTest) getName() string {
+func (tt *pluginPolicyTest) setName() {
 	p := string(tt.policyType)
 	if string(tt.policyType) == "" {
 		p = "unspecified"
@@ -1158,7 +1177,7 @@ func (tt *pluginPolicyTest) getName() string {
 	entryPathString := makePathString("entry", tt.useEntryAbsPath)
 	policyString := fmt.Sprintf("with-%s-policy", strings.ToLower(p))
 
-	return filepath.Join(
+	tt.name = filepath.Join(
 		policyString,
 		lengthStr,
 		pluginExistsString,
@@ -1204,9 +1223,6 @@ func TestRoundTripper(t *testing.T) {
 		Command:         "./testdata/test-plugin.sh",
 		APIVersion:      "client.authentication.k8s.io/v1beta1",
 		InteractiveMode: api.IfAvailableExecInteractiveMode,
-		PluginPolicy: api.PluginPolicy{
-			PolicyType: api.PluginPolicyAllowAll,
-		},
 	}
 	a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &c, nil)
 	if err != nil {
@@ -1364,9 +1380,6 @@ func TestTLSCredentials(t *testing.T) {
 		Command:         "./testdata/test-plugin.sh",
 		APIVersion:      "client.authentication.k8s.io/v1beta1",
 		InteractiveMode: api.IfAvailableExecInteractiveMode,
-		PluginPolicy: api.PluginPolicy{
-			PolicyType: api.PluginPolicyAllowAll,
-		},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1524,9 +1537,6 @@ func TestInstallHintRateLimit(t *testing.T) {
 				APIVersion:      "client.authentication.k8s.io/v1beta1",
 				InstallHint:     "some install hint",
 				InteractiveMode: api.IfAvailableExecInteractiveMode,
-				PluginPolicy: api.PluginPolicy{
-					PolicyType: api.PluginPolicyAllowAll,
-				},
 			}
 			a, err := newAuthenticator(newCache(), func(_ int) bool { return false }, &c, nil)
 			if err != nil {

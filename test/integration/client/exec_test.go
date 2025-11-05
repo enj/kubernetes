@@ -144,7 +144,6 @@ func execPluginClientTests(t *testing.T, unauthorizedCert, unauthorizedKey []byt
 									}`,
 					},
 				}
-				c.ExecProvider.PluginPolicy.PolicyType = clientcmdapi.PluginPolicyAllowAll
 			},
 			wantAuthorizationHeaderValues: [][]string{{"Bearer unauthorized"}},
 			wantCertificate:               &tls.Certificate{},
@@ -178,7 +177,6 @@ func execPluginClientTests(t *testing.T, unauthorizedCert, unauthorizedKey []byt
 						}`, unauthorizedCert, unauthorizedKey),
 					},
 				}
-				c.ExecProvider.PluginPolicy.PolicyType = clientcmdapi.PluginPolicyAllowAll
 			},
 			wantAuthorizationHeaderValues: [][]string{nil},
 			wantCertificate:               x509KeyPair(unauthorizedCert, unauthorizedKey, true),
@@ -211,7 +209,6 @@ func execPluginClientTests(t *testing.T, unauthorizedCert, unauthorizedKey []byt
 					}`, clientAuthorizedToken),
 					},
 				}
-				c.ExecProvider.PluginPolicy.PolicyType = clientcmdapi.PluginPolicyAllowAll
 			},
 			wantAuthorizationHeaderValues: [][]string{{"Bearer " + clientAuthorizedToken}},
 			wantCertificate:               &tls.Certificate{},
@@ -236,7 +233,6 @@ func execPluginClientTests(t *testing.T, unauthorizedCert, unauthorizedKey []byt
 						}`, read(t, clientCertFileName), read(t, clientKeyFileName)),
 					},
 				}
-				c.ExecProvider.PluginPolicy.PolicyType = clientcmdapi.PluginPolicyAllowAll
 			},
 			wantAuthorizationHeaderValues: [][]string{nil},
 			wantCertificate:               loadX509KeyPair(clientCertFileName, clientKeyFileName),
@@ -262,7 +258,6 @@ func execPluginClientTests(t *testing.T, unauthorizedCert, unauthorizedKey []byt
 						}`, clientAuthorizedToken, read(t, clientCertFileName), read(t, clientKeyFileName)),
 					},
 				}
-				c.ExecProvider.PluginPolicy.PolicyType = clientcmdapi.PluginPolicyAllowAll
 			},
 			wantAuthorizationHeaderValues: [][]string{{"Bearer " + clientAuthorizedToken}},
 			wantCertificate:               loadX509KeyPair(clientCertFileName, clientKeyFileName),
@@ -288,7 +283,6 @@ func execPluginClientTests(t *testing.T, unauthorizedCert, unauthorizedKey []byt
 						}`, "client-unauthorized-token", read(t, clientCertFileName), read(t, clientKeyFileName)),
 					},
 				}
-				c.ExecProvider.PluginPolicy.PolicyType = clientcmdapi.PluginPolicyAllowAll
 			},
 			wantAuthorizationHeaderValues: [][]string{{"Bearer client-unauthorized-token"}},
 			wantCertificate:               loadX509KeyPair(clientCertFileName, clientKeyFileName),
@@ -314,7 +308,6 @@ func execPluginClientTests(t *testing.T, unauthorizedCert, unauthorizedKey []byt
 						}`, clientAuthorizedToken, string(unauthorizedCert), string(unauthorizedKey)),
 					},
 				}
-				c.ExecProvider.PluginPolicy.PolicyType = clientcmdapi.PluginPolicyAllowAll
 			},
 			wantAuthorizationHeaderValues: [][]string{{"Bearer " + clientAuthorizedToken}},
 			wantCertificate:               x509KeyPair([]byte(unauthorizedCert), []byte(unauthorizedKey), true),
@@ -340,7 +333,6 @@ func execPluginClientTests(t *testing.T, unauthorizedCert, unauthorizedKey []byt
 						}`, "client-unauthorized-token", string(unauthorizedCert), string(unauthorizedKey)),
 					},
 				}
-				c.ExecProvider.PluginPolicy.PolicyType = clientcmdapi.PluginPolicyAllowAll
 			},
 			wantAuthorizationHeaderValues: [][]string{{"Bearer client-unauthorized-token"}},
 			wantCertificate:               x509KeyPair(unauthorizedCert, unauthorizedKey, true),
@@ -375,7 +367,6 @@ func execPluginClientTests(t *testing.T, unauthorizedCert, unauthorizedKey []byt
 				}
 				c.Username = "unauthorized"
 				c.Password = "unauthorized"
-				c.ExecProvider.PluginPolicy.PolicyType = clientcmdapi.PluginPolicyAllowAll
 			},
 			wantAuthorizationHeaderValues: [][]string{{"Basic " + basicAuthHeaderValue("unauthorized", "unauthorized")}},
 			wantClientErrorPrefix:         "Unauthorized",
@@ -397,7 +388,6 @@ func execPluginClientTests(t *testing.T, unauthorizedCert, unauthorizedKey []byt
 					},
 				}
 				c.BearerToken = "some-unauthorized-token"
-				c.ExecProvider.PluginPolicy.PolicyType = clientcmdapi.PluginPolicyAllowAll
 			},
 			wantAuthorizationHeaderValues: [][]string{{"Bearer some-unauthorized-token"}},
 			wantClientErrorPrefix:         "Unauthorized",
@@ -420,7 +410,6 @@ func execPluginClientTests(t *testing.T, unauthorizedCert, unauthorizedKey []byt
 				}
 				c.CertData = unauthorizedCert
 				c.KeyData = unauthorizedKey
-				c.ExecProvider.PluginPolicy.PolicyType = clientcmdapi.PluginPolicyAllowAll
 			},
 			wantAuthorizationHeaderValues: [][]string{nil},
 			wantClientErrorPrefix:         "Unauthorized",
@@ -431,7 +420,6 @@ func execPluginClientTests(t *testing.T, unauthorizedCert, unauthorizedKey []byt
 			name: "unknown binary",
 			clientConfigFunc: func(c *rest.Config) {
 				c.ExecProvider.Command = "does not exist"
-				c.ExecProvider.PluginPolicy.PolicyType = clientcmdapi.PluginPolicyAllowAll
 			},
 			wantGetCertificateErrorPrefix: "exec: executable does not exist not found",
 			wantClientErrorPrefix:         `Get "https`,
@@ -444,7 +432,6 @@ func execPluginClientTests(t *testing.T, unauthorizedCert, unauthorizedKey []byt
 			name: "binary not executable",
 			clientConfigFunc: func(c *rest.Config) {
 				c.ExecProvider.Command = "./testdata/exec-plugin-not-executable.sh"
-				c.ExecProvider.PluginPolicy.PolicyType = clientcmdapi.PluginPolicyAllowAll
 			},
 			wantGetCertificateErrorPrefix: "exec: fork/exec ./testdata/exec-plugin-not-executable.sh: permission denied",
 			wantClientErrorPrefix:         `Get "https`,
@@ -462,7 +449,6 @@ func execPluginClientTests(t *testing.T, unauthorizedCert, unauthorizedKey []byt
 						Value: "10",
 					},
 				}
-				c.ExecProvider.PluginPolicy.PolicyType = clientcmdapi.PluginPolicyAllowAll
 			},
 			wantGetCertificateErrorPrefix: "exec: executable testdata/exec-plugin.sh failed with exit code 10",
 			wantClientErrorPrefix:         `Get "https`,
@@ -604,9 +590,6 @@ func TestExecPluginViaClient(t *testing.T) {
 					rand.String(10),
 				},
 				InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
-				PluginPolicy: clientcmdapi.PluginPolicy{
-					PolicyType: clientcmdapi.PluginPolicyAllowAll,
-				},
 			}
 			clientConfig.Wrap(func(rt http.RoundTripper) http.RoundTripper {
 				return roundTripperFunc(func(req *http.Request) (*http.Response, error) {
@@ -618,10 +601,7 @@ func TestExecPluginViaClient(t *testing.T) {
 			if test.clientConfigFunc != nil {
 				test.clientConfigFunc(clientConfig)
 			}
-			client, err := clientset.NewForConfig(clientConfig)
-			if err != nil {
-				t.Fatal(err)
-			}
+			client := clientset.NewForConfigOrDie(clientConfig)
 
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 			defer cancel()
@@ -830,9 +810,6 @@ func TestExecPluginViaInformer(t *testing.T) {
 				Command:         "testdata/exec-plugin.sh",
 				APIVersion:      "client.authentication.k8s.io/v1",
 				InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
-				PluginPolicy: clientcmdapi.PluginPolicy{
-					PolicyType: clientcmdapi.PluginPolicyAllowAll,
-				},
 			}
 
 			if test.clientConfigFunc != nil {
@@ -867,9 +844,6 @@ func (e *execPlugin) config() *clientcmdapi.ExecConfig {
 		Command:         "testdata/exec-plugin.sh",
 		APIVersion:      "client.authentication.k8s.io/v1",
 		InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
-		PluginPolicy: clientcmdapi.PluginPolicy{
-			PolicyType: clientcmdapi.PluginPolicyAllowAll,
-		},
 		Env: []clientcmdapi.ExecEnvVar{
 			{
 				Name:  outputFileEnvVar,

@@ -181,6 +181,11 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 	var policyOnce sync.Once
 	var errPolicy error
 
+	pluginPolicy := api.PluginPolicy{
+		PolicyType: orDefaultPolicyType(config.PluginPolicy.PolicyType),
+		Allowlist:  config.PluginPolicy.Allowlist,
+	}
+
 	a := &Authenticator{
 		cmd:                config.Command,
 		args:               config.Args,
@@ -188,10 +193,10 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 		cluster:            cluster,
 		provideClusterInfo: config.ProvideClusterInfo,
 
-		execPluginPolicy: config.PluginPolicy,
+		execPluginPolicy: pluginPolicy,
 		validatePolicyFunc: func() error {
 			policyOnce.Do(func() {
-				errPolicy = ValidatePluginPolicy(config.PluginPolicy.PolicyType, config.PluginPolicy.Allowlist)
+				errPolicy = ValidatePluginPolicy(pluginPolicy.PolicyType, pluginPolicy.Allowlist)
 			})
 			return errPolicy
 		},
@@ -222,6 +227,13 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 	a.dial = &transport.DialHolder{Dial: defaultDialer.DialContext}
 
 	return c.put(key, a), nil
+}
+
+func orDefaultPolicyType(policy api.PolicyType) api.PolicyType {
+	if len(policy) == 0 {
+		policy = api.PluginPolicyAllowAll
+	}
+	return policy
 }
 
 func isInteractive(isTerminalFunc func(int) bool, config *api.ExecConfig) (bool, error) {
@@ -576,11 +588,13 @@ func (a *Authenticator) wrapCmdRunErrorLocked(err error) error {
 // is returned. If the plugin is not allowed, an error must be returned
 // explaining why.
 func (a *Authenticator) allowsPlugin() error {
-	if len(a.execPluginPolicy.PolicyType) == 0 {
-		return fmt.Errorf("unspecified plugin policy")
+	policy := a.execPluginPolicy.PolicyType
+
+	if len(policy) == 0 {
+		policy = api.PluginPolicyAllowAll
 	}
 
-	switch a.execPluginPolicy.PolicyType {
+	switch policy {
 	case api.PluginPolicyAllowAll:
 		return nil
 	case api.PluginPolicyDenyAll:
