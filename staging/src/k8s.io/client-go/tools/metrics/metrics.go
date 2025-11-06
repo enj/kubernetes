@@ -105,8 +105,8 @@ var (
 	// ExecPluginCalls is the number of calls made to an exec plugin, partitioned by
 	// exit code and call status.
 	ExecPluginCalls CallsMetric = noopCalls{}
-	// RequestRetry is the retry metric that tracks the number of
-	// retries sent to the server.
+	// ExecPluginPolicyCalls is the number of plugin policy check calls, partitioned
+	// by {"allowed", "denied"}
 	ExecPluginPolicyCalls PolicyCallsMetric = noopPolicy{}
 	// RequestRetry is the retry metric that tracks the number of
 	// retries sent to the server.

@@ -225,12 +225,12 @@ func NewKubectlCommand(o KubectlOptions) *cobra.Command {
 	if !cmdutil.KubeRC.IsDisabled() {
 		pref.AddFlags(flags)
 	}
+
 	kubeConfigFlags := o.ConfigFlags
 	if kubeConfigFlags == nil {
 		kubeConfigFlags = defaultConfigFlags().WithWarningPrinter(o.IOStreams)
 	}
 	kubeConfigFlags.AddFlags(flags)
-
 	matchVersionKubeConfigFlags := cmdutil.NewMatchVersionFlags(kubeConfigFlags)
 	matchVersionKubeConfigFlags.AddFlags(flags)
 	// Updates hooks to add kubectl command headers: SIG CLI KEP 859.

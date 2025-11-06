@@ -329,7 +329,15 @@ func validateAuthInfo(authInfoName string, authInfo clientcmdapi.AuthInfo) []err
 			validationErrors = append(validationErrors, fmt.Errorf("invalid interactiveMode for %v: %q", authInfoName, authInfo.Exec.InteractiveMode))
 		}
 
-		if err := authexec.ValidatePluginPolicy(authInfo.Exec.PluginPolicy.PolicyType, authInfo.Exec.PluginPolicy.Allowlist); err != nil {
+		pt := authInfo.Exec.PluginPolicy.PolicyType
+		if len(pt) == 0 {
+			// If empty, the policy will fall back to `AllowAll` at runtime for
+			// backward compatibility. Therefore, if it is empty now we need to
+			// validate the fallback value, since the empty value is considered
+			// invalid.
+			pt = clientcmdapi.PluginPolicyAllowAll
+		}
+		if err := authexec.ValidatePluginPolicy(pt, authInfo.Exec.PluginPolicy.Allowlist); err != nil {
 			validationErrors = append(validationErrors, fmt.Errorf("allowlist misconfiguration: %w", err))
 		}
 	}

@@ -61,11 +61,10 @@ type PreferencesHandler interface {
 // Preferences stores the kuberc file coming either from environment variable
 // or file from set in flag or the default kuberc path.
 type Preferences struct {
-	getPreferencesFunc func(kuberc string, errOut io.Writer) (*config.Preference, error) // DefaultGetPreferences
-	aliases            map[string]struct{}
-}
+	getPreferencesFunc func(kuberc string, errOut io.Writer) (*config.Preference, error)
 
-var _ PreferencesHandler = &Preferences{}
+	aliases map[string]struct{}
+}
 
 // NewPreferences returns initialized Prefrences object.
 func NewPreferences() PreferencesHandler {
@@ -126,9 +125,9 @@ func (p *Preferences) Apply(rootCmd *cobra.Command, kubeConfigFlags *genericclio
 	return args, nil
 }
 
-// `applyPluginPolicy` passes the values unaltered to their destination. To
-// prevent excessive coupling, logic to handle those values is further down the
-// stack.
+// `applyPluginPolicy` wraps the rest client getter with one that propagates
+// the allowlist, via the rest config, to the code handling credential exec
+// plugins.
 func (p *Preferences) applyPluginPolicy(kubeConfigFlags *genericclioptions.ConfigFlags, kuberc *config.Preference) {
 	wrapConfigFn := kubeConfigFlags.WrapConfigFn
 	kubeConfigFlags.WithWrapConfigFn(func(c *rest.Config) *rest.Config {

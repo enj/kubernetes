@@ -588,13 +588,11 @@ func (a *Authenticator) wrapCmdRunErrorLocked(err error) error {
 // is returned. If the plugin is not allowed, an error must be returned
 // explaining why.
 func (a *Authenticator) allowsPlugin() error {
-	policy := a.execPluginPolicy.PolicyType
-
-	if len(policy) == 0 {
-		policy = api.PluginPolicyAllowAll
+	if len(a.execPluginPolicy.PolicyType) == 0 {
+		return fmt.Errorf("unspecified plugin policy")
 	}
 
-	switch policy {
+	switch a.execPluginPolicy.PolicyType {
 	case api.PluginPolicyAllowAll:
 		return nil
 	case api.PluginPolicyDenyAll:

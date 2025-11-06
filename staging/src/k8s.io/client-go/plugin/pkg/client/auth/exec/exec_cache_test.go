@@ -46,9 +46,6 @@ func TestExecTLSCache(t *testing.T) {
 			Command:         "./testdata/test-plugin.sh",
 			APIVersion:      "client.authentication.k8s.io/v1",
 			InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
-			PluginPolicy: clientcmdapi.PluginPolicy{
-				PolicyType: clientcmdapi.PluginPolicyAllowAll,
-			},
 		},
 	}
 	client1 := clientset.NewForConfigOrDie(config1)
@@ -59,9 +56,6 @@ func TestExecTLSCache(t *testing.T) {
 			Command:         "./testdata/test-plugin.sh",
 			APIVersion:      "client.authentication.k8s.io/v1",
 			InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
-			PluginPolicy: clientcmdapi.PluginPolicy{
-				PolicyType: clientcmdapi.PluginPolicyAllowAll,
-			},
 		},
 	}
 	client2 := clientset.NewForConfigOrDie(config2)
@@ -73,9 +67,6 @@ func TestExecTLSCache(t *testing.T) {
 			Args:            []string{"make this exec auth different"},
 			APIVersion:      "client.authentication.k8s.io/v1",
 			InteractiveMode: clientcmdapi.IfAvailableExecInteractiveMode,
-			PluginPolicy: clientcmdapi.PluginPolicy{
-				PolicyType: clientcmdapi.PluginPolicyAllowAll,
-			},
 		},
 	}
 	client3 := clientset.NewForConfigOrDie(config3)

@@ -120,10 +120,7 @@ uml0obOEy+ON91k+SWTJ3ggmF/U=
 				ExecProvider: &clientcmdapi.ExecConfig{
 					Args:       []string{"secret"},
 					Env:        []clientcmdapi.ExecEnvVar{{Name: "secret", Value: "s3cr3t"}},
-					APIVersion: "client.authentication.k8s.io/v1",
-					PluginPolicy: clientcmdapi.PluginPolicy{
-						PolicyType: clientcmdapi.PluginPolicyAllowAll,
-					},
+					APIVersion: "client.authentication.k8s.io/v1beta1",
 				},
 			},
 		},
