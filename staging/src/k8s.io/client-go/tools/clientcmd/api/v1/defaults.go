@@ -35,7 +35,7 @@ func SetDefaults_ExecConfig(exec *ExecConfig) {
 		}
 	}
 
-	if len(exec.PluginPolicy.PolicyType) == 0 {
+	if len(exec.PluginPolicy.PolicyType) == 0 && exec.PluginPolicy.Allowlist == nil {
 		exec.PluginPolicy.PolicyType = PluginPolicyAllowAll
 	}
 }

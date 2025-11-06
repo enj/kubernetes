@@ -408,9 +408,9 @@ func addCmdHeaderHooks(cmds *cobra.Command, kubeConfigFlags *genericclioptions.C
 			// Must be separate RoundTripper; not "crt" closure.
 			// Fixes: https://github.com/kubernetes/kubectl/issues/1098
 			return &genericclioptions.CommandHeaderRoundTripper{
-				Delegate:   rt,
-				Headers:    crt.Headers,
-				IsProxyCmd: isProxyCmd,
+				Delegate:    rt,
+				Headers:     crt.Headers,
+				SkipHeaders: isProxyCmd, // proxy command is incompatible with these headers
 			}
 		})
 		return c

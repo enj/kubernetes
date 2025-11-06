@@ -202,10 +202,8 @@ EOF
   output7=$(kubectl --kubeconfig="${TMPDIR:-/tmp}/valid_exec_plugin.yaml" --kuberc="${TMPDIR:-/tmp}/kuberc-deny-all.yaml" "${kube_flags_without_token[@]:?}" get namespace kube-system -o name 2>&1)
   rc7="$?"
 
-  if [[ "$output7" =~ "DenyAll" ]]; then
+  if [ "$rc7" -ne 0 ] && [[ "$output7" =~ "DenyAll" ]]; then
     kube::log::status "exec credential plugin not triggered because plugin policy set to DenyAll"
-  elif [ "$rc7" -ne 0 ]; then
-    kube::log::status "expected allowlist error but did not receive expected error"
   else
     kube::log::status "Unexpected output when kuberc was configured with credentialPluginPolicy: DenyAll. Exec credential plugin ran despite DenyAll policy"
     exit 1
@@ -233,10 +231,8 @@ EOF
   output9=$(kubectl --kubeconfig="${TMPDIR:-/tmp}/valid_exec_plugin.yaml" --kuberc="${TMPDIR:-/tmp}/kuberc-allowlist-should-fail.yaml" "${kube_flags_without_token[@]:?}" get namespace kube-system -o name 2>&1)
   rc9="$?"
 
-  if kube::test::if_has_string "$output9" "is not permitted by the credential plugin allowlist"; then
+  if [ "$rc9" -ne 0 ] && kube::test::if_has_string "$output9" "is not permitted by the credential plugin allowlist"; then
     kube::log::status "exec credential plugin not triggered because allowlist does not permit it"
-  elif [ "$rc9" -ne 0 ]; then
-    kube::log::status "expected allowlist error but did not receive expected error"
   else
     kube::log::status "Unexpected output when kuberc was configured with credentialPluginPolicy: Allowlist. Exec credential plugin ran despite not appearing in allowlist"
     exit 1
@@ -258,6 +254,40 @@ EOF
     kube::log::status "exec credential plugin permitted by allowlist"
   else
     kube::log::status "Unexpected output when kuberc was configured with credentialPluginPolicy: Allowlist. Exec credential plugin not triggered despite appearing in allowlist"
+    exit 1
+  fi
+
+  cat >"${TMPDIR:-/tmp}/kuberc-allowlist-not-given.yaml" <<EOF
+apiVersion: kubectl.config.k8s.io/v1beta1
+kind: Preference
+EOF
+
+  output11=$(kubectl --kubeconfig="${TMPDIR:-/tmp}/valid_exec_plugin.yaml" --kuberc="${TMPDIR:-/tmp}/kuberc-allowlist-not-given.yaml" "${kube_flags_without_token[@]:?}" get namespace kube-system -o name)
+  rc11="$?"
+
+  if [ "$rc11" -eq 0 ] && [[ "$output11" =~ "namespace/kube-system" ]]; then
+    kube::log::status "exec credential plugin permitted by missing allowlist"
+  else
+    kube::log::status "Unexpected output when kuberc was configured without allowlist"
+    exit 1
+  fi
+
+  cat >"${TMPDIR:-/tmp}/kuberc-invalid-allowlist.yaml" <<EOF
+apiVersion: kubectl.config.k8s.io/v1beta1
+kind: Preference
+credentialPluginPolicy: AllowAll
+credentialPluginAllowlist:
+  - name: foobar
+  - name: echo
+EOF
+
+  output12=$(kubectl --kubeconfig="${TMPDIR:-/tmp}/valid_exec_plugin.yaml" --kuberc="${TMPDIR:-/tmp}/kuberc-invalid-allowlist.yaml" "${kube_flags_without_token[@]:?}" get namespace kube-system -o name)
+  rc12="$?"
+
+  if [ "$rc12" -ne 0 ] && [[ "$output12" =~ "misconfigured credential plugin allowlist" ]]; then
+    kube::log::status "exec credential plugin permitted by missing allowlist"
+  else
+    kube::log::status "Unexpected output when kuberc was configured without allowlist"
     exit 1
   fi
 

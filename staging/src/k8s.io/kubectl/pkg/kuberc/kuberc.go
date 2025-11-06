@@ -513,13 +513,12 @@ func validate(plugin *config.Preference) error {
 		}
 	}
 
-	if err := validatePluginPolicy(plugin); err != nil {
+	if err := exec.ValidatePluginPolicy(clientcmdapi.PluginPolicy{
+		PolicyType: plugin.CredentialPluginPolicy,
+		Allowlist:  plugin.CredentialPluginAllowlist,
+	}); err != nil {
 		return err
 	}
 
 	return nil
-}
-
-func validatePluginPolicy(plugin *config.Preference) error {
-	return exec.ValidatePluginPolicy(plugin.CredentialPluginPolicy, plugin.CredentialPluginAllowlist)
 }

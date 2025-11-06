@@ -34,9 +34,9 @@ const (
 // round tripper to add Request headers before delegation. Implements
 // the go standard library "http.RoundTripper" interface.
 type CommandHeaderRoundTripper struct {
-	Delegate   http.RoundTripper
-	Headers    map[string]string
-	IsProxyCmd *atomic.Bool
+	Delegate    http.RoundTripper
+	Headers     map[string]string
+	SkipHeaders *atomic.Bool
 }
 
 // CommandHeaderRoundTripper adds Request headers before delegating to standard
@@ -45,10 +45,12 @@ type CommandHeaderRoundTripper struct {
 //
 //	https://github.com/kubernetes/enhancements/tree/master/keps/sig-cli/859-kubectl-headers
 func (c *CommandHeaderRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if !c.isProxycmd() {
-		for header, value := range c.Headers {
-			req.Header.Set(header, value)
-		}
+	if c.shouldSkipHeaders() {
+		return c.Delegate.RoundTrip(req)
+	}
+
+	for header, value := range c.Headers {
+		req.Header.Set(header, value)
 	}
 
 	return c.Delegate.RoundTrip(req)
@@ -98,10 +100,10 @@ func (c *CommandHeaderRoundTripper) CancelRequest(req *http.Request) {
 	}
 }
 
-func (c *CommandHeaderRoundTripper) isProxycmd() bool {
-	if c.IsProxyCmd == nil {
+func (c *CommandHeaderRoundTripper) shouldSkipHeaders() bool {
+	if c.SkipHeaders == nil {
 		return false
 	}
 
-	return c.IsProxyCmd.Load()
+	return c.SkipHeaders.Load()
 }

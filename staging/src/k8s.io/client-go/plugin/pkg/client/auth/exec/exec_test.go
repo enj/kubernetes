@@ -891,7 +891,10 @@ func TestPluginPolicy(t *testing.T) {
 		switch test.policyType {
 		case "", api.PluginPolicyAllowAll:
 			if test.allowlist != nil { // invalid
-				return true, "allowlist is non-nil"
+				if test.policyType == api.PluginPolicyAllowAll {
+					return true, "allowlist is non-nil"
+				}
+				return true, "unspecified plugin policy"
 			}
 
 			if test.pluginExists {

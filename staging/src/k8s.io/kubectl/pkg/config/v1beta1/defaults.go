@@ -19,7 +19,7 @@ package v1beta1
 import clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 func SetDefaults_Preference(pref *Preference) {
-	if len(pref.CredentialPluginPolicy) == 0 {
+	if len(pref.CredentialPluginPolicy) == 0 && pref.CredentialPluginAllowlist == nil {
 		pref.CredentialPluginPolicy = clientcmdapi.PluginPolicyAllowAll
 	}
 }

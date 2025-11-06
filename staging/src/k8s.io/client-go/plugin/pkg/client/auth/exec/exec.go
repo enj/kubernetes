@@ -181,11 +181,6 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 	var policyOnce sync.Once
 	var errPolicy error
 
-	pluginPolicy := api.PluginPolicy{
-		PolicyType: orDefaultPolicyType(config.PluginPolicy.PolicyType),
-		Allowlist:  config.PluginPolicy.Allowlist,
-	}
-
 	a := &Authenticator{
 		cmd:                config.Command,
 		args:               config.Args,
@@ -193,10 +188,13 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 		cluster:            cluster,
 		provideClusterInfo: config.ProvideClusterInfo,
 
-		execPluginPolicy: pluginPolicy,
+		execPluginPolicy: config.PluginPolicy,
 		validatePolicyFunc: func() error {
 			policyOnce.Do(func() {
-				errPolicy = ValidatePluginPolicy(pluginPolicy.PolicyType, pluginPolicy.Allowlist)
+				if isEmptyPolicy(config.PluginPolicy) {
+					return // unset policy means all plugins are allowed
+				}
+				errPolicy = ValidatePluginPolicy(config.PluginPolicy)
 			})
 			return errPolicy
 		},
@@ -227,13 +225,6 @@ func newAuthenticator(c *cache, isTerminalFunc func(int) bool, config *api.ExecC
 	a.dial = &transport.DialHolder{Dial: defaultDialer.DialContext}
 
 	return c.put(key, a), nil
-}
-
-func orDefaultPolicyType(policy api.PolicyType) api.PolicyType {
-	if len(policy) == 0 {
-		policy = api.PluginPolicyAllowAll
-	}
-	return policy
 }
 
 func isInteractive(isTerminalFunc func(int) bool, config *api.ExecConfig) (bool, error) {
@@ -588,8 +579,8 @@ func (a *Authenticator) wrapCmdRunErrorLocked(err error) error {
 // is returned. If the plugin is not allowed, an error must be returned
 // explaining why.
 func (a *Authenticator) allowsPlugin() error {
-	if len(a.execPluginPolicy.PolicyType) == 0 {
-		return fmt.Errorf("unspecified plugin policy")
+	if isEmptyPolicy(a.execPluginPolicy) {
+		return nil // unset policy means all plugins are allowed
 	}
 
 	switch a.execPluginPolicy.PolicyType {
@@ -602,7 +593,6 @@ func (a *Authenticator) allowsPlugin() error {
 	default:
 		return fmt.Errorf("unknown plugin policy %q", a.execPluginPolicy.PolicyType)
 	}
-
 }
 
 func (a *Authenticator) checkAllowlist() error {
@@ -618,8 +608,7 @@ func (a *Authenticator) checkAllowlist() error {
 			errs = append(errs, err)
 			continue
 		}
-
-		return nil
+		return nil // an item in the allowlist matched, return nil to indicate success
 	}
 
 	return fmt.Errorf("%q is not permitted by the credential plugin allowlist\n%w", pluginAbsPath, utilerrors.NewAggregate(errs))
@@ -645,21 +634,25 @@ func itemGreenlights(alEntry *api.AllowlistEntry, pluginAbsPath string) error {
 	return nil
 }
 
-func ValidatePluginPolicy(policy api.PolicyType, allowlist []api.AllowlistEntry) error {
-	if len(policy) == 0 {
+func isEmptyPolicy(policy api.PluginPolicy) bool {
+	return len(policy.PolicyType) == 0 && policy.Allowlist == nil
+}
+
+func ValidatePluginPolicy(policy api.PluginPolicy) error {
+	if len(policy.PolicyType) == 0 {
 		return fmt.Errorf("unspecified plugin policy")
 	}
 
-	switch policy {
+	switch policy.PolicyType {
 	case api.PluginPolicyAllowAll, api.PluginPolicyDenyAll:
-		if allowlist != nil {
-			return fmt.Errorf("misconfigured credential plugin allowlist: plugin policy is %q but allowlist is non-nil", policy)
+		if policy.Allowlist != nil {
+			return fmt.Errorf("misconfigured credential plugin allowlist: plugin policy is %q but allowlist is non-nil", policy.PolicyType)
 		}
 		return nil
 	case api.PluginPolicyAllowlist:
-		return validateAllowlist(allowlist)
+		return validateAllowlist(policy.Allowlist)
 	default:
-		return fmt.Errorf("unknown plugin policy: %q", policy)
+		return fmt.Errorf("unknown plugin policy: %q", policy.PolicyType)
 	}
 }
 

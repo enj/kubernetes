@@ -113,6 +113,17 @@ func TestSetDefaults_Config(t *testing.T) {
 			},
 		},
 		{
+			name: "v1 exec API with empty plugin policy but non empty allowlist",
+			in: &ExecConfig{
+				APIVersion:   "client.authentication.k8s.io/v1",
+				PluginPolicy: PluginPolicy{Allowlist: []AllowlistEntry{{Name: "panda"}}},
+			},
+			wantOut: &ExecConfig{
+				APIVersion:   "client.authentication.k8s.io/v1",
+				PluginPolicy: PluginPolicy{Allowlist: []AllowlistEntry{{Name: "panda"}}},
+			},
+		},
+		{
 			name: "v1 exec API with set plugin policy",
 			in: &ExecConfig{
 				APIVersion:   "client.authentication.k8s.io/v1",
