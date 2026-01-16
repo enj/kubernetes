@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -36,7 +37,12 @@ import (
 // the config has no custom TLS options, http.DefaultTransport is returned.
 type tlsTransportCache struct {
 	mu         sync.Mutex
-	transports map[tlsCacheKey]*http.Transport
+	transports map[tlsCacheKey]*tlsCacheValue
+}
+
+type tlsCacheValue struct {
+	refs uint64
+	rt   *http.Transport
 }
 
 // DialerStopCh is stop channel that is passed down to dynamic cert dialer.
@@ -46,7 +52,7 @@ var DialerStopCh = wait.NeverStop
 
 const idleConnsPerHost = 25
 
-var tlsCache = &tlsTransportCache{transports: make(map[tlsCacheKey]*http.Transport)}
+var tlsCache = &tlsTransportCache{transports: make(map[tlsCacheKey]*tlsCacheValue)}
 
 type tlsCacheKey struct {
 	insecure           bool
@@ -87,7 +93,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		// See if we already have a custom transport for this config
 		if t, ok := c.transports[key]; ok {
 			metrics.TransportCreateCalls.Increment("hit")
-			return t, nil
+			return c.incrementRefLocked(key, t), nil
 		}
 		metrics.TransportCreateCalls.Increment("miss")
 	} else {
@@ -142,10 +148,39 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 
 	if canCache {
 		// Cache a single transport for these options
-		c.transports[key] = transport
+		val := &tlsCacheValue{rt: transport}
+		c.transports[key] = val
+		return c.incrementRefLocked(key, val)
 	}
 
 	return transport, nil
+}
+
+func (c *tlsTransportCache) incrementRefLocked(key tlsCacheKey, val *tlsCacheValue) *activeTransport {
+	val.refs++
+	a := &activeTransport{rt: val.rt}
+	arg := tlsCacheCleanupArg{key: key, val: val}
+	runtime.AddCleanup(a, c.decrementRef, arg)
+	return a
+}
+
+func (c *tlsTransportCache) decrementRef(arg tlsCacheCleanupArg) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	arg.val.refs--
+	if arg.val.refs == 0 {
+		delete(c.transports, arg.key)
+	}
+}
+
+type tlsCacheCleanupArg struct {
+	key tlsCacheKey
+	val *tlsCacheValue
+}
+
+type activeTransport struct {
+	rt *http.Transport
 }
 
 // tlsConfigKey returns a unique key for tls.Config objects returned from TLSConfigFor
