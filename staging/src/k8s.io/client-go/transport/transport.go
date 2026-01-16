@@ -344,11 +344,8 @@ func (b *contextCanceller) RoundTrip(req *http.Request) (*http.Response, error) 
 }
 
 func tryCancelRequest(rt http.RoundTripper, req *http.Request) {
-	type canceler interface {
-		CancelRequest(*http.Request)
-	}
 	switch rt := rt.(type) {
-	case canceler:
+	case utilnet.Canceler:
 		rt.CancelRequest(req)
 	case utilnet.RoundTripperWrapper:
 		tryCancelRequest(rt.WrappedRoundTripper(), req)

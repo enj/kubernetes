@@ -37,6 +37,7 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/net/http2"
+
 	"k8s.io/klog/v2"
 	netutils "k8s.io/utils/net"
 )
@@ -213,6 +214,18 @@ type RoundTripperWrapper interface {
 	WrappedRoundTripper() http.RoundTripper
 }
 
+type DialGetter interface {
+	GetDial() DialFunc
+}
+
+type Canceler interface {
+	CancelRequest(*http.Request)
+}
+
+type CloseIdler interface {
+	CloseIdleConnections()
+}
+
 type DialFunc func(ctx context.Context, net, addr string) (net.Conn, error)
 
 func DialerFor(transport http.RoundTripper) (DialFunc, error) {
@@ -234,6 +247,8 @@ func DialerFor(transport http.RoundTripper) (DialFunc, error) {
 		}
 		// otherwise return nil
 		return nil, nil
+	case DialGetter:
+		return transport.GetDial(), nil
 	case RoundTripperWrapper:
 		return DialerFor(transport.WrappedRoundTripper())
 	default:
@@ -250,12 +265,9 @@ func CloseIdleConnectionsFor(transport http.RoundTripper) {
 	if transport == nil {
 		return
 	}
-	type closeIdler interface {
-		CloseIdleConnections()
-	}
 
 	switch transport := transport.(type) {
-	case closeIdler:
+	case CloseIdler:
 		transport.CloseIdleConnections()
 	case RoundTripperWrapper:
 		CloseIdleConnectionsFor(transport.WrappedRoundTripper())

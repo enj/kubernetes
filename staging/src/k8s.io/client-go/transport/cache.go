@@ -18,6 +18,7 @@ package transport
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -41,8 +42,9 @@ type tlsTransportCache struct {
 }
 
 type tlsCacheValue struct {
-	refs uint64
-	rt   *http.Transport
+	refs      uint64
+	unwrapped bool
+	rt        *http.Transport
 }
 
 // DialerStopCh is stop channel that is passed down to dynamic cert dialer.
@@ -150,7 +152,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		// Cache a single transport for these options
 		val := &tlsCacheValue{rt: transport}
 		c.transports[key] = val
-		return c.incrementRefLocked(key, val)
+		return c.incrementRefLocked(key, val), nil
 	}
 
 	return transport, nil
@@ -158,7 +160,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 
 func (c *tlsTransportCache) incrementRefLocked(key tlsCacheKey, val *tlsCacheValue) *activeTransport {
 	val.refs++
-	a := &activeTransport{rt: val.rt}
+	a := &activeTransport{mu: &c.mu, val: val}
 	arg := tlsCacheCleanupArg{key: key, val: val}
 	runtime.AddCleanup(a, c.decrementRef, arg)
 	return a
@@ -169,7 +171,8 @@ func (c *tlsTransportCache) decrementRef(arg tlsCacheCleanupArg) {
 	defer c.mu.Unlock()
 
 	arg.val.refs--
-	if arg.val.refs == 0 {
+	if arg.val.refs == 0 && !arg.val.unwrapped {
+		// TODO add feature gate and metrics
 		delete(c.transports, arg.key)
 	}
 }
@@ -179,8 +182,68 @@ type tlsCacheCleanupArg struct {
 	val *tlsCacheValue
 }
 
+// implement all known interfaces to limit unwrapped transports
+var _ interface {
+	utilnet.Canceler
+	utilnet.CloseIdler
+	utilnet.DialGetter
+	utilnet.RoundTripperWrapper
+	utilnet.TLSClientConfigHolder
+} = &activeTransport{}
+
 type activeTransport struct {
-	rt *http.Transport
+	mu  *sync.Mutex
+	val *tlsCacheValue
+}
+
+func (a *activeTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return a.val.rt.RoundTrip(r)
+}
+
+func (a *activeTransport) WrappedRoundTripper() http.RoundTripper {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.val.unwrapped = true
+	return a.val.rt
+}
+
+func (a *activeTransport) CancelRequest(r *http.Request) {
+	a.val.rt.CancelRequest(r)
+}
+
+func (a *activeTransport) CloseIdleConnections() {
+	a.val.rt.CloseIdleConnections()
+}
+
+func (a *activeTransport) GetDial() utilnet.DialFunc {
+	if a.val.rt.DialContext == nil && a.val.rt.Dial == nil {
+		return nil
+	}
+	return a.dial
+}
+
+func (a *activeTransport) dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	dialer, err := utilnet.DialerFor(a.val.rt)
+	if err != nil {
+		return nil, err // should be impossible
+	}
+	if dialer == nil { // should be impossible
+		return nil, fmt.Errorf("unexpected invalid dialer")
+	}
+	conn, err := dialer(ctx, network, addr)
+	if err != nil {
+		return nil, err
+	}
+	type activeConn struct {
+		net.Conn
+		a *activeTransport
+	}
+	return &activeConn{Conn: conn, a: a}, nil // keep reference alive
+}
+
+func (a *activeTransport) TLSClientConfig() *tls.Config {
+	return a.val.rt.TLSClientConfig
 }
 
 // tlsConfigKey returns a unique key for tls.Config objects returned from TLSConfigFor
