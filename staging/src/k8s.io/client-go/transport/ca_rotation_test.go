@@ -252,7 +252,12 @@ func TestCARotationConnectionBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create transport: %v", err)
 	}
-	transport.(*atomicTransportHolder).caRefreshDuration = 500 * time.Millisecond
+	// Unwrap trackedTransport if present (GC-enabled path wraps the transport).
+	var innerRT http.RoundTripper = transport
+	if ct, ok := transport.(*trackedTransport); ok {
+		innerRT = ct.rt
+	}
+	innerRT.(*atomicTransportHolder).caRefreshDuration = 500 * time.Millisecond
 
 	client := &http.Client{
 		Transport: transport,
@@ -357,8 +362,13 @@ func TestCARotationConnectionBehavior_Disabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create transport: %v", err)
 	}
-	if _, ok := transport.(*atomicTransportHolder); ok {
-		t.Fatal("Expected plain transport when the feature gate is disabled, got atomicTransportHolder")
+	// Unwrap trackedTransport if present (GC-enabled path wraps the transport).
+	inner := http.RoundTripper(transport)
+	if ct, ok := transport.(*trackedTransport); ok {
+		inner = ct.rt
+	}
+	if _, ok := inner.(*atomicTransportHolder); ok {
+		t.Fatal("Expected plain *http.Transport when the CA rotation feature gate is disabled, got atomicTransportHolder")
 	}
 
 	client := &http.Client{
