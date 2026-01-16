@@ -217,29 +217,16 @@ func (a *activeTransport) CloseIdleConnections() {
 }
 
 func (a *activeTransport) GetDial() utilnet.DialFunc {
-	if a.val.rt.DialContext == nil && a.val.rt.Dial == nil {
+	rt := a.val.rt
+	if rt.DialContext == nil && rt.Dial == nil {
 		return nil
 	}
-	return a.dial
-}
-
-func (a *activeTransport) dial(ctx context.Context, network, addr string) (net.Conn, error) {
-	dialer, err := utilnet.DialerFor(a.val.rt)
-	if err != nil {
-		return nil, err // should be impossible
+	if rt.DialContext != nil {
+		return rt.DialContext
 	}
-	if dialer == nil { // should be impossible
-		return nil, fmt.Errorf("unexpected invalid dialer")
+	return func(_ context.Context, net, addr string) (net.Conn, error) {
+		return rt.Dial(net, addr)
 	}
-	conn, err := dialer(ctx, network, addr)
-	if err != nil {
-		return nil, err
-	}
-	type activeConn struct {
-		net.Conn
-		a *activeTransport
-	}
-	return &activeConn{Conn: conn, a: a}, nil // keep reference alive
 }
 
 func (a *activeTransport) TLSClientConfig() *tls.Config {
