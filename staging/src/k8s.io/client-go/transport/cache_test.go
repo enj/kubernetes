@@ -25,9 +25,12 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/wait"
 	clientgofeaturegate "k8s.io/client-go/features"
 	clientfeaturestesting "k8s.io/client-go/features/testing"
 )
@@ -235,6 +238,15 @@ func TestTLSConfigKeyCARotationDisabled(t *testing.T) {
 	}
 }
 
+// unwrapCachedTransport returns the inner RoundTripper from a cachedTransport,
+// or the original RoundTripper if it is not a cachedTransport.
+func unwrapCachedTransport(rt http.RoundTripper) http.RoundTripper {
+	if ct, ok := rt.(*cachedTransport); ok {
+		return ct.RoundTripper
+	}
+	return rt
+}
+
 // TestTLSTransportCacheCARotation tests transport cache behavior with CA rotation
 func TestTLSTransportCacheCARotation(t *testing.T) {
 
@@ -291,7 +303,7 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create new cache for testing
 			tlsCaches := &tlsTransportCache{
-				transports: make(map[tlsCacheKey]http.RoundTripper),
+				transports: make(map[tlsCacheKey]weak.Pointer[cachedTransport]),
 			}
 
 			rt, err := tlsCaches.get(tc.config)
@@ -307,18 +319,19 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 				return
 			}
 
+			inner := unwrapCachedTransport(rt)
 			if tc.expectWrapper {
 				// Should be wrapped in atomicTransportHolder
-				if _, ok := rt.(*atomicTransportHolder); !ok {
-					t.Errorf("Expected atomicTransportHolder, got %T", rt)
+				if _, ok := inner.(*atomicTransportHolder); !ok {
+					t.Errorf("Expected atomicTransportHolder, got %T", inner)
 				}
 				if !tc.config.TLS.ReloadCAFiles {
 					t.Errorf("Expected ReloadCAFiles to be true, got %v", tc.config.TLS.ReloadCAFiles)
 				}
 			} else {
 				// Should be a regular http.Transport
-				if _, ok := rt.(*http.Transport); !ok {
-					t.Errorf("Expected *http.Transport, got %T", rt)
+				if _, ok := inner.(*http.Transport); !ok {
+					t.Errorf("Expected *http.Transport, got %T", inner)
 				}
 			}
 
@@ -353,18 +366,19 @@ func TestTLSTransportCacheCARotationDisabled(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowCARotation, false)
 
 	caFile := writeCAFile(t, []byte(testCACert1))
-	cache := &tlsTransportCache{transports: make(map[tlsCacheKey]http.RoundTripper)}
+	cache := &tlsTransportCache{transports: make(map[tlsCacheKey]weak.Pointer[cachedTransport])}
 
 	rt, err := cache.get(&Config{TLS: TLSConfig{CAFile: caFile}})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if _, ok := rt.(*atomicTransportHolder); ok {
+	inner := unwrapCachedTransport(rt)
+	if _, ok := inner.(*atomicTransportHolder); ok {
 		t.Error("Expected plain *http.Transport when feature gate is disabled, got atomicTransportHolder")
 	}
-	if _, ok := rt.(*http.Transport); !ok {
-		t.Errorf("Expected *http.Transport, got %T", rt)
+	if _, ok := inner.(*http.Transport); !ok {
+		t.Errorf("Expected *http.Transport, got %T", inner)
 	}
 }
 
@@ -382,7 +396,7 @@ func TestEmptyCAFileRotationLifecycle(t *testing.T) {
 	}
 
 	tlsCaches := &tlsTransportCache{
-		transports: make(map[tlsCacheKey]http.RoundTripper),
+		transports: make(map[tlsCacheKey]weak.Pointer[cachedTransport]),
 	}
 
 	rt, err := tlsCaches.get(config)
@@ -391,9 +405,10 @@ func TestEmptyCAFileRotationLifecycle(t *testing.T) {
 	}
 
 	// Verify newAtomicTransportHolder is successfully generated
-	holder, ok := rt.(*atomicTransportHolder)
+	inner := unwrapCachedTransport(rt)
+	holder, ok := inner.(*atomicTransportHolder)
 	if !ok {
-		t.Fatalf("Expected atomicTransportHolder, got %T", rt)
+		t.Fatalf("Expected atomicTransportHolder, got %T", inner)
 	}
 
 	// Verify the initial state: RootCAs should be non-nil but empty
@@ -423,4 +438,88 @@ func TestEmptyCAFileRotationLifecycle(t *testing.T) {
 	if refreshedTransport.TLSClientConfig.RootCAs.Equal(emptyPool) {
 		t.Fatal("Expected RootCAs to be populated after writing valid cert data and refreshing")
 	}
+}
+
+func TestCacheLeak(t *testing.T) {
+	requireCacheLen(t, tlsCache, 0) // clean start
+
+	// manually create some transports that have some overlap
+	// these 3 calls result in 2 transports in the cache
+	rt1, err := New(&Config{TLS: TLSConfig{ServerName: "1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt2, err := New(&Config{TLS: TLSConfig{ServerName: "2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt3, err := New(&Config{TLS: TLSConfig{ServerName: "1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requireCacheLen(t, tlsCache, 2) // rt1 and rt2 (rt3 is the same as rt1)
+
+	var wg wait.Group
+	var d net.Dialer
+	var rts []http.RoundTripper
+	var rtsLock sync.Mutex
+	for i := range 1_000 { // outer loop forces cache miss via dialer
+		dh := &DialHolder{Dial: d.DialContext}
+		for range i%7 + 1 { // inner loop exercises each cache value having 1 to N references
+			wg.Start(func() {
+				rt, err := New(&Config{DialHolder: dh})
+				if err != nil {
+					panic(err)
+				}
+				rtsLock.Lock()
+				rts = append(rts, rt) // keep a live reference to the round tripper
+				rtsLock.Unlock()
+			})
+		}
+	}
+	wg.Wait()
+
+	requireCacheLen(t, tlsCache, 1_000+2) // rts and rt1 and rt2 (rt3 is the same as rt1)
+
+	runtime.KeepAlive(rts) // prevent round trippers from being GC'd too early
+
+	pollCacheSizeWithGC(t, tlsCache, 2) // rt1 and rt2 (rt3 is the same as rt1)
+
+	runtime.KeepAlive(rt1)
+	runtime.KeepAlive(rt2)
+	runtime.KeepAlive(rt3)
+
+	pollCacheSizeWithGC(t, tlsCache, 0)
+}
+
+func requireCacheLen(t *testing.T, c *tlsTransportCache, want int) {
+	t.Helper()
+
+	if cacheLen(c) != want {
+		t.Fatalf("cache len %d, want %d", cacheLen(c), want)
+	}
+}
+
+func cacheLen(c *tlsTransportCache) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return len(c.transports)
+}
+
+func pollCacheSizeWithGC(t *testing.T, c *tlsTransportCache, want int) {
+	t.Helper()
+
+	if err := wait.PollUntilContextTimeout(t.Context(), 10*time.Millisecond, 10*time.Second, true, func(_ context.Context) (done bool, _ error) {
+		runtime.GC() // run the garbage collector so the cleanups run
+		return cacheLen(c) == want, nil
+	}); err != nil {
+		t.Fatalf("cache len %d, want %d: %v", cacheLen(c), want, err)
+	}
+
+	for range 3 { // make sure the cache size is stable even when more GC's happen
+		runtime.GC()
+	}
+	requireCacheLen(t, c, want)
 }

@@ -252,7 +252,9 @@ func TestCARotationConnectionBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create transport: %v", err)
 	}
-	transport.(*atomicTransportHolder).caRefreshDuration = 500 * time.Millisecond
+	// Unwrap cachedTransport to access the atomicTransportHolder inside
+	inner := unwrapCachedTransport(transport)
+	inner.(*atomicTransportHolder).caRefreshDuration = 500 * time.Millisecond
 
 	client := &http.Client{
 		Transport: transport,
@@ -357,7 +359,8 @@ func TestCARotationConnectionBehavior_Disabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create transport: %v", err)
 	}
-	if _, ok := transport.(*atomicTransportHolder); ok {
+	inner := unwrapCachedTransport(transport)
+	if _, ok := inner.(*atomicTransportHolder); ok {
 		t.Fatal("Expected plain transport when the feature gate is disabled, got atomicTransportHolder")
 	}
 
