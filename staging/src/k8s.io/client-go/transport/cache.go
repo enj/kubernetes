@@ -42,9 +42,8 @@ type tlsTransportCache struct {
 }
 
 type tlsCacheValue struct {
-	refs      uint64
-	unwrapped bool
-	rt        *http.Transport
+	refs uint64
+	rt   *http.Transport
 }
 
 // DialerStopCh is stop channel that is passed down to dynamic cert dialer.
@@ -160,9 +159,11 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 
 func (c *tlsTransportCache) incrementRefLocked(key tlsCacheKey, val *tlsCacheValue) *activeTransport {
 	val.refs++
-	a := &activeTransport{mu: &c.mu, val: val}
+	a := &activeTransport{rt: val.rt}
 	arg := tlsCacheCleanupArg{key: key, val: val}
-	runtime.AddCleanup(a, c.decrementRef, arg)
+	cleanup := runtime.AddCleanup(a, c.decrementRef, arg)
+	var once sync.Once
+	a.stopCleanup = func() { once.Do(cleanup.Stop) }
 	return a
 }
 
@@ -171,7 +172,7 @@ func (c *tlsTransportCache) decrementRef(arg tlsCacheCleanupArg) {
 	defer c.mu.Unlock()
 
 	arg.val.refs--
-	if arg.val.refs == 0 && !arg.val.unwrapped {
+	if arg.val.refs == 0 {
 		// TODO add feature gate and metrics
 		delete(c.transports, arg.key)
 	}
@@ -192,32 +193,29 @@ var _ interface {
 } = &activeTransport{}
 
 type activeTransport struct {
-	mu  *sync.Mutex
-	val *tlsCacheValue
+	rt          *http.Transport
+	stopCleanup func()
 }
 
 func (a *activeTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	return a.val.rt.RoundTrip(r)
+	return a.rt.RoundTrip(r)
 }
 
 func (a *activeTransport) WrappedRoundTripper() http.RoundTripper {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	a.val.unwrapped = true
-	return a.val.rt
+	a.stopCleanup()
+	return a.rt
 }
 
 func (a *activeTransport) CancelRequest(r *http.Request) {
-	a.val.rt.CancelRequest(r)
+	a.rt.CancelRequest(r)
 }
 
 func (a *activeTransport) CloseIdleConnections() {
-	a.val.rt.CloseIdleConnections()
+	a.rt.CloseIdleConnections()
 }
 
 func (a *activeTransport) GetDial() utilnet.DialFunc {
-	rt := a.val.rt
+	rt := a.rt
 	if rt.DialContext == nil && rt.Dial == nil {
 		return nil
 	}
@@ -230,7 +228,7 @@ func (a *activeTransport) GetDial() utilnet.DialFunc {
 }
 
 func (a *activeTransport) TLSClientConfig() *tls.Config {
-	return a.val.rt.TLSClientConfig
+	return a.rt.TLSClientConfig
 }
 
 // tlsConfigKey returns a unique key for tls.Config objects returned from TLSConfigFor
