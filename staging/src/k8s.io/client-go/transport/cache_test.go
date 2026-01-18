@@ -23,7 +23,11 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"runtime"
 	"testing"
+	"time"
+
+	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 func TestTLSConfigKey(t *testing.T) {
@@ -187,4 +191,33 @@ func TestTLSConfigKey(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestCacheLeak(t *testing.T) {
+	var d net.Dialer
+	rts := make([]http.RoundTripper, 0, 1_000)
+	for range 1_000 {
+		rt, err := New(&Config{DialHolder: &DialHolder{Dial: d.DialContext}}) // force cache miss
+		if err != nil {
+			t.Fatal(err)
+		}
+		rts = append(rts, rt)
+	}
+	if cacheLen(tlsCache) != 1_000 {
+		t.Errorf("cache len %d, want 1_000", cacheLen(tlsCache))
+	}
+	runtime.KeepAlive(rts) // prevent round trippers from being GC'd too early
+	if err := wait.PollUntilContextTimeout(t.Context(), 100*time.Millisecond, time.Minute, true, func(_ context.Context) (done bool, _ error) {
+		runtime.GC() // run the garbage collector so the cleanups run
+		return cacheLen(tlsCache) == 0, nil
+	}); err != nil {
+		t.Errorf("cache len %d, want 0: %v", cacheLen(tlsCache), err)
+	}
+}
+
+func cacheLen(c *tlsTransportCache) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return len(c.transports)
 }
