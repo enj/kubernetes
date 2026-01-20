@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
@@ -197,21 +198,42 @@ func TestCacheLeak(t *testing.T) {
 	var d net.Dialer
 	rts := make([]http.RoundTripper, 0, 1_000)
 	for range 1_000 {
-		rt, err := New(&Config{DialHolder: &DialHolder{Dial: d.DialContext}}) // force cache miss
-		if err != nil {
-			t.Fatal(err)
+		dh := &DialHolder{Dial: d.DialContext}
+		for range 27 { // TODO make random
+			rt, err := New(&Config{DialHolder: dh}) // force cache miss
+			if err != nil {
+				t.Fatal(err)
+			}
+			rts = append(rts, rt)
 		}
-		rts = append(rts, rt)
 	}
 	if cacheLen(tlsCache) != 1_000 {
 		t.Errorf("cache len %d, want 1_000", cacheLen(tlsCache))
 	}
+
+	// Exercise all of these interfaces to make sure clean up is not stopped for them:
+	//   Canceler
+	//   CloseIdler
+	//   DialGetter
+	//   TLSClientConfigHolder
+	dialer, err := utilnet.DialerFor(rts[177])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dialer == nil {
+		t.Fatal("unexpected nil dialer")
+	}
+
+	// pick a transport to stop clean up on by calling RoundTripperWrapper
+	unwrapTransportDirectly(t, rts[77])
+
 	runtime.KeepAlive(rts) // prevent round trippers from being GC'd too early
+
 	if err := wait.PollUntilContextTimeout(t.Context(), 100*time.Millisecond, time.Minute, true, func(_ context.Context) (done bool, _ error) {
 		runtime.GC() // run the garbage collector so the cleanups run
-		return cacheLen(tlsCache) == 0, nil
+		return cacheLen(tlsCache) == 1, nil
 	}); err != nil {
-		t.Errorf("cache len %d, want 0: %v", cacheLen(tlsCache), err)
+		t.Errorf("cache len %d, want 1: %v", cacheLen(tlsCache), err)
 	}
 }
 
@@ -220,4 +242,16 @@ func cacheLen(c *tlsTransportCache) int {
 	defer c.mu.Unlock()
 
 	return len(c.transports)
+}
+
+func unwrapTransportDirectly(t *testing.T, rt http.RoundTripper) {
+	t.Helper()
+	switch rt := rt.(type) {
+	case *http.Transport:
+		return
+	case utilnet.RoundTripperWrapper:
+		unwrapTransportDirectly(t, rt.WrappedRoundTripper())
+	default:
+		t.Fatalf("unwrapTransport: expected *http.Transport, got %T", rt)
+	}
 }
