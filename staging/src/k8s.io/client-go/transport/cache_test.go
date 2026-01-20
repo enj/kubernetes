@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"reflect"
 	"runtime"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -216,6 +217,7 @@ func TestCacheLeak(t *testing.T) {
 	}
 
 	requireCacheLen(t, tlsCache, 2) // rt1 and rt2 (rt3 is the same as rt1)
+	requireCacheRefs(t, tlsCache, [7]int{1, 1})
 
 	var eg errgroup.Group
 	eg.SetLimit(10)
@@ -242,7 +244,15 @@ func TestCacheLeak(t *testing.T) {
 	}
 
 	requireCacheLen(t, tlsCache, 1_000+2) // rts and rt1 and rt2 (rt3 is the same as rt1)
-	// TODO check cache reference state
+
+	const baseRefs = 1_000 / 7
+	var wantRefs = [7]int{baseRefs, baseRefs, baseRefs, baseRefs, baseRefs, baseRefs, baseRefs}
+	for i := range 1_000 % 7 {
+		wantRefs[i]++
+	}
+	wantRefs[0]++ // account for rt2 having one ref
+	wantRefs[1]++ // account for rt1 and rt3 having two refs
+	requireCacheRefs(t, tlsCache, wantRefs)
 
 	// Exercise all of these interfaces to make sure clean up is not stopped for them:
 	//   Canceler
@@ -272,12 +282,29 @@ func TestCacheLeak(t *testing.T) {
 	runtime.KeepAlive(rts) // prevent round trippers from being GC'd too early
 
 	pollCacheSizeWithGC(t, tlsCache, 1+2) // rts[77] and rt1 and rt2 (rt3 is the same as rt1)
+	requireCacheRefs(t, tlsCache, [7]int{2, 1})
 
 	runtime.KeepAlive(rt1)
 	runtime.KeepAlive(rt2)
 	runtime.KeepAlive(rt3)
 
 	pollCacheSizeWithGC(t, tlsCache, 1) // rts[77]
+	requireCacheRefs(t, tlsCache, [7]int{1})
+}
+
+func requireCacheRefs(t *testing.T, c *tlsTransportCache, want [7]int) {
+	t.Helper()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var got [7]int
+	for _, val := range c.transports {
+		got[val.refs-1]++
+	}
+	if !slices.Equal(want[:], got[:]) {
+		t.Fatalf("unexpected cache ref counts: got %#v, want %#v", got, want)
+	}
 }
 
 func requireCacheLen(t *testing.T, c *tlsTransportCache, want int) {
