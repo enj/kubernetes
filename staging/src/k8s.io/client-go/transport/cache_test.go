@@ -255,13 +255,13 @@ func TestCacheLeak(t *testing.T) {
 
 	runtime.KeepAlive(rts) // prevent round trippers from being GC'd too early
 
-	pollCacheSizeWithGC(t, tlsCache, 1+2)
+	pollCacheSizeWithGC(t, tlsCache, 1+2) // rts[77] and rt1 and rt2 (rt3 is the same as rt1)
 
 	runtime.KeepAlive(rt1)
 	runtime.KeepAlive(rt2)
 	runtime.KeepAlive(rt3)
 
-	pollCacheSizeWithGC(t, tlsCache, 1)
+	pollCacheSizeWithGC(t, tlsCache, 1) // rts[77]
 }
 
 func requireCacheLen(t *testing.T, c *tlsTransportCache, want int) {
