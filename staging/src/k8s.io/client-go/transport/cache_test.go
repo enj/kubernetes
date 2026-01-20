@@ -197,7 +197,21 @@ func TestTLSConfigKey(t *testing.T) {
 func TestCacheLeak(t *testing.T) {
 	requireCacheLen(t, tlsCache, 0) // clean start
 
-	// TODO add some other transports that are not cleaned up _yet_
+	// manually create some transports that have some overlap
+	// these 3 calls result in 2 transports in the cache
+	rt1, err := New(&Config{TLS: TLSConfig{ServerName: "1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt2, err := New(&Config{TLS: TLSConfig{ServerName: "2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt3, err := New(&Config{TLS: TLSConfig{ServerName: "1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	// TODO use go rountines
 	var d net.Dialer
 	var rts []http.RoundTripper
@@ -212,7 +226,7 @@ func TestCacheLeak(t *testing.T) {
 		}
 	}
 
-	requireCacheLen(t, tlsCache, 1_000) // overall cache size should always match outer loop
+	requireCacheLen(t, tlsCache, 1_000+2)
 
 	// Exercise all of these interfaces to make sure clean up is not stopped for them:
 	//   Canceler
@@ -241,24 +255,20 @@ func TestCacheLeak(t *testing.T) {
 
 	runtime.KeepAlive(rts) // prevent round trippers from being GC'd too early
 
-	if err := wait.PollUntilContextTimeout(t.Context(), 10*time.Millisecond, 10*time.Second, true, func(_ context.Context) (done bool, _ error) {
-		runtime.GC() // run the garbage collector so the cleanups run
-		return cacheLen(tlsCache) == 1, nil
-	}); err != nil {
-		t.Errorf("cache len %d, want 1: %v", cacheLen(tlsCache), err)
-	}
+	pollCacheSizeWithGC(t, tlsCache, 1+2)
 
-	for range 7 { // make sure the cache size is stable even when more GC's happen
-		runtime.GC()
-	}
-	requireCacheLen(t, tlsCache, 1)
+	runtime.KeepAlive(rt1)
+	runtime.KeepAlive(rt2)
+	runtime.KeepAlive(rt3)
+
+	pollCacheSizeWithGC(t, tlsCache, 1)
 }
 
 func requireCacheLen(t *testing.T, c *tlsTransportCache, want int) {
 	t.Helper()
 
 	if cacheLen(c) != want {
-		t.Fatalf("cache len %d, want %d", cacheLen(tlsCache), want)
+		t.Fatalf("cache len %d, want %d", cacheLen(c), want)
 	}
 }
 
@@ -269,8 +279,25 @@ func cacheLen(c *tlsTransportCache) int {
 	return len(c.transports)
 }
 
+func pollCacheSizeWithGC(t *testing.T, c *tlsTransportCache, want int) {
+	t.Helper()
+
+	if err := wait.PollUntilContextTimeout(t.Context(), 10*time.Millisecond, 10*time.Second, true, func(_ context.Context) (done bool, _ error) {
+		runtime.GC() // run the garbage collector so the cleanups run
+		return cacheLen(c) == want, nil
+	}); err != nil {
+		t.Fatalf("cache len %d, want %d: %v", cacheLen(c), want, err)
+	}
+
+	for range 3 { // make sure the cache size is stable even when more GC's happen
+		runtime.GC()
+	}
+	requireCacheLen(t, c, want)
+}
+
 func unwrapTransportDirectly(t *testing.T, rt http.RoundTripper) {
 	t.Helper()
+
 	switch rt := rt.(type) {
 	case *http.Transport:
 		return
