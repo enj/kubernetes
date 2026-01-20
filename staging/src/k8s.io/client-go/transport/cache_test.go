@@ -24,8 +24,11 @@ import (
 	"net/url"
 	"reflect"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -212,21 +215,34 @@ func TestCacheLeak(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// TODO use go rountines
+	requireCacheLen(t, tlsCache, 2) // rt1 and rt2 (rt3 is the same as rt1)
+
+	var eg errgroup.Group
+	eg.SetLimit(10)
 	var d net.Dialer
 	var rts []http.RoundTripper
+	var rtsLock sync.Mutex
 	for i := range 1_000 { // outer loop forces cache miss via dialer
 		dh := &DialHolder{Dial: d.DialContext}
 		for range i%7 + 1 { // inner loop exercises each cache value having 1 to N references
-			rt, err := New(&Config{DialHolder: dh})
-			if err != nil {
-				t.Fatal(err)
-			}
-			rts = append(rts, rt) // keep a live reference to the round tripper
+			eg.Go(func() error {
+				rt, err := New(&Config{DialHolder: dh})
+				if err != nil {
+					return err
+				}
+				rtsLock.Lock()
+				rts = append(rts, rt) // keep a live reference to the round tripper
+				rtsLock.Unlock()
+				return nil
+			})
 		}
 	}
+	if err := eg.Wait(); err != nil {
+		t.Fatal(err)
+	}
 
-	requireCacheLen(t, tlsCache, 1_000+2)
+	requireCacheLen(t, tlsCache, 1_000+2) // rts and rt1 and rt2 (rt3 is the same as rt1)
+	// TODO check cache reference state
 
 	// Exercise all of these interfaces to make sure clean up is not stopped for them:
 	//   Canceler
