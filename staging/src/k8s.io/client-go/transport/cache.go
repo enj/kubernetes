@@ -18,7 +18,6 @@ package transport
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -26,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"weak"
 
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -38,12 +38,7 @@ import (
 // the config has no custom TLS options, http.DefaultTransport is returned.
 type tlsTransportCache struct {
 	mu         sync.Mutex
-	transports map[tlsCacheKey]*tlsCacheValue
-}
-
-type tlsCacheValue struct {
-	refs uint64
-	rt   *http.Transport
+	transports map[tlsCacheKey]weak.Pointer[http.Transport]
 }
 
 // DialerStopCh is stop channel that is passed down to dynamic cert dialer.
@@ -53,7 +48,7 @@ var DialerStopCh = wait.NeverStop
 
 const idleConnsPerHost = 25
 
-var tlsCache = &tlsTransportCache{transports: make(map[tlsCacheKey]*tlsCacheValue)}
+var tlsCache = &tlsTransportCache{transports: make(map[tlsCacheKey]weak.Pointer[http.Transport])}
 
 type tlsCacheKey struct {
 	insecure           bool
@@ -92,9 +87,11 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		defer metrics.TransportCacheEntries.Observe(len(c.transports))
 
 		// See if we already have a custom transport for this config
-		if t, ok := c.transports[key]; ok {
-			metrics.TransportCreateCalls.Increment("hit")
-			return c.incrementRefLocked(key, t), nil
+		if v, ok := c.transports[key]; ok {
+			if t := v.Value(); t != nil {
+				metrics.TransportCreateCalls.Increment("hit")
+				return t, nil
+			}
 		}
 		metrics.TransportCreateCalls.Increment("miss")
 	} else {
@@ -149,86 +146,15 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 
 	if canCache {
 		// Cache a single transport for these options
-		val := &tlsCacheValue{rt: transport}
-		c.transports[key] = val
-		return c.incrementRefLocked(key, val), nil
+		c.transports[key] = weak.Make(transport)
+		runtime.AddCleanup(transport, func(key tlsCacheKey) {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			delete(c.transports, key)
+		}, key)
 	}
 
 	return transport, nil
-}
-
-func (c *tlsTransportCache) incrementRefLocked(key tlsCacheKey, val *tlsCacheValue) *activeTransport {
-	val.refs++
-	a := &activeTransport{rt: val.rt}
-	arg := tlsCacheCleanupArg{key: key, val: val}
-	cleanup := runtime.AddCleanup(a, c.decrementRef, arg)
-	var once sync.Once
-	a.stopCleanup = func() { once.Do(cleanup.Stop) }
-	return a
-}
-
-func (c *tlsTransportCache) decrementRef(arg tlsCacheCleanupArg) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	arg.val.refs--
-	if arg.val.refs == 0 {
-		// TODO add feature gate and metrics
-		delete(c.transports, arg.key)
-	}
-}
-
-type tlsCacheCleanupArg struct {
-	key tlsCacheKey
-	val *tlsCacheValue
-}
-
-// implement all known interfaces to limit unwrapped transports
-var _ interface {
-	utilnet.Canceler
-	utilnet.CloseIdler
-	utilnet.DialGetter
-	utilnet.RoundTripperWrapper
-	utilnet.TLSClientConfigHolder
-} = &activeTransport{}
-
-type activeTransport struct {
-	rt          *http.Transport
-	stopCleanup func()
-}
-
-func (a *activeTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	return a.rt.RoundTrip(r)
-}
-
-func (a *activeTransport) WrappedRoundTripper() http.RoundTripper {
-	a.stopCleanup()
-	return a.rt
-}
-
-func (a *activeTransport) CancelRequest(r *http.Request) {
-	a.rt.CancelRequest(r)
-}
-
-func (a *activeTransport) CloseIdleConnections() {
-	a.rt.CloseIdleConnections()
-}
-
-func (a *activeTransport) GetDial() utilnet.DialFunc {
-	rt := a.rt
-	if rt.DialContext == nil && rt.Dial == nil {
-		return nil
-	}
-	if rt.DialContext != nil {
-		return rt.DialContext
-	}
-	return func(_ context.Context, net, addr string) (net.Conn, error) {
-		return rt.Dial(net, addr)
-	}
-}
-
-func (a *activeTransport) TLSClientConfig() *tls.Config {
-	return a.rt.TLSClientConfig
 }
 
 // tlsConfigKey returns a unique key for tls.Config objects returned from TLSConfigFor
