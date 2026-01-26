@@ -120,6 +120,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 
 	// If we use are reloading files, we need to handle certificate rotation properly
 	// TODO(jackkleeman): We can also add rotation here when config.HasCertCallback() is true
+	var cancel context.CancelCauseFunc
 	if config.TLS.ReloadTLSFiles && tlsConfig != nil && tlsConfig.GetClientCertificate != nil {
 		// The TLS cache is a singleton, so sharing the same name for all of its
 		// background activity seems okay.
@@ -127,7 +128,9 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		dynamicCertDialer := certRotatingDialer(logger, tlsConfig.GetClientCertificate, dial)
 		tlsConfig.GetClientCertificate = dynamicCertDialer.GetClientCertificate
 		dial = dynamicCertDialer.connDialer.DialContext
-		go dynamicCertDialer.run(DialerStopCh)
+		var ctx context.Context
+		ctx, cancel = context.WithCancelCause(context.Background())
+		go dynamicCertDialer.run(ctx.Done())
 	}
 
 	proxy := http.ProxyFromEnvironment
@@ -152,6 +155,10 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 			defer c.mu.Unlock()
 			delete(c.transports, key)
 		}, key)
+	}
+
+	if cancel != nil {
+		runtime.AddCleanup(transport, cancel, fmt.Errorf("transport garbage collected"))
 	}
 
 	return transport, nil
