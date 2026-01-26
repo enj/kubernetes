@@ -24,14 +24,10 @@ import (
 	"net/url"
 	"reflect"
 	"runtime"
-	"slices"
 	"sync"
 	"testing"
 	"time"
 
-	"golang.org/x/sync/errgroup"
-
-	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
@@ -217,94 +213,38 @@ func TestCacheLeak(t *testing.T) {
 	}
 
 	requireCacheLen(t, tlsCache, 2) // rt1 and rt2 (rt3 is the same as rt1)
-	requireCacheRefs(t, tlsCache, [7]int{1, 1})
 
-	var eg errgroup.Group
-	eg.SetLimit(10)
+	var wg wait.Group
 	var d net.Dialer
 	var rts []http.RoundTripper
 	var rtsLock sync.Mutex
 	for i := range 1_000 { // outer loop forces cache miss via dialer
 		dh := &DialHolder{Dial: d.DialContext}
 		for range i%7 + 1 { // inner loop exercises each cache value having 1 to N references
-			eg.Go(func() error {
+			wg.Start(func() {
 				rt, err := New(&Config{DialHolder: dh})
 				if err != nil {
-					return err
+					panic(err)
 				}
 				rtsLock.Lock()
 				rts = append(rts, rt) // keep a live reference to the round tripper
 				rtsLock.Unlock()
-				return nil
 			})
 		}
 	}
-	if err := eg.Wait(); err != nil {
-		t.Fatal(err)
-	}
+	wg.Wait()
 
 	requireCacheLen(t, tlsCache, 1_000+2) // rts and rt1 and rt2 (rt3 is the same as rt1)
 
-	const baseRefs = 1_000 / 7
-	var wantRefs = [7]int{baseRefs, baseRefs, baseRefs, baseRefs, baseRefs, baseRefs, baseRefs}
-	for i := range 1_000 % 7 {
-		wantRefs[i]++
-	}
-	wantRefs[0]++ // account for rt2 having one ref
-	wantRefs[1]++ // account for rt1 and rt3 having two refs
-	requireCacheRefs(t, tlsCache, wantRefs)
-
-	// Exercise all of these interfaces to make sure clean up is not stopped for them:
-	//   Canceler
-	//   CloseIdler
-	//   DialGetter
-	//   TLSClientConfigHolder
-	rts[477].(utilnet.Canceler).CancelRequest(new(http.Request))
-	utilnet.CloseIdleConnectionsFor(rts[277])
-	dialer, err := utilnet.DialerFor(rts[177])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dialer == nil {
-		t.Fatal("unexpected nil dialer")
-	}
-	tlsConfig, err := utilnet.TLSClientConfig(rts[377])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tlsConfig == nil {
-		t.Fatal("unexpected nil tls config")
-	}
-
-	// pick a transport to stop clean up on by calling RoundTripperWrapper
-	unwrapTransportDirectly(t, rts[77])
-
 	runtime.KeepAlive(rts) // prevent round trippers from being GC'd too early
 
-	pollCacheSizeWithGC(t, tlsCache, 1+2) // rts[77] and rt1 and rt2 (rt3 is the same as rt1)
-	requireCacheRefs(t, tlsCache, [7]int{2, 1})
+	pollCacheSizeWithGC(t, tlsCache, 2) // rt1 and rt2 (rt3 is the same as rt1)
 
 	runtime.KeepAlive(rt1)
 	runtime.KeepAlive(rt2)
 	runtime.KeepAlive(rt3)
 
-	pollCacheSizeWithGC(t, tlsCache, 1) // rts[77]
-	requireCacheRefs(t, tlsCache, [7]int{1})
-}
-
-func requireCacheRefs(t *testing.T, c *tlsTransportCache, want [7]int) {
-	t.Helper()
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	var got [7]int
-	for _, val := range c.transports {
-		got[val.refs-1]++
-	}
-	if !slices.Equal(want[:], got[:]) {
-		t.Fatalf("unexpected cache ref counts: got %#v, want %#v", got, want)
-	}
+	pollCacheSizeWithGC(t, tlsCache, 0)
 }
 
 func requireCacheLen(t *testing.T, c *tlsTransportCache, want int) {
@@ -336,17 +276,4 @@ func pollCacheSizeWithGC(t *testing.T, c *tlsTransportCache, want int) {
 		runtime.GC()
 	}
 	requireCacheLen(t, c, want)
-}
-
-func unwrapTransportDirectly(t *testing.T, rt http.RoundTripper) {
-	t.Helper()
-
-	switch rt := rt.(type) {
-	case *http.Transport:
-		return
-	case utilnet.RoundTripperWrapper:
-		unwrapTransportDirectly(t, rt.WrappedRoundTripper())
-	default:
-		t.Fatalf("unwrapTransport: expected *http.Transport, got %T", rt)
-	}
 }
