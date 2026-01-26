@@ -17,10 +17,12 @@ limitations under the License.
 package framework
 
 import (
+	"runtime"
 	"testing"
 	"time"
 
 	"go.uber.org/goleak"
+
 	"k8s.io/apiserver/pkg/server/healthz"
 )
 
@@ -63,6 +65,7 @@ func goleakFindRetry(opts ...goleak.Option) error {
 		if err == nil {
 			return nil
 		}
+		runtime.GC() // let cleanups run, i.e. those associated with tlsTransportCache in client-go
 		if time.Now().Sub(start) >= timeout {
 			return err
 		}
