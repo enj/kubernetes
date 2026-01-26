@@ -28,7 +28,6 @@ import (
 	"weak"
 
 	utilnet "k8s.io/apimachinery/pkg/util/net"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/metrics"
 	"k8s.io/klog/v2"
 )
@@ -40,11 +39,6 @@ type tlsTransportCache struct {
 	mu         sync.Mutex
 	transports map[tlsCacheKey]weak.Pointer[http.Transport]
 }
-
-// DialerStopCh is stop channel that is passed down to dynamic cert dialer.
-// It's exposed as variable for testing purposes to avoid testing for goroutine
-// leakages.
-var DialerStopCh = wait.NeverStop
 
 const idleConnsPerHost = 25
 
