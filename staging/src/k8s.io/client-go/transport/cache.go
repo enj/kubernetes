@@ -92,8 +92,10 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 				metrics.TransportCreateCalls.Increment("hit")
 				return t, nil
 			}
+			metrics.TransportCreateCalls.Increment("miss-gc")
+		} else {
+			metrics.TransportCreateCalls.Increment("miss")
 		}
-		metrics.TransportCreateCalls.Increment("miss")
 	} else {
 		metrics.TransportCreateCalls.Increment("uncacheable")
 	}
