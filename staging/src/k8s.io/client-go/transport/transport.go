@@ -217,6 +217,8 @@ func loadTLSFiles(c *Config) error {
 		if len(c.TLS.CAFile) > 0 && len(c.TLS.CAData) == 0 {
 			c.TLS.ReloadCAFiles = true
 		}
+	} else if c.TLS.ReloadCAFiles {
+		return fmt.Errorf("ReloadCAFiles=true requires ClientsAllowCARotation to be enabled")
 	}
 
 	// Check that we are purely loading certs and keys from files

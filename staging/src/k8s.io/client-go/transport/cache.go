@@ -135,7 +135,6 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		proxy = config.Proxy
 	}
 
-	var transport http.RoundTripper
 	httpTransport := utilnet.SetTransportDefaults(&http.Transport{
 		Proxy:               proxy,
 		TLSHandshakeTimeout: 10 * time.Second,
@@ -144,10 +143,10 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		DialContext:         dial,
 		DisableCompression:  config.DisableCompression,
 	})
-	transport = httpTransport
+	var transport http.RoundTripper = httpTransport
 
-	if config.TLS.ReloadCAFiles && tlsConfig != nil {
-		transport = newAtomicTransportHolder(config, httpTransport, clock.RealClock{})
+	if config.TLS.ReloadCAFiles && tlsConfig != nil && tlsConfig.RootCAs != nil && len(config.TLS.CAFile) > 0 && len(config.TLS.CAData) > 0 {
+		transport = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport, clock.RealClock{})
 	}
 
 	if canCache {

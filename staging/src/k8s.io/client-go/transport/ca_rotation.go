@@ -18,24 +18,25 @@ package transport
 
 import (
 	"bytes"
-	"crypto/tls"
 	"net/http"
 	"os"
 	"sync"
 	"time"
 
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/client-go/tools/metrics"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 )
 
-var caRefreshDuration = 5 * time.Minute
+var _ utilnet.RoundTripperWrapper = &atomicTransportHolder{}
+
+var caRefreshDuration = 5 * time.Minute // TODO move to local var
 
 // atomicTransportHolder holds a transport that can be atomically updated
 // when CA files change, enabling graceful CA rotation without cache complexity
 type atomicTransportHolder struct {
 	caFile        string
-	config        *Config
 	currentCAData []byte // Track the actual CA data currently in use
 	// clock is used to allow for testing time-based logic.
 	clock clock.Clock
@@ -45,10 +46,12 @@ type atomicTransportHolder struct {
 	transportLastChecked time.Time
 }
 
-// RoundTrip implements http.RoundTripper interface
 func (h *atomicTransportHolder) RoundTrip(req *http.Request) (*http.Response, error) {
-	transport := h.getTransport()
-	return transport.RoundTrip(req)
+	return h.getTransport().RoundTrip(req)
+}
+
+func (h *atomicTransportHolder) WrappedRoundTripper() http.RoundTripper {
+	return h.getTransport()
 }
 
 func (h *atomicTransportHolder) getTransport() *http.Transport {
@@ -77,18 +80,21 @@ func (h *atomicTransportHolder) tryRefreshTransport() *http.Transport {
 		return h.transport
 	}
 
+	h.transportLastChecked = h.clock.Now()
+
 	klog.V(4).InfoS("Checking CA file content", "caFile", h.caFile)
 
 	// Load new CA data from file
 	newCAData, err := os.ReadFile(h.caFile)
 	// Return old transport on read error
 	if err != nil {
+		// TODO log err
 		metrics.TransportCAReloads.Increment("failure", "read_error")
 		return h.transport
 	}
+
 	if len(newCAData) == 0 || bytes.Equal(h.currentCAData, newCAData) {
 		klog.V(4).InfoS("CA file unchanged or empty, skipping transport rotation", "caFile", h.caFile)
-		h.transportLastChecked = h.clock.Now()
 		metrics.TransportCAReloads.Increment("success", "unchanged")
 		return h.transport
 	}
@@ -102,46 +108,28 @@ func (h *atomicTransportHolder) tryRefreshTransport() *http.Transport {
 		return h.transport
 	}
 	newTransport := h.transport.Clone()
-	if newTransport.TLSClientConfig == nil {
-		newTransport.TLSClientConfig = &tls.Config{}
-	}
 	newTransport.TLSClientConfig.RootCAs = newCAs
 	oldTransport := h.transport
 	h.transport = newTransport
-	h.transportLastChecked = h.clock.Now()
-
 	// Update our tracking of current CA data
 	h.currentCAData = newCAData
 
-	if oldTransport != nil {
-		// Close idle connections on the old transport to encourage migration
-		oldTransport.CloseIdleConnections()
-	}
+	// Close idle connections on the old transport to encourage migration
+	oldTransport.CloseIdleConnections() // TODO close all?
 
 	klog.V(4).InfoS("Transport updated for CA rotation", "caFile", h.caFile)
 	metrics.TransportCAReloads.Increment("success", "updated")
-	return newTransport
+	return h.transport
 }
 
 // newAtomicTransportHolder creates a new holder for CA file reloading scenarios
-func newAtomicTransportHolder(config *Config, initialTransport *http.Transport, c clock.Clock) *atomicTransportHolder {
-	holder := &atomicTransportHolder{
-		caFile:               config.TLS.CAFile,
-		config:               config,
+// TODO write assumptions about inputs
+func newAtomicTransportHolder(caFile string, caData []byte, transport *http.Transport, c clock.Clock) *atomicTransportHolder {
+	return &atomicTransportHolder{
+		caFile:               caFile,
+		currentCAData:        caData,
 		clock:                c,
 		transportLastChecked: c.Now(),
-		transport:            initialTransport,
+		transport:            transport,
 	}
-
-	// Initialize currentCAData with the CA data that was actually loaded into the transport
-	if len(config.TLS.CAData) > 0 {
-		holder.currentCAData = config.TLS.CAData
-	} else if len(config.TLS.CAFile) > 0 {
-		// Read the initial CA data from file
-		if caData, err := os.ReadFile(config.TLS.CAFile); err == nil {
-			holder.currentCAData = caData
-		}
-	}
-
-	return holder
 }
