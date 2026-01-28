@@ -30,6 +30,7 @@ import (
 )
 
 func TestTLSConfigKey(t *testing.T) {
+	// TODO(review): add tests for when this is disabled
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowCARotation, true)
 	// Make sure config fields that don't affect the tls config don't affect the cache key
 	identicalConfigurations := map[string]*Config{
@@ -74,8 +75,7 @@ func TestTLSConfigKey(t *testing.T) {
 	// Make sure config fields that affect the tls config affect the cache key
 	dialer := net.Dialer{}
 	getCert := &GetCertHolder{GetCert: func() (*tls.Certificate, error) { return nil, nil }}
-	caFile, tearFun := writeCAFile(t, []byte(testCACert1))
-	defer tearFun(t)
+	caFile := writeCAFile(t, []byte(testCACert1))
 	uniqueConfigurations := map[string]*Config{
 		"proxy":                         {Proxy: func(request *http.Request) (*url.URL, error) { return nil, nil }},
 		"no tls":                        {},
@@ -199,9 +199,9 @@ func TestTLSConfigKey(t *testing.T) {
 
 // TestTLSTransportCacheCARotation tests transport cache behavior with CA rotation
 func TestTLSTransportCacheCARotation(t *testing.T) {
+	// TODO(review): add tests for when this is disabled
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowCARotation, true)
-	caFile, tearFun := writeCAFile(t, []byte(testCACert1))
-	defer tearFun(t)
+	caFile := writeCAFile(t, []byte(testCACert1))
 	testCases := []struct {
 		name            string
 		config          *Config

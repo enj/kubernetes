@@ -86,6 +86,7 @@ func TestClientGOMetrics(t *testing.T) {
 	}
 }
 
+// TODO(review): add tests that actually check what metrics are emitted by ca_rotation.go
 func TestTransportCAReloadsMetric(t *testing.T) {
 	tests := []struct {
 		description string
