@@ -39,7 +39,7 @@ const (
 	AtomicFIFO Feature = "AtomicFIFO"
 
 	// owner: @yt2985
-	// alpha: 1.36
+	// beta: 1.36
 	//
 	// If enabled, allows clients to gracefully handle Certificate Authority (CA)
 	// rotations without dropping connections or requiring a restart.
@@ -100,7 +100,7 @@ var defaultVersionedKubernetesFeatureGates = map[Feature]VersionedSpecs{
 		{Version: version.MustParse("1.36"), Default: true, PreRelease: Beta},
 	},
 	ClientsAllowCARotation: {
-		{Version: version.MustParse("1.36"), Default: false, PreRelease: Alpha},
+		{Version: version.MustParse("1.36"), Default: true, PreRelease: Beta},
 	},
 	ClientsAllowCBOR: {
 		{Version: version.MustParse("1.32"), Default: false, PreRelease: Alpha},

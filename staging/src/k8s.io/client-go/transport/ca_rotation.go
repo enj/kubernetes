@@ -18,6 +18,7 @@ package transport
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"os"
 	"sync"
@@ -31,81 +32,96 @@ import (
 
 var _ utilnet.RoundTripperWrapper = &atomicTransportHolder{}
 
-var caRefreshDuration = 5 * time.Minute // TODO move to local var
-
 // atomicTransportHolder holds a transport that can be atomically updated
 // when CA files change, enabling graceful CA rotation without cache complexity
 type atomicTransportHolder struct {
 	caFile        string
 	currentCAData []byte // Track the actual CA data currently in use
-	// clock is used to allow for testing time-based logic.
-	clock clock.Clock
-	// mu covers transport and transportLastUpdated
+	// clock and caRefreshDuration are used to allow for testing time-based logic.
+	clock             clock.Clock
+	caRefreshDuration time.Duration
+	// mu covers transport and transportLastChecked
 	mu                   sync.RWMutex
 	transport            *http.Transport
 	transportLastChecked time.Time
 }
 
 func (h *atomicTransportHolder) RoundTrip(req *http.Request) (*http.Response, error) {
-	return h.getTransport().RoundTrip(req)
+	return h.getTransport(req.Context()).RoundTrip(req)
 }
 
 func (h *atomicTransportHolder) WrappedRoundTripper() http.RoundTripper {
-	return h.getTransport()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	return h.transport
 }
 
-func (h *atomicTransportHolder) getTransport() *http.Transport {
-	if tr := h.getTransportIfFresh(); tr != nil {
-		return tr
+func (h *atomicTransportHolder) getTransport(ctx context.Context) *http.Transport {
+	if rt := h.getTransportIfFresh(); rt != nil {
+		return rt
 	}
-	return h.tryRefreshTransport()
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.tryRefreshTransportLocked(ctx)
+	return h.transport
 }
 
 func (h *atomicTransportHolder) getTransportIfFresh() *http.Transport {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	if h.clock.Since(h.transportLastChecked) < caRefreshDuration {
+	if h.clock.Since(h.transportLastChecked) < h.caRefreshDuration {
 		return h.transport
 	}
 	return nil
 }
 
-func (h *atomicTransportHolder) tryRefreshTransport() *http.Transport {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
+func (h *atomicTransportHolder) tryRefreshTransportLocked(ctx context.Context) {
 	// If some other goroutine already checked/updated the CA
-	if h.clock.Since(h.transportLastChecked) < caRefreshDuration {
-		return h.transport
+	if h.clock.Since(h.transportLastChecked) < h.caRefreshDuration {
+		return
 	}
 
+	// only attempt CA reload once per caRefreshDuration, even if the reload fails
 	h.transportLastChecked = h.clock.Now()
 
-	klog.V(4).InfoS("Checking CA file content", "caFile", h.caFile)
+	logger := klog.FromContext(ctx).WithValues("caFile", h.caFile)
+
+	logger.V(4).Info("Checking CA file content")
 
 	// Load new CA data from file
 	newCAData, err := os.ReadFile(h.caFile)
 	// Return old transport on read error
 	if err != nil {
-		// TODO log err
+		logger.Error(err, "Failed to read CA data from file")
 		metrics.TransportCAReloads.Increment("failure", "read_error")
-		return h.transport
+		return
 	}
 
-	if len(newCAData) == 0 || bytes.Equal(h.currentCAData, newCAData) {
-		klog.V(4).InfoS("CA file unchanged or empty, skipping transport rotation", "caFile", h.caFile)
-		metrics.TransportCAReloads.Increment("success", "unchanged")
-		return h.transport
+	if len(newCAData) == 0 {
+		logger.Info("CA file empty, skipping transport rotation")
+		metrics.TransportCAReloads.Increment("failure", "empty")
+		return
 	}
-	klog.V(4).InfoS("CA content changed, updating transport", "caFile", h.caFile)
+
+	if bytes.Equal(h.currentCAData, newCAData) {
+		logger.V(4).Info("CA file unchanged, skipping transport rotation")
+		metrics.TransportCAReloads.Increment("success", "unchanged")
+		return
+	}
+
+	logger.V(4).Info("CA content changed, updating transport")
 
 	// Load new CA pool
 	newCAs, err := rootCertPool(newCAData)
 	// Return old transport on parse error
 	if err != nil {
+		logger.Error(err, "Failed to parse CA data from file")
 		metrics.TransportCAReloads.Increment("failure", "ca_parse_error")
-		return h.transport
+		return
 	}
 	newTransport := h.transport.Clone()
 	newTransport.TLSClientConfig.RootCAs = newCAs
@@ -115,21 +131,22 @@ func (h *atomicTransportHolder) tryRefreshTransport() *http.Transport {
 	h.currentCAData = newCAData
 
 	// Close idle connections on the old transport to encourage migration
-	oldTransport.CloseIdleConnections() // TODO close all?
+	oldTransport.CloseIdleConnections()
 
-	klog.V(4).InfoS("Transport updated for CA rotation", "caFile", h.caFile)
+	logger.V(4).Info("Transport updated for CA rotation")
 	metrics.TransportCAReloads.Increment("success", "updated")
-	return h.transport
 }
 
 // newAtomicTransportHolder creates a new holder for CA file reloading scenarios
-// TODO write assumptions about inputs
-func newAtomicTransportHolder(caFile string, caData []byte, transport *http.Transport, c clock.Clock) *atomicTransportHolder {
+// all inputs are required to be non-empty and transport must have a TLS config with root CAs that match caFile and caData
+func newAtomicTransportHolder(caFile string, caData []byte, transport *http.Transport) *atomicTransportHolder {
+	c := clock.RealClock{}
 	return &atomicTransportHolder{
 		caFile:               caFile,
 		currentCAData:        caData,
 		clock:                c,
-		transportLastChecked: c.Now(),
+		caRefreshDuration:    5 * time.Minute,
 		transport:            transport,
+		transportLastChecked: c.Now(),
 	}
 }

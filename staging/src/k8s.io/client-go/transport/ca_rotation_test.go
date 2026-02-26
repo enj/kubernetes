@@ -17,7 +17,6 @@ limitations under the License.
 package transport
 
 import (
-	"bytes"
 	"context"
 	"crypto"
 	"crypto/rand"
@@ -86,7 +85,7 @@ BRjCI+izPzFTjsxD4aORE+WOkyWFCGPWKfNejfw0
 )
 
 // writeCAFile writes CA data to a temporary file
-func writeCAFile(t testing.TB, caData []byte) (string, func(testing.TB)) {
+func writeCAFile(t testing.TB, caData []byte) string {
 	tmpDir := t.TempDir()
 	caFile := filepath.Join(tmpDir, "ca.crt")
 
@@ -94,12 +93,12 @@ func writeCAFile(t testing.TB, caData []byte) (string, func(testing.TB)) {
 	if err != nil {
 		t.Fatalf("Failed to write CA file: %v", err)
 	}
-	tearFun := func(t testing.TB) {
+	t.Cleanup(func() {
 		if err := os.Remove(caFile); err != nil {
 			t.Fatalf("unexpected error while removing file: %s - %v", caFile, err)
 		}
-	}
-	return caFile, tearFun
+	})
+	return caFile
 }
 
 // createTestTransport creates a test transport with TLS config
@@ -115,44 +114,12 @@ func createTestTransport(t testing.TB, caData []byte) *http.Transport {
 	}
 }
 
-func TestNewAtomicTransportHolder(t *testing.T) {
-	caFile, tearFun := writeCAFile(t, []byte(testCACert1))
-	defer tearFun(t)
-
-	config := &Config{
-		TLS: TLSConfig{
-			CAFile: caFile,
-			CAData: []byte(testCACert1),
-		},
-	}
-
-	transport := createTestTransport(t, []byte(testCACert1))
-
-	holder := newAtomicTransportHolder(config, transport, testingclock.NewFakeClock(time.Now()))
-
-	if holder == nil {
-		t.Fatal("Expected non-nil holder")
-	}
-
-	if holder.caFile != caFile {
-		t.Errorf("Expected caFile %s, got %s", caFile, holder.caFile)
-	}
-
-	if holder.config != config {
-		t.Error("Expected config to be set")
-	}
-
-	if holder.transport != transport {
-		t.Error("Expected transport to be stored")
-	}
-}
-
 func TestCheckCAFileAndRotate(t *testing.T) {
 	tests := []struct {
 		name           string
 		setupCA        []byte
 		updateCA       []byte
-		caFile         string
+		caFileOverride string
 		expectRotation bool
 	}{
 		{
@@ -168,9 +135,15 @@ func TestCheckCAFileAndRotate(t *testing.T) {
 			expectRotation: true,
 		},
 		{
+			name:           "CA changed to invalid",
+			setupCA:        []byte(testCACert1),
+			updateCA:       []byte("panda"), // invalid CA
+			expectRotation: false,
+		},
+		{
 			name:           "file error",
 			setupCA:        []byte(testCACert1),
-			caFile:         "/nonexistent/ca.crt", // Non-existent file
+			caFileOverride: "/nonexistent/ca.crt", // Non-existent file
 			expectRotation: false,
 		},
 		{
@@ -179,32 +152,31 @@ func TestCheckCAFileAndRotate(t *testing.T) {
 			updateCA:       []byte{}, // Empty file
 			expectRotation: false,
 		},
-		{
-			name:           "initial empty CA data",
-			setupCA:        []byte{}, // No initial CA data
-			updateCA:       []byte(testCACert1),
-			expectRotation: true, // Should rotate since we have new CA data
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			caFile, tearFun := writeCAFile(t, tt.setupCA)
-			defer tearFun(t)
-			if tt.caFile != "" {
-				caFile = tt.caFile
-			}
-
-			config := &Config{
-				TLS: TLSConfig{
-					CAFile: caFile,
-					CAData: tt.setupCA,
-				},
+			caFile := writeCAFile(t, tt.setupCA)
+			if len(tt.caFileOverride) > 0 {
+				caFile = tt.caFileOverride
 			}
 
 			transport := createTestTransport(t, tt.setupCA)
+			setupRoots := transport.TLSClientConfig.RootCAs.Clone()
+
+			expectedRoots := setupRoots
+			if tt.expectRotation {
+				var err error
+				expectedRoots, err = rootCertPool(tt.updateCA)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+
 			clock := testingclock.NewFakeClock(time.Now())
-			holder := newAtomicTransportHolder(config, transport, clock)
+			holder := newAtomicTransportHolder(caFile, tt.setupCA, transport)
+			holder.clock = clock
+			holder.transportLastChecked = clock.Now()
 
 			if tt.updateCA != nil {
 				// Update the file with new CA content
@@ -214,96 +186,26 @@ func TestCheckCAFileAndRotate(t *testing.T) {
 				}
 			}
 
-			clock.Step(caRefreshDuration)
+			clock.Step(holder.caRefreshDuration)
 
 			// Check CA file rotation
-			newTransport := holder.getTransport()
-			if tt.expectRotation {
-				if newTransport == transport {
-					t.Error("Expected transport to be rotated")
-				}
-				// New transport should have updated CA
-				if newTransport.TLSClientConfig == nil {
-					t.Error("Expected TLS config in new transport")
-				}
-				// Verify RootCAs is not nil when we have valid CA data
-				if len(tt.updateCA) > 0 && newTransport.TLSClientConfig.RootCAs == nil {
-					t.Error("Expected RootCAs to be set when CA data is available")
-				}
-				if newTransport.TLSClientConfig.RootCAs == transport.TLSClientConfig.RootCAs {
-					t.Error("Expected RootCAs should change")
-				}
-			} else if newTransport != transport {
-				t.Error("Expected transport to remain unchanged")
+			newTransport := holder.getTransport(t.Context())
+			newRoots := newTransport.TLSClientConfig.RootCAs
+
+			if newRoots == nil || !expectedRoots.Equal(newRoots) {
+				t.Error("new roots did not match expected roots")
 			}
+
+			transportRotated := newTransport != transport
+			if tt.expectRotation != transportRotated {
+				t.Error("transport rotation did not match")
+			}
+
 		})
 	}
 }
 
-func TestUtilityFunctions(t *testing.T) {
-	t.Run("bytes equal", func(t *testing.T) {
-		tests := []struct {
-			name     string
-			data1    []byte
-			data2    []byte
-			expected bool
-		}{
-			{"same data", []byte(testCACert1), []byte(testCACert1), true},
-			{"different data", []byte(testCACert1), []byte(testCACert2), false},
-			{"empty data", []byte{}, []byte{}, true},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				result := bytes.Equal(tt.data1, tt.data2)
-				if result != tt.expected {
-					t.Errorf("Expected %v, got %v", tt.expected, result)
-				}
-			})
-		}
-	})
-
-	t.Run("root cert pool", func(t *testing.T) {
-		tests := []struct {
-			name        string
-			caData      []byte
-			expectError bool
-			expectNil   bool
-		}{
-			{"valid CA data", []byte(testCACert1), false, false},
-			{"invalid CA data", []byte("invalid-ca-data"), true, false},
-			{"empty CA data", []byte{}, false, true},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				pool, err := rootCertPool(tt.caData)
-
-				if tt.expectError {
-					if err == nil {
-						t.Error("Expected error but got none")
-					}
-					return
-				}
-
-				if err != nil {
-					t.Errorf("Unexpected error: %v", err)
-				}
-
-				if tt.expectNil {
-					if pool != nil {
-						t.Error("Expected nil cert pool")
-					}
-				} else {
-					if pool == nil {
-						t.Error("Expected non-nil cert pool")
-					}
-				}
-			})
-		}
-	})
-}
-
+// TODO(review): use k8s.io/client-go/util/cert instead
 // createTestCertificateAuthority creates a test CA certificate and key
 func createTestCertificateAuthority(t testing.TB, commonName string) ([]byte, crypto.PrivateKey, []byte, []byte, error) {
 	// Generate private key
@@ -348,6 +250,7 @@ func createTestCertificateAuthority(t testing.TB, commonName string) ([]byte, cr
 	return certDER, privateKey, keyPEM, certPEM, nil
 }
 
+// TODO(review): use k8s.io/client-go/util/cert instead
 // createTestClientCertificate creates a client certificate signed by the given CA
 func createTestClientCertificate(t testing.TB, caCertPEM []byte, caKey crypto.PrivateKey, commonName string) ([]byte, []byte, error) {
 	// Parse CA certificate
@@ -402,13 +305,8 @@ func createTestClientCertificate(t testing.TB, caCertPEM []byte, caKey crypto.Pr
 func TestCARotationConnectionBehavior(t *testing.T) {
 	t.Log("Testing CA Rotation Connection Behavior")
 
+	// TODO(review): add tests for when this is disabled
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowCARotation, true)
-	// Speed up the refresh duration for this test
-	originalCARefreshDuration := caRefreshDuration
-	caRefreshDuration = 500 * time.Millisecond
-	t.Cleanup(func() {
-		caRefreshDuration = originalCARefreshDuration
-	})
 
 	// Create initial CA and server certificates
 	serverCert1, serverKey1, serverKeyPem1, serverCA1, err := createTestCertificateAuthority(t, "test-server-1")
@@ -429,8 +327,7 @@ func TestCARotationConnectionBehavior(t *testing.T) {
 	defer server1.Close()
 
 	// Set up the client
-	clientCAFile, tearFun := writeCAFile(t, serverCA1)
-	defer tearFun(t)
+	clientCAFile := writeCAFile(t, serverCA1)
 	config := &Config{
 		TLS: TLSConfig{
 			CAFile:   clientCAFile,
@@ -443,6 +340,8 @@ func TestCARotationConnectionBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create transport: %v", err)
 	}
+	// Speed up the refresh duration for this test
+	transport.(*atomicTransportHolder).caRefreshDuration = 500 * time.Millisecond
 
 	client := &http.Client{
 		Transport: transport,

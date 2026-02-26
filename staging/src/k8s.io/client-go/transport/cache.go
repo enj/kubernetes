@@ -29,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/metrics"
 	"k8s.io/klog/v2"
-	"k8s.io/utils/clock"
 )
 
 // TlsTransportCache caches TLS http.RoundTrippers different configurations. The
@@ -146,7 +145,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 	var transport http.RoundTripper = httpTransport
 
 	if config.TLS.ReloadCAFiles && tlsConfig != nil && tlsConfig.RootCAs != nil && len(config.TLS.CAFile) > 0 && len(config.TLS.CAData) > 0 {
-		transport = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport, clock.RealClock{})
+		transport = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport)
 	}
 
 	if canCache {
