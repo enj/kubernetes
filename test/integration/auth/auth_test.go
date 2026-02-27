@@ -36,6 +36,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1110,6 +1112,8 @@ func TestConstrainedImpersonation(t *testing.T) {
 	})
 
 	t.Run("bob impersonating alice", func(t *testing.T) {
+		resetAllMetrics(t, ctx, superuserClient)
+
 		impersonatorClientConfig := rest.CopyConfig(kubeConfig)
 		impersonatorClientConfig.BearerToken = "bob"
 		impersonatorClientConfig.Impersonate = rest.ImpersonationConfig{
@@ -1164,9 +1168,29 @@ func TestConstrainedImpersonation(t *testing.T) {
 		if !errors.IsForbidden(err) {
 			t.Fatalf("expected forbidden error, got %T %v", err, err)
 		}
+
+		assertImpersonationMetrics(t, ctx, superuserClient, []string{
+			`apiserver_impersonation_attempts_total{status="failed"} 3`,
+			`apiserver_impersonation_attempts_total{status="user-info"} 1`,
+			`apiserver_impersonation_authorization_attempts_total{decision="allowed",mode="user-info"} 2`,
+			`apiserver_impersonation_authorization_attempts_total{decision="denied",mode="legacy"} 3`,
+			`apiserver_impersonation_authorization_attempts_total{decision="denied",mode="user-info"} 3`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="allowed",mode="user-info"} 2} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="legacy"} 3} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="user-info"} 3} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_sum{decision="allowed",mode="user-info"} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_sum{decision="denied",mode="user-info"} FP`,
+			`apiserver_impersonation_duration_seconds_count{status="failed"} 3} FP`,
+			`apiserver_impersonation_duration_seconds_count{status="user-info"} 1} FP`,
+			`apiserver_impersonation_duration_seconds_sum{status="failed"} FP`,
+			`apiserver_impersonation_duration_seconds_sum{status="user-info"} FP`,
+		})
 	})
 
 	t.Run("bob impersonating a node", func(t *testing.T) {
+		resetAllMetrics(t, ctx, superuserClient)
+
 		impersonatorClientConfig := rest.CopyConfig(kubeConfig)
 		impersonatorClientConfig.BearerToken = "bob"
 		impersonatorClientConfig.Impersonate = rest.ImpersonationConfig{
@@ -1221,9 +1245,29 @@ func TestConstrainedImpersonation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected no error, got %T %v", err, err)
 		}
+
+		assertImpersonationMetrics(t, ctx, superuserClient, []string{
+			`apiserver_impersonation_attempts_total{status="arbitrary-node"} 1`,
+			`apiserver_impersonation_attempts_total{status="failed"} 2`,
+			`apiserver_impersonation_authorization_attempts_total{decision="allowed",mode="arbitrary-node"} 3`,
+			`apiserver_impersonation_authorization_attempts_total{decision="denied",mode="arbitrary-node"} 2`,
+			`apiserver_impersonation_authorization_attempts_total{decision="denied",mode="legacy"} 2`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="allowed",mode="arbitrary-node"} 3} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="arbitrary-node"} 2} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="legacy"} 2} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_sum{decision="allowed",mode="arbitrary-node"} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_sum{decision="denied",mode="arbitrary-node"} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
+			`apiserver_impersonation_duration_seconds_count{status="arbitrary-node"} 1} FP`,
+			`apiserver_impersonation_duration_seconds_count{status="failed"} 2} FP`,
+			`apiserver_impersonation_duration_seconds_sum{status="arbitrary-node"} FP`,
+			`apiserver_impersonation_duration_seconds_sum{status="failed"} FP`,
+		})
 	})
 
 	t.Run("impersonating scheduled node", func(t *testing.T) {
+		resetAllMetrics(t, ctx, superuserClient)
+
 		impersonatorClientConfig := rest.CopyConfig(kubeConfig)
 		impersonatorClientConfig.BearerToken = "serviceaccount2"
 		impersonatorClientConfig.Impersonate = rest.ImpersonationConfig{
@@ -1275,9 +1319,29 @@ func TestConstrainedImpersonation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected no error, got %T %v", err, err)
 		}
+
+		assertImpersonationMetrics(t, ctx, superuserClient, []string{
+			`apiserver_impersonation_attempts_total{status="associated-node"} 1`,
+			`apiserver_impersonation_attempts_total{status="failed"} 1`,
+			`apiserver_impersonation_authorization_attempts_total{decision="allowed",mode="associated-node"} 2`,
+			`apiserver_impersonation_authorization_attempts_total{decision="denied",mode="arbitrary-node"} 1`,
+			`apiserver_impersonation_authorization_attempts_total{decision="denied",mode="legacy"} 1`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="allowed",mode="associated-node"} 2} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="arbitrary-node"} 1} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="legacy"} 1} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_sum{decision="allowed",mode="associated-node"} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_sum{decision="denied",mode="arbitrary-node"} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
+			`apiserver_impersonation_duration_seconds_count{status="associated-node"} 1} FP`,
+			`apiserver_impersonation_duration_seconds_count{status="failed"} 1} FP`,
+			`apiserver_impersonation_duration_seconds_sum{status="associated-node"} FP`,
+			`apiserver_impersonation_duration_seconds_sum{status="failed"} FP`,
+		})
 	})
 
 	t.Run("fallback to legacy impersonation", func(t *testing.T) {
+		resetAllMetrics(t, ctx, superuserClient)
+
 		impersonatorClientConfig := rest.CopyConfig(kubeConfig)
 		impersonatorClientConfig.BearerToken = "bob"
 		impersonatorClientConfig.Impersonate = rest.ImpersonationConfig{
@@ -1297,48 +1361,56 @@ func TestConstrainedImpersonation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected no error, got %T %v", err, err)
 		}
+
+		// bob already has impersonate:user-info + impersonate-on:user-info:list from the first sub-test,
+		// so user-info mode succeeds before legacy is attempted. The impersonation cache from the first
+		// sub-test provides a full cache hit, so no authorization calls are made.
+		assertImpersonationMetrics(t, ctx, superuserClient, []string{
+			`apiserver_impersonation_attempts_total{status="user-info"} 1`,
+			`apiserver_impersonation_duration_seconds_count{status="user-info"} 1} FP`,
+			`apiserver_impersonation_duration_seconds_sum{status="user-info"} FP`,
+		})
 	})
+}
 
-	// verify impersonation metrics were recorded
-	t.Run("verify metrics", func(t *testing.T) {
-		body, err := superuserClient.CoreV1().RESTClient().Get().AbsPath("/metrics").DoRaw(ctx)
-		if err != nil {
-			t.Fatalf("failed to fetch metrics: %v", err)
-		}
-		metricsOutput := string(body)
+func resetAllMetrics(t *testing.T, ctx context.Context, client clientset.Interface) {
+	t.Helper()
 
-		// verify attempt metrics exist for statuses that must have been triggered
-		for _, status := range []string{"failed", "user-info", "arbitrary-node", "associated-node"} {
-			expectedPrefix := fmt.Sprintf(`apiserver_impersonation_attempts_total{status="%s"}`, status)
-			if !strings.Contains(metricsOutput, expectedPrefix) {
-				t.Errorf("expected metric %s to be present in /metrics output", expectedPrefix)
-			}
-		}
+	if err := client.CoreV1().RESTClient().Delete().AbsPath("/metrics").Do(ctx).Error(); err != nil {
+		t.Fatalf("failed to reset metrics: %v", err)
+	}
+}
 
-		// verify authorization metrics exist for modes and decisions we know must have occurred
-		requiredAuthzMetrics := []struct{ decision, mode string }{
-			{"allowed", "user-info"},
-			{"denied", "user-info"},
-			{"allowed", "arbitrary-node"},
-			{"denied", "arbitrary-node"},
-			{"allowed", "associated-node"},
-			{"denied", "legacy"},
-		}
-		for _, m := range requiredAuthzMetrics {
-			expectedPrefix := fmt.Sprintf(`apiserver_impersonation_authorization_attempts_total{decision="%s",mode="%s"}`, m.decision, m.mode)
-			if !strings.Contains(metricsOutput, expectedPrefix) {
-				t.Errorf("expected metric %s to be present in /metrics output", expectedPrefix)
-			}
-		}
+func assertImpersonationMetrics(t *testing.T, ctx context.Context, client clientset.Interface, wantMetricStrings []string) {
+	t.Helper()
 
-		// verify duration histograms are present
-		if !strings.Contains(metricsOutput, "apiserver_impersonation_duration_seconds") {
-			t.Error("expected apiserver_impersonation_duration_seconds metric to be present")
+	rc := client.CoreV1().RESTClient()
+
+	body, err := rc.Get().AbsPath("/metrics").DoRaw(ctx)
+	if err != nil {
+		t.Fatalf("failed to fetch metrics: %v", err)
+	}
+
+	var gotMetricStrings []string
+	trimFP := regexp.MustCompile(`(.*)(} \d+\.\d+.*)`)
+	for _, line := range strings.Split(string(body), "\n") {
+		if !strings.HasPrefix(line, "apiserver_impersonation_") {
+			continue
 		}
-		if !strings.Contains(metricsOutput, "apiserver_impersonation_authorization_duration_seconds") {
-			t.Error("expected apiserver_impersonation_authorization_duration_seconds metric to be present")
+		// skip histogram bucket lines to keep assertions manageable
+		if strings.Contains(line, "_bucket{") {
+			continue
 		}
-	})
+		if strings.Contains(line, "_seconds") {
+			line = trimFP.ReplaceAllString(line, `$1`) + "} FP"
+		}
+		gotMetricStrings = append(gotMetricStrings, line)
+	}
+	slices.Sort(gotMetricStrings)
+
+	if diff := cmp.Diff(wantMetricStrings, gotMetricStrings); diff != "" {
+		t.Errorf("unexpected impersonation metrics diff (-want +got): %s", diff)
+	}
 }
 
 // TestConstrainedImpersonationDisabled tests the impersonation behavior when the
