@@ -89,7 +89,7 @@ func (c *constrainedImpersonationHandler) ServeHTTP(w http.ResponseWriter, req *
 		responsewriters.RespondWithError(w, req, err, c.s)
 		return
 	}
-	impersonationmetrics.RecordImpersonationAttempt(modeFromVerbOrConstraint(impersonatedUser.constraint), duration)
+	impersonationmetrics.RecordImpersonationAttempt(modeFromConstraint(impersonatedUser.constraint), duration)
 
 	req = req.WithContext(request.WithUser(ctx, impersonatedUser.user))
 	httplog.LogOf(req, w).Addf("%v is impersonating %v", userString(requestor), userString(impersonatedUser.user))
@@ -177,7 +177,7 @@ func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTr
 		decision, reason, err := a.Authorize(ctx, attributes)
 		duration := time.Since(start)
 
-		mode := modeFromVerbOrConstraint(attributes.GetVerb())
+		mode := modeFromVerb(attributes.GetVerb())
 		impersonationmetrics.RecordImpersonationAuthorizationCall(mode, decisionToLabel(decision), duration)
 
 		// build a detailed log of the authorization
@@ -264,20 +264,28 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 	return nil, errors.New("all impersonation modes failed")
 }
 
-func modeFromVerbOrConstraint(verbOrConstraint string) string {
-	switch {
-	case verbOrConstraint == "" || verbOrConstraint == "impersonate":
+func modeFromConstraint(constraint string) string {
+	if len(constraint) == 0 {
 		return "legacy"
-	case strings.HasPrefix(verbOrConstraint, "impersonate-on:"):
-		rest := strings.TrimPrefix(verbOrConstraint, "impersonate-on:")
-		if idx := strings.Index(rest, ":"); idx > 0 {
-			return rest[:idx]
-		}
-		return rest
-	case strings.HasPrefix(verbOrConstraint, "impersonate:"):
-		return strings.TrimPrefix(verbOrConstraint, "impersonate:")
 	}
-	return "unknown"
+	return modeFromVerb(constraint)
+}
+
+func modeFromVerb(verb string) string {
+	switch {
+	case verb == "impersonate":
+		return "legacy"
+	case verb == "impersonate:associated-node" || strings.HasPrefix(verb, "impersonate-on:associated-node:"):
+		return "associated-node"
+	case verb == "impersonate:arbitrary-node" || strings.HasPrefix(verb, "impersonate-on:arbitrary-node:"):
+		return "arbitrary-node"
+	case verb == "impersonate:serviceaccount" || strings.HasPrefix(verb, "impersonate-on:serviceaccount:"):
+		return "serviceaccount"
+	case verb == "impersonate:user-info" || strings.HasPrefix(verb, "impersonate-on:user-info:"):
+		return "user-info"
+	default:
+		return "unknown"
+	}
 }
 
 func decisionToLabel(decision authorizer.Decision) string {
