@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -30,6 +31,7 @@ import (
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/endpoints/filters"
+	impersonationmetrics "k8s.io/apiserver/pkg/endpoints/filters/impersonation/metrics"
 	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/server/httplog"
@@ -164,8 +166,17 @@ type impersonationModesTracker struct {
 }
 
 func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTracker {
+	impersonationmetrics.RegisterMetrics()
+
 	loggingAuthorizer := authorizer.AuthorizerFunc(func(ctx context.Context, attributes authorizer.Attributes) (authorizer.Decision, string, error) {
+		start := time.Now()
 		decision, reason, err := a.Authorize(ctx, attributes)
+		duration := time.Since(start)
+
+		// record per-authorization-call metrics, deriving the mode from the verb
+		mode := modeFromVerb(attributes.GetVerb())
+		impersonationmetrics.RecordImpersonationAuthorizationCall(mode, decisionToLabel(decision), duration)
+
 		// build a detailed log of the authorization
 		// make the whole block conditional so we do not do a lot of string-building we will not use
 		if klogV := klog.V(5); klogV.Enabled() { // same log level that the RBAC authorizer uses for verbose logging
@@ -208,6 +219,8 @@ func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTr
 }
 
 func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
+	start := time.Now()
+
 	// share a single cache key across all modes so that we only lazily build it once
 	key := &impersonationCacheKey{wantedUser: wantedUser, attributes: attributes}
 	var firstErr error
@@ -218,6 +231,7 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 	if modeIdxOk {
 		impersonatedUser, err := t.modes[modeIdx].check(ctx, key, wantedUser, attributes)
 		if err == nil && impersonatedUser != nil {
+			impersonationmetrics.RecordImpersonationAttempt(modeFromVerb(impersonatedUser.constraint), time.Since(start))
 			return impersonatedUser, nil
 		}
 		firstErr = err
@@ -239,8 +253,11 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 			continue
 		}
 		t.idxCache.set(attributes, i)
+		impersonationmetrics.RecordImpersonationAttempt(modeFromVerb(impersonatedUser.constraint), time.Since(start))
 		return impersonatedUser, nil
 	}
+
+	impersonationmetrics.RecordImpersonationAttempt("failed", time.Since(start))
 
 	if firstErr != nil {
 		return nil, firstErr
@@ -248,4 +265,35 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 
 	// this should not happen, but make sure we fail closed when no impersonation mode succeeded
 	return nil, errors.New("all impersonation modes failed")
+}
+
+// modeFromVerb extracts the impersonation mode name from the authorization verb.
+// The verb patterns used in impersonation are:
+//   - "impersonate:<mode>" (e.g. "impersonate:user-info") for primary authorization checks
+//   - "impersonate-on:<mode>:<verb>" (e.g. "impersonate-on:user-info:list") for secondary authorization checks
+//   - "impersonate" for legacy impersonation
+//   - "" (empty) for the legacy impersonation constraint stored in impersonatedUserInfo
+func modeFromVerb(verb string) string {
+	switch {
+	case verb == "" || verb == "impersonate":
+		return "legacy"
+	case strings.HasPrefix(verb, "impersonate-on:"):
+		// "impersonate-on:<mode>:<verb>" → extract <mode>
+		rest := strings.TrimPrefix(verb, "impersonate-on:")
+		if idx := strings.Index(rest, ":"); idx > 0 {
+			return rest[:idx]
+		}
+		return rest
+	case strings.HasPrefix(verb, "impersonate:"):
+		return strings.TrimPrefix(verb, "impersonate:")
+	}
+	return "unknown"
+}
+
+// decisionToLabel converts an authorizer decision into a metric label.
+func decisionToLabel(decision authorizer.Decision) string {
+	if decision == authorizer.DecisionAllow {
+		return "allowed"
+	}
+	return "denied"
 }

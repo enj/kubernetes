@@ -1298,6 +1298,51 @@ func TestConstrainedImpersonation(t *testing.T) {
 			t.Fatalf("expected no error, got %T %v", err, err)
 		}
 	})
+
+	// verify impersonation metrics were recorded
+	t.Run("verify metrics", func(t *testing.T) {
+		metricsConfig := rest.CopyConfig(kubeConfig)
+		metricsConfig.BearerToken = superUser
+		metricsConfig.Impersonate = rest.ImpersonationConfig{} // clear any impersonation
+		metricsClient := clientset.NewForConfigOrDie(metricsConfig)
+		body, err := metricsClient.RESTClient().Get().AbsPath("/metrics").DoRaw(ctx)
+		if err != nil {
+			t.Fatalf("failed to fetch metrics: %v", err)
+		}
+		metricsOutput := string(body)
+
+		// verify attempt metrics exist for statuses that must have been triggered
+		for _, status := range []string{"failed", "user-info", "arbitrary-node", "associated-node"} {
+			expectedPrefix := fmt.Sprintf(`apiserver_impersonation_attempts_total{status="%s"}`, status)
+			if !strings.Contains(metricsOutput, expectedPrefix) {
+				t.Errorf("expected metric %s to be present in /metrics output", expectedPrefix)
+			}
+		}
+
+		// verify authorization metrics exist for modes and decisions we know must have occurred
+		requiredAuthzMetrics := []struct{ decision, mode string }{
+			{"allowed", "user-info"},
+			{"denied", "user-info"},
+			{"allowed", "arbitrary-node"},
+			{"denied", "arbitrary-node"},
+			{"allowed", "associated-node"},
+			{"denied", "legacy"},
+		}
+		for _, m := range requiredAuthzMetrics {
+			expectedPrefix := fmt.Sprintf(`apiserver_impersonation_authorization_attempts_total{decision="%s",mode="%s"}`, m.decision, m.mode)
+			if !strings.Contains(metricsOutput, expectedPrefix) {
+				t.Errorf("expected metric %s to be present in /metrics output", expectedPrefix)
+			}
+		}
+
+		// verify duration histograms are present
+		if !strings.Contains(metricsOutput, "apiserver_impersonation_duration_seconds") {
+			t.Error("expected apiserver_impersonation_duration_seconds metric to be present")
+		}
+		if !strings.Contains(metricsOutput, "apiserver_impersonation_authorization_duration_seconds") {
+			t.Error("expected apiserver_impersonation_authorization_duration_seconds metric to be present")
+		}
+	})
 }
 
 // TestConstrainedImpersonationDisabled tests the impersonation behavior when the
