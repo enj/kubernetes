@@ -80,12 +80,16 @@ func (c *constrainedImpersonationHandler) ServeHTTP(w http.ResponseWriter, req *
 		return
 	}
 
+	start := time.Now()
 	impersonatedUser, err := c.tracker.getImpersonatedUser(ctx, wantedUser, attributes)
+	duration := time.Since(start)
 	if err != nil {
+		impersonationmetrics.RecordImpersonationAttempt("failed", duration)
 		klog.V(4).InfoS("Forbidden", "URI", req.RequestURI, "err", err)
 		responsewriters.RespondWithError(w, req, err, c.s)
 		return
 	}
+	impersonationmetrics.RecordImpersonationAttempt(modeFromVerbOrConstraint(impersonatedUser.constraint), duration)
 
 	req = req.WithContext(request.WithUser(ctx, impersonatedUser.user))
 	httplog.LogOf(req, w).Addf("%v is impersonating %v", userString(requestor), userString(impersonatedUser.user))
@@ -173,8 +177,7 @@ func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTr
 		decision, reason, err := a.Authorize(ctx, attributes)
 		duration := time.Since(start)
 
-		// record per-authorization-call metrics, deriving the mode from the verb
-		mode := modeFromVerb(attributes.GetVerb())
+		mode := modeFromVerbOrConstraint(attributes.GetVerb())
 		impersonationmetrics.RecordImpersonationAuthorizationCall(mode, decisionToLabel(decision), duration)
 
 		// build a detailed log of the authorization
@@ -219,8 +222,6 @@ func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTr
 }
 
 func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (*impersonatedUserInfo, error) {
-	start := time.Now()
-
 	// share a single cache key across all modes so that we only lazily build it once
 	key := &impersonationCacheKey{wantedUser: wantedUser, attributes: attributes}
 	var firstErr error
@@ -231,7 +232,6 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 	if modeIdxOk {
 		impersonatedUser, err := t.modes[modeIdx].check(ctx, key, wantedUser, attributes)
 		if err == nil && impersonatedUser != nil {
-			impersonationmetrics.RecordImpersonationAttempt(modeFromVerb(impersonatedUser.constraint), time.Since(start))
 			return impersonatedUser, nil
 		}
 		firstErr = err
@@ -253,11 +253,8 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 			continue
 		}
 		t.idxCache.set(attributes, i)
-		impersonationmetrics.RecordImpersonationAttempt(modeFromVerb(impersonatedUser.constraint), time.Since(start))
 		return impersonatedUser, nil
 	}
-
-	impersonationmetrics.RecordImpersonationAttempt("failed", time.Since(start))
 
 	if firstErr != nil {
 		return nil, firstErr
@@ -267,30 +264,22 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 	return nil, errors.New("all impersonation modes failed")
 }
 
-// modeFromVerb extracts the impersonation mode name from the authorization verb.
-// The verb patterns used in impersonation are:
-//   - "impersonate:<mode>" (e.g. "impersonate:user-info") for primary authorization checks
-//   - "impersonate-on:<mode>:<verb>" (e.g. "impersonate-on:user-info:list") for secondary authorization checks
-//   - "impersonate" for legacy impersonation
-//   - "" (empty) for the legacy impersonation constraint stored in impersonatedUserInfo
-func modeFromVerb(verb string) string {
+func modeFromVerbOrConstraint(verbOrConstraint string) string {
 	switch {
-	case verb == "" || verb == "impersonate":
+	case verbOrConstraint == "" || verbOrConstraint == "impersonate":
 		return "legacy"
-	case strings.HasPrefix(verb, "impersonate-on:"):
-		// "impersonate-on:<mode>:<verb>" → extract <mode>
-		rest := strings.TrimPrefix(verb, "impersonate-on:")
+	case strings.HasPrefix(verbOrConstraint, "impersonate-on:"):
+		rest := strings.TrimPrefix(verbOrConstraint, "impersonate-on:")
 		if idx := strings.Index(rest, ":"); idx > 0 {
 			return rest[:idx]
 		}
 		return rest
-	case strings.HasPrefix(verb, "impersonate:"):
-		return strings.TrimPrefix(verb, "impersonate:")
+	case strings.HasPrefix(verbOrConstraint, "impersonate:"):
+		return strings.TrimPrefix(verbOrConstraint, "impersonate:")
 	}
 	return "unknown"
 }
 
-// decisionToLabel converts an authorizer decision into a metric label.
 func decisionToLabel(decision authorizer.Decision) string {
 	if decision == authorizer.DecisionAllow {
 		return "allowed"
