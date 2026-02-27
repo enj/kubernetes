@@ -1175,14 +1175,14 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_total{decision="allowed",mode="user-info"} 2`,
 			`apiserver_impersonation_authorization_attempts_total{decision="denied",mode="legacy"} 3`,
 			`apiserver_impersonation_authorization_attempts_total{decision="denied",mode="user-info"} 3`,
-			`apiserver_impersonation_authorization_duration_seconds_count{decision="allowed",mode="user-info"} 2} FP`,
-			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="legacy"} 3} FP`,
-			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="user-info"} 3} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="allowed",mode="user-info"} 2`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="legacy"} 3`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="user-info"} 3`,
 			`apiserver_impersonation_authorization_duration_seconds_sum{decision="allowed",mode="user-info"} FP`,
 			`apiserver_impersonation_authorization_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
 			`apiserver_impersonation_authorization_duration_seconds_sum{decision="denied",mode="user-info"} FP`,
-			`apiserver_impersonation_duration_seconds_count{status="failed"} 3} FP`,
-			`apiserver_impersonation_duration_seconds_count{status="user-info"} 1} FP`,
+			`apiserver_impersonation_duration_seconds_count{status="failed"} 3`,
+			`apiserver_impersonation_duration_seconds_count{status="user-info"} 1`,
 			`apiserver_impersonation_duration_seconds_sum{status="failed"} FP`,
 			`apiserver_impersonation_duration_seconds_sum{status="user-info"} FP`,
 		})
@@ -1252,14 +1252,14 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_total{decision="allowed",mode="arbitrary-node"} 3`,
 			`apiserver_impersonation_authorization_attempts_total{decision="denied",mode="arbitrary-node"} 2`,
 			`apiserver_impersonation_authorization_attempts_total{decision="denied",mode="legacy"} 2`,
-			`apiserver_impersonation_authorization_duration_seconds_count{decision="allowed",mode="arbitrary-node"} 3} FP`,
-			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="arbitrary-node"} 2} FP`,
-			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="legacy"} 2} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="allowed",mode="arbitrary-node"} 3`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="arbitrary-node"} 2`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="legacy"} 2`,
 			`apiserver_impersonation_authorization_duration_seconds_sum{decision="allowed",mode="arbitrary-node"} FP`,
 			`apiserver_impersonation_authorization_duration_seconds_sum{decision="denied",mode="arbitrary-node"} FP`,
 			`apiserver_impersonation_authorization_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
-			`apiserver_impersonation_duration_seconds_count{status="arbitrary-node"} 1} FP`,
-			`apiserver_impersonation_duration_seconds_count{status="failed"} 2} FP`,
+			`apiserver_impersonation_duration_seconds_count{status="arbitrary-node"} 1`,
+			`apiserver_impersonation_duration_seconds_count{status="failed"} 2`,
 			`apiserver_impersonation_duration_seconds_sum{status="arbitrary-node"} FP`,
 			`apiserver_impersonation_duration_seconds_sum{status="failed"} FP`,
 		})
@@ -1326,14 +1326,14 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_total{decision="allowed",mode="associated-node"} 2`,
 			`apiserver_impersonation_authorization_attempts_total{decision="denied",mode="arbitrary-node"} 1`,
 			`apiserver_impersonation_authorization_attempts_total{decision="denied",mode="legacy"} 1`,
-			`apiserver_impersonation_authorization_duration_seconds_count{decision="allowed",mode="associated-node"} 2} FP`,
-			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="arbitrary-node"} 1} FP`,
-			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="legacy"} 1} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="allowed",mode="associated-node"} 2`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="arbitrary-node"} 1`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="legacy"} 1`,
 			`apiserver_impersonation_authorization_duration_seconds_sum{decision="allowed",mode="associated-node"} FP`,
 			`apiserver_impersonation_authorization_duration_seconds_sum{decision="denied",mode="arbitrary-node"} FP`,
 			`apiserver_impersonation_authorization_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
-			`apiserver_impersonation_duration_seconds_count{status="associated-node"} 1} FP`,
-			`apiserver_impersonation_duration_seconds_count{status="failed"} 1} FP`,
+			`apiserver_impersonation_duration_seconds_count{status="associated-node"} 1`,
+			`apiserver_impersonation_duration_seconds_count{status="failed"} 1`,
 			`apiserver_impersonation_duration_seconds_sum{status="associated-node"} FP`,
 			`apiserver_impersonation_duration_seconds_sum{status="failed"} FP`,
 		})
@@ -1367,7 +1367,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 		// sub-test provides a full cache hit, so no authorization calls are made.
 		assertImpersonationMetrics(t, ctx, superuserClient, []string{
 			`apiserver_impersonation_attempts_total{status="user-info"} 1`,
-			`apiserver_impersonation_duration_seconds_count{status="user-info"} 1} FP`,
+			`apiserver_impersonation_duration_seconds_count{status="user-info"} 1`,
 			`apiserver_impersonation_duration_seconds_sum{status="user-info"} FP`,
 		})
 	})
@@ -1401,7 +1401,7 @@ func assertImpersonationMetrics(t *testing.T, ctx context.Context, client client
 		if strings.Contains(line, "_bucket{") {
 			continue
 		}
-		if strings.Contains(line, "_seconds") {
+		if strings.Contains(line, "_seconds_sum") {
 			line = trimFP.ReplaceAllString(line, `$1`) + "} FP"
 		}
 		gotMetricStrings = append(gotMetricStrings, line)
