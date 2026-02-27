@@ -28,6 +28,11 @@ import (
 func TestRecordImpersonationAttempt(t *testing.T) {
 	RegisterMetrics()
 
+	attemptMetrics := []string{
+		namespace + "_" + subsystem + "_attempts_total",
+		namespace + "_" + subsystem + "_duration_seconds",
+	}
+
 	testCases := []struct {
 		name          string
 		status        string
@@ -40,6 +45,22 @@ func TestRecordImpersonationAttempt(t *testing.T) {
 				# HELP apiserver_impersonation_attempts_total [ALPHA] Total number of impersonation attempts split by status. Status is the impersonation mode on success or 'failed' on failure.
 				# TYPE apiserver_impersonation_attempts_total counter
 				apiserver_impersonation_attempts_total{status="user-info"} 1
+				# HELP apiserver_impersonation_duration_seconds [ALPHA] Latency of impersonation attempts in seconds split by status. Status is the impersonation mode on success or 'failed' on failure.
+				# TYPE apiserver_impersonation_duration_seconds histogram
+				apiserver_impersonation_duration_seconds_bucket{status="user-info",le="0.005"} 0
+				apiserver_impersonation_duration_seconds_bucket{status="user-info",le="0.01"} 0
+				apiserver_impersonation_duration_seconds_bucket{status="user-info",le="0.025"} 0
+				apiserver_impersonation_duration_seconds_bucket{status="user-info",le="0.05"} 0
+				apiserver_impersonation_duration_seconds_bucket{status="user-info",le="0.1"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="user-info",le="0.25"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="user-info",le="0.5"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="user-info",le="1"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="user-info",le="2.5"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="user-info",le="5"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="user-info",le="10"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="user-info",le="+Inf"} 1
+				apiserver_impersonation_duration_seconds_sum{status="user-info"} 0.1
+				apiserver_impersonation_duration_seconds_count{status="user-info"} 1
 			`,
 		},
 		{
@@ -49,6 +70,22 @@ func TestRecordImpersonationAttempt(t *testing.T) {
 				# HELP apiserver_impersonation_attempts_total [ALPHA] Total number of impersonation attempts split by status. Status is the impersonation mode on success or 'failed' on failure.
 				# TYPE apiserver_impersonation_attempts_total counter
 				apiserver_impersonation_attempts_total{status="failed"} 1
+				# HELP apiserver_impersonation_duration_seconds [ALPHA] Latency of impersonation attempts in seconds split by status. Status is the impersonation mode on success or 'failed' on failure.
+				# TYPE apiserver_impersonation_duration_seconds histogram
+				apiserver_impersonation_duration_seconds_bucket{status="failed",le="0.005"} 0
+				apiserver_impersonation_duration_seconds_bucket{status="failed",le="0.01"} 0
+				apiserver_impersonation_duration_seconds_bucket{status="failed",le="0.025"} 0
+				apiserver_impersonation_duration_seconds_bucket{status="failed",le="0.05"} 0
+				apiserver_impersonation_duration_seconds_bucket{status="failed",le="0.1"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="failed",le="0.25"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="failed",le="0.5"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="failed",le="1"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="failed",le="2.5"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="failed",le="5"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="failed",le="10"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="failed",le="+Inf"} 1
+				apiserver_impersonation_duration_seconds_sum{status="failed"} 0.1
+				apiserver_impersonation_duration_seconds_count{status="failed"} 1
 			`,
 		},
 		{
@@ -58,35 +95,228 @@ func TestRecordImpersonationAttempt(t *testing.T) {
 				# HELP apiserver_impersonation_attempts_total [ALPHA] Total number of impersonation attempts split by status. Status is the impersonation mode on success or 'failed' on failure.
 				# TYPE apiserver_impersonation_attempts_total counter
 				apiserver_impersonation_attempts_total{status="legacy"} 1
+				# HELP apiserver_impersonation_duration_seconds [ALPHA] Latency of impersonation attempts in seconds split by status. Status is the impersonation mode on success or 'failed' on failure.
+				# TYPE apiserver_impersonation_duration_seconds histogram
+				apiserver_impersonation_duration_seconds_bucket{status="legacy",le="0.005"} 0
+				apiserver_impersonation_duration_seconds_bucket{status="legacy",le="0.01"} 0
+				apiserver_impersonation_duration_seconds_bucket{status="legacy",le="0.025"} 0
+				apiserver_impersonation_duration_seconds_bucket{status="legacy",le="0.05"} 0
+				apiserver_impersonation_duration_seconds_bucket{status="legacy",le="0.1"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="legacy",le="0.25"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="legacy",le="0.5"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="legacy",le="1"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="legacy",le="2.5"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="legacy",le="5"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="legacy",le="10"} 1
+				apiserver_impersonation_duration_seconds_bucket{status="legacy",le="+Inf"} 1
+				apiserver_impersonation_duration_seconds_sum{status="legacy"} 0.1
+				apiserver_impersonation_duration_seconds_count{status="legacy"} 1
 			`,
 		},
 	}
 
-	metrics := []string{
-		namespace + "_" + subsystem + "_attempts_total",
-	}
-
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			impersonationAttemptsTotal.Reset()
+			resetMetricsForTest()
 
-			RecordImpersonationAttempt(tc.status, time.Millisecond)
-			if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(tc.expectedValue), metrics...); err != nil {
+			RecordImpersonationAttempt(tc.status, 100*time.Millisecond)
+
+			if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(tc.expectedValue), attemptMetrics...); err != nil {
 				t.Fatal(err)
 			}
 		})
 	}
 }
 
-func TestRecordImpersonationAttemptDuration(t *testing.T) {
+func TestRecordImpersonationAuthorizationCall(t *testing.T) {
 	RegisterMetrics()
-	impersonationDurationSeconds.Reset()
+
+	authorizationMetrics := []string{
+		namespace + "_" + subsystem + "_authorization_attempts_total",
+		namespace + "_" + subsystem + "_authorization_duration_seconds",
+	}
+
+	testCases := []struct {
+		name          string
+		mode          string
+		decision      string
+		expectedValue string
+	}{
+		{
+			name:     "user-info allowed",
+			mode:     "user-info",
+			decision: "allowed",
+			expectedValue: `
+				# HELP apiserver_impersonation_authorization_attempts_total [ALPHA] Total number of authorization checks made by the impersonation handler split by mode and decision.
+				# TYPE apiserver_impersonation_authorization_attempts_total counter
+				apiserver_impersonation_authorization_attempts_total{decision="allowed",mode="user-info"} 1
+				# HELP apiserver_impersonation_authorization_duration_seconds [ALPHA] Latency of authorization checks made by the impersonation handler in seconds split by mode and decision.
+				# TYPE apiserver_impersonation_authorization_duration_seconds histogram
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="0.005"} 0
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="0.01"} 0
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="0.025"} 0
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="0.05"} 0
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="0.1"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="0.25"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="0.5"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="1"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="2.5"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="5"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="10"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="+Inf"} 1
+				apiserver_impersonation_authorization_duration_seconds_sum{decision="allowed",mode="user-info"} 0.1
+				apiserver_impersonation_authorization_duration_seconds_count{decision="allowed",mode="user-info"} 1
+			`,
+		},
+		{
+			name:     "arbitrary-node denied",
+			mode:     "arbitrary-node",
+			decision: "denied",
+			expectedValue: `
+				# HELP apiserver_impersonation_authorization_attempts_total [ALPHA] Total number of authorization checks made by the impersonation handler split by mode and decision.
+				# TYPE apiserver_impersonation_authorization_attempts_total counter
+				apiserver_impersonation_authorization_attempts_total{decision="denied",mode="arbitrary-node"} 1
+				# HELP apiserver_impersonation_authorization_duration_seconds [ALPHA] Latency of authorization checks made by the impersonation handler in seconds split by mode and decision.
+				# TYPE apiserver_impersonation_authorization_duration_seconds histogram
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="arbitrary-node",le="0.005"} 0
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="arbitrary-node",le="0.01"} 0
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="arbitrary-node",le="0.025"} 0
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="arbitrary-node",le="0.05"} 0
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="arbitrary-node",le="0.1"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="arbitrary-node",le="0.25"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="arbitrary-node",le="0.5"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="arbitrary-node",le="1"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="arbitrary-node",le="2.5"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="arbitrary-node",le="5"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="arbitrary-node",le="10"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="arbitrary-node",le="+Inf"} 1
+				apiserver_impersonation_authorization_duration_seconds_sum{decision="denied",mode="arbitrary-node"} 0.1
+				apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="arbitrary-node"} 1
+			`,
+		},
+		{
+			name:     "legacy allowed",
+			mode:     "legacy",
+			decision: "allowed",
+			expectedValue: `
+				# HELP apiserver_impersonation_authorization_attempts_total [ALPHA] Total number of authorization checks made by the impersonation handler split by mode and decision.
+				# TYPE apiserver_impersonation_authorization_attempts_total counter
+				apiserver_impersonation_authorization_attempts_total{decision="allowed",mode="legacy"} 1
+				# HELP apiserver_impersonation_authorization_duration_seconds [ALPHA] Latency of authorization checks made by the impersonation handler in seconds split by mode and decision.
+				# TYPE apiserver_impersonation_authorization_duration_seconds histogram
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="legacy",le="0.005"} 0
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="legacy",le="0.01"} 0
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="legacy",le="0.025"} 0
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="legacy",le="0.05"} 0
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="legacy",le="0.1"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="legacy",le="0.25"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="legacy",le="0.5"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="legacy",le="1"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="legacy",le="2.5"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="legacy",le="5"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="legacy",le="10"} 1
+				apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="legacy",le="+Inf"} 1
+				apiserver_impersonation_authorization_duration_seconds_sum{decision="allowed",mode="legacy"} 0.1
+				apiserver_impersonation_authorization_duration_seconds_count{decision="allowed",mode="legacy"} 1
+			`,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetMetricsForTest()
+
+			RecordImpersonationAuthorizationCall(tc.mode, tc.decision, 100*time.Millisecond)
+
+			if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(tc.expectedValue), authorizationMetrics...); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestRecordImpersonationMetricsMultiple(t *testing.T) {
+	RegisterMetrics()
+	resetMetricsForTest()
 
 	RecordImpersonationAttempt("user-info", 100*time.Millisecond)
+	RecordImpersonationAttempt("failed", 50*time.Millisecond)
+	RecordImpersonationAttempt("failed", 50*time.Millisecond)
+	RecordImpersonationAuthorizationCall("user-info", "allowed", 100*time.Millisecond)
+	RecordImpersonationAuthorizationCall("user-info", "allowed", 100*time.Millisecond)
+	RecordImpersonationAuthorizationCall("user-info", "denied", 50*time.Millisecond)
+	RecordImpersonationAuthorizationCall("legacy", "denied", 50*time.Millisecond)
 
 	expectedValue := `
+		# HELP apiserver_impersonation_attempts_total [ALPHA] Total number of impersonation attempts split by status. Status is the impersonation mode on success or 'failed' on failure.
+		# TYPE apiserver_impersonation_attempts_total counter
+		apiserver_impersonation_attempts_total{status="failed"} 2
+		apiserver_impersonation_attempts_total{status="user-info"} 1
+		# HELP apiserver_impersonation_authorization_attempts_total [ALPHA] Total number of authorization checks made by the impersonation handler split by mode and decision.
+		# TYPE apiserver_impersonation_authorization_attempts_total counter
+		apiserver_impersonation_authorization_attempts_total{decision="allowed",mode="user-info"} 2
+		apiserver_impersonation_authorization_attempts_total{decision="denied",mode="legacy"} 1
+		apiserver_impersonation_authorization_attempts_total{decision="denied",mode="user-info"} 1
+		# HELP apiserver_impersonation_authorization_duration_seconds [ALPHA] Latency of authorization checks made by the impersonation handler in seconds split by mode and decision.
+		# TYPE apiserver_impersonation_authorization_duration_seconds histogram
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="0.005"} 0
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="0.01"} 0
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="0.025"} 0
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="0.05"} 0
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="0.1"} 2
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="0.25"} 2
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="0.5"} 2
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="1"} 2
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="2.5"} 2
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="5"} 2
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="10"} 2
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="allowed",mode="user-info",le="+Inf"} 2
+		apiserver_impersonation_authorization_duration_seconds_sum{decision="allowed",mode="user-info"} 0.2
+		apiserver_impersonation_authorization_duration_seconds_count{decision="allowed",mode="user-info"} 2
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="legacy",le="0.005"} 0
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="legacy",le="0.01"} 0
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="legacy",le="0.025"} 0
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="legacy",le="0.05"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="legacy",le="0.1"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="legacy",le="0.25"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="legacy",le="0.5"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="legacy",le="1"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="legacy",le="2.5"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="legacy",le="5"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="legacy",le="10"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="legacy",le="+Inf"} 1
+		apiserver_impersonation_authorization_duration_seconds_sum{decision="denied",mode="legacy"} 0.05
+		apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="legacy"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="user-info",le="0.005"} 0
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="user-info",le="0.01"} 0
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="user-info",le="0.025"} 0
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="user-info",le="0.05"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="user-info",le="0.1"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="user-info",le="0.25"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="user-info",le="0.5"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="user-info",le="1"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="user-info",le="2.5"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="user-info",le="5"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="user-info",le="10"} 1
+		apiserver_impersonation_authorization_duration_seconds_bucket{decision="denied",mode="user-info",le="+Inf"} 1
+		apiserver_impersonation_authorization_duration_seconds_sum{decision="denied",mode="user-info"} 0.05
+		apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="user-info"} 1
 		# HELP apiserver_impersonation_duration_seconds [ALPHA] Latency of impersonation attempts in seconds split by status. Status is the impersonation mode on success or 'failed' on failure.
 		# TYPE apiserver_impersonation_duration_seconds histogram
+		apiserver_impersonation_duration_seconds_bucket{status="failed",le="0.005"} 0
+		apiserver_impersonation_duration_seconds_bucket{status="failed",le="0.01"} 0
+		apiserver_impersonation_duration_seconds_bucket{status="failed",le="0.025"} 0
+		apiserver_impersonation_duration_seconds_bucket{status="failed",le="0.05"} 2
+		apiserver_impersonation_duration_seconds_bucket{status="failed",le="0.1"} 2
+		apiserver_impersonation_duration_seconds_bucket{status="failed",le="0.25"} 2
+		apiserver_impersonation_duration_seconds_bucket{status="failed",le="0.5"} 2
+		apiserver_impersonation_duration_seconds_bucket{status="failed",le="1"} 2
+		apiserver_impersonation_duration_seconds_bucket{status="failed",le="2.5"} 2
+		apiserver_impersonation_duration_seconds_bucket{status="failed",le="5"} 2
+		apiserver_impersonation_duration_seconds_bucket{status="failed",le="10"} 2
+		apiserver_impersonation_duration_seconds_bucket{status="failed",le="+Inf"} 2
+		apiserver_impersonation_duration_seconds_sum{status="failed"} 0.1
+		apiserver_impersonation_duration_seconds_count{status="failed"} 2
 		apiserver_impersonation_duration_seconds_bucket{status="user-info",le="0.005"} 0
 		apiserver_impersonation_duration_seconds_bucket{status="user-info",le="0.01"} 0
 		apiserver_impersonation_duration_seconds_bucket{status="user-info",le="0.025"} 0
@@ -103,94 +333,21 @@ func TestRecordImpersonationAttemptDuration(t *testing.T) {
 		apiserver_impersonation_duration_seconds_count{status="user-info"} 1
 	`
 
-	metrics := []string{
+	allMetrics := []string{
+		namespace + "_" + subsystem + "_attempts_total",
+		namespace + "_" + subsystem + "_authorization_attempts_total",
+		namespace + "_" + subsystem + "_authorization_duration_seconds",
 		namespace + "_" + subsystem + "_duration_seconds",
 	}
 
-	if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(expectedValue), metrics...); err != nil {
+	if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(expectedValue), allMetrics...); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestRecordImpersonationAuthorizationCall(t *testing.T) {
-	RegisterMetrics()
-
-	testCases := []struct {
-		name          string
-		mode          string
-		decision      string
-		expectedValue string
-	}{
-		{
-			name:     "user-info allowed",
-			mode:     "user-info",
-			decision: "allowed",
-			expectedValue: `
-				# HELP apiserver_impersonation_authorization_attempts_total [ALPHA] Total number of authorization checks made by the impersonation handler split by mode and decision.
-				# TYPE apiserver_impersonation_authorization_attempts_total counter
-				apiserver_impersonation_authorization_attempts_total{decision="allowed",mode="user-info"} 1
-			`,
-		},
-		{
-			name:     "arbitrary-node denied",
-			mode:     "arbitrary-node",
-			decision: "denied",
-			expectedValue: `
-				# HELP apiserver_impersonation_authorization_attempts_total [ALPHA] Total number of authorization checks made by the impersonation handler split by mode and decision.
-				# TYPE apiserver_impersonation_authorization_attempts_total counter
-				apiserver_impersonation_authorization_attempts_total{decision="denied",mode="arbitrary-node"} 1
-			`,
-		},
-		{
-			name:     "legacy allowed",
-			mode:     "legacy",
-			decision: "allowed",
-			expectedValue: `
-				# HELP apiserver_impersonation_authorization_attempts_total [ALPHA] Total number of authorization checks made by the impersonation handler split by mode and decision.
-				# TYPE apiserver_impersonation_authorization_attempts_total counter
-				apiserver_impersonation_authorization_attempts_total{decision="allowed",mode="legacy"} 1
-			`,
-		},
-	}
-
-	metrics := []string{
-		namespace + "_" + subsystem + "_authorization_attempts_total",
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			impersonationAuthorizationAttemptsTotal.Reset()
-
-			RecordImpersonationAuthorizationCall(tc.mode, tc.decision, time.Millisecond)
-			if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(tc.expectedValue), metrics...); err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
-}
-
-func TestRecordImpersonationAuthorizationCallMultiple(t *testing.T) {
-	RegisterMetrics()
-	ResetMetricsForTest()
-
-	RecordImpersonationAuthorizationCall("user-info", "allowed", time.Millisecond)
-	RecordImpersonationAuthorizationCall("user-info", "allowed", time.Millisecond)
-	RecordImpersonationAuthorizationCall("user-info", "denied", time.Millisecond)
-	RecordImpersonationAuthorizationCall("legacy", "denied", time.Millisecond)
-
-	expectedValue := `
-		# HELP apiserver_impersonation_authorization_attempts_total [ALPHA] Total number of authorization checks made by the impersonation handler split by mode and decision.
-		# TYPE apiserver_impersonation_authorization_attempts_total counter
-		apiserver_impersonation_authorization_attempts_total{decision="allowed",mode="user-info"} 2
-		apiserver_impersonation_authorization_attempts_total{decision="denied",mode="legacy"} 1
-		apiserver_impersonation_authorization_attempts_total{decision="denied",mode="user-info"} 1
-	`
-
-	metrics := []string{
-		namespace + "_" + subsystem + "_authorization_attempts_total",
-	}
-
-	if err := testutil.GatherAndCompare(legacyregistry.DefaultGatherer, strings.NewReader(expectedValue), metrics...); err != nil {
-		t.Fatal(err)
-	}
+func resetMetricsForTest() {
+	impersonationAttemptsTotal.Reset()
+	impersonationDurationSeconds.Reset()
+	impersonationAuthorizationAttemptsTotal.Reset()
+	impersonationAuthorizationDurationSeconds.Reset()
 }

@@ -88,13 +88,6 @@ func RegisterMetrics() {
 	})
 }
 
-func ResetMetricsForTest() {
-	impersonationAttemptsTotal.Reset()
-	impersonationDurationSeconds.Reset()
-	impersonationAuthorizationAttemptsTotal.Reset()
-	impersonationAuthorizationDurationSeconds.Reset()
-}
-
 func RecordImpersonationAttempt(status string, duration time.Duration) {
 	impersonationAttemptsTotal.WithLabelValues(status).Inc()
 	impersonationDurationSeconds.WithLabelValues(status).Observe(duration.Seconds())
