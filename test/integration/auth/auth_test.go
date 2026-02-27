@@ -1301,11 +1301,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 
 	// verify impersonation metrics were recorded
 	t.Run("verify metrics", func(t *testing.T) {
-		metricsConfig := rest.CopyConfig(kubeConfig)
-		metricsConfig.BearerToken = superUser
-		metricsConfig.Impersonate = rest.ImpersonationConfig{} // clear any impersonation
-		metricsClient := clientset.NewForConfigOrDie(metricsConfig)
-		body, err := metricsClient.RESTClient().Get().AbsPath("/metrics").DoRaw(ctx)
+		body, err := superuserClient.CoreV1().RESTClient().Get().AbsPath("/metrics").DoRaw(ctx)
 		if err != nil {
 			t.Fatalf("failed to fetch metrics: %v", err)
 		}
