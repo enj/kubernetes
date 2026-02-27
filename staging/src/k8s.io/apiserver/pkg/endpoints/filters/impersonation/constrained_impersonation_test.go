@@ -25,7 +25,6 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -51,7 +50,6 @@ type constrainedImpersonationTest struct {
 	checkedAttrs                    []authorizer.Attributes
 	echoCalled                      bool
 
-	mu                   sync.Mutex
 	attemptStatus        string
 	authorizationMetrics map[string]int // "mode/decision" -> count
 }
@@ -174,18 +172,12 @@ func (c *constrainedImpersonationTest) handler() http.Handler {
 	metav1.AddToGroupVersion(s, metav1.SchemeGroupVersion)
 
 	addImpersonation := WithConstrainedImpersonation(c.echoUserInfoHandler(), c, serializer.NewCodecFactory(s))
-	h := addImpersonation.(*constrainedImpersonationHandler)
-	c.constrainedImpersonationHandler = h
+	c.constrainedImpersonationHandler = addImpersonation.(*constrainedImpersonationHandler)
 
-	// override the metric recording functions with per-test-instance implementations
-	h.recordAttempt = func(status string, _ time.Duration) {
-		c.mu.Lock()
-		defer c.mu.Unlock()
+	c.constrainedImpersonationHandler.recordAttempt = func(status string, _ time.Duration) {
 		c.attemptStatus = status
 	}
-	h.metricsAuthorizer.recordAuthorizationCall = func(mode, decision string, _ time.Duration) {
-		c.mu.Lock()
-		defer c.mu.Unlock()
+	c.constrainedImpersonationHandler.metricsAuthorizer.recordAuthorizationCall = func(mode, decision string, _ time.Duration) {
 		if c.authorizationMetrics == nil {
 			c.authorizationMetrics = map[string]int{}
 		}
@@ -195,13 +187,6 @@ func (c *constrainedImpersonationTest) handler() http.Handler {
 	addAuthentication := c.authenticationHandler(addImpersonation)
 	addRequestInfo := c.requestInfoHandler(addAuthentication)
 	return addRequestInfo
-}
-
-func (c *constrainedImpersonationTest) resetMetrics() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.attemptStatus = ""
-	c.authorizationMetrics = nil
 }
 
 type testRoundTripper struct {
@@ -281,18 +266,14 @@ func (c *constrainedImpersonationTest) assertEchoCalled(expectedCalled bool) {
 
 func (c *constrainedImpersonationTest) assertMetrics(r testRequest) {
 	c.t.Helper()
-	c.mu.Lock()
-	defer c.mu.Unlock()
 
-	if r.expectedAttemptStatus != "" {
-		require.Equal(c.t, r.expectedAttemptStatus, c.attemptStatus, "unexpected attempt status")
-	}
+	attemptStatus := c.attemptStatus
+	authorizationMetrics := c.authorizationMetrics
+	c.attemptStatus = ""
+	c.authorizationMetrics = nil
 
-	if len(r.expectedAuthorizationMetrics) > 0 {
-		require.Equal(c.t, r.expectedAuthorizationMetrics, c.authorizationMetrics, "unexpected authorization metrics")
-	} else {
-		require.Empty(c.t, c.authorizationMetrics, "expected no authorization metrics")
-	}
+	require.Equal(c.t, r.expectedAttemptStatus, attemptStatus, "unexpected attempt status")
+	require.Equal(c.t, r.expectedAuthorizationMetrics, authorizationMetrics, "unexpected authorization metrics")
 }
 
 func (c *constrainedImpersonationTest) assertCache(r testRequest) {
@@ -427,11 +408,7 @@ type testRequest struct {
 	expectedCache          *expectedCache
 	expectedCode           int
 
-	// expectedAttemptStatus is the expected status label for the apiserver_impersonation_attempts_total metric.
-	// It is the mode name on success (e.g. "user-info", "legacy") or "failed" on failure.
-	expectedAttemptStatus string
-	// expectedAuthorizationMetrics maps "mode/decision" to the expected count for
-	// apiserver_impersonation_authorization_attempts_total. For example: {"user-info/allowed": 2, "user-info/denied": 1}.
+	expectedAttemptStatus        string
 	expectedAuthorizationMetrics map[string]int
 }
 
@@ -531,16 +508,16 @@ func associatedNodeTestCase() []testRequest {
 			},
 		},
 		{
-			request:                  getSecretRequest,
-			requestor:                saDefaultOnNode2,
-			impersonatedUser:         &user.DefaultInfo{Name: "system:node:node2"}, // node matches
-			expectedImpersonatedUser: node2FullUserInfo,
-			expectedAttributesUser:   saDefaultOnAnyNode,
-			expectedAttributes:       nil, // no authz checks for the second request
-			expectedCache:            cacheWithOnlyNode1Data,
-			expectedCode:             http.StatusOK,
-			expectedAttemptStatus:    "associated-node",
-			// no authorization metrics — full cache hit
+			request:                      getSecretRequest,
+			requestor:                    saDefaultOnNode2,
+			impersonatedUser:             &user.DefaultInfo{Name: "system:node:node2"}, // node matches
+			expectedImpersonatedUser:     node2FullUserInfo,
+			expectedAttributesUser:       saDefaultOnAnyNode,
+			expectedAttributes:           nil, // no authz checks for the second request
+			expectedCache:                cacheWithOnlyNode1Data,
+			expectedCode:                 http.StatusOK,
+			expectedAttemptStatus:        "associated-node",
+			expectedAuthorizationMetrics: nil, // full cache hit
 		},
 		{
 			request:                getSecretRequest,
@@ -579,16 +556,16 @@ func associatedNodeTestCase() []testRequest {
 			},
 		},
 		{
-			request:                  getPodRequest,
-			requestor:                saDefaultOnNode1,
-			impersonatedUser:         &user.DefaultInfo{Name: "system:node:node1"}, // node matches
-			expectedImpersonatedUser: node1FullUserInfo,
-			expectedAttributesUser:   nil,
-			expectedAttributes:       nil, // no authz checks for pod request via node1
-			expectedCache:            cacheWithMultipleRequests,
-			expectedCode:             http.StatusOK,
-			expectedAttemptStatus:    "associated-node",
-			// no authorization metrics — full cache hit
+			request:                      getPodRequest,
+			requestor:                    saDefaultOnNode1,
+			impersonatedUser:             &user.DefaultInfo{Name: "system:node:node1"}, // node matches
+			expectedImpersonatedUser:     node1FullUserInfo,
+			expectedAttributesUser:       nil,
+			expectedAttributes:           nil, // no authz checks for pod request via node1
+			expectedCache:                cacheWithMultipleRequests,
+			expectedCode:                 http.StatusOK,
+			expectedAttemptStatus:        "associated-node",
+			expectedAuthorizationMetrics: nil, // full cache hit
 		},
 	}
 }
@@ -668,9 +645,9 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 					expectedMessage:       `users.authentication.k8s.io "anyone" is forbidden: User "tester" cannot impersonate:user-info resource "users" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
 					expectedAttemptStatus: "failed",
 					expectedAuthorizationMetrics: map[string]int{
-						"user-info/allowed": 1, // impersonate-on:user-info:get → allowed
-						"user-info/denied":  1, // impersonate:user-info users → denied
-						"legacy/denied":     1, // impersonate users → denied
+						"user-info/allowed": 1, // impersonate-on:user-info:get
+						"user-info/denied":  1, // impersonate:user-info users
+						"legacy/denied":     1, // impersonate users
 					},
 				},
 			},
@@ -766,8 +743,8 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 					expectedMessage:       `pods "foo" is forbidden: User "user-impersonater" cannot impersonate-on:user-info:create resource "pods" in API group "" in the namespace "bar": deny by default`,
 					expectedAttemptStatus: "failed",
 					expectedAuthorizationMetrics: map[string]int{
-						"user-info/denied": 1, // impersonate-on:user-info:create → denied
-						"legacy/denied":    1, // impersonate users → denied
+						"user-info/denied": 1, // impersonate-on:user-info:create
+						"legacy/denied":    1, // impersonate users
 					},
 				},
 			},
@@ -827,9 +804,9 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 					expectedMessage:       `nodes.authentication.k8s.io "node1" is forbidden: User "sa-impersonater" cannot impersonate:arbitrary-node resource "nodes" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
 					expectedAttemptStatus: "failed",
 					expectedAuthorizationMetrics: map[string]int{
-						"arbitrary-node/allowed": 1, // impersonate-on:arbitrary-node:get → allowed
-						"arbitrary-node/denied":  1, // impersonate:arbitrary-node nodes → denied
-						"legacy/denied":          1, // impersonate users → denied
+						"arbitrary-node/allowed": 1, // impersonate-on:arbitrary-node:get
+						"arbitrary-node/denied":  1, // impersonate:arbitrary-node nodes
+						"legacy/denied":          1, // impersonate users
 					},
 				},
 			},
@@ -850,8 +827,8 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 					expectedMessage:       `pods "foo" is forbidden: User "node-impersonater" cannot impersonate-on:arbitrary-node:create resource "pods" in API group "" in the namespace "bar": deny by default`,
 					expectedAttemptStatus: "failed",
 					expectedAuthorizationMetrics: map[string]int{
-						"arbitrary-node/denied": 1, // impersonate-on:arbitrary-node:create → denied
-						"legacy/denied":         1, // impersonate users → denied
+						"arbitrary-node/denied": 1, // impersonate-on:arbitrary-node:create
+						"legacy/denied":         1, // impersonate users
 					},
 				},
 			},
@@ -1031,9 +1008,9 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 					expectedMessage:       `nodes.authentication.k8s.io "node1" is forbidden: User "user-impersonater" cannot impersonate:arbitrary-node resource "nodes" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
 					expectedAttemptStatus: "failed",
 					expectedAuthorizationMetrics: map[string]int{
-						"arbitrary-node/allowed": 1, // impersonate-on:arbitrary-node:get → allowed
-						"arbitrary-node/denied":  1, // impersonate:arbitrary-node nodes → denied
-						"legacy/denied":          1, // impersonate users → denied
+						"arbitrary-node/allowed": 1, // impersonate-on:arbitrary-node:get
+						"arbitrary-node/denied":  1, // impersonate:arbitrary-node nodes
+						"legacy/denied":          1, // impersonate users
 					},
 				},
 			},
@@ -1063,9 +1040,9 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 					expectedCode:          http.StatusOK,
 					expectedAttemptStatus: "legacy",
 					expectedAuthorizationMetrics: map[string]int{
-						"user-info/allowed": 1, // impersonate-on:user-info:get → allowed
-						"user-info/denied":  1, // impersonate:user-info users → denied
-						"legacy/allowed":    1, // impersonate users → allowed
+						"user-info/allowed": 1, // impersonate-on:user-info:get
+						"user-info/denied":  1, // impersonate:user-info users
+						"legacy/allowed":    1, // impersonate users
 					},
 				},
 			},
@@ -1142,8 +1119,8 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 							},
 						},
 					},
-					expectedAttemptStatus: "user-info",
-					// no authorization metrics expected — full cache hit (no authorizer calls)
+					expectedAttemptStatus:        "user-info",
+					expectedAuthorizationMetrics: nil, // full cache hit
 				},
 			},
 		},
@@ -1170,8 +1147,6 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 			handlers[i] = test.handler()
 
 			for _, r := range tc.requests {
-				test.resetMetrics()
-
 				client := &http.Client{
 					Transport: &testRoundTripper{
 						user:        r.requestor,
