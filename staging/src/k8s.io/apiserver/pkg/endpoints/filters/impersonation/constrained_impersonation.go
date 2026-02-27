@@ -31,7 +31,7 @@ import (
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/endpoints/filters"
-	impersonationmetrics "k8s.io/apiserver/pkg/endpoints/filters/impersonation/metrics"
+	"k8s.io/apiserver/pkg/endpoints/filters/impersonation/metrics"
 	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/server/httplog"
@@ -44,10 +44,20 @@ import (
 // expression of impersonation access.  For example, a service account may be authorized to impersonate the
 // node that it is associated with but only when listing pods.  See the linked KEP for further details.
 func WithConstrainedImpersonation(handler http.Handler, a authorizer.Authorizer, s runtime.NegotiatedSerializer) http.Handler {
+	metrics.RegisterMetrics()
+
+	ma := &metricsAuthorizer{
+		delegate:                a,
+		recordAuthorizationCall: metrics.RecordImpersonationAuthorizationCall,
+	}
+
 	return &constrainedImpersonationHandler{
 		handler: handler,
-		tracker: newImpersonationModesTracker(a),
+		tracker: newImpersonationModesTracker(ma),
 		s:       s,
+
+		recordAttempt:     metrics.RecordImpersonationAttempt,
+		metricsAuthorizer: ma,
 	}
 }
 
@@ -55,6 +65,10 @@ type constrainedImpersonationHandler struct {
 	handler http.Handler
 	tracker *impersonationModesTracker
 	s       runtime.NegotiatedSerializer
+
+	// to allow unit tests to override metrics recording
+	recordAttempt     func(status string, duration time.Duration)
+	metricsAuthorizer *metricsAuthorizer
 }
 
 func (c *constrainedImpersonationHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -84,12 +98,12 @@ func (c *constrainedImpersonationHandler) ServeHTTP(w http.ResponseWriter, req *
 	impersonatedUser, err := c.tracker.getImpersonatedUser(ctx, wantedUser, attributes)
 	duration := time.Since(start)
 	if err != nil {
-		impersonationmetrics.RecordImpersonationAttempt("failed", duration)
+		c.recordAttempt("failed", duration)
 		klog.V(4).InfoS("Forbidden", "URI", req.RequestURI, "err", err)
 		responsewriters.RespondWithError(w, req, err, c.s)
 		return
 	}
-	impersonationmetrics.RecordImpersonationAttempt(modeFromConstraint(impersonatedUser.constraint), duration)
+	c.recordAttempt(modeFromConstraint(impersonatedUser.constraint), duration)
 
 	req = req.WithContext(request.WithUser(ctx, impersonatedUser.user))
 	httplog.LogOf(req, w).Addf("%v is impersonating %v", userString(requestor), userString(impersonatedUser.user))
@@ -170,16 +184,8 @@ type impersonationModesTracker struct {
 }
 
 func newImpersonationModesTracker(a authorizer.Authorizer) *impersonationModesTracker {
-	impersonationmetrics.RegisterMetrics()
-
 	loggingAuthorizer := authorizer.AuthorizerFunc(func(ctx context.Context, attributes authorizer.Attributes) (authorizer.Decision, string, error) {
-		start := time.Now()
 		decision, reason, err := a.Authorize(ctx, attributes)
-		duration := time.Since(start)
-
-		mode := modeFromVerb(attributes.GetVerb())
-		impersonationmetrics.RecordImpersonationAuthorizationCall(mode, decisionToLabel(decision), duration)
-
 		// build a detailed log of the authorization
 		// make the whole block conditional so we do not do a lot of string-building we will not use
 		if klogV := klog.V(5); klogV.Enabled() { // same log level that the RBAC authorizer uses for verbose logging
@@ -262,6 +268,21 @@ func (t *impersonationModesTracker) getImpersonatedUser(ctx context.Context, wan
 
 	// this should not happen, but make sure we fail closed when no impersonation mode succeeded
 	return nil, errors.New("all impersonation modes failed")
+}
+
+type metricsAuthorizer struct {
+	delegate                authorizer.Authorizer
+	recordAuthorizationCall func(mode, decision string, duration time.Duration)
+}
+
+func (m *metricsAuthorizer) Authorize(ctx context.Context, attributes authorizer.Attributes) (authorizer.Decision, string, error) {
+	start := time.Now()
+	decision, reason, err := m.delegate.Authorize(ctx, attributes)
+	duration := time.Since(start)
+
+	m.recordAuthorizationCall(modeFromVerb(attributes.GetVerb()), decisionToLabel(decision), duration)
+
+	return decision, reason, err
 }
 
 func modeFromConstraint(constraint string) string {
