@@ -1357,18 +1357,23 @@ func TestConstrainedImpersonation(t *testing.T) {
 			Resources: []string{"users"},
 		})
 
-		_, err := client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
+		_, err := client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{
+			LabelSelector: "app=panda", // force this request to have a different cache key than the earlier test
+		})
 		if err != nil {
 			t.Fatalf("expected no error, got %T %v", err, err)
 		}
 
-		// bob already has impersonate:user-info + impersonate-on:user-info:list from the first sub-test,
-		// so user-info mode succeeds before legacy is attempted. The impersonation cache from the first
-		// sub-test provides a full cache hit, so no authorization calls are made.
 		assertImpersonationMetrics(t, ctx, superuserClient, []string{
-			`apiserver_impersonation_attempts_total{status="user-info"} 1`,
-			`apiserver_impersonation_duration_seconds_count{status="user-info"} 1`,
-			`apiserver_impersonation_duration_seconds_sum{status="user-info"} FP`,
+			`apiserver_impersonation_attempts_total{status="legacy"} 1`,
+			`apiserver_impersonation_authorization_attempts_total{decision="allowed",mode="legacy"} 1`,
+			`apiserver_impersonation_authorization_attempts_total{decision="denied",mode="user-info"} 1`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="allowed",mode="legacy"} 1`,
+			`apiserver_impersonation_authorization_duration_seconds_count{decision="denied",mode="user-info"} 1`,
+			`apiserver_impersonation_authorization_duration_seconds_sum{decision="allowed",mode="legacy"} FP`,
+			`apiserver_impersonation_authorization_duration_seconds_sum{decision="denied",mode="user-info"} FP`,
+			`apiserver_impersonation_duration_seconds_count{status="legacy"} 1`,
+			`apiserver_impersonation_duration_seconds_sum{status="legacy"} FP`,
 		})
 	})
 }
