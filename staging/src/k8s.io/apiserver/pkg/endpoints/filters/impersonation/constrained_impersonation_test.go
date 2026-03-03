@@ -126,6 +126,12 @@ func (c *constrainedImpersonationTest) echoUserInfoHandler() http.HandlerFunc {
 				c.t.Fatalf("extra header still present: %v", key)
 			}
 		}
+
+		// verify impersonation latency was tracked
+		annotations := request.AuditAnnotationsFromLatencyTrackers(req.Context())
+		if annotations["apiserver.latency.k8s.io/impersonation"] == "" {
+			c.t.Error("missing impersonation latency annotation")
+		}
 	}
 }
 
@@ -174,9 +180,11 @@ func (c *constrainedImpersonationTest) handler() http.Handler {
 	addImpersonation := WithConstrainedImpersonation(c.echoUserInfoHandler(), c, serializer.NewCodecFactory(s))
 	c.constrainedImpersonationHandler = addImpersonation.(*constrainedImpersonationHandler)
 
-	c.constrainedImpersonationHandler.recordAttempt = func(mode, decision string, _ time.Duration) {
+	recordAttempt := c.constrainedImpersonationHandler.recordAttempt
+	c.constrainedImpersonationHandler.recordAttempt = func(ctx context.Context, mode, decision string, duration time.Duration) {
 		c.attemptMode = mode
 		c.attemptDecision = decision
+		recordAttempt(ctx, mode, decision, duration)
 	}
 	c.constrainedImpersonationHandler.metricsAuthorizer.recordAuthorizationCall = func(mode, decision string, _ time.Duration) {
 		if c.authorizationMetrics == nil {
@@ -186,7 +194,8 @@ func (c *constrainedImpersonationTest) handler() http.Handler {
 	}
 
 	addAuthentication := c.authenticationHandler(addImpersonation)
-	addRequestInfo := c.requestInfoHandler(addAuthentication)
+	addLatencyTrackers := filters.WithLatencyTrackers(addAuthentication)
+	addRequestInfo := c.requestInfoHandler(addLatencyTrackers)
 	return addRequestInfo
 }
 
