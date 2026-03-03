@@ -326,7 +326,7 @@ func (c *constrainedImpersonationTest) assertAuditEvents(r testRequest) {
 	require.Len(c.t, events, 2) // RequestReceived and ResponseComplete
 
 	require.Empty(c.t, events[0].Annotations["apiserver.latency.k8s.io/impersonation"])
-	require.NotEmpty(c.t, events[1].Annotations["apiserver.latency.k8s.io/impersonation"])
+	require.Regexp(c.t, "^[0-9.]+[µnm]s$", events[1].Annotations["apiserver.latency.k8s.io/impersonation"])
 
 	require.Nil(c.t, events[0].ImpersonatedUser)
 	require.Equal(c.t, r.expectedImpersonatedUser, comparableAuditUser(events[1].ImpersonatedUser))
