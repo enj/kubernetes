@@ -34,6 +34,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
+	auditinternal "k8s.io/apiserver/pkg/apis/audit"
+	"k8s.io/apiserver/pkg/audit/policy"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
 	"k8s.io/apiserver/pkg/authentication/user"
@@ -49,10 +51,18 @@ type constrainedImpersonationTest struct {
 	constrainedImpersonationHandler *constrainedImpersonationHandler
 	checkedAttrs                    []authorizer.Attributes
 	echoCalled                      bool
+	auditEvents                     []*auditinternal.Event
 
 	attemptMode          string
 	attemptDecision      string
 	authorizationMetrics map[string]int // "mode/decision" -> count
+}
+
+func (c *constrainedImpersonationTest) ProcessEvents(evs ...*auditinternal.Event) bool {
+	for _, e := range evs {
+		c.auditEvents = append(c.auditEvents, e)
+	}
+	return true
 }
 
 func (c *constrainedImpersonationTest) Authorize(ctx context.Context, a authorizer.Attributes) (authorizer.Decision, string, error) {
@@ -126,12 +136,6 @@ func (c *constrainedImpersonationTest) echoUserInfoHandler() http.HandlerFunc {
 				c.t.Fatalf("extra header still present: %v", key)
 			}
 		}
-
-		// verify impersonation latency was tracked
-		annotations := request.AuditAnnotationsFromLatencyTrackers(req.Context())
-		if annotations["apiserver.latency.k8s.io/impersonation"] == "" {
-			c.t.Error("missing impersonation latency annotation")
-		}
 	}
 }
 
@@ -193,10 +197,20 @@ func (c *constrainedImpersonationTest) handler() http.Handler {
 		c.authorizationMetrics[mode+"/"+decision]++
 	}
 
-	addAuthentication := c.authenticationHandler(addImpersonation)
+	fakeRuleEvaluator := policy.NewFakePolicyRuleEvaluator(auditinternal.LevelRequestResponse, nil)
+
+	// follow the same handler chain order as DefaultBuildHandlerChain
+	addAudit := filters.WithAudit(addImpersonation, c, fakeRuleEvaluator, nil)
+	addAuthentication := c.authenticationHandler(addAudit)
 	addLatencyTrackers := filters.WithLatencyTrackers(addAuthentication)
 	addRequestInfo := c.requestInfoHandler(addLatencyTrackers)
-	return addRequestInfo
+	// set received timestamp >500ms in the past so audit annotations are emitted
+	addReceivedTimestamp := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		req = req.WithContext(request.WithReceivedTimestamp(req.Context(), time.Now().Add(-time.Hour)))
+		addRequestInfo.ServeHTTP(w, req)
+	})
+	addAuditInit := filters.WithAuditInit(addReceivedTimestamp)
+	return addAuditInit
 }
 
 type testRoundTripper struct {
@@ -259,6 +273,25 @@ func comparableAttributes(attributes authorizer.Attributes) authorizer.Attribute
 	}
 }
 
+func comparableAuditUser(u *authenticationv1.UserInfo) *user.DefaultInfo {
+	if u == nil {
+		return nil
+	}
+	var extra map[string][]string
+	if len(u.Extra) > 0 {
+		extra = make(map[string][]string, len(u.Extra))
+		for k, v := range u.Extra {
+			extra[k] = v
+		}
+	}
+	return &user.DefaultInfo{
+		Name:   u.Username,
+		UID:    u.UID,
+		Groups: u.Groups,
+		Extra:  extra,
+	}
+}
+
 func comparableUser(u user.Info) *user.DefaultInfo {
 	return &user.DefaultInfo{
 		Name:   u.GetName(),
@@ -287,6 +320,24 @@ func (c *constrainedImpersonationTest) assertMetrics(r testRequest) {
 	require.Equal(c.t, r.expectedAttemptMode, attemptMode, "unexpected attempt mode")
 	require.Equal(c.t, r.expectedAttemptDecision, attemptDecision, "unexpected attempt decision")
 	require.Equal(c.t, r.expectedAuthorizationMetrics, authorizationMetrics, "unexpected authorization metrics")
+}
+
+func (c *constrainedImpersonationTest) assertImpersonationLatencyAuditAnnotation(r testRequest) {
+	c.t.Helper()
+
+	events := c.auditEvents
+	c.auditEvents = nil
+
+	for _, event := range events {
+		if event.Stage == auditinternal.StageRequestReceived {
+			require.Empty(c.t, event.Annotations["apiserver.latency.k8s.io/impersonation"])
+			require.Nil(c.t, event.ImpersonatedUser)
+			continue
+		}
+
+		require.NotEmpty(c.t, event.Annotations["apiserver.latency.k8s.io/impersonation"])
+		require.Equal(c.t, r.expectedImpersonatedUser, comparableAuditUser(event.ImpersonatedUser))
+	}
 }
 
 func (c *constrainedImpersonationTest) assertCache(r testRequest) {
@@ -1231,6 +1282,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 				test.assertAttributes(r)
 				test.assertCache(r)
 				test.assertMetrics(r)
+				test.assertImpersonationLatencyAuditAnnotation(r)
 			}
 		})
 	}
