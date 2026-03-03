@@ -60,7 +60,7 @@ type constrainedImpersonationTest struct {
 
 func (c *constrainedImpersonationTest) ProcessEvents(evs ...*auditinternal.Event) bool {
 	for _, e := range evs {
-		c.auditEvents = append(c.auditEvents, e)
+		c.auditEvents = append(c.auditEvents, e.DeepCopy()) // event is mutated in place so capture its current state
 	}
 	return true
 }
@@ -322,22 +322,19 @@ func (c *constrainedImpersonationTest) assertMetrics(r testRequest) {
 	require.Equal(c.t, r.expectedAuthorizationMetrics, authorizationMetrics, "unexpected authorization metrics")
 }
 
-func (c *constrainedImpersonationTest) assertImpersonationLatencyAuditAnnotation(r testRequest) {
+func (c *constrainedImpersonationTest) assertAuditEvents(r testRequest) {
 	c.t.Helper()
 
 	events := c.auditEvents
 	c.auditEvents = nil
 
-	for _, event := range events {
-		if event.Stage == auditinternal.StageRequestReceived {
-			require.Empty(c.t, event.Annotations["apiserver.latency.k8s.io/impersonation"])
-			require.Nil(c.t, event.ImpersonatedUser)
-			continue
-		}
+	require.Len(c.t, events, 2) // RequestReceived and ResponseComplete
 
-		require.NotEmpty(c.t, event.Annotations["apiserver.latency.k8s.io/impersonation"])
-		require.Equal(c.t, r.expectedImpersonatedUser, comparableAuditUser(event.ImpersonatedUser))
-	}
+	require.Empty(c.t, events[0].Annotations["apiserver.latency.k8s.io/impersonation"])
+	require.NotEmpty(c.t, events[1].Annotations["apiserver.latency.k8s.io/impersonation"])
+
+	require.Nil(c.t, events[0].ImpersonatedUser)
+	require.Equal(c.t, r.expectedImpersonatedUser, comparableAuditUser(events[1].ImpersonatedUser))
 }
 
 func (c *constrainedImpersonationTest) assertCache(r testRequest) {
@@ -1282,7 +1279,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 				test.assertAttributes(r)
 				test.assertCache(r)
 				test.assertMetrics(r)
-				test.assertImpersonationLatencyAuditAnnotation(r)
+				test.assertAuditEvents(r)
 			}
 		})
 	}
