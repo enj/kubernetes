@@ -505,8 +505,8 @@ func associatedNodeTestCase() []testRequest {
 				withImpersonateOnAttributes(getSecretRequest, "associated-node"),
 				withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "nodes", Name: "*"}, "associated-node"),
 			},
-			expectedCache:         cacheWithOnlyNode1Data,
-			expectedCode:          http.StatusOK,
+			expectedCache:           cacheWithOnlyNode1Data,
+			expectedCode:            http.StatusOK,
 			expectedAttemptMode:     "associated-node",
 			expectedAttemptDecision: "allowed",
 			expectedAuthorizationMetrics: map[string]int{
@@ -537,8 +537,8 @@ func associatedNodeTestCase() []testRequest {
 				withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "nodes", Name: "node1"}, "arbitrary-node"),
 				withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:node:node1"}),
 			},
-			expectedCache:         cacheWithOnlyNode1Data,
-			expectedCode:          http.StatusForbidden,
+			expectedCache:           cacheWithOnlyNode1Data,
+			expectedCode:            http.StatusForbidden,
 			expectedAttemptMode:     "",
 			expectedAttemptDecision: "denied",
 			expectedAuthorizationMetrics: map[string]int{
@@ -556,8 +556,8 @@ func associatedNodeTestCase() []testRequest {
 			expectedAttributes: []authorizer.AttributesRecord{
 				withImpersonateOnAttributes(getPodRequest, "associated-node"), // one authz check because different request info
 			},
-			expectedCache:         cacheWithMultipleRequests,
-			expectedCode:          http.StatusOK,
+			expectedCache:           cacheWithMultipleRequests,
+			expectedCode:            http.StatusOK,
 			expectedAttemptMode:     "associated-node",
 			expectedAttemptDecision: "allowed",
 			expectedAuthorizationMetrics: map[string]int{
@@ -650,9 +650,9 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "users", Name: "anyone"}, "user-info"),
 						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "anyone"}),
 					},
-					expectedCache:         nil,
-					expectedCode:          http.StatusForbidden,
-					expectedMessage:       `users.authentication.k8s.io "anyone" is forbidden: User "tester" cannot impersonate:user-info resource "users" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
+					expectedCache:           nil,
+					expectedCode:            http.StatusForbidden,
+					expectedMessage:         `users.authentication.k8s.io "anyone" is forbidden: User "tester" cannot impersonate:user-info resource "users" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
 					expectedAttemptMode:     "",
 					expectedAttemptDecision: "denied",
 					expectedAuthorizationMetrics: map[string]int{
@@ -690,7 +690,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 							},
 						},
 					},
-					expectedCode:          http.StatusOK,
+					expectedCode:            http.StatusOK,
 					expectedAttemptMode:     "user-info",
 					expectedAttemptDecision: "allowed",
 					expectedAuthorizationMetrics: map[string]int{
@@ -721,7 +721,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 							},
 						},
 					},
-					expectedCode:          http.StatusOK,
+					expectedCode:            http.StatusOK,
 					expectedAttemptMode:     "user-info",
 					expectedAttemptDecision: "allowed",
 					expectedAuthorizationMetrics: map[string]int{
@@ -752,8 +752,8 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 							},
 						},
 					},
-					expectedCode:          http.StatusForbidden,
-					expectedMessage:       `pods "foo" is forbidden: User "user-impersonater" cannot impersonate-on:user-info:create resource "pods" in API group "" in the namespace "bar": deny by default`,
+					expectedCode:            http.StatusForbidden,
+					expectedMessage:         `pods "foo" is forbidden: User "user-impersonater" cannot impersonate-on:user-info:create resource "pods" in API group "" in the namespace "bar": deny by default`,
 					expectedAttemptMode:     "",
 					expectedAttemptDecision: "denied",
 					expectedAuthorizationMetrics: map[string]int{
@@ -793,7 +793,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 							},
 						},
 					},
-					expectedCode:          http.StatusOK,
+					expectedCode:            http.StatusOK,
 					expectedAttemptMode:     "serviceaccount",
 					expectedAttemptDecision: "allowed",
 					expectedAuthorizationMetrics: map[string]int{
@@ -814,9 +814,9 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "nodes", Name: "node1"}, "arbitrary-node"),
 						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:node:node1"}),
 					},
-					expectedCache:         nil,
-					expectedCode:          http.StatusForbidden,
-					expectedMessage:       `nodes.authentication.k8s.io "node1" is forbidden: User "sa-impersonater" cannot impersonate:arbitrary-node resource "nodes" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
+					expectedCache:           nil,
+					expectedCode:            http.StatusForbidden,
+					expectedMessage:         `nodes.authentication.k8s.io "node1" is forbidden: User "sa-impersonater" cannot impersonate:arbitrary-node resource "nodes" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
 					expectedAttemptMode:     "",
 					expectedAttemptDecision: "denied",
 					expectedAuthorizationMetrics: map[string]int{
@@ -838,9 +838,9 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						withImpersonateOnAttributes(createPodRequest, "arbitrary-node"),
 						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:node:node1"}),
 					},
-					expectedCache:         nil,
-					expectedCode:          http.StatusForbidden,
-					expectedMessage:       `pods "foo" is forbidden: User "node-impersonater" cannot impersonate-on:arbitrary-node:create resource "pods" in API group "" in the namespace "bar": deny by default`,
+					expectedCache:           nil,
+					expectedCode:            http.StatusForbidden,
+					expectedMessage:         `pods "foo" is forbidden: User "node-impersonater" cannot impersonate-on:arbitrary-node:create resource "pods" in API group "" in the namespace "bar": deny by default`,
 					expectedAttemptMode:     "",
 					expectedAttemptDecision: "denied",
 					expectedAuthorizationMetrics: map[string]int{
@@ -877,7 +877,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 							},
 						},
 					},
-					expectedCode:          http.StatusOK,
+					expectedCode:            http.StatusOK,
 					expectedAttemptMode:     "arbitrary-node",
 					expectedAttemptDecision: "allowed",
 					expectedAuthorizationMetrics: map[string]int{
@@ -907,9 +907,9 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "userextras", Subresource: "pandas.io/scopes", Name: "scope-a"}, "user-info"),
 						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:admin"}),
 					},
-					expectedCache:         nil,
-					expectedCode:          http.StatusForbidden,
-					expectedMessage:       `userextras.authentication.k8s.io "scope-a" is forbidden: User "user-impersonater" cannot impersonate:user-info resource "userextras/pandas.io/scopes" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
+					expectedCache:           nil,
+					expectedCode:            http.StatusForbidden,
+					expectedMessage:         `userextras.authentication.k8s.io "scope-a" is forbidden: User "user-impersonater" cannot impersonate:user-info resource "userextras/pandas.io/scopes" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
 					expectedAttemptMode:     "",
 					expectedAttemptDecision: "denied",
 					expectedAuthorizationMetrics: map[string]int{
@@ -991,7 +991,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 							},
 						},
 					},
-					expectedCode:          http.StatusOK,
+					expectedCode:            http.StatusOK,
 					expectedAttemptMode:     "user-info",
 					expectedAttemptDecision: "allowed",
 					expectedAuthorizationMetrics: map[string]int{
@@ -1023,9 +1023,9 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "nodes", Name: "node1"}, "arbitrary-node"),
 						withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "system:node:node1"}),
 					},
-					expectedCache:         nil,
-					expectedCode:          http.StatusForbidden,
-					expectedMessage:       `nodes.authentication.k8s.io "node1" is forbidden: User "user-impersonater" cannot impersonate:arbitrary-node resource "nodes" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
+					expectedCache:           nil,
+					expectedCode:            http.StatusForbidden,
+					expectedMessage:         `nodes.authentication.k8s.io "node1" is forbidden: User "user-impersonater" cannot impersonate:arbitrary-node resource "nodes" in API group "authentication.k8s.io" at the cluster scope: deny by default`,
 					expectedAttemptMode:     "",
 					expectedAttemptDecision: "denied",
 					expectedAuthorizationMetrics: map[string]int{
@@ -1058,7 +1058,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						},
 						modes: nil, // legacy impersonation does not cache
 					},
-					expectedCode:          http.StatusOK,
+					expectedCode:            http.StatusOK,
 					expectedAttemptMode:     "legacy",
 					expectedAttemptDecision: "allowed",
 					expectedAuthorizationMetrics: map[string]int{
@@ -1105,7 +1105,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 							},
 						},
 					},
-					expectedCode:          http.StatusOK,
+					expectedCode:            http.StatusOK,
 					expectedAttemptMode:     "user-info",
 					expectedAttemptDecision: "allowed",
 					expectedAuthorizationMetrics: map[string]int{
