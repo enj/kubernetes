@@ -35,22 +35,22 @@ var (
 			Namespace:      namespace,
 			Subsystem:      subsystem,
 			Name:           "attempts_total",
-			Help:           "Total number of impersonation attempts split by status. Status is the impersonation mode on success or 'failed' on failure.",
+			Help:           "Total number of impersonation attempts split by mode and decision.",
 			StabilityLevel: metrics.ALPHA,
 		},
-		[]string{"status"},
+		[]string{"mode", "decision"},
 	)
 
-	impersonationDurationSeconds = metrics.NewHistogramVec(
+	impersonationAttemptsDurationSeconds = metrics.NewHistogramVec(
 		&metrics.HistogramOpts{
 			Namespace:      namespace,
 			Subsystem:      subsystem,
-			Name:           "duration_seconds",
-			Help:           "Latency of impersonation attempts in seconds split by status. Status is the impersonation mode on success or 'failed' on failure.",
+			Name:           "attempts_duration_seconds",
+			Help:           "Latency of impersonation attempts in seconds split by mode and decision.",
 			StabilityLevel: metrics.ALPHA,
-			Buckets:        metrics.DefBuckets,
+			Buckets:        metrics.ExponentialBuckets(0.001, 2, 15),
 		},
-		[]string{"status"},
+		[]string{"mode", "decision"},
 	)
 
 	impersonationAuthorizationAttemptsTotal = metrics.NewCounterVec(
@@ -64,14 +64,14 @@ var (
 		[]string{"mode", "decision"},
 	)
 
-	impersonationAuthorizationDurationSeconds = metrics.NewHistogramVec(
+	impersonationAuthorizationAttemptsDurationSeconds = metrics.NewHistogramVec(
 		&metrics.HistogramOpts{
 			Namespace:      namespace,
 			Subsystem:      subsystem,
-			Name:           "authorization_duration_seconds",
+			Name:           "authorization_attempts_duration_seconds",
 			Help:           "Latency of authorization checks made by the impersonation handler in seconds split by mode and decision.",
 			StabilityLevel: metrics.ALPHA,
-			Buckets:        metrics.DefBuckets,
+			Buckets:        metrics.ExponentialBuckets(0.001, 2, 15),
 		},
 		[]string{"mode", "decision"},
 	)
@@ -82,18 +82,18 @@ var registerMetrics sync.Once
 func RegisterMetrics() {
 	registerMetrics.Do(func() {
 		legacyregistry.MustRegister(impersonationAttemptsTotal)
-		legacyregistry.MustRegister(impersonationDurationSeconds)
+		legacyregistry.MustRegister(impersonationAttemptsDurationSeconds)
 		legacyregistry.MustRegister(impersonationAuthorizationAttemptsTotal)
-		legacyregistry.MustRegister(impersonationAuthorizationDurationSeconds)
+		legacyregistry.MustRegister(impersonationAuthorizationAttemptsDurationSeconds)
 	})
 }
 
-func RecordImpersonationAttempt(status string, duration time.Duration) {
-	impersonationAttemptsTotal.WithLabelValues(status).Inc()
-	impersonationDurationSeconds.WithLabelValues(status).Observe(duration.Seconds())
+func RecordImpersonationAttempt(mode, decision string, duration time.Duration) {
+	impersonationAttemptsTotal.WithLabelValues(mode, decision).Inc()
+	impersonationAttemptsDurationSeconds.WithLabelValues(mode, decision).Observe(duration.Seconds())
 }
 
 func RecordImpersonationAuthorizationCall(mode, decision string, duration time.Duration) {
 	impersonationAuthorizationAttemptsTotal.WithLabelValues(mode, decision).Inc()
-	impersonationAuthorizationDurationSeconds.WithLabelValues(mode, decision).Observe(duration.Seconds())
+	impersonationAuthorizationAttemptsDurationSeconds.WithLabelValues(mode, decision).Observe(duration.Seconds())
 }
