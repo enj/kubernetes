@@ -51,7 +51,6 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
 	auditinternal "k8s.io/apiserver/pkg/apis/audit"
@@ -1469,24 +1468,16 @@ rules:
 func setupImpersonationAudit(t *testing.T) (policyFilePath, logFilePath string) {
 	t.Helper()
 
-	policyFile, err := os.CreateTemp("", "audit-policy-*.yaml")
-	if err != nil {
-		t.Fatalf("failed to create audit policy file: %v", err)
-	}
-	t.Cleanup(func() { os.Remove(policyFile.Name()) })
-	if _, err := policyFile.Write([]byte(impersonationAuditPolicy)); err != nil {
+	dir := t.TempDir()
+
+	policyFilePath = filepath.Join(dir, "audit-policy.yaml")
+	if err := os.WriteFile(policyFilePath, []byte(impersonationAuditPolicy), 0644); err != nil {
 		t.Fatalf("failed to write audit policy: %v", err)
 	}
-	policyFile.Close()
 
-	logFile, err := os.CreateTemp("", "audit-log-*.log")
-	if err != nil {
-		t.Fatalf("failed to create audit log file: %v", err)
-	}
-	t.Cleanup(func() { os.Remove(logFile.Name()) })
-	logFile.Close()
+	logFilePath = filepath.Join(dir, "audit.log")
 
-	return policyFile.Name(), logFile.Name()
+	return policyFilePath, logFilePath
 }
 
 func truncateAuditLog(t *testing.T, logFilePath string) {
@@ -1503,7 +1494,7 @@ func getImpersonationAuditEvents(t *testing.T, logFilePath string) []testutils.A
 		t.Fatalf("failed to open audit log: %v", err)
 	}
 	defer stream.Close()
-	report, err := testutils.CheckAuditLines(stream, nil, schema.GroupVersion(auditv1.SchemeGroupVersion))
+	report, err := testutils.CheckAuditLines(stream, nil, auditv1.SchemeGroupVersion)
 	if err != nil {
 		t.Fatalf("failed to parse audit log: %v", err)
 	}
