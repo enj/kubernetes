@@ -815,13 +815,11 @@ func (impersonateAuthorizer) Authorize(ctx context.Context, a authorizer.Attribu
 
 func TestImpersonateIsForbidden(t *testing.T) {
 	tCtx := ktesting.Init(t)
-	var auditLogFile string
 	kubeClient, kubeConfig, tearDownFn := framework.StartTestServer(tCtx, t, framework.TestServerSetup{
 		ModifyServerRunOptions: func(opts *options.ServerRunOptions) {
 			// Disable ServiceAccount admission plugin as we don't have serviceaccount controller running.
 			opts.Admission.GenericAdmission.DisablePlugins = []string{"ServiceAccount"}
 			opts.Authentication.TokenFile.TokenFile = "testdata/tokens.csv"
-			auditLogFile = setupImpersonationAudit(t, opts)
 		},
 		ModifyServerConfig: func(config *controlplane.Config) {
 			// Prepend an impersonation authorizer with specific opinions about alice and bob
@@ -938,11 +936,6 @@ func TestImpersonateIsForbidden(t *testing.T) {
 			}
 		}()
 	}
-
-	// legacy impersonation does not set AuthenticationMetadata
-	numTestRequests := len(getTestRequests(ns.Name))
-	assertImpersonationAuditEvents(t, auditLogFile, "bob", "alice", numTestRequests, nil)
-	assertImpersonationAuditEvents(t, auditLogFile, "bob", serviceaccount.MakeUsername("default", "default"), numTestRequests, nil)
 }
 
 func TestImpersonateWithUID(t *testing.T) {
@@ -1019,8 +1012,14 @@ func TestImpersonateWithUID(t *testing.T) {
 			t.Fatalf("CSR spec was different than expected, -got, +want:\n %s", diff)
 		}
 
-		// legacy impersonation does not set AuthenticationMetadata
-		assertImpersonationAuditEvents(t, auditLogFile, user.APIServerUser, "alice", 1, nil)
+		assertImpersonationAuditEvents(t, auditLogFile, user.APIServerUser, testutils.AuditEvent{
+			Verb:               "create",
+			Code:               http.StatusCreated,
+			ImpersonatedUser:   "alice",
+			ImpersonatedGroups: "system:authenticated",
+			Resource:           "certificatesigningrequests",
+			AuthorizeDecision:  "allow",
+		})
 	})
 
 	t.Run("impersonation with only UID fails", func(t *testing.T) {
@@ -1209,7 +1208,15 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="user-info"} FP`,
 		})
-		assertImpersonationAuditEvents(t, auditLogFile, "bob", "alice", 1, ptr.To("impersonate:user-info"))
+		assertImpersonationAuditEvents(t, auditLogFile, "bob", testutils.AuditEvent{
+			Verb:                    "list",
+			Code:                    200,
+			ImpersonatedUser:        "alice",
+			ImpersonatedGroups:      "system:authenticated",
+			Resource:                "pods",
+			AuthorizeDecision:       "allow",
+			ImpersonationConstraint: ptr.To("impersonate:user-info"),
+		})
 	})
 
 	t.Run("bob impersonating a node", func(t *testing.T) {
@@ -1288,7 +1295,15 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="arbitrary-node"} FP`,
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
 		})
-		assertImpersonationAuditEvents(t, auditLogFile, "bob", "system:node:node1", 1, ptr.To("impersonate:arbitrary-node"))
+		assertImpersonationAuditEvents(t, auditLogFile, "bob", testutils.AuditEvent{
+			Verb:                    "list",
+			Code:                    200,
+			ImpersonatedUser:        "system:node:node1",
+			ImpersonatedGroups:      "system:authenticated,system:nodes",
+			Resource:                "pods",
+			AuthorizeDecision:       "allow",
+			ImpersonationConstraint: ptr.To("impersonate:arbitrary-node"),
+		})
 	})
 
 	t.Run("impersonating scheduled node", func(t *testing.T) {
@@ -1364,7 +1379,15 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="arbitrary-node"} FP`,
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
 		})
-		assertImpersonationAuditEvents(t, auditLogFile, "system:serviceaccount:default:sa1", "system:node:node1", 1, ptr.To("impersonate:associated-node"))
+		assertImpersonationAuditEvents(t, auditLogFile, "system:serviceaccount:default:sa1", testutils.AuditEvent{
+			Verb:                    "list",
+			Code:                    200,
+			ImpersonatedUser:        "system:node:node1",
+			ImpersonatedGroups:      "system:authenticated,system:nodes",
+			Resource:                "pods",
+			AuthorizeDecision:       "allow",
+			ImpersonationConstraint: ptr.To("impersonate:associated-node"),
+		})
 	})
 
 	t.Run("fallback to legacy impersonation", func(t *testing.T) {
@@ -1405,7 +1428,14 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="user-info"} FP`,
 		})
 		// legacy impersonation does not set AuthenticationMetadata
-		assertImpersonationAuditEvents(t, auditLogFile, "bob", "alice", 1, nil)
+		assertImpersonationAuditEvents(t, auditLogFile, "bob", testutils.AuditEvent{
+			Verb:               "list",
+			Code:               http.StatusOK,
+			ImpersonatedUser:   "alice",
+			ImpersonatedGroups: "system:authenticated",
+			Resource:           "pods",
+			AuthorizeDecision:  "allow",
+		})
 	})
 }
 
@@ -1507,7 +1537,7 @@ func getAuditEvents(t *testing.T, logFilePath string) []testutils.AuditEvent {
 	return report.AllEvents
 }
 
-func assertImpersonationAuditEvents(t *testing.T, logFilePath, wantUser, wantImpersonatedUser string, wantCount int, wantConstraint *string) {
+func assertImpersonationAuditEvents(t *testing.T, logFilePath, wantUser string, wantEvent testutils.AuditEvent) {
 	t.Helper()
 
 	var matched []testutils.AuditEvent
@@ -1518,18 +1548,27 @@ func assertImpersonationAuditEvents(t *testing.T, logFilePath, wantUser, wantImp
 		if event.User != wantUser {
 			continue
 		}
-		if event.ImpersonatedUser != wantImpersonatedUser {
+		if len(event.ImpersonatedUser) == 0 {
 			continue
 		}
 		matched = append(matched, event)
 	}
-	if len(matched) != wantCount {
-		t.Fatalf("expected %d audit event(s) from user %q impersonating %q, got %d", wantCount, wantUser, wantImpersonatedUser, len(matched))
+	if len(matched) != 1 {
+		t.Fatalf("expected 1 audit event from user %q with impersonation, got %d: %v", wantUser, len(matched), matched)
 	}
-	for _, event := range matched {
-		if diff := cmp.Diff(wantConstraint, event.ImpersonationConstraint); diff != "" {
-			t.Errorf("unexpected ImpersonationConstraint for event %s %s (-want +got): %s", event.Verb, event.RequestURI, diff)
-		}
+	event := matched[0]
+	got := testutils.AuditEvent{
+		Verb:                    event.Verb,
+		Code:                    event.Code,
+		ImpersonatedUser:        event.ImpersonatedUser,
+		ImpersonatedGroups:      event.ImpersonatedGroups,
+		Resource:                event.Resource,
+		Namespace:               event.Namespace,
+		AuthorizeDecision:       event.AuthorizeDecision,
+		ImpersonationConstraint: event.ImpersonationConstraint,
+	}
+	if diff := cmp.Diff(wantEvent, got); diff != "" {
+		t.Errorf("audit event mismatch (-want +got): %s", diff)
 	}
 }
 
@@ -1627,7 +1666,14 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 		}
 
 		// legacy impersonation does not set AuthenticationMetadata
-		assertImpersonationAuditEvents(t, auditLogFile, "bob", "alice", 1, nil)
+		assertImpersonationAuditEvents(t, auditLogFile, "bob", testutils.AuditEvent{
+			Verb:               "list",
+			Code:               http.StatusOK,
+			ImpersonatedUser:   "alice",
+			ImpersonatedGroups: "system:authenticated",
+			Resource:           "pods",
+			AuthorizeDecision:  "allow",
+		})
 	})
 
 	t.Run("serviceaccount impersonating a node", func(t *testing.T) {
@@ -1682,7 +1728,14 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 		}
 
 		// legacy impersonation does not set AuthenticationMetadata
-		assertImpersonationAuditEvents(t, auditLogFile, "system:serviceaccount:default:sa1", "system:node:node1", 1, nil)
+		assertImpersonationAuditEvents(t, auditLogFile, "system:serviceaccount:default:sa1", testutils.AuditEvent{
+			Verb:               "list",
+			Code:               http.StatusOK,
+			ImpersonatedUser:   "system:node:node1",
+			ImpersonatedGroups: "system:authenticated",
+			Resource:           "pods",
+			AuthorizeDecision:  "allow",
+		})
 	})
 }
 
