@@ -814,16 +814,13 @@ func (impersonateAuthorizer) Authorize(ctx context.Context, a authorizer.Attribu
 
 func TestImpersonateIsForbidden(t *testing.T) {
 	tCtx := ktesting.Init(t)
-	auditPolicyFile, auditLogFile := setupImpersonationAudit(t)
+	var auditLogFile string
 	kubeClient, kubeConfig, tearDownFn := framework.StartTestServer(tCtx, t, framework.TestServerSetup{
 		ModifyServerRunOptions: func(opts *options.ServerRunOptions) {
 			// Disable ServiceAccount admission plugin as we don't have serviceaccount controller running.
 			opts.Admission.GenericAdmission.DisablePlugins = []string{"ServiceAccount"}
 			opts.Authentication.TokenFile.TokenFile = "testdata/tokens.csv"
-			opts.Audit.PolicyFile = auditPolicyFile
-			opts.Audit.LogOptions.Path = auditLogFile
-			opts.Audit.LogOptions.GroupVersionString = "audit.k8s.io/v1"
-			opts.Audit.LogOptions.BatchOptions.Mode = "blocking"
+			auditLogFile = setupImpersonationAudit(t, opts)
 		},
 		ModifyServerConfig: func(config *controlplane.Config) {
 			// Prepend an impersonation authorizer with specific opinions about alice and bob
@@ -947,7 +944,7 @@ func TestImpersonateIsForbidden(t *testing.T) {
 }
 
 func TestImpersonateWithUID(t *testing.T) {
-	auditPolicyFile, auditLogFile := setupImpersonationAudit(t)
+	auditPolicyFile, auditLogFile := setupImpersonationAuditFiles(t)
 	server := kubeapiservertesting.StartTestServerOrDie(
 		t,
 		nil,
@@ -1107,14 +1104,11 @@ func TestConstrainedImpersonation(t *testing.T) {
 	t.Cleanup(cancel)
 
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ConstrainedImpersonation, true)
-	auditPolicyFile, auditLogFile := setupImpersonationAudit(t)
+	var auditLogFile string
 	_, kubeConfig, tearDownFn := framework.StartTestServer(ctx, t, framework.TestServerSetup{
 		ModifyServerRunOptions: func(opts *options.ServerRunOptions) {
 			opts.Authorization.Modes = []string{"RBAC"}
-			opts.Audit.PolicyFile = auditPolicyFile
-			opts.Audit.LogOptions.Path = auditLogFile
-			opts.Audit.LogOptions.GroupVersionString = "audit.k8s.io/v1"
-			opts.Audit.LogOptions.BatchOptions.Mode = "blocking"
+			auditLogFile = setupImpersonationAudit(t, opts)
 		},
 		ModifyServerConfig: func(config *controlplane.Config) {
 			config.ControlPlane.Generic.Authentication.Authenticator = authenticator
@@ -1465,7 +1459,7 @@ rules:
   - level: Metadata
 `
 
-func setupImpersonationAudit(t *testing.T) (policyFilePath, logFilePath string) {
+func setupImpersonationAuditFiles(t *testing.T) (policyFilePath, logFilePath string) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -1478,6 +1472,18 @@ func setupImpersonationAudit(t *testing.T) (policyFilePath, logFilePath string) 
 	logFilePath = filepath.Join(dir, "audit.log")
 
 	return policyFilePath, logFilePath
+}
+
+func setupImpersonationAudit(t *testing.T, opts *options.ServerRunOptions) string {
+	t.Helper()
+
+	policyFilePath, logFilePath := setupImpersonationAuditFiles(t)
+	opts.Audit.PolicyFile = policyFilePath
+	opts.Audit.LogOptions.Path = logFilePath
+	opts.Audit.LogOptions.GroupVersionString = "audit.k8s.io/v1"
+	opts.Audit.LogOptions.BatchOptions.Mode = "blocking"
+
+	return logFilePath
 }
 
 func truncateAuditLog(t *testing.T, logFilePath string) {
@@ -1553,14 +1559,11 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 	t.Cleanup(cancel)
 
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ConstrainedImpersonation, false)
-	auditPolicyFile, auditLogFile := setupImpersonationAudit(t)
+	var auditLogFile string
 	_, kubeConfig, tearDownFn := framework.StartTestServer(ctx, t, framework.TestServerSetup{
 		ModifyServerRunOptions: func(opts *options.ServerRunOptions) {
 			opts.Authorization.Modes = []string{"RBAC"}
-			opts.Audit.PolicyFile = auditPolicyFile
-			opts.Audit.LogOptions.Path = auditLogFile
-			opts.Audit.LogOptions.GroupVersionString = "audit.k8s.io/v1"
-			opts.Audit.LogOptions.BatchOptions.Mode = "blocking"
+			auditLogFile = setupImpersonationAudit(t, opts)
 		},
 		ModifyServerConfig: func(config *controlplane.Config) {
 			config.ControlPlane.Generic.Authentication.Authenticator = authenticator
