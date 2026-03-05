@@ -49,6 +49,10 @@ type AuditEvent struct {
 	ResponseObject     bool
 	AuthorizeDecision  string
 
+	// ImpersonationConstraint is the constraint from AuthenticationMetadata.
+	// nil when AuthenticationMetadata is not set (legacy impersonation or no impersonation).
+	ImpersonationConstraint *string
+
 	// The Check functions in this package takes ownerships of these maps. You should
 	// not reference these maps after calling the Check functions.
 	AdmissionWebhookMutationAnnotations map[string]string
@@ -158,6 +162,9 @@ func testEventFromInternalFiltered(e *auditinternal.Event, customAnnotationsFilt
 		event.ImpersonatedUser = e.ImpersonatedUser.Username
 		sort.Strings(e.ImpersonatedUser.Groups)
 		event.ImpersonatedGroups = strings.Join(e.ImpersonatedUser.Groups, ",")
+	}
+	if e.AuthenticationMetadata != nil {
+		event.ImpersonationConstraint = &e.AuthenticationMetadata.ImpersonationConstraint
 	}
 	event.AuthorizeDecision = e.Annotations["authorization.k8s.io/decision"]
 	for k, v := range e.Annotations {

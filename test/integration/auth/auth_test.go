@@ -51,8 +51,11 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
+	auditinternal "k8s.io/apiserver/pkg/apis/audit"
+	auditv1 "k8s.io/apiserver/pkg/apis/audit/v1"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authentication/group"
 	"k8s.io/apiserver/pkg/authentication/request/bearertoken"
@@ -81,6 +84,7 @@ import (
 	"k8s.io/kubernetes/test/integration"
 	"k8s.io/kubernetes/test/integration/authutil"
 	"k8s.io/kubernetes/test/integration/framework"
+	testutils "k8s.io/kubernetes/test/utils"
 	"k8s.io/kubernetes/test/utils/ktesting"
 )
 
@@ -811,11 +815,16 @@ func (impersonateAuthorizer) Authorize(ctx context.Context, a authorizer.Attribu
 
 func TestImpersonateIsForbidden(t *testing.T) {
 	tCtx := ktesting.Init(t)
+	auditPolicyFile, auditLogFile := setupImpersonationAudit(t)
 	kubeClient, kubeConfig, tearDownFn := framework.StartTestServer(tCtx, t, framework.TestServerSetup{
 		ModifyServerRunOptions: func(opts *options.ServerRunOptions) {
 			// Disable ServiceAccount admission plugin as we don't have serviceaccount controller running.
 			opts.Admission.GenericAdmission.DisablePlugins = []string{"ServiceAccount"}
 			opts.Authentication.TokenFile.TokenFile = "testdata/tokens.csv"
+			opts.Audit.PolicyFile = auditPolicyFile
+			opts.Audit.LogOptions.Path = auditLogFile
+			opts.Audit.LogOptions.GroupVersionString = "audit.k8s.io/v1"
+			opts.Audit.LogOptions.BatchOptions.Mode = "blocking"
 		},
 		ModifyServerConfig: func(config *controlplane.Config) {
 			// Prepend an impersonation authorizer with specific opinions about alice and bob
@@ -933,15 +942,23 @@ func TestImpersonateIsForbidden(t *testing.T) {
 		}()
 	}
 
+	// legacy impersonation does not set AuthenticationMetadata
+	assertImpersonationAuditEvents(t, auditLogFile, "alice", nil)
+	assertImpersonationAuditEvents(t, auditLogFile, serviceaccount.MakeUsername("default", "default"), nil)
 }
 
 func TestImpersonateWithUID(t *testing.T) {
+	auditPolicyFile, auditLogFile := setupImpersonationAudit(t)
 	server := kubeapiservertesting.StartTestServerOrDie(
 		t,
 		nil,
 		[]string{
 			"--authorization-mode=RBAC",
 			"--anonymous-auth",
+			"--audit-policy-file", auditPolicyFile,
+			"--audit-log-path", auditLogFile,
+			"--audit-log-version", "audit.k8s.io/v1",
+			"--audit-log-mode", "blocking",
 		},
 		framework.SharedEtcd(),
 	)
@@ -1003,9 +1020,13 @@ func TestImpersonateWithUID(t *testing.T) {
 		if diff := cmp.Diff(expectedCsrSpec, actualCsrSpec); diff != "" {
 			t.Fatalf("CSR spec was different than expected, -got, +want:\n %s", diff)
 		}
+
+		// legacy impersonation does not set AuthenticationMetadata
+		assertImpersonationAuditEvents(t, auditLogFile, "alice", nil)
 	})
 
 	t.Run("impersonation with only UID fails", func(t *testing.T) {
+		truncateAuditLog(t, auditLogFile)
 		clientConfig := rest.CopyConfig(server.ClientConfig)
 		clientConfig.Impersonate = rest.ImpersonationConfig{
 			UID: "1234",
@@ -1087,9 +1108,14 @@ func TestConstrainedImpersonation(t *testing.T) {
 	t.Cleanup(cancel)
 
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ConstrainedImpersonation, true)
+	auditPolicyFile, auditLogFile := setupImpersonationAudit(t)
 	_, kubeConfig, tearDownFn := framework.StartTestServer(ctx, t, framework.TestServerSetup{
 		ModifyServerRunOptions: func(opts *options.ServerRunOptions) {
 			opts.Authorization.Modes = []string{"RBAC"}
+			opts.Audit.PolicyFile = auditPolicyFile
+			opts.Audit.LogOptions.Path = auditLogFile
+			opts.Audit.LogOptions.GroupVersionString = "audit.k8s.io/v1"
+			opts.Audit.LogOptions.BatchOptions.Mode = "blocking"
 		},
 		ModifyServerConfig: func(config *controlplane.Config) {
 			config.ControlPlane.Generic.Authentication.Authenticator = authenticator
@@ -1113,6 +1139,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 
 	t.Run("bob impersonating alice", func(t *testing.T) {
 		resetAllMetrics(t, ctx, superuserClient)
+		truncateAuditLog(t, auditLogFile)
 
 		impersonatorClientConfig := rest.CopyConfig(kubeConfig)
 		impersonatorClientConfig.BearerToken = "bob"
@@ -1186,10 +1213,13 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="user-info"} FP`,
 		})
+		constraint := "impersonate:user-info"
+		assertImpersonationAuditEvents(t, auditLogFile, "alice", &constraint)
 	})
 
 	t.Run("bob impersonating a node", func(t *testing.T) {
 		resetAllMetrics(t, ctx, superuserClient)
+		truncateAuditLog(t, auditLogFile)
 
 		impersonatorClientConfig := rest.CopyConfig(kubeConfig)
 		impersonatorClientConfig.BearerToken = "bob"
@@ -1263,10 +1293,13 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="arbitrary-node"} FP`,
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
 		})
+		constraint := "impersonate:arbitrary-node"
+		assertImpersonationAuditEvents(t, auditLogFile, "system:node:node1", &constraint)
 	})
 
 	t.Run("impersonating scheduled node", func(t *testing.T) {
 		resetAllMetrics(t, ctx, superuserClient)
+		truncateAuditLog(t, auditLogFile)
 
 		impersonatorClientConfig := rest.CopyConfig(kubeConfig)
 		impersonatorClientConfig.BearerToken = "serviceaccount2"
@@ -1337,10 +1370,13 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="arbitrary-node"} FP`,
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
 		})
+		constraint := "impersonate:associated-node"
+		assertImpersonationAuditEvents(t, auditLogFile, "system:node:node1", &constraint)
 	})
 
 	t.Run("fallback to legacy impersonation", func(t *testing.T) {
 		resetAllMetrics(t, ctx, superuserClient)
+		truncateAuditLog(t, auditLogFile)
 
 		impersonatorClientConfig := rest.CopyConfig(kubeConfig)
 		impersonatorClientConfig.BearerToken = "bob"
@@ -1375,6 +1411,8 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="allowed",mode="legacy"} FP`,
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="user-info"} FP`,
 		})
+		// legacy impersonation does not set AuthenticationMetadata
+		assertImpersonationAuditEvents(t, auditLogFile, "alice", nil)
 	})
 }
 
@@ -1419,6 +1457,89 @@ func assertImpersonationMetrics(t *testing.T, ctx context.Context, client client
 	}
 }
 
+const impersonationAuditPolicy = `
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages:
+  - "RequestReceived"
+rules:
+  - level: Metadata
+`
+
+func setupImpersonationAudit(t *testing.T) (policyFilePath, logFilePath string) {
+	t.Helper()
+
+	policyFile, err := os.CreateTemp("", "audit-policy-*.yaml")
+	if err != nil {
+		t.Fatalf("failed to create audit policy file: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(policyFile.Name()) })
+	if _, err := policyFile.Write([]byte(impersonationAuditPolicy)); err != nil {
+		t.Fatalf("failed to write audit policy: %v", err)
+	}
+	policyFile.Close()
+
+	logFile, err := os.CreateTemp("", "audit-log-*.log")
+	if err != nil {
+		t.Fatalf("failed to create audit log file: %v", err)
+	}
+	t.Cleanup(func() { os.Remove(logFile.Name()) })
+	logFile.Close()
+
+	return policyFile.Name(), logFile.Name()
+}
+
+func truncateAuditLog(t *testing.T, logFilePath string) {
+	t.Helper()
+	if err := os.Truncate(logFilePath, 0); err != nil {
+		t.Fatalf("failed to truncate audit log: %v", err)
+	}
+}
+
+func getImpersonationAuditEvents(t *testing.T, logFilePath string) []testutils.AuditEvent {
+	t.Helper()
+	stream, err := os.Open(logFilePath)
+	if err != nil {
+		t.Fatalf("failed to open audit log: %v", err)
+	}
+	defer stream.Close()
+	report, err := testutils.CheckAuditLines(stream, nil, schema.GroupVersion(auditv1.SchemeGroupVersion))
+	if err != nil {
+		t.Fatalf("failed to parse audit log: %v", err)
+	}
+	return report.AllEvents
+}
+
+// assertImpersonationAuditEvents checks that audit events from impersonated requests have the expected
+// ImpersonatedUser and ImpersonationConstraint. Only ResponseComplete events are checked since
+// impersonation data is set after the request is processed.
+func assertImpersonationAuditEvents(t *testing.T, logFilePath string, wantUser string, wantConstraint *string) {
+	t.Helper()
+
+	events := getImpersonationAuditEvents(t, logFilePath)
+
+	var found bool
+	for _, event := range events {
+		if event.Stage != auditinternal.StageResponseComplete {
+			continue
+		}
+		// skip events that are not from the impersonated request (e.g. RBAC setup requests)
+		if event.ImpersonatedUser == "" && wantUser == "" {
+			continue
+		}
+		if event.ImpersonatedUser != wantUser {
+			continue
+		}
+		found = true
+		if diff := cmp.Diff(wantConstraint, event.ImpersonationConstraint); diff != "" {
+			t.Errorf("unexpected ImpersonationConstraint for event %s %s (-want +got): %s", event.Verb, event.RequestURI, diff)
+		}
+	}
+	if wantUser != "" && !found {
+		t.Errorf("expected audit event with ImpersonatedUser=%q but none found", wantUser)
+	}
+}
+
 // TestConstrainedImpersonationDisabled tests the impersonation behavior when the
 // ConstrainedImpersonation feature gate is disabled. In this mode, the legacy
 // impersonation behavior is expected, where a user only needs the "impersonate"
@@ -1441,9 +1562,14 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 	t.Cleanup(cancel)
 
 	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.ConstrainedImpersonation, false)
+	auditPolicyFile, auditLogFile := setupImpersonationAudit(t)
 	_, kubeConfig, tearDownFn := framework.StartTestServer(ctx, t, framework.TestServerSetup{
 		ModifyServerRunOptions: func(opts *options.ServerRunOptions) {
 			opts.Authorization.Modes = []string{"RBAC"}
+			opts.Audit.PolicyFile = auditPolicyFile
+			opts.Audit.LogOptions.Path = auditLogFile
+			opts.Audit.LogOptions.GroupVersionString = "audit.k8s.io/v1"
+			opts.Audit.LogOptions.BatchOptions.Mode = "blocking"
 		},
 		ModifyServerConfig: func(config *controlplane.Config) {
 			config.ControlPlane.Generic.Authentication.Authenticator = authenticator
@@ -1466,6 +1592,8 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 	})
 
 	t.Run("bob impersonating alice", func(t *testing.T) {
+		truncateAuditLog(t, auditLogFile)
+
 		authutil.GrantUserAuthorization(t, ctx, superuserClient, "bob", rbacv1.PolicyRule{
 			Verbs:     []string{"impersonate:user-info"},
 			APIGroups: []string{"authentication.k8s.io"},
@@ -1507,9 +1635,13 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected no error, got %T %v", err, err)
 		}
+
+		// legacy impersonation does not set AuthenticationMetadata
+		assertImpersonationAuditEvents(t, auditLogFile, "alice", nil)
 	})
 
 	t.Run("serviceaccount impersonating a node", func(t *testing.T) {
+		truncateAuditLog(t, auditLogFile)
 		authutil.GrantUserAuthorization(t, ctx, superuserClient, "system:serviceaccount:default:sa1", rbacv1.PolicyRule{
 			Verbs:     []string{"impersonate:associated-node"},
 			APIGroups: []string{"authentication.k8s.io"},
@@ -1558,6 +1690,9 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected no error, got %T %v", err, err)
 		}
+
+		// legacy impersonation does not set AuthenticationMetadata
+		assertImpersonationAuditEvents(t, auditLogFile, "system:node:node1", nil)
 	})
 }
 
