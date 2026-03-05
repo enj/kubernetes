@@ -85,6 +85,7 @@ import (
 	"k8s.io/kubernetes/test/integration/framework"
 	testutils "k8s.io/kubernetes/test/utils"
 	"k8s.io/kubernetes/test/utils/ktesting"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -1206,8 +1207,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="user-info"} FP`,
 		})
-		constraint := "impersonate:user-info"
-		assertImpersonationAuditEvents(t, auditLogFile, "alice", &constraint)
+		assertImpersonationAuditEvents(t, auditLogFile, "alice", ptr.To("impersonate:user-info"))
 	})
 
 	t.Run("bob impersonating a node", func(t *testing.T) {
@@ -1286,8 +1286,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="arbitrary-node"} FP`,
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
 		})
-		constraint := "impersonate:arbitrary-node"
-		assertImpersonationAuditEvents(t, auditLogFile, "system:node:node1", &constraint)
+		assertImpersonationAuditEvents(t, auditLogFile, "system:node:node1", ptr.To("impersonate:arbitrary-node"))
 	})
 
 	t.Run("impersonating scheduled node", func(t *testing.T) {
@@ -1363,8 +1362,7 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="arbitrary-node"} FP`,
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
 		})
-		constraint := "impersonate:associated-node"
-		assertImpersonationAuditEvents(t, auditLogFile, "system:node:node1", &constraint)
+		assertImpersonationAuditEvents(t, auditLogFile, "system:node:node1", ptr.To("impersonate:associated-node"))
 	})
 
 	t.Run("fallback to legacy impersonation", func(t *testing.T) {
