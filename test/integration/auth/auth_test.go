@@ -1491,7 +1491,7 @@ func truncateAuditLog(t *testing.T, logFilePath string) {
 	}
 }
 
-func getImpersonationAuditEvents(t *testing.T, logFilePath string) []testutils.AuditEvent {
+func getAuditEvents(t *testing.T, logFilePath string) []testutils.AuditEvent {
 	t.Helper()
 	stream, err := os.Open(logFilePath)
 	if err != nil {
@@ -1505,24 +1505,15 @@ func getImpersonationAuditEvents(t *testing.T, logFilePath string) []testutils.A
 	return report.AllEvents
 }
 
-// assertImpersonationAuditEvents checks that audit events from impersonated requests have the expected
-// ImpersonatedUser and ImpersonationConstraint. Only ResponseComplete events are checked since
-// impersonation data is set after the request is processed.
-func assertImpersonationAuditEvents(t *testing.T, logFilePath string, wantUser string, wantConstraint *string) {
+func assertImpersonationAuditEvents(t *testing.T, logFilePath, wantImpersonatedUser string, wantConstraint *string) {
 	t.Helper()
 
-	events := getImpersonationAuditEvents(t, logFilePath)
-
 	var found bool
-	for _, event := range events {
+	for _, event := range getAuditEvents(t, logFilePath) {
 		if event.Stage != auditinternal.StageResponseComplete {
 			continue
 		}
-		// skip events that are not from the impersonated request (e.g. RBAC setup requests)
-		if event.ImpersonatedUser == "" && wantUser == "" {
-			continue
-		}
-		if event.ImpersonatedUser != wantUser {
+		if event.ImpersonatedUser != wantImpersonatedUser {
 			continue
 		}
 		found = true
@@ -1530,8 +1521,8 @@ func assertImpersonationAuditEvents(t *testing.T, logFilePath string, wantUser s
 			t.Errorf("unexpected ImpersonationConstraint for event %s %s (-want +got): %s", event.Verb, event.RequestURI, diff)
 		}
 	}
-	if wantUser != "" && !found {
-		t.Errorf("expected audit event with ImpersonatedUser=%q but none found", wantUser)
+	if !found {
+		t.Errorf("expected audit event with ImpersonatedUser=%q but none found", wantImpersonatedUser)
 	}
 }
 
