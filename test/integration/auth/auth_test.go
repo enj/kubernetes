@@ -1018,8 +1018,6 @@ func TestImpersonateWithUID(t *testing.T) {
 	})
 
 	t.Run("impersonation with only UID fails", func(t *testing.T) {
-		truncateAuditLog(t, auditLogFile)
-
 		clientConfig := rest.CopyConfig(server.ClientConfig)
 		clientConfig.Impersonate = rest.ImpersonationConfig{
 			UID: "1234",
@@ -1372,6 +1370,9 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="arbitrary-node"} FP`,
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
 		})
+		assertImpersonationAuditEvents(t, auditLogFile, "system:serviceaccount:default:sa2",
+			deniedImpersonationEvent("list", `pods is forbidden: User "system:serviceaccount:default:sa2" cannot impersonate-on:arbitrary-node:list resource "pods" in API group "" at the cluster scope`, "pods"),
+		)
 		assertImpersonationAuditEvents(t, auditLogFile, "system:serviceaccount:default:sa1",
 			allowedImpersonationEvent("list", http.StatusOK, "system:node:node1", "system:authenticated,system:nodes", "pods", ptr.To("impersonate:associated-node")),
 		)
