@@ -335,6 +335,9 @@ func (c *constrainedImpersonationTest) assertAuditEvents(r testRequest) {
 
 	require.Nil(c.t, events[0].ImpersonatedUser)
 	require.Equal(c.t, r.expectedImpersonatedUser, comparableAuditUser(events[1].ImpersonatedUser))
+
+	require.Nil(c.t, events[0].ResponseStatus)
+	require.Equal(c.t, r.expectedMessage, events[1].ResponseStatus.Message)
 }
 
 func (c *constrainedImpersonationTest) assertCache(r testRequest) {

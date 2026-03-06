@@ -40,6 +40,7 @@ type AuditEvent struct {
 	RequestURI         string
 	Verb               string
 	Code               int32
+	StatusMessage      string
 	User               string
 	ImpersonatedUser   string
 	ImpersonatedGroups string
@@ -151,6 +152,7 @@ func testEventFromInternalFiltered(e *auditinternal.Event, customAnnotationsFilt
 	}
 	if e.ResponseStatus != nil {
 		event.Code = e.ResponseStatus.Code
+		event.StatusMessage = e.ResponseStatus.Message
 	}
 	if e.ResponseObject != nil {
 		event.ResponseObject = true

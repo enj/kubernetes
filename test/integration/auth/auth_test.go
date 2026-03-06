@@ -1548,7 +1548,7 @@ func assertImpersonationAuditEvents(t *testing.T, logFilePath, wantUser string, 
 		if event.User != wantUser {
 			continue
 		}
-		if len(event.ImpersonatedUser) == 0 {
+		if len(event.ImpersonatedUser) == 0 && !strings.Contains(event.StatusMessage, "impersonate") {
 			continue
 		}
 		matched = append(matched, event)
@@ -1560,6 +1560,7 @@ func assertImpersonationAuditEvents(t *testing.T, logFilePath, wantUser string, 
 	got := testutils.AuditEvent{
 		Verb:                    event.Verb,
 		Code:                    event.Code,
+		StatusMessage:           event.StatusMessage,
 		ImpersonatedUser:        event.ImpersonatedUser,
 		ImpersonatedGroups:      event.ImpersonatedGroups,
 		Resource:                event.Resource,
