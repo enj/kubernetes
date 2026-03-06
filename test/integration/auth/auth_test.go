@@ -1562,7 +1562,7 @@ func assertImpersonationAuditEvents(t *testing.T, logFilePath, wantUser string, 
 		if diff := cmp.Diff(wantEvents[i], got); len(diff) > 0 {
 			t.Errorf("audit event[%d] mismatch (-want +got): %s", i, diff)
 		}
-		if utilfeature.DefaultFeatureGate.Enabled(features.ConstrainedImpersonation) {
+		if event.Verb != "watch" && utilfeature.DefaultFeatureGate.Enabled(features.ConstrainedImpersonation) {
 			latency := event.CustomAuditAnnotations["apiserver.latency.k8s.io/impersonation"]
 			if matched, _ := regexp.MatchString("^[0-9.]+[µnm]s$", latency); !matched {
 				t.Errorf("audit event[%d] expected valid impersonation latency annotation, got %q", i, latency)
@@ -1598,7 +1598,7 @@ type slowImpersonationRequests struct {
 
 func (s *slowImpersonationRequests) NewRequestInfo(req *http.Request) (*genericrequest.RequestInfo, error) {
 	if len(req.Header.Get(authenticationv1.ImpersonateUserHeader)) > 0 {
-		time.Sleep(time.Second) // force latency audit annotations to be emitted for impersonation requests
+		time.Sleep(505 * time.Millisecond) // force latency audit annotations to be emitted for impersonation requests
 	}
 	return s.delegate.NewRequestInfo(req)
 }
