@@ -1045,6 +1045,7 @@ func TestImpersonateWithUID(t *testing.T) {
 	})
 
 	t.Run("impersonating UID without authorization fails", func(t *testing.T) {
+		truncateAuditLog(t, auditLogFile)
 		adminClient := clientset.NewForConfigOrDie(server.ClientConfig)
 
 		authutil.GrantUserAuthorization(t, ctx, adminClient, "system:anonymous",
@@ -1075,6 +1076,10 @@ func TestImpersonateWithUID(t *testing.T) {
 		); diff != "" {
 			t.Fatalf("forbidden error different than expected, -got, +want:\n %s", diff)
 		}
+
+		assertImpersonationAuditEvents(t, auditLogFile, "system:anonymous",
+			testutils.AuditEvent{Verb: "list", Code: http.StatusForbidden, StatusMessage: `uids.authentication.k8s.io "1234" is forbidden: User "system:anonymous" cannot impersonate resource "uids" in API group "authentication.k8s.io" at the cluster scope`, Resource: "nodes"},
+		)
 	})
 }
 
@@ -1208,15 +1213,12 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="user-info"} FP`,
 		})
-		assertImpersonationAuditEvents(t, auditLogFile, "bob", testutils.AuditEvent{
-			Verb:                    "list",
-			Code:                    200,
-			ImpersonatedUser:        "alice",
-			ImpersonatedGroups:      "system:authenticated",
-			Resource:                "pods",
-			AuthorizeDecision:       "allow",
-			ImpersonationConstraint: ptr.To("impersonate:user-info"),
-		})
+		assertImpersonationAuditEvents(t, auditLogFile, "bob",
+			testutils.AuditEvent{Verb: "list", Code: http.StatusForbidden, StatusMessage: `pods is forbidden: User "bob" cannot impersonate-on:user-info:list resource "pods" in API group "" at the cluster scope`, Resource: "pods"},
+			testutils.AuditEvent{Verb: "list", Code: http.StatusForbidden, StatusMessage: `pods is forbidden: User "bob" cannot impersonate-on:user-info:list resource "pods" in API group "" at the cluster scope`, Resource: "pods"},
+			testutils.AuditEvent{Verb: "list", Code: http.StatusOK, ImpersonatedUser: "alice", ImpersonatedGroups: "system:authenticated", Resource: "pods", AuthorizeDecision: "allow", ImpersonationConstraint: ptr.To("impersonate:user-info")},
+			testutils.AuditEvent{Verb: "watch", Code: http.StatusForbidden, StatusMessage: `pods is forbidden: User "bob" cannot impersonate-on:user-info:watch resource "pods" in API group "" at the cluster scope`, Resource: "pods"},
+		)
 	})
 
 	t.Run("bob impersonating a node", func(t *testing.T) {
@@ -1295,15 +1297,11 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="arbitrary-node"} FP`,
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
 		})
-		assertImpersonationAuditEvents(t, auditLogFile, "bob", testutils.AuditEvent{
-			Verb:                    "list",
-			Code:                    200,
-			ImpersonatedUser:        "system:node:node1",
-			ImpersonatedGroups:      "system:authenticated,system:nodes",
-			Resource:                "pods",
-			AuthorizeDecision:       "allow",
-			ImpersonationConstraint: ptr.To("impersonate:arbitrary-node"),
-		})
+		assertImpersonationAuditEvents(t, auditLogFile, "bob",
+			testutils.AuditEvent{Verb: "list", Code: http.StatusForbidden, StatusMessage: `pods is forbidden: User "bob" cannot impersonate-on:arbitrary-node:list resource "pods" in API group "" at the cluster scope`, Resource: "pods"},
+			testutils.AuditEvent{Verb: "list", Code: http.StatusForbidden, StatusMessage: `nodes.authentication.k8s.io "node1" is forbidden: User "bob" cannot impersonate:arbitrary-node resource "nodes" in API group "authentication.k8s.io" at the cluster scope`, Resource: "pods"},
+			testutils.AuditEvent{Verb: "list", Code: http.StatusOK, ImpersonatedUser: "system:node:node1", ImpersonatedGroups: "system:authenticated,system:nodes", Resource: "pods", AuthorizeDecision: "allow", ImpersonationConstraint: ptr.To("impersonate:arbitrary-node")},
+		)
 	})
 
 	t.Run("impersonating scheduled node", func(t *testing.T) {
@@ -1537,7 +1535,7 @@ func getAuditEvents(t *testing.T, logFilePath string) []testutils.AuditEvent {
 	return report.AllEvents
 }
 
-func assertImpersonationAuditEvents(t *testing.T, logFilePath, wantUser string, wantEvent testutils.AuditEvent) {
+func assertImpersonationAuditEvents(t *testing.T, logFilePath, wantUser string, wantEvents ...testutils.AuditEvent) {
 	t.Helper()
 
 	var matched []testutils.AuditEvent
@@ -1553,23 +1551,24 @@ func assertImpersonationAuditEvents(t *testing.T, logFilePath, wantUser string, 
 		}
 		matched = append(matched, event)
 	}
-	if len(matched) != 1 {
-		t.Fatalf("expected 1 audit event from user %q with impersonation, got %d: %v", wantUser, len(matched), matched)
+	if len(matched) != len(wantEvents) {
+		t.Fatalf("expected %d audit event(s) from user %q with impersonation, got %d: %v", len(wantEvents), wantUser, len(matched), matched)
 	}
-	event := matched[0]
-	got := testutils.AuditEvent{
-		Verb:                    event.Verb,
-		Code:                    event.Code,
-		StatusMessage:           event.StatusMessage,
-		ImpersonatedUser:        event.ImpersonatedUser,
-		ImpersonatedGroups:      event.ImpersonatedGroups,
-		Resource:                event.Resource,
-		Namespace:               event.Namespace,
-		AuthorizeDecision:       event.AuthorizeDecision,
-		ImpersonationConstraint: event.ImpersonationConstraint,
-	}
-	if diff := cmp.Diff(wantEvent, got); diff != "" {
-		t.Errorf("audit event mismatch (-want +got): %s", diff)
+	for i, event := range matched {
+		got := testutils.AuditEvent{
+			Verb:                    event.Verb,
+			Code:                    event.Code,
+			StatusMessage:           event.StatusMessage,
+			ImpersonatedUser:        event.ImpersonatedUser,
+			ImpersonatedGroups:      event.ImpersonatedGroups,
+			Resource:                event.Resource,
+			Namespace:               event.Namespace,
+			AuthorizeDecision:       event.AuthorizeDecision,
+			ImpersonationConstraint: event.ImpersonationConstraint,
+		}
+		if diff := cmp.Diff(wantEvents[i], got); len(diff) > 0 {
+			t.Errorf("audit event[%d] mismatch (-want +got): %s", i, diff)
+		}
 	}
 }
 
@@ -1667,14 +1666,10 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 		}
 
 		// legacy impersonation does not set AuthenticationMetadata
-		assertImpersonationAuditEvents(t, auditLogFile, "bob", testutils.AuditEvent{
-			Verb:               "list",
-			Code:               http.StatusOK,
-			ImpersonatedUser:   "alice",
-			ImpersonatedGroups: "system:authenticated",
-			Resource:           "pods",
-			AuthorizeDecision:  "allow",
-		})
+		assertImpersonationAuditEvents(t, auditLogFile, "bob",
+			testutils.AuditEvent{Verb: "list", Code: http.StatusForbidden, StatusMessage: `users "alice" is forbidden: User "bob" cannot impersonate resource "users" in API group "" at the cluster scope`, Resource: "pods"},
+			testutils.AuditEvent{Verb: "list", Code: http.StatusOK, ImpersonatedUser: "alice", ImpersonatedGroups: "system:authenticated", Resource: "pods", AuthorizeDecision: "allow"},
+		)
 	})
 
 	t.Run("serviceaccount impersonating a node", func(t *testing.T) {
@@ -1729,14 +1724,10 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 		}
 
 		// legacy impersonation does not set AuthenticationMetadata
-		assertImpersonationAuditEvents(t, auditLogFile, "system:serviceaccount:default:sa1", testutils.AuditEvent{
-			Verb:               "list",
-			Code:               http.StatusOK,
-			ImpersonatedUser:   "system:node:node1",
-			ImpersonatedGroups: "system:authenticated",
-			Resource:           "pods",
-			AuthorizeDecision:  "allow",
-		})
+		assertImpersonationAuditEvents(t, auditLogFile, "system:serviceaccount:default:sa1",
+			testutils.AuditEvent{Verb: "list", Code: http.StatusForbidden, StatusMessage: `users "system:node:node1" is forbidden: User "system:serviceaccount:default:sa1" cannot impersonate resource "users" in API group "" at the cluster scope`, Resource: "pods"},
+			testutils.AuditEvent{Verb: "list", Code: http.StatusOK, ImpersonatedUser: "system:node:node1", ImpersonatedGroups: "system:authenticated", Resource: "pods", AuthorizeDecision: "allow"},
+		)
 	})
 }
 
