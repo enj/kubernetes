@@ -1012,14 +1012,9 @@ func TestImpersonateWithUID(t *testing.T) {
 			t.Fatalf("CSR spec was different than expected, -got, +want:\n %s", diff)
 		}
 
-		assertImpersonationAuditEvents(t, auditLogFile, user.APIServerUser, testutils.AuditEvent{
-			Verb:               "create",
-			Code:               http.StatusCreated,
-			ImpersonatedUser:   "alice",
-			ImpersonatedGroups: "system:authenticated",
-			Resource:           "certificatesigningrequests",
-			AuthorizeDecision:  "allow",
-		})
+		assertImpersonationAuditEvents(t, auditLogFile, user.APIServerUser,
+			allowedImpersonationEvent("create", http.StatusCreated, "alice", "system:authenticated", "certificatesigningrequests", nil),
+		)
 	})
 
 	t.Run("impersonation with only UID fails", func(t *testing.T) {
@@ -1078,7 +1073,7 @@ func TestImpersonateWithUID(t *testing.T) {
 		}
 
 		assertImpersonationAuditEvents(t, auditLogFile, "system:anonymous",
-			testutils.AuditEvent{Verb: "list", Code: http.StatusForbidden, StatusMessage: `uids.authentication.k8s.io "1234" is forbidden: User "system:anonymous" cannot impersonate resource "uids" in API group "authentication.k8s.io" at the cluster scope`, Resource: "nodes"},
+			deniedImpersonationEvent("list", `uids.authentication.k8s.io "1234" is forbidden: User "system:anonymous" cannot impersonate resource "uids" in API group "authentication.k8s.io" at the cluster scope`, "nodes"),
 		)
 	})
 }
@@ -1214,10 +1209,10 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="user-info"} FP`,
 		})
 		assertImpersonationAuditEvents(t, auditLogFile, "bob",
-			testutils.AuditEvent{Verb: "list", Code: http.StatusForbidden, StatusMessage: `pods is forbidden: User "bob" cannot impersonate-on:user-info:list resource "pods" in API group "" at the cluster scope`, Resource: "pods"},
-			testutils.AuditEvent{Verb: "list", Code: http.StatusForbidden, StatusMessage: `pods is forbidden: User "bob" cannot impersonate-on:user-info:list resource "pods" in API group "" at the cluster scope`, Resource: "pods"},
-			testutils.AuditEvent{Verb: "list", Code: http.StatusOK, ImpersonatedUser: "alice", ImpersonatedGroups: "system:authenticated", Resource: "pods", AuthorizeDecision: "allow", ImpersonationConstraint: ptr.To("impersonate:user-info")},
-			testutils.AuditEvent{Verb: "watch", Code: http.StatusForbidden, StatusMessage: `pods is forbidden: User "bob" cannot impersonate-on:user-info:watch resource "pods" in API group "" at the cluster scope`, Resource: "pods"},
+			deniedImpersonationEvent("list", `pods is forbidden: User "bob" cannot impersonate-on:user-info:list resource "pods" in API group "" at the cluster scope`, "pods"),
+			deniedImpersonationEvent("list", `pods is forbidden: User "bob" cannot impersonate-on:user-info:list resource "pods" in API group "" at the cluster scope`, "pods"),
+			allowedImpersonationEvent("list", http.StatusOK, "alice", "system:authenticated", "pods", ptr.To("impersonate:user-info")),
+			deniedImpersonationEvent("watch", `pods is forbidden: User "bob" cannot impersonate-on:user-info:watch resource "pods" in API group "" at the cluster scope`, "pods"),
 		)
 	})
 
@@ -1298,9 +1293,9 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
 		})
 		assertImpersonationAuditEvents(t, auditLogFile, "bob",
-			testutils.AuditEvent{Verb: "list", Code: http.StatusForbidden, StatusMessage: `pods is forbidden: User "bob" cannot impersonate-on:arbitrary-node:list resource "pods" in API group "" at the cluster scope`, Resource: "pods"},
-			testutils.AuditEvent{Verb: "list", Code: http.StatusForbidden, StatusMessage: `nodes.authentication.k8s.io "node1" is forbidden: User "bob" cannot impersonate:arbitrary-node resource "nodes" in API group "authentication.k8s.io" at the cluster scope`, Resource: "pods"},
-			testutils.AuditEvent{Verb: "list", Code: http.StatusOK, ImpersonatedUser: "system:node:node1", ImpersonatedGroups: "system:authenticated,system:nodes", Resource: "pods", AuthorizeDecision: "allow", ImpersonationConstraint: ptr.To("impersonate:arbitrary-node")},
+			deniedImpersonationEvent("list", `pods is forbidden: User "bob" cannot impersonate-on:arbitrary-node:list resource "pods" in API group "" at the cluster scope`, "pods"),
+			deniedImpersonationEvent("list", `nodes.authentication.k8s.io "node1" is forbidden: User "bob" cannot impersonate:arbitrary-node resource "nodes" in API group "authentication.k8s.io" at the cluster scope`, "pods"),
+			allowedImpersonationEvent("list", http.StatusOK, "system:node:node1", "system:authenticated,system:nodes", "pods", ptr.To("impersonate:arbitrary-node")),
 		)
 	})
 
@@ -1377,15 +1372,9 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="arbitrary-node"} FP`,
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="legacy"} FP`,
 		})
-		assertImpersonationAuditEvents(t, auditLogFile, "system:serviceaccount:default:sa1", testutils.AuditEvent{
-			Verb:                    "list",
-			Code:                    200,
-			ImpersonatedUser:        "system:node:node1",
-			ImpersonatedGroups:      "system:authenticated,system:nodes",
-			Resource:                "pods",
-			AuthorizeDecision:       "allow",
-			ImpersonationConstraint: ptr.To("impersonate:associated-node"),
-		})
+		assertImpersonationAuditEvents(t, auditLogFile, "system:serviceaccount:default:sa1",
+			allowedImpersonationEvent("list", http.StatusOK, "system:node:node1", "system:authenticated,system:nodes", "pods", ptr.To("impersonate:associated-node")),
+		)
 	})
 
 	t.Run("fallback to legacy impersonation", func(t *testing.T) {
@@ -1426,14 +1415,9 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="user-info"} FP`,
 		})
 		// legacy impersonation does not set AuthenticationMetadata
-		assertImpersonationAuditEvents(t, auditLogFile, "bob", testutils.AuditEvent{
-			Verb:               "list",
-			Code:               http.StatusOK,
-			ImpersonatedUser:   "alice",
-			ImpersonatedGroups: "system:authenticated",
-			Resource:           "pods",
-			AuthorizeDecision:  "allow",
-		})
+		assertImpersonationAuditEvents(t, auditLogFile, "bob",
+			allowedImpersonationEvent("list", http.StatusOK, "alice", "system:authenticated", "pods", nil),
+		)
 	})
 }
 
@@ -1572,6 +1556,27 @@ func assertImpersonationAuditEvents(t *testing.T, logFilePath, wantUser string, 
 	}
 }
 
+func allowedImpersonationEvent(verb string, code int32, impersonatedUser, impersonatedGroups, resource string, constraint *string) testutils.AuditEvent {
+	return testutils.AuditEvent{
+		Verb:                    verb,
+		Code:                    code,
+		ImpersonatedUser:        impersonatedUser,
+		ImpersonatedGroups:      impersonatedGroups,
+		Resource:                resource,
+		AuthorizeDecision:       "allow",
+		ImpersonationConstraint: constraint,
+	}
+}
+
+func deniedImpersonationEvent(verb, statusMessage, resource string) testutils.AuditEvent {
+	return testutils.AuditEvent{
+		Verb:          verb,
+		Code:          http.StatusForbidden,
+		StatusMessage: statusMessage,
+		Resource:      resource,
+	}
+}
+
 // TestConstrainedImpersonationDisabled tests the impersonation behavior when the
 // ConstrainedImpersonation feature gate is disabled. In this mode, the legacy
 // impersonation behavior is expected, where a user only needs the "impersonate"
@@ -1667,8 +1672,8 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 
 		// legacy impersonation does not set AuthenticationMetadata
 		assertImpersonationAuditEvents(t, auditLogFile, "bob",
-			testutils.AuditEvent{Verb: "list", Code: http.StatusForbidden, StatusMessage: `users "alice" is forbidden: User "bob" cannot impersonate resource "users" in API group "" at the cluster scope`, Resource: "pods"},
-			testutils.AuditEvent{Verb: "list", Code: http.StatusOK, ImpersonatedUser: "alice", ImpersonatedGroups: "system:authenticated", Resource: "pods", AuthorizeDecision: "allow"},
+			deniedImpersonationEvent("list", `users "alice" is forbidden: User "bob" cannot impersonate resource "users" in API group "" at the cluster scope`, "pods"),
+			allowedImpersonationEvent("list", http.StatusOK, "alice", "system:authenticated", "pods", nil),
 		)
 	})
 
@@ -1725,8 +1730,8 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 
 		// legacy impersonation does not set AuthenticationMetadata
 		assertImpersonationAuditEvents(t, auditLogFile, "system:serviceaccount:default:sa1",
-			testutils.AuditEvent{Verb: "list", Code: http.StatusForbidden, StatusMessage: `users "system:node:node1" is forbidden: User "system:serviceaccount:default:sa1" cannot impersonate resource "users" in API group "" at the cluster scope`, Resource: "pods"},
-			testutils.AuditEvent{Verb: "list", Code: http.StatusOK, ImpersonatedUser: "system:node:node1", ImpersonatedGroups: "system:authenticated", Resource: "pods", AuthorizeDecision: "allow"},
+			deniedImpersonationEvent("list", `users "system:node:node1" is forbidden: User "system:serviceaccount:default:sa1" cannot impersonate resource "users" in API group "" at the cluster scope`, "pods"),
+			allowedImpersonationEvent("list", http.StatusOK, "system:node:node1", "system:authenticated", "pods", nil),
 		)
 	})
 }
