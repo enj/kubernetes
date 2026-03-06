@@ -1012,9 +1012,9 @@ func TestImpersonateWithUID(t *testing.T) {
 			t.Fatalf("CSR spec was different than expected, -got, +want:\n %s", diff)
 		}
 
-		assertImpersonationAuditEvents(t, auditLogFile, user.APIServerUser,
-			allowedImpersonationEvent("create", http.StatusCreated, "alice", "system:authenticated", "certificatesigningrequests", nil),
-		)
+		withUID := allowedImpersonationEvent("create", http.StatusCreated, "alice", "system:authenticated", "certificatesigningrequests", nil)
+		withUID.ImpersonatedUID = "1234"
+		assertImpersonationAuditEvents(t, auditLogFile, user.APIServerUser, withUID)
 	})
 
 	t.Run("impersonation with only UID fails", func(t *testing.T) {
@@ -1545,6 +1545,7 @@ func assertImpersonationAuditEvents(t *testing.T, logFilePath, wantUser string, 
 			Code:                    event.Code,
 			StatusMessage:           event.StatusMessage,
 			ImpersonatedUser:        event.ImpersonatedUser,
+			ImpersonatedUID:         event.ImpersonatedUID,
 			ImpersonatedGroups:      event.ImpersonatedGroups,
 			Resource:                event.Resource,
 			Namespace:               event.Namespace,

@@ -43,6 +43,7 @@ type AuditEvent struct {
 	StatusMessage      string
 	User               string
 	ImpersonatedUser   string
+	ImpersonatedUID    string
 	ImpersonatedGroups string
 	Resource           string
 	Namespace          string
@@ -162,6 +163,7 @@ func testEventFromInternalFiltered(e *auditinternal.Event, customAnnotationsFilt
 	}
 	if e.ImpersonatedUser != nil {
 		event.ImpersonatedUser = e.ImpersonatedUser.Username
+		event.ImpersonatedUID = e.ImpersonatedUser.UID
 		sort.Strings(e.ImpersonatedUser.Groups)
 		event.ImpersonatedGroups = strings.Join(e.ImpersonatedUser.Groups, ",")
 	}
