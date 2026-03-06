@@ -64,7 +64,9 @@ import (
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	unionauthz "k8s.io/apiserver/pkg/authorization/union"
+	genericrequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/features"
+	"k8s.io/apiserver/pkg/server"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	webhookutil "k8s.io/apiserver/pkg/util/webhook"
 	"k8s.io/apiserver/plugin/pkg/authenticator/token/webhook"
@@ -1112,6 +1114,9 @@ func TestConstrainedImpersonation(t *testing.T) {
 		},
 		ModifyServerConfig: func(config *controlplane.Config) {
 			config.ControlPlane.Generic.Authentication.Authenticator = authenticator
+			config.ControlPlane.Generic.RequestInfoResolver = &slowImpersonationRequests{
+				delegate: server.NewRequestInfoResolver(config.ControlPlane.Generic),
+			}
 		},
 	})
 	t.Cleanup(tearDownFn)
@@ -1513,7 +1518,9 @@ func getAuditEvents(t *testing.T, logFilePath string) []testutils.AuditEvent {
 		t.Fatalf("failed to open audit log: %v", err)
 	}
 	defer stream.Close()
-	report, err := testutils.CheckAuditLines(stream, nil, auditv1.SchemeGroupVersion)
+	report, err := testutils.CheckAuditLinesFiltered(stream, nil, auditv1.SchemeGroupVersion, func(_, _ string) bool {
+		return true // get all audit annotations
+	})
 	if err != nil {
 		t.Fatalf("failed to parse audit log: %v", err)
 	}
@@ -1555,6 +1562,12 @@ func assertImpersonationAuditEvents(t *testing.T, logFilePath, wantUser string, 
 		if diff := cmp.Diff(wantEvents[i], got); len(diff) > 0 {
 			t.Errorf("audit event[%d] mismatch (-want +got): %s", i, diff)
 		}
+		if utilfeature.DefaultFeatureGate.Enabled(features.ConstrainedImpersonation) {
+			latency := event.CustomAuditAnnotations["apiserver.latency.k8s.io/impersonation"]
+			if matched, _ := regexp.MatchString("^[0-9.]+[µnm]s$", latency); !matched {
+				t.Errorf("audit event[%d] expected valid impersonation latency annotation, got %q", i, latency)
+			}
+		}
 	}
 }
 
@@ -1577,6 +1590,17 @@ func deniedImpersonationEvent(verb, statusMessage, resource string) testutils.Au
 		StatusMessage: statusMessage,
 		Resource:      resource,
 	}
+}
+
+type slowImpersonationRequests struct {
+	delegate genericrequest.RequestInfoResolver
+}
+
+func (s *slowImpersonationRequests) NewRequestInfo(req *http.Request) (*genericrequest.RequestInfo, error) {
+	if len(req.Header.Get(authenticationv1.ImpersonateUserHeader)) > 0 {
+		time.Sleep(time.Second) // force latency audit annotations to be emitted for impersonation requests
+	}
+	return s.delegate.NewRequestInfo(req)
 }
 
 // TestConstrainedImpersonationDisabled tests the impersonation behavior when the
