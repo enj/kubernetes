@@ -938,6 +938,7 @@ func TestImpersonateIsForbidden(t *testing.T) {
 			}
 		}()
 	}
+
 }
 
 func TestImpersonateWithUID(t *testing.T) {
@@ -1420,7 +1421,6 @@ func TestConstrainedImpersonation(t *testing.T) {
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="allowed",mode="legacy"} FP`,
 			`apiserver_impersonation_authorization_attempts_duration_seconds_sum{decision="denied",mode="user-info"} FP`,
 		})
-		// legacy impersonation does not set AuthenticationMetadata
 		assertImpersonationAuditEvents(t, auditLogFile, "bob",
 			allowedImpersonationEvent("list", http.StatusOK, "alice", "system:authenticated", "pods", nil),
 		)
@@ -1696,7 +1696,6 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 			t.Fatalf("expected no error, got %T %v", err, err)
 		}
 
-		// legacy impersonation does not set AuthenticationMetadata
 		assertImpersonationAuditEvents(t, auditLogFile, "bob",
 			deniedImpersonationEvent("list", `users "alice" is forbidden: User "bob" cannot impersonate resource "users" in API group "" at the cluster scope`, "pods"),
 			allowedImpersonationEvent("list", http.StatusOK, "alice", "system:authenticated", "pods", nil),
@@ -1754,7 +1753,6 @@ func TestConstrainedImpersonationDisabled(t *testing.T) {
 			t.Fatalf("expected no error, got %T %v", err, err)
 		}
 
-		// legacy impersonation does not set AuthenticationMetadata
 		assertImpersonationAuditEvents(t, auditLogFile, "system:serviceaccount:default:sa1",
 			deniedImpersonationEvent("list", `users "system:node:node1" is forbidden: User "system:serviceaccount:default:sa1" cannot impersonate resource "users" in API group "" at the cluster scope`, "pods"),
 			allowedImpersonationEvent("list", http.StatusOK, "system:node:node1", "system:authenticated", "pods", nil),

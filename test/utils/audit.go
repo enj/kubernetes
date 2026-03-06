@@ -34,26 +34,23 @@ import (
 
 // AuditEvent is a simplified representation of an audit event for testing purposes
 type AuditEvent struct {
-	ID                 types.UID
-	Level              auditinternal.Level
-	Stage              auditinternal.Stage
-	RequestURI         string
-	Verb               string
-	Code               int32
-	StatusMessage      string
-	User               string
-	ImpersonatedUser   string
-	ImpersonatedUID    string
-	ImpersonatedGroups string
-	Resource           string
-	Namespace          string
-	RequestObject      bool
-	ResponseObject     bool
-	AuthorizeDecision  string
-
-	// ImpersonationConstraint is the constraint from AuthenticationMetadata.
-	// nil when AuthenticationMetadata is not set (legacy impersonation or no impersonation).
+	ID                      types.UID
+	Level                   auditinternal.Level
+	Stage                   auditinternal.Stage
+	RequestURI              string
+	Verb                    string
+	Code                    int32
+	StatusMessage           string
+	User                    string
+	ImpersonatedUser        string
+	ImpersonatedUID         string
+	ImpersonatedGroups      string
 	ImpersonationConstraint *string
+	Resource                string
+	Namespace               string
+	RequestObject           bool
+	ResponseObject          bool
+	AuthorizeDecision       string
 
 	// The Check functions in this package takes ownerships of these maps. You should
 	// not reference these maps after calling the Check functions.
