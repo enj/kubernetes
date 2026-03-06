@@ -328,16 +328,28 @@ func (c *constrainedImpersonationTest) assertAuditEvents(r testRequest) {
 	events := c.auditEvents
 	c.auditEvents = nil
 
-	require.Len(c.t, events, 2) // RequestReceived and ResponseComplete
+	require.Len(c.t, events, 2)
 
-	require.Empty(c.t, events[0].Annotations["apiserver.latency.k8s.io/impersonation"])
-	require.Regexp(c.t, "^[0-9.]+[µnm]s$", events[1].Annotations["apiserver.latency.k8s.io/impersonation"])
+	requestReceived := events[0]
+	responseComplete := events[1]
 
-	require.Nil(c.t, events[0].ImpersonatedUser)
-	require.Equal(c.t, r.expectedImpersonatedUser, comparableAuditUser(events[1].ImpersonatedUser))
+	require.Empty(c.t, requestReceived.Annotations["apiserver.latency.k8s.io/impersonation"])
+	require.Regexp(c.t, "^[0-9.]+[µnm]s$", responseComplete.Annotations["apiserver.latency.k8s.io/impersonation"])
 
-	require.Nil(c.t, events[0].ResponseStatus)
-	require.Equal(c.t, r.expectedMessage, events[1].ResponseStatus.Message)
+	require.Nil(c.t, requestReceived.ImpersonatedUser)
+	require.Equal(c.t, r.expectedImpersonatedUser, comparableAuditUser(responseComplete.ImpersonatedUser))
+
+	require.Nil(c.t, requestReceived.ResponseStatus)
+	require.Equal(c.t, r.expectedMessage, responseComplete.ResponseStatus.Message)
+
+	require.Nil(c.t, requestReceived.AuthenticationMetadata)
+	var expectedAuthenticationMetadata *auditinternal.AuthenticationMetadata
+	if r.expectedCode == http.StatusOK && r.expectedAttemptMode != "legacy" {
+		expectedAuthenticationMetadata = &auditinternal.AuthenticationMetadata{
+			ImpersonationConstraint: "impersonate:" + r.expectedAttemptMode,
+		}
+	}
+	require.Equal(c.t, expectedAuthenticationMetadata, responseComplete.AuthenticationMetadata)
 }
 
 func (c *constrainedImpersonationTest) assertCache(r testRequest) {
