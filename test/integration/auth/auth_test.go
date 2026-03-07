@@ -1014,7 +1014,7 @@ func TestImpersonateWithUID(t *testing.T) {
 			t.Fatalf("CSR spec was different than expected, -got, +want:\n %s", diff)
 		}
 
-		withUID := allowedImpersonationEvent("create", http.StatusCreated, "alice", "system:authenticated", "certificatesigningrequests", nil)
+		withUID := allowedImpersonationEvent("create", http.StatusCreated, "alice", "system:authenticated", "certificatesigningrequests", ptr.To("impersonate:user-info"))
 		withUID.ImpersonatedUID = "1234"
 		assertImpersonationAuditEvents(t, auditLogFile, user.APIServerUser, withUID)
 	})
@@ -1032,7 +1032,7 @@ func TestImpersonateWithUID(t *testing.T) {
 			t.Fatalf("expected bad request, got %T %v", err, err)
 		}
 		if diff := cmp.Diff(
-			`requested [{UID  1234  authentication.k8s.io/v1  }] without impersonating a user`,
+			`requested &user.DefaultInfo{Name:"", UID:"1234", Groups:[]string(nil), Extra:map[string][]string(nil)} without impersonating a user name`,
 			err.Error(),
 		); diff != "" {
 			t.Fatalf("bad request different than expected, -got, +want:\n %s", diff)
@@ -1045,10 +1045,17 @@ func TestImpersonateWithUID(t *testing.T) {
 
 		authutil.GrantUserAuthorization(t, ctx, adminClient, "system:anonymous",
 			rbacv1.PolicyRule{
-				Verbs:         []string{"impersonate"},
-				APIGroups:     []string{""},
+				Verbs:         []string{"impersonate:user-info"},
+				APIGroups:     []string{"authentication.k8s.io"},
 				Resources:     []string{"users"},
 				ResourceNames: []string{"some-user-anonymous-can-impersonate"},
+			},
+		)
+		authutil.GrantUserAuthorization(t, ctx, adminClient, "system:anonymous",
+			rbacv1.PolicyRule{
+				Verbs:     []string{"impersonate-on:user-info:list"},
+				APIGroups: []string{""},
+				Resources: []string{"nodes"},
 			},
 		)
 
@@ -1066,14 +1073,14 @@ func TestImpersonateWithUID(t *testing.T) {
 		}
 		if diff := cmp.Diff(
 			`uids.authentication.k8s.io "1234" is forbidden: `+
-				`User "system:anonymous" cannot impersonate resource "uids" in API group "authentication.k8s.io" at the cluster scope`,
+				`User "system:anonymous" cannot impersonate:user-info resource "uids" in API group "authentication.k8s.io" at the cluster scope`,
 			err.Error(),
 		); diff != "" {
 			t.Fatalf("forbidden error different than expected, -got, +want:\n %s", diff)
 		}
 
 		assertImpersonationAuditEvents(t, auditLogFile, "system:anonymous",
-			deniedImpersonationEvent("list", `uids.authentication.k8s.io "1234" is forbidden: User "system:anonymous" cannot impersonate resource "uids" in API group "authentication.k8s.io" at the cluster scope`, "nodes"),
+			deniedImpersonationEvent("list", `uids.authentication.k8s.io "1234" is forbidden: User "system:anonymous" cannot impersonate:user-info resource "uids" in API group "authentication.k8s.io" at the cluster scope`, "nodes"),
 		)
 	})
 }
@@ -1567,7 +1574,8 @@ func assertImpersonationAuditEvents(t *testing.T, logFilePath, wantUser string, 
 		if diff := cmp.Diff(wantEvents[i], got); len(diff) > 0 {
 			t.Errorf("audit event[%d] mismatch (-want +got): %s", i, diff)
 		}
-		if event.Verb != "watch" && utilfeature.DefaultFeatureGate.Enabled(features.ConstrainedImpersonation) {
+		if event.Verb != "watch" && utilfeature.DefaultFeatureGate.Enabled(features.ConstrainedImpersonation) &&
+			!strings.HasPrefix(t.Name(), "TestImpersonateWithUID/") { // cannot use slowImpersonationRequests with that test
 			latency := event.CustomAuditAnnotations["apiserver.latency.k8s.io/impersonation"]
 			if !latencyPattern.MatchString(latency) {
 				t.Errorf("audit event[%d] expected valid impersonation latency annotation, got %q", i, latency)
