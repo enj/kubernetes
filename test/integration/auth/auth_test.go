@@ -1014,9 +1014,9 @@ func TestImpersonateWithUID(t *testing.T) {
 			t.Fatalf("CSR spec was different than expected, -got, +want:\n %s", diff)
 		}
 
-		withUID := allowedImpersonationEvent("create", http.StatusCreated, "alice", "system:authenticated", "certificatesigningrequests", ptr.To("impersonate:user-info"))
+		withUID := allowedImpersonationEvent("create", http.StatusCreated, "alice", "system:authenticated", "certificatesigningrequests", new("impersonate:user-info"))
 		withUID.ImpersonatedUID = "1234"
-		assertImpersonationAuditEvents(t, auditLogFile, user.APIServerUser, withUID)
+		assertImpersonationAuditEventsNoLatency(t, auditLogFile, user.APIServerUser, withUID)
 	})
 
 	t.Run("impersonation with only UID fails", func(t *testing.T) {
@@ -1079,7 +1079,7 @@ func TestImpersonateWithUID(t *testing.T) {
 			t.Fatalf("forbidden error different than expected, -got, +want:\n %s", diff)
 		}
 
-		assertImpersonationAuditEvents(t, auditLogFile, "system:anonymous",
+		assertImpersonationAuditEventsNoLatency(t, auditLogFile, "system:anonymous",
 			deniedImpersonationEvent("list", `uids.authentication.k8s.io "1234" is forbidden: User "system:anonymous" cannot impersonate:user-info resource "uids" in API group "authentication.k8s.io" at the cluster scope`, "nodes"),
 		)
 	})
@@ -1539,6 +1539,16 @@ func getAuditEvents(t *testing.T, logFilePath string) []testutils.AuditEvent {
 
 func assertImpersonationAuditEvents(t *testing.T, logFilePath, wantUser string, wantEvents ...testutils.AuditEvent) {
 	t.Helper()
+	doAssertImpersonationAuditEvents(t, logFilePath, wantUser, false, wantEvents...)
+}
+
+func assertImpersonationAuditEventsNoLatency(t *testing.T, logFilePath, wantUser string, wantEvents ...testutils.AuditEvent) {
+	t.Helper()
+	doAssertImpersonationAuditEvents(t, logFilePath, wantUser, true, wantEvents...)
+}
+
+func doAssertImpersonationAuditEvents(t *testing.T, logFilePath, wantUser string, skipLatency bool, wantEvents ...testutils.AuditEvent) {
+	t.Helper()
 
 	latencyPattern := regexp.MustCompile("^[0-9.]+[µnm]s$")
 
@@ -1574,8 +1584,7 @@ func assertImpersonationAuditEvents(t *testing.T, logFilePath, wantUser string, 
 		if diff := cmp.Diff(wantEvents[i], got); len(diff) > 0 {
 			t.Errorf("audit event[%d] mismatch (-want +got): %s", i, diff)
 		}
-		if event.Verb != "watch" && utilfeature.DefaultFeatureGate.Enabled(features.ConstrainedImpersonation) &&
-			!strings.HasPrefix(t.Name(), "TestImpersonateWithUID/") { // cannot use slowImpersonationRequests with that test
+		if !skipLatency && event.Verb != "watch" && utilfeature.DefaultFeatureGate.Enabled(features.ConstrainedImpersonation) {
 			latency := event.CustomAuditAnnotations["apiserver.latency.k8s.io/impersonation"]
 			if !latencyPattern.MatchString(latency) {
 				t.Errorf("audit event[%d] expected valid impersonation latency annotation, got %q", i, latency)
