@@ -40,33 +40,30 @@ import (
 func generateTestCerts(t *testing.T, tempDir, serverName string) (caCertPath, serverCertPath, serverKeyPath, clientCertPath, clientKeyPath string) {
 	t.Helper()
 
-	// Generate CA
 	caKey, err := testutils.NewPrivateKey()
-	require.NoError(t, err)
+	require.NoError(t, err, "Failed to generate CA key")
 	caCert, err := certutil.NewSelfSignedCACert(certutil.Config{CommonName: "Test CA"}, caKey)
-	require.NoError(t, err)
+	require.NoError(t, err, "Failed to create CA certificate")
 	caCertPath = filepath.Join(tempDir, "ca.crt")
-	require.NoError(t, os.WriteFile(caCertPath, testutils.EncodeCertPEM(caCert), 0600))
+	require.NoError(t, os.WriteFile(caCertPath, testutils.EncodeCertPEM(caCert), 0600), "Failed to write CA cert")
 
-	// Generate server cert
 	serverKey, err := testutils.NewPrivateKey()
-	require.NoError(t, err)
+	require.NoError(t, err, "Failed to generate server key")
 	serverCert, err := testutils.NewSignedCert(&certutil.Config{
 		CommonName: serverName,
 		AltNames:   certutil.AltNames{DNSNames: []string{serverName}},
 		Usages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}, serverKey, caCert, caKey)
-	require.NoError(t, err)
+	require.NoError(t, err, "Failed to create server certificate")
 	serverCertPath, serverKeyPath = writeCertAndKey(t, tempDir, "server", serverCert, serverKey)
 
-	// Generate client cert
 	clientKey, err := testutils.NewPrivateKey()
-	require.NoError(t, err)
+	require.NoError(t, err, "Failed to generate client key")
 	clientCert, err := testutils.NewSignedCert(&certutil.Config{
 		CommonName: "test-client",
 		Usages:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}, clientKey, caCert, caKey)
-	require.NoError(t, err)
+	require.NoError(t, err, "Failed to create client certificate")
 	clientCertPath, clientKeyPath = writeCertAndKey(t, tempDir, "client", clientCert, clientKey)
 
 	return caCertPath, serverCertPath, serverKeyPath, clientCertPath, clientKeyPath
@@ -232,13 +229,8 @@ jwt:
 				sni = *ptr
 			}
 
-			if sni != tc.expectedSNI {
-				t.Errorf("expected SNI=%q, got=%q", tc.expectedSNI, sni)
-			}
-
-			if tc.expectProxyCalled != proxyCalled.Load() {
-				t.Errorf("expected proxy called=%v, got=%v", tc.expectProxyCalled, proxyCalled.Load())
-			}
+			require.Equal(t, tc.expectedSNI, sni, "SNI mismatch")
+			require.Equal(t, tc.expectProxyCalled, proxyCalled.Load(), "proxy called mismatch")
 		})
 	}
 }
