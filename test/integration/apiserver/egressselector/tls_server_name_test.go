@@ -17,6 +17,7 @@ limitations under the License.
 package egressselector
 
 import (
+	"crypto"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -39,83 +40,71 @@ import (
 func generateTestCerts(t *testing.T, tempDir, serverName string) (caCertPath, serverCertPath, serverKeyPath, clientCertPath, clientKeyPath string) {
 	t.Helper()
 
+	// Generate CA
 	caKey, err := testutils.NewPrivateKey()
-	require.NoError(t, err, "Failed to generate CA key")
+	require.NoError(t, err)
+	caCert, err := certutil.NewSelfSignedCACert(certutil.Config{CommonName: "Test CA"}, caKey)
+	require.NoError(t, err)
+	caCertPath = filepath.Join(tempDir, "ca.crt")
+	require.NoError(t, os.WriteFile(caCertPath, testutils.EncodeCertPEM(caCert), 0600))
 
-	caCert, err := certutil.NewSelfSignedCACert(certutil.Config{
-		CommonName: "Test CA",
-	}, caKey)
-	require.NoError(t, err, "Failed to create CA certificate")
-
+	// Generate server cert
 	serverKey, err := testutils.NewPrivateKey()
-	require.NoError(t, err, "Failed to generate server key")
-
+	require.NoError(t, err)
 	serverCert, err := testutils.NewSignedCert(&certutil.Config{
 		CommonName: serverName,
 		AltNames:   certutil.AltNames{DNSNames: []string{serverName}},
 		Usages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}, serverKey, caCert, caKey)
-	require.NoError(t, err, "Failed to create server certificate")
+	require.NoError(t, err)
+	serverCertPath, serverKeyPath = writeCertAndKey(t, tempDir, "server", serverCert, serverKey)
 
+	// Generate client cert
 	clientKey, err := testutils.NewPrivateKey()
-	require.NoError(t, err, "Failed to generate client key")
-
+	require.NoError(t, err)
 	clientCert, err := testutils.NewSignedCert(&certutil.Config{
 		CommonName: "test-client",
 		Usages:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}, clientKey, caCert, caKey)
-	require.NoError(t, err, "Failed to create client certificate")
-
-	caCertPath = filepath.Join(tempDir, "ca.crt")
-	require.NoError(t, os.WriteFile(caCertPath, testutils.EncodeCertPEM(caCert), 0600), "Failed to write CA cert")
-
-	serverCertPath = filepath.Join(tempDir, "server.crt")
-	serverKeyPath = filepath.Join(tempDir, "server.key")
-	require.NoError(t, os.WriteFile(serverCertPath, testutils.EncodeCertPEM(serverCert), 0600), "Failed to write server cert")
-
-	serverKeyPEM, err := keyutil.MarshalPrivateKeyToPEM(serverKey)
-	require.NoError(t, err, "Failed to marshal server key")
-	require.NoError(t, os.WriteFile(serverKeyPath, serverKeyPEM, 0600), "Failed to write server key")
-
-	clientCertPath = filepath.Join(tempDir, "client.crt")
-	clientKeyPath = filepath.Join(tempDir, "client.key")
-	require.NoError(t, os.WriteFile(clientCertPath, testutils.EncodeCertPEM(clientCert), 0600), "Failed to write client cert")
-
-	clientKeyPEM, err := keyutil.MarshalPrivateKeyToPEM(clientKey)
-	require.NoError(t, err, "Failed to marshal client key")
-	require.NoError(t, os.WriteFile(clientKeyPath, clientKeyPEM, 0600), "Failed to write client key")
+	require.NoError(t, err)
+	clientCertPath, clientKeyPath = writeCertAndKey(t, tempDir, "client", clientCert, clientKey)
 
 	return caCertPath, serverCertPath, serverKeyPath, clientCertPath, clientKeyPath
 }
 
+func writeCertAndKey(t *testing.T, dir, name string, cert *x509.Certificate, key crypto.Signer) (certPath, keyPath string) {
+	t.Helper()
+	certPath = filepath.Join(dir, name+".crt")
+	keyPath = filepath.Join(dir, name+".key")
+	require.NoError(t, os.WriteFile(certPath, testutils.EncodeCertPEM(cert), 0600))
+	keyPEM, err := keyutil.MarshalPrivateKeyToPEM(key)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(keyPath, keyPEM, 0600))
+	return certPath, keyPath
+}
+
 // runTLSEgressProxy runs an HTTP CONNECT proxy with TLS.
-func runTLSEgressProxy(t *testing.T, serverCertPath, serverKeyPath, caCertPath string, called *atomic.Bool, observedSNI *atomic.Value) (string, error) {
+func runTLSEgressProxy(t *testing.T, serverCertPath, serverKeyPath, caCertPath string, called *atomic.Bool, observedSNI *atomic.Pointer[string]) string {
 	t.Helper()
 
 	serverCert, err := tls.LoadX509KeyPair(serverCertPath, serverKeyPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to load server cert: %w", err)
-	}
+	require.NoError(t, err, "Failed to load server cert")
 
 	clientCAs, err := certutil.NewPool(caCertPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to load CA cert pool: %w", err)
-	}
+	require.NoError(t, err, "Failed to load CA cert pool")
 
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{serverCert},
 		ClientAuth:   tls.RequireAndVerifyClientCert,
 		ClientCAs:    clientCAs,
 		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
-			observedSNI.Store(hello.ServerName)
+			observedSNI.Store(&hello.ServerName)
 			return nil, nil
 		},
 	}
 
 	listener, err := tls.Listen("tcp", "127.0.0.1:0", tlsConfig)
-	if err != nil {
-		return "", fmt.Errorf("failed to start TLS listener: %w", err)
-	}
+	require.NoError(t, err, "Failed to start TLS listener")
 
 	proxyAddr := listener.Addr().String()
 
@@ -133,7 +122,7 @@ func runTLSEgressProxy(t *testing.T, serverCertPath, serverKeyPath, caCertPath s
 		}
 	})
 
-	return proxyAddr, nil
+	return proxyAddr
 }
 
 // TestTLSServerName verifies that the tlsServerName field in the egress selector configuration
@@ -178,10 +167,9 @@ func TestTLSServerName(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			var proxyCalled atomic.Bool
-			var observedSNI atomic.Value
+			var observedSNI atomic.Pointer[string]
 
-			proxyAddr, err := runTLSEgressProxy(t, serverCertPath, serverKeyPath, caCertPath, &proxyCalled, &observedSNI)
-			require.NoError(t, err, "Failed to start TLS egress proxy")
+			proxyAddr := runTLSEgressProxy(t, serverCertPath, serverKeyPath, caCertPath, &proxyCalled, &observedSNI)
 			t.Logf("TLS egress proxy ready at %s (cert issued for: %s)", proxyAddr, proxyHostname)
 
 			caCertContent, _, caFilePath, caKeyFilePath := oidc.GenerateCert(t)
@@ -235,9 +223,16 @@ jwt:
 			)
 			t.Cleanup(server.TearDownFn)
 
+			// Mock OIDC server's JWKS endpoint, API server is configured with OIDC
+			// authentication and will fetch the key set during initialization.
 			oidcServer.JwksHandler().EXPECT().KeySet().RunAndReturn(oidc.DefaultJwksHandlerBehavior(t, publicKey)).Maybe()
 
-			if sni, _ := observedSNI.Load().(string); sni != tc.expectedSNI {
+			sni := ""
+			if ptr := observedSNI.Load(); ptr != nil {
+				sni = *ptr
+			}
+
+			if sni != tc.expectedSNI {
 				t.Errorf("expected SNI=%q, got=%q", tc.expectedSNI, sni)
 			}
 

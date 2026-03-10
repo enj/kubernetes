@@ -312,3 +312,4 @@ func WriteTempFile(t *testing.T, content string) string {
 func IndentCertificateAuthority(caCert string) string {
 	return strings.ReplaceAll(caCert, "\n", "\n        ")
 }
+
