@@ -29,6 +29,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"weak"
 
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientgofeaturegate "k8s.io/client-go/features"
@@ -242,7 +243,7 @@ func TestTLSConfigKeyCARotationDisabled(t *testing.T) {
 // or the original RoundTripper if it is not a cachedTransport.
 func unwrapCachedTransport(rt http.RoundTripper) http.RoundTripper {
 	if ct, ok := rt.(*cachedTransport); ok {
-		return ct.RoundTripper
+		return ct.WrappedRoundTripper()
 	}
 	return rt
 }
@@ -250,7 +251,8 @@ func unwrapCachedTransport(rt http.RoundTripper) http.RoundTripper {
 // newTestTLSTransportCache creates a new tlsTransportCache for testing.
 func newTestTLSTransportCache() *tlsTransportCache {
 	return &tlsTransportCache{
-		transports: make(map[tlsCacheKey]cacheEntry),
+		transports:       make(map[tlsCacheKey]weak.Pointer[cachedTransport]),
+		strongTransports: make(map[tlsCacheKey]*cachedTransport),
 	}
 }
 
@@ -352,7 +354,7 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 
 			// Verify cache size
 			tlsCaches.mu.Lock()
-			cacheSize := len(tlsCaches.transports)
+			cacheSize := tlsCaches.lenLocked()
 			tlsCaches.mu.Unlock()
 
 			expectedCacheSize := 1
@@ -510,7 +512,7 @@ func cacheLen(c *tlsTransportCache) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	return len(c.transports)
+	return c.lenLocked()
 }
 
 func pollCacheSizeWithGC(t *testing.T, c *tlsTransportCache, want int) {
