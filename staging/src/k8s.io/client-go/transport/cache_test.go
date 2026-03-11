@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -452,30 +453,54 @@ func TestEmptyCAFileRotationLifecycle(t *testing.T) {
 // cachedTransport wrapper, not the inner transport that the caller holds.
 func TestCacheUnwrapBug(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
+	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowCARotation, true)
 
-	pollCacheSizeWithGC(t, tlsCache, 0) // clean start
-
-	rt, err := New(&Config{TLS: TLSConfig{ServerName: "unwrap-test"}})
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name      string
+		config    *Config
+		innerType string
+	}{
+		{
+			name:      "inner is *http.Transport",
+			config:    &Config{TLS: TLSConfig{ServerName: "unwrap-test-plain"}},
+			innerType: "*http.Transport",
+		},
+		{
+			name:      "inner is *atomicTransportHolder",
+			config:    &Config{TLS: TLSConfig{ServerName: "unwrap-test-ca", CAFile: writeCAFile(t, []byte(testCACert1))}},
+			innerType: "*transport.atomicTransportHolder",
+		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pollCacheSizeWithGC(t, tlsCache, 0) // clean start
 
-	requireCacheLen(t, tlsCache, 1)
+			rt, err := New(tt.config)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	// Unwrap to get the inner *http.Transport, simulating what a caller
-	// that uses utilnet.RoundTripperWrapper would do.
-	inner := unwrapCachedTransport(rt)
+			requireCacheLen(t, tlsCache, 1)
 
-	// Drop the only reference to the cachedTransport wrapper.
-	// The caller still has `inner` (the real *http.Transport) alive.
-	rt = nil //nolint:ineffassign
+			// Unwrap to get the inner transport, simulating what a caller
+			// that uses utilnet.RoundTripperWrapper would do.
+			inner := rt.(*cachedTransport).WrappedRoundTripper()
+			if got := fmt.Sprintf("%T", inner); got != tt.innerType {
+				t.Fatalf("expected inner type %s, got %s", tt.innerType, got)
+			}
 
-	// The cache entry should survive because the caller is still using the
-	// transport. But because the weak pointer tracks the cachedTransport
-	// wrapper (which is now unreachable), the entry gets collected.
-	pollCacheSizeWithGC(t, tlsCache, 0) // BUG: this should be 1, not 0
+			// Drop the only reference to the cachedTransport wrapper.
+			// The caller still has `inner` (the real transport) alive.
+			rt = nil //nolint:ineffassign
 
-	runtime.KeepAlive(inner) // inner is still alive — the caller is using it
+			// The cache entry should survive because the caller is still using the
+			// transport. But because the weak pointer tracks the cachedTransport
+			// wrapper (which is now unreachable), the entry gets collected.
+			pollCacheSizeWithGC(t, tlsCache, 0) // BUG: this should be 1, not 0
+
+			runtime.KeepAlive(inner) // inner is still alive — the caller is using it
+		})
+	}
 }
 
 func TestCacheLeak(t *testing.T) {
