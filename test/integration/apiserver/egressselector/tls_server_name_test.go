@@ -17,6 +17,7 @@ limitations under the License.
 package egressselector
 
 import (
+	"context"
 	"crypto"
 	"crypto/tls"
 	"crypto/x509"
@@ -26,15 +27,17 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"k8s.io/apimachinery/pkg/util/wait"
 	certutil "k8s.io/client-go/util/cert"
 	"k8s.io/client-go/util/keyutil"
 	kubeapiserverapptesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
 	"k8s.io/kubernetes/test/integration/framework"
 	testutils "k8s.io/kubernetes/test/utils"
-	"k8s.io/kubernetes/test/utils/oidc"
+	utilsoidc "k8s.io/kubernetes/test/utils/oidc"
 )
 
 func generateTestCerts(t *testing.T, tempDir, serverName string) (caCertPath, serverCertPath, serverKeyPath, clientCertPath, clientKeyPath string) {
@@ -105,7 +108,7 @@ func runTLSEgressProxy(t *testing.T, serverCertPath, serverKeyPath, caCertPath s
 
 	proxyAddr := listener.Addr().String()
 
-	server := &http.Server{Handler: oidc.NewHTTPConnectProxyHandler(t, called)}
+	server := &http.Server{Handler: utilsoidc.NewHTTPConnectProxyHandler(t, called)}
 
 	go func() {
 		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
@@ -169,10 +172,6 @@ func TestTLSServerName(t *testing.T) {
 			proxyAddr := runTLSEgressProxy(t, serverCertPath, serverKeyPath, caCertPath, &proxyCalled, &observedSNI)
 			t.Logf("TLS egress proxy ready at %s (cert issued for: %s)", proxyAddr, proxyHostname)
 
-			caCertContent, _, caFilePath, caKeyFilePath := oidc.GenerateCert(t)
-			_, publicKey := oidc.RSAGenerateKey(t)
-			oidcServer := oidc.BuildAndRunTestServer(t, caFilePath, caKeyFilePath, "")
-
 			egressConfig := fmt.Sprintf(`
 apiVersion: apiserver.k8s.io/v1beta1
 kind: EgressSelectorConfiguration
@@ -190,45 +189,42 @@ egressSelections:
           tlsServerName: %s
 `, proxyAddr, caCertPath, clientCertPath, clientKeyPath, tc.tlsServerName)
 
-			authenticationConfig := fmt.Sprintf(`
+			const authenticationConfigWithEgress = `
 apiVersion: apiserver.config.k8s.io/v1
 kind: AuthenticationConfiguration
 jwt:
 - issuer:
-    url: %s
+    url: https://panda.snorlax
     audiences:
     - foo
-    certificateAuthority: |
-        %s
     egressSelectorType: cluster
   claimMappings:
     username:
       expression: "'test-' + claims.sub"
-`, oidcServer.URL(), oidc.IndentCertificateAuthority(string(caCertContent)))
-
-			customFlags := []string{
-				fmt.Sprintf("--egress-selector-config-file=%s", oidc.WriteTempFile(t, egressConfig)),
-				fmt.Sprintf("--authentication-config=%s", oidc.WriteTempFile(t, authenticationConfig)),
-				"--authorization-mode=RBAC",
-			}
+`
 
 			server := kubeapiserverapptesting.StartTestServerOrDie(
 				t,
 				kubeapiserverapptesting.NewDefaultTestServerOptions(),
-				customFlags,
+				[]string{
+					fmt.Sprintf("--egress-selector-config-file=%s", utilsoidc.WriteTempFile(t, egressConfig)),
+					fmt.Sprintf("--authentication-config=%s", utilsoidc.WriteTempFile(t, authenticationConfigWithEgress)),
+				},
 				framework.SharedEtcd(),
 			)
 			t.Cleanup(server.TearDownFn)
 
-			// Mock OIDC server's JWKS endpoint, API server is configured with OIDC
-			// authentication and will fetch the key set during initialization.
-			oidcServer.JwksHandler().EXPECT().KeySet().RunAndReturn(oidc.DefaultJwksHandlerBehavior(t, publicKey)).Maybe()
-
-			sni := ""
-			if ptr := observedSNI.Load(); ptr != nil {
-				sni = *ptr
-			}
-
+			var sni string
+			err := wait.PollUntilContextTimeout(t.Context(), time.Second, wait.ForeverTestTimeout, true,
+				func(ctx context.Context) (done bool, err error) {
+					if ptr := observedSNI.Load(); ptr != nil {
+						sni = *ptr
+						return true, nil
+					}
+					return false, nil
+				},
+			)
+			require.NoError(t, err, "SNI not observed")
 			require.Equal(t, tc.expectedSNI, sni, "SNI mismatch")
 			require.Equal(t, tc.expectProxyCalled, proxyCalled.Load(), "proxy called mismatch")
 		})
