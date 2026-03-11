@@ -247,6 +247,13 @@ func unwrapCachedTransport(rt http.RoundTripper) http.RoundTripper {
 	return rt
 }
 
+// newTestTLSTransportCache creates a new tlsTransportCache for testing.
+func newTestTLSTransportCache() *tlsTransportCache {
+	return &tlsTransportCache{
+		transports: make(map[tlsCacheKey]cacheEntry),
+	}
+}
+
 // TestTLSTransportCacheCARotation tests transport cache behavior with CA rotation
 func TestTLSTransportCacheCARotation(t *testing.T) {
 
@@ -302,9 +309,7 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create new cache for testing
-			tlsCaches := &tlsTransportCache{
-				transports: make(map[tlsCacheKey]weak.Pointer[cachedTransport]),
-			}
+			tlsCaches := newTestTLSTransportCache()
 
 			rt, err := tlsCaches.get(tc.config)
 			if err != nil {
@@ -366,7 +371,7 @@ func TestTLSTransportCacheCARotationDisabled(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowCARotation, false)
 
 	caFile := writeCAFile(t, []byte(testCACert1))
-	cache := &tlsTransportCache{transports: make(map[tlsCacheKey]weak.Pointer[cachedTransport])}
+	cache := newTestTLSTransportCache()
 
 	rt, err := cache.get(&Config{TLS: TLSConfig{CAFile: caFile}})
 	if err != nil {
@@ -395,9 +400,7 @@ func TestEmptyCAFileRotationLifecycle(t *testing.T) {
 		},
 	}
 
-	tlsCaches := &tlsTransportCache{
-		transports: make(map[tlsCacheKey]weak.Pointer[cachedTransport]),
-	}
+	tlsCaches := newTestTLSTransportCache()
 
 	rt, err := tlsCaches.get(config)
 	if err != nil {
@@ -441,7 +444,9 @@ func TestEmptyCAFileRotationLifecycle(t *testing.T) {
 }
 
 func TestCacheLeak(t *testing.T) {
-	requireCacheLen(t, tlsCache, 0) // clean start
+	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
+
+	pollCacheSizeWithGC(t, tlsCache, 0) // clean start - wait for any transports from other tests to be GC'd
 
 	// manually create some transports that have some overlap
 	// these 3 calls result in 2 transports in the cache
