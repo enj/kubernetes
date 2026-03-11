@@ -445,6 +445,39 @@ func TestEmptyCAFileRotationLifecycle(t *testing.T) {
 	}
 }
 
+// TestCacheUnwrapBug demonstrates that unwrapping the cachedTransport via
+// WrappedRoundTripper and holding only the inner transport causes the cache
+// entry to be garbage collected, even though the caller is still using the
+// underlying transport. This is a known bug: the weak reference tracks the
+// cachedTransport wrapper, not the inner transport that the caller holds.
+func TestCacheUnwrapBug(t *testing.T) {
+	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
+
+	pollCacheSizeWithGC(t, tlsCache, 0) // clean start
+
+	rt, err := New(&Config{TLS: TLSConfig{ServerName: "unwrap-test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requireCacheLen(t, tlsCache, 1)
+
+	// Unwrap to get the inner *http.Transport, simulating what a caller
+	// that uses utilnet.RoundTripperWrapper would do.
+	inner := unwrapCachedTransport(rt)
+
+	// Drop the only reference to the cachedTransport wrapper.
+	// The caller still has `inner` (the real *http.Transport) alive.
+	rt = nil //nolint:ineffassign
+
+	// The cache entry should survive because the caller is still using the
+	// transport. But because the weak pointer tracks the cachedTransport
+	// wrapper (which is now unreachable), the entry gets collected.
+	pollCacheSizeWithGC(t, tlsCache, 0) // BUG: this should be 1, not 0
+
+	runtime.KeepAlive(inner) // inner is still alive — the caller is using it
+}
+
 func TestCacheLeak(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
 
