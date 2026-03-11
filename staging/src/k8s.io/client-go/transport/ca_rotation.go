@@ -46,10 +46,11 @@ type atomicTransportHolder struct {
 	clock             clock.Clock
 	caRefreshDuration time.Duration
 	cleanup           func()
-	// mu covers transport and transportLastChecked
+	// mu covers transport and transportLastChecked and weak
 	mu                   sync.RWMutex
 	transport            func() *http.Transport
 	transportLastChecked time.Time
+	weak                 weak.Pointer[http.Transport]
 }
 
 func (h *atomicTransportHolder) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -170,12 +171,13 @@ func (h *atomicTransportHolder) setTransportWithCleanupLocked(transport *http.Tr
 
 	val := weak.Make(transport)
 	h.transport = val.Value
+	h.weak = val
 
 	runtime.AddCleanup(transport, func(_ empty) {
 		h.mu.RLock()
 		defer h.mu.RUnlock()
 
-		if val != h.transport {
+		if val != h.weak {
 			return
 		}
 
