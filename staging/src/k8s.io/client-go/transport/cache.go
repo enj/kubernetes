@@ -33,32 +33,20 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// cachedTransport is a concrete wrapper around http.RoundTripper that serves as the
-// target for weak.Pointer in the TLS transport cache. This is needed because
-// weak.Pointer requires a concrete pointer type, and the cache may hold either
-// *http.Transport or *atomicTransportHolder (when CA rotation is enabled).
-type cachedTransport struct {
-	http.RoundTripper
+// TlsTransportCache caches TLS http.RoundTrippers different configurations. The
+// same RoundTripper will be returned for configs with identical TLS options If
+// the config has no custom TLS options, http.DefaultTransport is returned.
+type tlsTransportCache struct {
+	mu         sync.Mutex
+	transports map[tlsCacheKey]cacheEntry
 }
 
-// WrappedRoundTripper implements the utilnet.RoundTripperWrapper interface,
-// allowing callers to unwrap the inner transport.
-func (t *cachedTransport) WrappedRoundTripper() http.RoundTripper {
-	return t.RoundTripper
-}
-
-// cacheEntry holds either a strong or weak reference to a cachedTransport,
-// depending on whether the ClientsAllowTLSCacheGC feature gate is enabled.
+// cacheEntry holds either a strong or weak reference to a cachedTransport.
 type cacheEntry struct {
-	// strong holds a strong reference, preventing GC. Used when the feature gate
-	// is disabled. Mutually exclusive with weak.
 	strong *cachedTransport
-	// weak holds a weak reference, allowing GC. Used when the feature gate
-	// is enabled. Mutually exclusive with strong.
-	weak weak.Pointer[cachedTransport]
+	weak   weak.Pointer[cachedTransport]
 }
 
-// value returns the cached transport, or nil if it has been garbage collected.
 func (e cacheEntry) value() *cachedTransport {
 	if e.strong != nil {
 		return e.strong
@@ -66,12 +54,13 @@ func (e cacheEntry) value() *cachedTransport {
 	return e.weak.Value()
 }
 
-// TlsTransportCache caches TLS http.RoundTrippers different configurations. The
-// same RoundTripper will be returned for configs with identical TLS options If
-// the config has no custom TLS options, http.DefaultTransport is returned.
-type tlsTransportCache struct {
-	mu         sync.Mutex
-	transports map[tlsCacheKey]cacheEntry
+// weak.Pointer requires a concrete pointer type so we need this indirection to support interfaces.
+type cachedTransport struct {
+	http.RoundTripper
+}
+
+func (t *cachedTransport) WrappedRoundTripper() http.RoundTripper {
+	return t.RoundTripper
 }
 
 const idleConnsPerHost = 25
@@ -189,7 +178,6 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 
 	if canCache {
 		if gcEnabled {
-			// Cache a weak reference to allow garbage collection of unused transports
 			c.transports[key] = cacheEntry{weak: weak.Make(transport)}
 			runtime.AddCleanup(transport, func(key tlsCacheKey) {
 				c.mu.Lock()
@@ -197,17 +185,12 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 				delete(c.transports, key)
 			}, key)
 		} else {
-			// Cache a strong reference (old behavior, no GC)
 			c.transports[key] = cacheEntry{strong: transport}
 		}
 	}
 
-	if cancel != nil {
-		if gcEnabled {
-			runtime.AddCleanup(transport, cancel, fmt.Errorf("transport garbage collected"))
-		}
-		// When GC is disabled, the cert rotation goroutine runs indefinitely
-		// (matching the pre-GC behavior).
+	if cancel != nil && gcEnabled {
+		runtime.AddCleanup(transport, cancel, fmt.Errorf("transport garbage collected"))
 	}
 
 	return transport, nil
