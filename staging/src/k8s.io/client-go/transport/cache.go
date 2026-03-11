@@ -21,62 +21,26 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
-	"weak"
 
 	utilnet "k8s.io/apimachinery/pkg/util/net"
-	clientgofeaturegate "k8s.io/client-go/features"
 	"k8s.io/client-go/tools/metrics"
 	"k8s.io/klog/v2"
 )
-
-// cachedTransport is a concrete wrapper around http.RoundTripper that serves as the
-// target for weak.Pointer in the TLS transport cache. This is needed because
-// weak.Pointer requires a concrete pointer type, and the cache may hold either
-// *http.Transport or *atomicTransportHolder (when CA rotation is enabled).
-type cachedTransport struct {
-	http.RoundTripper
-}
-
-// WrappedRoundTripper implements the utilnet.RoundTripperWrapper interface,
-// allowing callers to unwrap the inner transport.
-func (t *cachedTransport) WrappedRoundTripper() http.RoundTripper {
-	return t.RoundTripper
-}
-
-// cacheEntry holds either a strong or weak reference to a cachedTransport,
-// depending on whether the ClientsAllowTLSCacheGC feature gate is enabled.
-type cacheEntry struct {
-	// strong holds a strong reference, preventing GC. Used when the feature gate
-	// is disabled. Mutually exclusive with weak.
-	strong *cachedTransport
-	// weak holds a weak reference, allowing GC. Used when the feature gate
-	// is enabled. Mutually exclusive with strong.
-	weak weak.Pointer[cachedTransport]
-}
-
-// value returns the cached transport, or nil if it has been garbage collected.
-func (e cacheEntry) value() *cachedTransport {
-	if e.strong != nil {
-		return e.strong
-	}
-	return e.weak.Value()
-}
 
 // TlsTransportCache caches TLS http.RoundTrippers different configurations. The
 // same RoundTripper will be returned for configs with identical TLS options If
 // the config has no custom TLS options, http.DefaultTransport is returned.
 type tlsTransportCache struct {
 	mu         sync.Mutex
-	transports map[tlsCacheKey]cacheEntry
+	transports map[tlsCacheKey]*atomicTransportHolder
 }
 
 const idleConnsPerHost = 25
 
-var tlsCache = &tlsTransportCache{transports: make(map[tlsCacheKey]cacheEntry)}
+var tlsCache = &tlsTransportCache{transports: make(map[tlsCacheKey]*atomicTransportHolder)}
 
 type tlsCacheKey struct {
 	insecure           bool
@@ -109,8 +73,6 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		return nil, err
 	}
 
-	gcEnabled := clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC)
-
 	if canCache {
 		// Ensure we only create a single transport for the given TLS options
 		c.mu.Lock()
@@ -119,9 +81,9 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 
 		// See if we already have a custom transport for this config
 		if v, ok := c.transports[key]; ok {
-			if t := v.value(); t != nil {
+			if v.isValid() {
 				metrics.TransportCreateCalls.Increment("hit")
-				return t, nil
+				return v, nil
 			}
 			metrics.TransportCreateCalls.Increment("miss-gc")
 		} else {
@@ -153,7 +115,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 
 	// If we use are reloading files, we need to handle certificate rotation properly
 	// TODO(jackkleeman): We can also add rotation here when config.HasCertCallback() is true
-	var cancel context.CancelCauseFunc
+	var cancel context.CancelFunc
 	if config.TLS.ReloadTLSFiles && tlsConfig != nil && tlsConfig.GetClientCertificate != nil {
 		// The TLS cache is a singleton, so sharing the same name for all of its
 		// background activity seems okay.
@@ -162,7 +124,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		tlsConfig.GetClientCertificate = dynamicCertDialer.GetClientCertificate
 		dial = dynamicCertDialer.connDialer.DialContext
 		var ctx context.Context
-		ctx, cancel = context.WithCancelCause(context.Background())
+		ctx, cancel = context.WithCancel(context.Background())
 		go dynamicCertDialer.run(ctx.Done())
 	}
 
@@ -179,35 +141,37 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		DialContext:         dial,
 		DisableCompression:  config.DisableCompression,
 	})
-	var rt http.RoundTripper = httpTransport
+	var transport *atomicTransportHolder
+
+	cleanup := func() {
+		if cancel != nil {
+			cancel()
+		}
+
+		if !canCache {
+			return
+		}
+
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		cachedTransport := c.transports[key]
+		if cachedTransport != transport {
+			return
+		}
+
+		delete(c.transports, key)
+	}
 
 	if config.TLS.ReloadCAFiles && tlsConfig != nil && tlsConfig.RootCAs != nil && len(config.TLS.CAFile) > 0 {
-		rt = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport)
+		transport = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport, cleanup)
+	} else {
+		transport = newAtomicTransportHolderWithoutReload(httpTransport, cleanup)
 	}
-
-	transport := &cachedTransport{RoundTripper: rt}
 
 	if canCache {
-		if gcEnabled {
-			// Cache a weak reference to allow garbage collection of unused transports
-			c.transports[key] = cacheEntry{weak: weak.Make(transport)}
-			runtime.AddCleanup(transport, func(key tlsCacheKey) {
-				c.mu.Lock()
-				defer c.mu.Unlock()
-				delete(c.transports, key)
-			}, key)
-		} else {
-			// Cache a strong reference (old behavior, no GC)
-			c.transports[key] = cacheEntry{strong: transport}
-		}
-	}
-
-	if cancel != nil {
-		if gcEnabled {
-			runtime.AddCleanup(transport, cancel, fmt.Errorf("transport garbage collected"))
-		}
-		// When GC is disabled, the cert rotation goroutine runs indefinitely
-		// (matching the pre-GC behavior).
+		// Cache a single transport for these options
+		c.transports[key] = transport
 	}
 
 	return transport, nil
