@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -590,6 +591,79 @@ func TestCacheUnwrapAfterCARotation(t *testing.T) {
 	runtime.KeepAlive(newInner)
 
 	pollCacheSizeWithGC(t, tlsCache, 0) // now newInner is unreachable
+}
+
+// TestCacheEvictReviveRace exercises the race between a GC callback calling
+// tryEvict and a concurrent get() calling revive for the same key. The test
+// creates many goroutines that repeatedly get and drop a transport for the
+// same key, forcing the holder through alive→dead→revived transitions while
+// GC runs concurrently. The invariant is: if any goroutine holds a reference,
+// the cache entry must not be evicted.
+//
+// Run with: go test -race -count=100 -run TestCacheEvictReviveRace
+func TestCacheEvictReviveRace(t *testing.T) {
+	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
+
+	pollCacheSizeWithGC(t, tlsCache, 0) // clean start
+
+	const goroutines = 50
+	const iterations = 100
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	// Half the goroutines repeatedly get and immediately drop.
+	// The other half get, hold briefly, then drop.
+	// GC runs in a separate goroutine to trigger cleanups concurrently.
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+
+	// Background GC pressure
+	go func() {
+		for ctx.Err() == nil {
+			runtime.GC()
+			runtime.Gosched()
+		}
+	}()
+
+	for i := range goroutines {
+		go func() {
+			defer wg.Done()
+			for range iterations {
+				// Each call needs its own Config because loadTLSFiles mutates it.
+				cfg := &Config{TLS: TLSConfig{ServerName: "race-test"}}
+				rt, err := tlsCache.get(cfg)
+				if err != nil {
+					panic(err)
+				}
+
+				// Verify the transport is functional
+				holder, ok := rt.(*atomicTransportHolder)
+				if !ok {
+					panic(fmt.Sprintf("expected *atomicTransportHolder, got %T", rt))
+				}
+				inner := holder.WrappedRoundTripper()
+				if inner == nil {
+					panic("transport is nil")
+				}
+
+				// Odd goroutines hold the transport briefly to create
+				// interleaving between revive and GC cleanup.
+				if i%2 == 1 {
+					runtime.Gosched()
+				}
+
+				runtime.KeepAlive(rt)
+				runtime.KeepAlive(inner)
+			}
+		}()
+	}
+
+	wg.Wait()
+	stop()
+
+	// After all goroutines are done, everything should be evictable.
+	pollCacheSizeWithGC(t, tlsCache, 0)
 }
 
 // TestCacheReviveAfterDrop verifies that after all callers drop a holder,

@@ -50,12 +50,15 @@ type tlsCacheEntry struct {
 	wp             weak.Pointer[atomicTransportHolder]
 	holderDead     atomic.Bool
 	liveTransports atomic.Int64
-	evictOnce      sync.Once
-	evict          func()
+	// evict acquires c.mu and re-checks holderDead and liveTransports under the
+	// lock before deleting the cache entry. This ensures no race with revive
+	// (which also runs under c.mu).
+	evict func()
 }
 
-// tryEvict runs the eviction function if both the holder is dead and all
-// transports have been garbage collected.
+// tryEvict attempts to evict this cache entry. The atomic checks are an
+// optimistic fast-path; the actual eviction decision is made under c.mu
+// inside the evict closure.
 func (e *tlsCacheEntry) tryEvict() {
 	if !e.holderDead.Load() {
 		return
@@ -63,11 +66,9 @@ func (e *tlsCacheEntry) tryEvict() {
 	if e.liveTransports.Load() > 0 {
 		return
 	}
-	e.evictOnce.Do(func() {
-		if e.evict != nil {
-			e.evict()
-		}
-	})
+	if e.evict != nil {
+		e.evict()
+	}
 }
 
 // onTransportCreated is called when a new *http.Transport is created (initial
@@ -254,14 +255,25 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		c.setLocked(key, transport, entry)
 
 		entry.evict = func() {
-			if cancel != nil {
-				cancel()
-			}
-
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			if c.transports[key] == entry {
-				delete(c.transports, key)
+
+			// Re-check under the lock: revive may have run between the
+			// atomic fast-path in tryEvict and acquiring c.mu.
+			if !entry.holderDead.Load() {
+				return
+			}
+			if entry.liveTransports.Load() > 0 {
+				return
+			}
+			if c.transports[key] != entry {
+				return
+			}
+
+			delete(c.transports, key)
+
+			if cancel != nil {
+				cancel()
 			}
 		}
 	}
