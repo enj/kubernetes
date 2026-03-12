@@ -391,8 +391,13 @@ func TestNew(t *testing.T) {
 				return
 			}
 
-			// We only know how to check TLSConfig on http.Transports
-			transport := rt.(*concreteTransport).WrappedRoundTripper().(*http.Transport)
+			// We only know how to check TLSConfig on http.Transports.
+			// Unwrap concreteTransport if present (GC-enabled path).
+			inner := rt
+			if ct, ok := rt.(*concreteTransport); ok {
+				inner = ct.WrappedRoundTripper()
+			}
+			transport := inner.(*http.Transport)
 			switch {
 			case testCase.TLS && transport.TLSClientConfig == nil:
 				t.Fatalf("got %#v, expected TLSClientConfig", transport)

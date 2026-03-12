@@ -243,7 +243,7 @@ func TestTLSConfigKeyCARotationDisabled(t *testing.T) {
 func newTestTLSTransportCache() *tlsTransportCache {
 	return &tlsTransportCache{
 		transports:       make(map[tlsCacheKey]weak.Pointer[concreteTransport]),
-		strongTransports: make(map[tlsCacheKey]*concreteTransport),
+		strongTransports: make(map[tlsCacheKey]http.RoundTripper),
 	}
 }
 
@@ -315,20 +315,21 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 				return
 			}
 
-			cached, ok := rt.(*concreteTransport)
-			if !ok {
-				t.Fatalf("Expected *tlsCacheValue, got %T", rt)
+			// Unwrap concreteTransport if present (GC-enabled path wraps the transport).
+			inner := rt
+			if ct, ok := rt.(*concreteTransport); ok {
+				inner = ct.rt
 			}
 			if tc.expectCAReload {
-				if _, ok := cached.rt.(*atomicTransportHolder); !ok {
-					t.Errorf("Expected atomicTransportHolder for CA rotation, got %T", cached.rt)
+				if _, ok := inner.(*atomicTransportHolder); !ok {
+					t.Errorf("Expected atomicTransportHolder for CA rotation, got %T", inner)
 				}
 				if !tc.config.TLS.ReloadCAFiles {
 					t.Errorf("Expected ReloadCAFiles to be true, got %v", tc.config.TLS.ReloadCAFiles)
 				}
 			} else {
-				if _, ok := cached.rt.(*http.Transport); !ok {
-					t.Errorf("Expected *http.Transport without CA rotation, got %T", cached.rt)
+				if _, ok := inner.(*http.Transport); !ok {
+					t.Errorf("Expected *http.Transport without CA rotation, got %T", inner)
 				}
 			}
 
@@ -370,11 +371,13 @@ func TestTLSTransportCacheCARotationDisabled(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	cached, ok := rt.(*concreteTransport)
-	if !ok {
-		t.Fatalf("Expected *tlsCacheValue, got %T", rt)
+	// Without CA rotation, the transport should be a plain *http.Transport
+	// (possibly wrapped in concreteTransport if GC is enabled).
+	inner := rt
+	if ct, ok := rt.(*concreteTransport); ok {
+		inner = ct.rt
 	}
-	if _, ok := cached.rt.(*atomicTransportHolder); ok {
+	if _, ok := inner.(*atomicTransportHolder); ok {
 		t.Error("Expected plain *http.Transport when CA rotation feature gate is disabled, got atomicTransportHolder")
 	}
 }
@@ -397,14 +400,14 @@ func TestEmptyCAFileRotationLifecycle(t *testing.T) {
 		t.Fatalf("Unexpected error getting transport: %v", err)
 	}
 
-	cached, ok := rt.(*concreteTransport)
-	if !ok {
-		t.Fatalf("Expected *tlsCacheValue, got %T", rt)
+	inner := rt
+	if ct, ok := rt.(*concreteTransport); ok {
+		inner = ct.rt
 	}
 
-	holder, ok := cached.rt.(*atomicTransportHolder)
+	holder, ok := inner.(*atomicTransportHolder)
 	if !ok {
-		t.Fatalf("Expected atomicTransportHolder, got %T", cached.rt)
+		t.Fatalf("Expected atomicTransportHolder, got %T", inner)
 	}
 
 	initialTransport := holder.getTransport(context.Background())

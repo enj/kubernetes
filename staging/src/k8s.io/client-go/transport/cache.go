@@ -39,14 +39,14 @@ import (
 type tlsTransportCache struct {
 	mu               sync.Mutex
 	transports       map[tlsCacheKey]weak.Pointer[concreteTransport] // GC-enabled
-	strongTransports map[tlsCacheKey]*concreteTransport              // GC-disabled
+	strongTransports map[tlsCacheKey]http.RoundTripper               // GC-disabled
 }
 
 const idleConnsPerHost = 25
 
 var tlsCache = &tlsTransportCache{
 	transports:       make(map[tlsCacheKey]weak.Pointer[concreteTransport]),
-	strongTransports: make(map[tlsCacheKey]*concreteTransport),
+	strongTransports: make(map[tlsCacheKey]http.RoundTripper),
 }
 
 type tlsCacheKey struct {
@@ -154,20 +154,26 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		transport = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport)
 	}
 
-	transportWithGC := &concreteTransport{rt: transport}
-
-	if canCache {
-		// Cache a single transport for these options
-		c.setLocked(key, transportWithGC, cancel)
-	} else if cancel != nil && clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
-		// Uncacheable transports still need cert rotation goroutine cleanup.
-		addCleanup(transportWithGC, cancel)
+	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
+		if canCache {
+			c.strongTransports[key] = transport
+		}
+		return transport, nil
 	}
 
-	return transportWithGC, nil
+	cached := &concreteTransport{rt: transport}
+
+	if canCache {
+		c.setLocked(key, cached, cancel)
+	} else if cancel != nil {
+		// Uncacheable transports still need cert rotation goroutine cleanup.
+		addCleanup(cached, cancel)
+	}
+
+	return cached, nil
 }
 
-func (c *tlsTransportCache) getLocked(key tlsCacheKey) (*concreteTransport, bool) {
+func (c *tlsTransportCache) getLocked(key tlsCacheKey) (http.RoundTripper, bool) {
 	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
 		v, ok := c.strongTransports[key]
 		return v, ok
@@ -177,20 +183,21 @@ func (c *tlsTransportCache) getLocked(key tlsCacheKey) (*concreteTransport, bool
 	if !ok {
 		return nil, false
 	}
-	return wp.Value(), true
+	// Avoid returning a typed nil (*concreteTransport)(nil) inside the
+	// http.RoundTripper interface — callers check "if t != nil" which
+	// would incorrectly pass for a non-nil interface with a nil value.
+	if v := wp.Value(); v != nil {
+		return v, true
+	}
+	return nil, true
 }
 
-func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport *concreteTransport, cancel context.CancelFunc) {
-	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
-		c.strongTransports[key] = transport
-		return
-	}
-
-	wp := weak.Make(transport)
+func (c *tlsTransportCache) setLocked(key tlsCacheKey, cached *concreteTransport, cancel context.CancelFunc) {
+	wp := weak.Make(cached)
 	c.transports[key] = wp
 	// When the cached value is GC'd (all callers dropped it), clean up the
 	// cache entry and stop the cert rotation goroutine if one is running.
-	addCleanup(transport, func() {
+	addCleanup(cached, func() {
 		if cancel != nil {
 			cancel()
 		}
