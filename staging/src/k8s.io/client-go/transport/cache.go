@@ -159,7 +159,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 	if canCache {
 		// Cache a single transport for these options
 		c.setLocked(key, transportWithGC, cancel)
-	} else if cancel != nil {
+	} else if cancel != nil && clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
 		// Uncacheable transports still need cert rotation goroutine cleanup.
 		addCleanup(transportWithGC, cancel)
 	}
