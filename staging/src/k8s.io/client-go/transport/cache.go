@@ -39,21 +39,16 @@ import (
 // the config has no custom TLS options, http.DefaultTransport is returned.
 type tlsTransportCache struct {
 	mu               sync.Mutex
-	transports       map[tlsCacheKey]tlsCacheEntry
+	transports       map[tlsCacheKey]*tlsCacheEntry
 	strongTransports map[tlsCacheKey]*atomicTransportHolder
 }
 
-// tlsCacheEntry pairs a weak pointer with eviction tracking state.
+// tlsCacheEntry tracks a cached atomicTransportHolder via a weak pointer and
+// manages eviction. The entry is only evicted when both the holder and all of
+// its *http.Transport instances have been garbage collected.
 type tlsCacheEntry struct {
-	wp         weak.Pointer[atomicTransportHolder]
-	generation uint64
-	tracker    *cacheEvictionTracker
-}
-
-// cacheEvictionTracker tracks the liveness of an atomicTransportHolder and all
-// of its *http.Transport instances. A cache entry is only evicted when both the
-// holder and all transports have been garbage collected.
-type cacheEvictionTracker struct {
+	wp             weak.Pointer[atomicTransportHolder]
+	generation     uint64
 	holderDead     atomic.Bool
 	liveTransports atomic.Int64
 	evictOnce      sync.Once
@@ -62,33 +57,33 @@ type cacheEvictionTracker struct {
 
 // tryEvict runs the eviction function if both the holder is dead and all
 // transports have been garbage collected.
-func (t *cacheEvictionTracker) tryEvict() {
-	if !t.holderDead.Load() {
+func (e *tlsCacheEntry) tryEvict() {
+	if !e.holderDead.Load() {
 		return
 	}
-	if t.liveTransports.Load() > 0 {
+	if e.liveTransports.Load() > 0 {
 		return
 	}
-	t.evictOnce.Do(func() {
-		if t.evict != nil {
-			t.evict()
+	e.evictOnce.Do(func() {
+		if e.evict != nil {
+			e.evict()
 		}
 	})
 }
 
 // onTransportCreated is called when a new *http.Transport is created (initial
 // creation and after CA rotation).
-func (t *cacheEvictionTracker) onTransportCreated() {
-	t.liveTransports.Add(1)
+func (e *tlsCacheEntry) onTransportCreated() {
+	e.liveTransports.Add(1)
 }
 
 // revive marks the holder as alive again and registers a new cleanup so that
 // when this caller drops the holder, the eviction check runs again.
-func (t *cacheEvictionTracker) revive(holder *atomicTransportHolder) {
-	t.holderDead.Store(false)
+func (e *tlsCacheEntry) revive(holder *atomicTransportHolder) {
+	e.holderDead.Store(false)
 	addCleanup(holder, func() {
-		t.holderDead.Store(true)
-		t.tryEvict()
+		e.holderDead.Store(true)
+		e.tryEvict()
 	})
 }
 
@@ -109,26 +104,24 @@ func (c *tlsTransportCache) getLocked(key tlsCacheKey) (*atomicTransportHolder, 
 
 	// Revive: a new caller is holding the holder, so mark it alive again
 	// and register a new cleanup for this caller's reference.
-	e.tracker.revive(t)
+	e.revive(t)
 
 	return t, true
 }
 
-func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport *atomicTransportHolder, tracker *cacheEvictionTracker) uint64 {
+func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport *atomicTransportHolder, entry *tlsCacheEntry) uint64 {
 	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
 		c.strongTransports[key] = transport
 		return 0
 	}
 
 	var gen uint64
-	if e, ok := c.transports[key]; ok {
-		gen = e.generation + 1
+	if prev, ok := c.transports[key]; ok {
+		gen = prev.generation + 1
 	}
-	c.transports[key] = tlsCacheEntry{
-		wp:         weak.Make(transport),
-		generation: gen,
-		tracker:    tracker,
-	}
+	entry.wp = weak.Make(transport)
+	entry.generation = gen
+	c.transports[key] = entry
 	return gen
 }
 
@@ -150,7 +143,7 @@ func (c *tlsTransportCache) lenLocked() int {
 const idleConnsPerHost = 25
 
 var tlsCache = &tlsTransportCache{
-	transports:       make(map[tlsCacheKey]tlsCacheEntry),
+	transports:       make(map[tlsCacheKey]*tlsCacheEntry),
 	strongTransports: make(map[tlsCacheKey]*atomicTransportHolder),
 }
 
@@ -254,25 +247,25 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		DisableCompression:  config.DisableCompression,
 	})
 
-	tracker := &cacheEvictionTracker{}
+	entry := &tlsCacheEntry{}
 
 	// onTransportCleanup decrements the live transport count and tries to evict.
 	onTransportCleanup := func() {
-		tracker.liveTransports.Add(-1)
-		tracker.tryEvict()
+		entry.liveTransports.Add(-1)
+		entry.tryEvict()
 	}
 
 	var transport *atomicTransportHolder
 	if config.TLS.ReloadCAFiles && tlsConfig != nil && tlsConfig.RootCAs != nil && len(config.TLS.CAFile) > 0 {
-		transport = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport, onTransportCleanup, tracker.onTransportCreated)
+		transport = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport, onTransportCleanup, entry.onTransportCreated)
 	} else {
-		transport = newAtomicTransportHolderWithoutReload(httpTransport, onTransportCleanup, tracker.onTransportCreated)
+		transport = newAtomicTransportHolderWithoutReload(httpTransport, onTransportCleanup, entry.onTransportCreated)
 	}
 
 	if canCache {
-		gen := c.setLocked(key, transport, tracker)
+		gen := c.setLocked(key, transport, entry)
 
-		tracker.evict = func() {
+		entry.evict = func() {
 			if cancel != nil {
 				cancel()
 			}
@@ -282,7 +275,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 			c.deleteLocked(key, gen)
 		}
 
-		tracker.revive(transport)
+		entry.revive(transport)
 	}
 
 	return transport, nil

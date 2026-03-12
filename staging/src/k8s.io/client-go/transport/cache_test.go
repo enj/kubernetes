@@ -241,7 +241,7 @@ func TestTLSConfigKeyCARotationDisabled(t *testing.T) {
 // newTestTLSTransportCache creates a new tlsTransportCache for testing.
 func newTestTLSTransportCache() *tlsTransportCache {
 	return &tlsTransportCache{
-		transports:       make(map[tlsCacheKey]tlsCacheEntry),
+		transports:       make(map[tlsCacheKey]*tlsCacheEntry),
 		strongTransports: make(map[tlsCacheKey]*atomicTransportHolder),
 	}
 }
