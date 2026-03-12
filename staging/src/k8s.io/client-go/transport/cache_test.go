@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -593,76 +592,69 @@ func TestCacheUnwrapAfterCARotation(t *testing.T) {
 	pollCacheSizeWithGC(t, tlsCache, 0) // now newInner is unreachable
 }
 
-// TestCacheEvictReviveRace exercises the race between a GC callback calling
-// tryEvict and a concurrent get() calling revive for the same key. The test
-// creates many goroutines that repeatedly get and drop a transport for the
-// same key, forcing the holder through alive→dead→revived transitions while
-// GC runs concurrently. The invariant is: if any goroutine holds a reference,
-// the cache entry must not be evicted.
+// TestCacheEvictReviveRace verifies that the eviction logic correctly handles
+// the case where revive runs between tryEvict's atomic checks and the actual
+// eviction. This simulates the race by directly calling the entry's evict
+// function after revive has reset holderDead.
 //
-// Run with: go test -race -count=100 -run TestCacheEvictReviveRace
+// The race scenario (without the lock re-check fix):
+//  1. holderDead=true, liveTransports=0 — tryEvict passes both atomic checks
+//  2. revive sets holderDead=false (a new caller got the holder from cache)
+//  3. evict runs anyway and deletes the cache entry
+//
+// With the fix, evict re-checks holderDead under c.mu and sees false, so it
+// does not delete.
 func TestCacheEvictReviveRace(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
 
 	pollCacheSizeWithGC(t, tlsCache, 0) // clean start
 
-	const goroutines = 50
-	const iterations = 100
+	serverName := "race-test"
 
-	var wg sync.WaitGroup
-	wg.Add(goroutines)
+	// Create entry in the cache.
+	rt, err := New(&Config{TLS: TLSConfig{ServerName: serverName}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireCacheLen(t, tlsCache, 1)
 
-	// Half the goroutines repeatedly get and immediately drop.
-	// The other half get, hold briefly, then drop.
-	// GC runs in a separate goroutine to trigger cleanups concurrently.
-	ctx, stop := context.WithCancel(context.Background())
-	defer stop()
+	// Grab the entry and its evict function.
+	cfg := &Config{TLS: TLSConfig{ServerName: serverName}}
+	key, _, _ := tlsConfigKey(cfg)
+	tlsCache.mu.Lock()
+	entry := tlsCache.transports[key]
+	evictFn := entry.evict
+	tlsCache.mu.Unlock()
 
-	// Background GC pressure
-	go func() {
-		for ctx.Err() == nil {
-			runtime.GC()
-			runtime.Gosched()
-		}
-	}()
+	// Simulate the exact race sequence:
+	// 1. tryEvict passes the atomic checks (holderDead=true, liveTransports=0)
+	//    We simulate this by setting holderDead=true and decrementing liveTransports.
+	entry.holderDead.Store(true)
+	entry.liveTransports.Add(-1) // was 1, now 0
 
-	for i := range goroutines {
-		go func() {
-			defer wg.Done()
-			for range iterations {
-				// Each call needs its own Config because loadTLSFiles mutates it.
-				cfg := &Config{TLS: TLSConfig{ServerName: "race-test"}}
-				rt, err := tlsCache.get(cfg)
-				if err != nil {
-					panic(err)
-				}
-
-				// Verify the transport is functional
-				holder, ok := rt.(*atomicTransportHolder)
-				if !ok {
-					panic(fmt.Sprintf("expected *atomicTransportHolder, got %T", rt))
-				}
-				inner := holder.WrappedRoundTripper()
-				if inner == nil {
-					panic("transport is nil")
-				}
-
-				// Odd goroutines hold the transport briefly to create
-				// interleaving between revive and GC cleanup.
-				if i%2 == 1 {
-					runtime.Gosched()
-				}
-
-				runtime.KeepAlive(rt)
-				runtime.KeepAlive(inner)
-			}
-		}()
+	// 2. Before evict runs, a new caller does get() → getLocked → revive,
+	//    which sets holderDead=false and increments liveTransports.
+	rt2, err := New(&Config{TLS: TLSConfig{ServerName: serverName}})
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	wg.Wait()
-	stop()
+	// 3. Now evict runs (simulating what tryEvict would do after passing
+	//    the atomic checks but before the actual eviction).
+	evictFn()
 
-	// After all goroutines are done, everything should be evictable.
+	// The entry should NOT have been evicted because revive ran in step 2.
+	tlsCache.mu.Lock()
+	currentEntry := tlsCache.transports[key]
+	tlsCache.mu.Unlock()
+
+	if currentEntry != entry {
+		t.Error("entry was replaced — evict raced with revive and wrongly evicted the entry")
+	}
+	requireCacheLen(t, tlsCache, 1)
+
+	runtime.KeepAlive(rt)
+	runtime.KeepAlive(rt2)
 	pollCacheSizeWithGC(t, tlsCache, 0)
 }
 
