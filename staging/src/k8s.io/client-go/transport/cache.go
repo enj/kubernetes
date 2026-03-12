@@ -48,11 +48,10 @@ type tlsTransportCache struct {
 // its *http.Transport instances have been garbage collected.
 type tlsCacheEntry struct {
 	wp             weak.Pointer[atomicTransportHolder]
-	generation     uint64
 	holderDead     atomic.Bool
 	liveTransports atomic.Int64
 	evictOnce      sync.Once
-	evict          func() // set after the generation is known
+	evict          func()
 }
 
 // tryEvict runs the eviction function if both the holder is dead and all
@@ -109,27 +108,14 @@ func (c *tlsTransportCache) getLocked(key tlsCacheKey) (*atomicTransportHolder, 
 	return t, true
 }
 
-func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport *atomicTransportHolder, entry *tlsCacheEntry) uint64 {
+func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport *atomicTransportHolder, entry *tlsCacheEntry) {
 	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
 		c.strongTransports[key] = transport
-		return 0
+		return
 	}
 
-	var gen uint64
-	if prev, ok := c.transports[key]; ok {
-		gen = prev.generation + 1
-	}
 	entry.wp = weak.Make(transport)
-	entry.generation = gen
 	c.transports[key] = entry
-	return gen
-}
-
-// deleteLocked removes the cache entry for key only if its generation matches.
-func (c *tlsTransportCache) deleteLocked(key tlsCacheKey, generation uint64) {
-	if e, ok := c.transports[key]; ok && e.generation == generation {
-		delete(c.transports, key)
-	}
 }
 
 func (c *tlsTransportCache) lenLocked() int {
@@ -263,7 +249,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 	}
 
 	if canCache {
-		gen := c.setLocked(key, transport, entry)
+		c.setLocked(key, transport, entry)
 
 		entry.evict = func() {
 			if cancel != nil {
@@ -272,7 +258,9 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			c.deleteLocked(key, gen)
+			if c.transports[key] == entry {
+				delete(c.transports, key)
+			}
 		}
 
 		entry.revive(transport)
