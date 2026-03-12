@@ -47,19 +47,52 @@ type tlsTransportCache struct {
 type tlsCacheEntry struct {
 	wp         weak.Pointer[atomicTransportHolder]
 	generation uint64
+	tracker    *cacheEvictionTracker
+}
 
-	// holderDead is set to true when the holder is GC'd.  It is reset to
-	// false when a new caller retrieves the holder from the cache (reviving it).
-	holderDead *atomic.Bool
+// cacheEvictionTracker tracks the liveness of an atomicTransportHolder and all
+// of its *http.Transport instances. A cache entry is only evicted when both the
+// holder and all transports have been garbage collected.
+type cacheEvictionTracker struct {
+	holderDead     atomic.Bool
+	liveTransports atomic.Int64
+	evictOnce      sync.Once
+	evict          func() // set after the generation is known
+}
 
-	// liveTransports tracks the number of *http.Transport instances that are
-	// still alive.  Incremented when a transport is created, decremented when
-	// a transport is GC'd.
-	liveTransports *atomic.Int64
+// tryEvict runs the eviction function if both the holder is dead and all
+// transports have been garbage collected.
+func (t *cacheEvictionTracker) tryEvict() {
+	if !t.holderDead.Load() {
+		return
+	}
+	if t.liveTransports.Load() > 0 {
+		return
+	}
+	t.evictOnce.Do(func() {
+		if t.evict != nil {
+			t.evict()
+		}
+	})
+}
 
-	// evict deletes this cache entry and cancels the cert rotation goroutine,
-	// but only when both holderDead is true and liveTransports is 0.
-	evict func()
+// onHolderGC is registered via runtime.AddCleanup on the atomicTransportHolder.
+func (t *cacheEvictionTracker) onHolderGC(_ struct{}) {
+	t.holderDead.Store(true)
+	t.tryEvict()
+}
+
+// onTransportCreated is called when a new *http.Transport is created (initial
+// creation and after CA rotation).
+func (t *cacheEvictionTracker) onTransportCreated() {
+	t.liveTransports.Add(1)
+}
+
+// revive marks the holder as alive again and registers a new cleanup so that
+// when this caller drops the holder, the eviction check runs again.
+func (t *cacheEvictionTracker) revive(holder *atomicTransportHolder) {
+	t.holderDead.Store(false)
+	runtime.AddCleanup(holder, t.onHolderGC, struct{}{})
 }
 
 func (c *tlsTransportCache) getLocked(key tlsCacheKey) (*atomicTransportHolder, bool) {
@@ -79,16 +112,12 @@ func (c *tlsTransportCache) getLocked(key tlsCacheKey) (*atomicTransportHolder, 
 
 	// Revive: a new caller is holding the holder, so mark it alive again
 	// and register a new cleanup for this caller's reference.
-	e.holderDead.Store(false)
-	runtime.AddCleanup(t, func(_ struct{}) {
-		e.holderDead.Store(true)
-		e.evict()
-	}, struct{}{})
+	e.tracker.revive(t)
 
 	return t, true
 }
 
-func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport *atomicTransportHolder, holderDead *atomic.Bool, liveTransports *atomic.Int64, evict func()) uint64 {
+func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport *atomicTransportHolder, tracker *cacheEvictionTracker) uint64 {
 	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
 		c.strongTransports[key] = transport
 		return 0
@@ -99,13 +128,18 @@ func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport *atomicTranspor
 		gen = e.generation + 1
 	}
 	c.transports[key] = tlsCacheEntry{
-		wp:             weak.Make(transport),
-		generation:     gen,
-		holderDead:     holderDead,
-		liveTransports: liveTransports,
-		evict:          evict,
+		wp:         weak.Make(transport),
+		generation: gen,
+		tracker:    tracker,
 	}
 	return gen
+}
+
+// deleteLocked removes the cache entry for key only if its generation matches.
+func (c *tlsTransportCache) deleteLocked(key tlsCacheKey, generation uint64) {
+	if e, ok := c.transports[key]; ok && e.generation == generation {
+		delete(c.transports, key)
+	}
 }
 
 func (c *tlsTransportCache) lenLocked() int {
@@ -223,91 +257,35 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		DisableCompression:  config.DisableCompression,
 	})
 
-	// cacheEviction tracks the liveness of both the atomicTransportHolder and
-	// its *http.Transport(s). The cache entry should only be evicted (and
-	// the cert rotation goroutine cancelled) when both the holder and all
-	// of its transports have been garbage collected.
-	//
-	// holderDead is set to true by runtime.AddCleanup on the holder.
-	// liveTransports is incremented for each *http.Transport created and
-	// decremented by runtime.AddCleanup when each transport is GC'd.
-	// tryEvict only proceeds when holderDead is true AND liveTransports is 0.
-	var holderDead atomic.Bool
-	var liveTransports atomic.Int64
+	tracker := &cacheEvictionTracker{}
 
-	// evict is set after setLocked to capture the generation. Callbacks
-	// call through this pointer so they always use the final version.
-	var evict func()
-
-	// transportCleanup is called by registerTransportCleanup when any
-	// *http.Transport created by this holder is garbage collected.
-	transportCleanup := func() {
-		liveTransports.Add(-1)
-		if evict != nil {
-			evict()
-		}
-	}
-
-	// transportCreated is called by the holder whenever a new *http.Transport
-	// is created (initial creation and after CA rotation).
-	transportCreated := func() {
-		liveTransports.Add(1)
+	// onTransportCleanup decrements the live transport count and tries to evict.
+	onTransportCleanup := func() {
+		tracker.liveTransports.Add(-1)
+		tracker.tryEvict()
 	}
 
 	var transport *atomicTransportHolder
 	if config.TLS.ReloadCAFiles && tlsConfig != nil && tlsConfig.RootCAs != nil && len(config.TLS.CAFile) > 0 {
-		transport = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport, transportCleanup, transportCreated)
+		transport = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport, onTransportCleanup, tracker.onTransportCreated)
 	} else {
-		transport = newAtomicTransportHolderWithoutReload(httpTransport, transportCleanup, transportCreated)
+		transport = newAtomicTransportHolderWithoutReload(httpTransport, onTransportCleanup, tracker.onTransportCreated)
 	}
 
 	if canCache {
-		// evict only deletes this entry (checked via generation), and only
-		// when both the holder and all transports are dead.
-		// It is set as a closure after setLocked to capture the generation.
-		// Callbacks (transportCleanup, holder AddCleanup, and getLocked revive)
-		// all call through the entry's evict pointer.
-		var evictOnce sync.Once
-		evictFn := func(gen uint64) {
-			if !holderDead.Load() {
-				return
-			}
-			if liveTransports.Load() > 0 {
-				return
+		gen := c.setLocked(key, transport, tracker)
+
+		tracker.evict = func() {
+			if cancel != nil {
+				cancel()
 			}
 
-			evictOnce.Do(func() {
-				if cancel != nil {
-					cancel()
-				}
-
-				c.mu.Lock()
-				defer c.mu.Unlock()
-
-				if e, ok := c.transports[key]; ok && e.generation == gen {
-					delete(c.transports, key)
-				}
-			})
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.deleteLocked(key, gen)
 		}
 
-		gen := c.setLocked(key, transport, &holderDead, &liveTransports, nil)
-		evictWithGen := func() { evictFn(gen) }
-
-		// Update the cache entry's evict pointer now that we have the generation.
-		e := c.transports[key]
-		e.evict = evictWithGen
-		c.transports[key] = e
-
-		// Also wire up the transportCleanup → evict path.
-		evict = evictWithGen
-
-		// When the holder is GC'd (caller dropped it), mark it dead and try
-		// to evict. If any transport is still alive (someone unwrapped
-		// it), eviction will be deferred until all transports are also GC'd.
-		runtime.AddCleanup(transport, func(_ struct{}) {
-			holderDead.Store(true)
-			evictWithGen()
-		}, struct{}{})
+		runtime.AddCleanup(transport, tracker.onHolderGC, struct{}{})
 	}
 
 	return transport, nil
