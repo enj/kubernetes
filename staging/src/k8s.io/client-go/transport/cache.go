@@ -156,39 +156,14 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		holder = newAtomicTransportHolderWithoutReload(httpTransport)
 	}
 
-	if clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
-		if canCache {
-			c.setLocked(key, holder)
-		}
-		// When the holder is GC'd (all callers dropped it), clean up the
-		// cache entry and stop the cert rotation goroutine if one is running.
-		c.addHolderCleanup(holder, key, canCache, cancel)
-	} else if canCache {
-		c.strongTransports[key] = holder
+	if canCache {
+		c.setLocked(key, holder, cancel)
+	} else if cancel != nil {
+		// Uncacheable transports still need cert rotation goroutine cleanup.
+		addCleanup(holder, cancel)
 	}
 
 	return holder, nil
-}
-
-// addHolderCleanup registers a runtime.AddCleanup on the holder that will
-// delete the cache entry and cancel the cert rotation goroutine when the
-// holder becomes unreachable.
-func (c *tlsTransportCache) addHolderCleanup(holder *atomicTransportHolder, key tlsCacheKey, canCache bool, cancel context.CancelFunc) {
-	addCleanup(holder, func() {
-		if cancel != nil {
-			cancel()
-		}
-		if !canCache {
-			return
-		}
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		// Only delete if the entry still points to this holder.
-		// A new get() for the same key may have already replaced it.
-		if wp, ok := c.transports[key]; ok && wp.Value() == nil {
-			delete(c.transports, key)
-		}
-	})
 }
 
 func (c *tlsTransportCache) getLocked(key tlsCacheKey) (*atomicTransportHolder, bool) {
@@ -204,8 +179,27 @@ func (c *tlsTransportCache) getLocked(key tlsCacheKey) (*atomicTransportHolder, 
 	return wp.Value(), true
 }
 
-func (c *tlsTransportCache) setLocked(key tlsCacheKey, holder *atomicTransportHolder) {
+func (c *tlsTransportCache) setLocked(key tlsCacheKey, holder *atomicTransportHolder, cancel context.CancelFunc) {
+	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
+		c.strongTransports[key] = holder
+		return
+	}
+
 	c.transports[key] = weak.Make(holder)
+	// When the holder is GC'd (all callers dropped it), clean up the
+	// cache entry and stop the cert rotation goroutine if one is running.
+	addCleanup(holder, func() {
+		if cancel != nil {
+			cancel()
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		// Only delete if the entry still points to this holder.
+		// A new get() for the same key may have already replaced it.
+		if wp, ok := c.transports[key]; ok && wp.Value() == nil {
+			delete(c.transports, key)
+		}
+	})
 }
 
 func (c *tlsTransportCache) lenLocked() int {
@@ -213,6 +207,10 @@ func (c *tlsTransportCache) lenLocked() int {
 		return len(c.strongTransports)
 	}
 	return len(c.transports)
+}
+
+func addCleanup[T any](ptr *T, cleanup func()) {
+	runtime.AddCleanup(ptr, func(_ struct{}) { cleanup() }, struct{}{})
 }
 
 // tlsConfigKey returns a unique key for tls.Config objects returned from TLSConfigFor
@@ -254,8 +252,4 @@ func tlsConfigKey(c *Config) (tlsCacheKey, bool, error) {
 	}
 
 	return k, true, nil
-}
-
-func addCleanup[T any](ptr *T, cleanup func()) {
-	runtime.AddCleanup(ptr, func(_ struct{}) { cleanup() }, struct{}{})
 }
