@@ -50,20 +50,13 @@ type tlsCacheEntry struct {
 	wp             weak.Pointer[atomicTransportHolder]
 	holderDead     atomic.Bool
 	liveTransports atomic.Int64
-	// evict acquires c.mu and re-checks holderDead and liveTransports under the
-	// lock before deleting the cache entry. This ensures no race with revive
-	// (which also runs under c.mu).
-	evict func()
+	evict          func()
 }
 
 // tryEvict attempts to evict this cache entry. The atomic checks are an
 // optimistic fast-path; the actual eviction decision is made under c.mu
 // inside the evict closure.
 func (e *tlsCacheEntry) tryEvict() {
-	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
-		return
-	}
-
 	if !e.holderDead.Load() {
 		return
 	}
@@ -88,13 +81,9 @@ func (e *tlsCacheEntry) onTransportCleanup() {
 	e.tryEvict()
 }
 
-// revive marks the holder as alive again and registers a new cleanup so that
+// markAliveWithCleanup marks the holder as alive again and registers a new cleanup so that
 // when this caller drops the holder, the eviction check runs again.
-func (e *tlsCacheEntry) revive(holder *atomicTransportHolder) {
-	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
-		return
-	}
-
+func (e *tlsCacheEntry) markAliveWithCleanup(holder *atomicTransportHolder) {
 	e.holderDead.Store(false)
 	addCleanup(holder, func() {
 		e.holderDead.Store(true)
@@ -119,7 +108,7 @@ func (c *tlsTransportCache) getLocked(key tlsCacheKey) (*atomicTransportHolder, 
 
 	// Revive: a new caller is holding the holder, so mark it alive again
 	// and register a new cleanup for this caller's reference.
-	e.revive(t)
+	e.markAliveWithCleanup(t)
 
 	return t, true
 }
@@ -132,7 +121,30 @@ func (c *tlsTransportCache) setLocked(key tlsCacheKey, holder *atomicTransportHo
 
 	entry.wp = weak.Make(holder)
 	c.transports[key] = entry
-	entry.revive(holder)
+	entry.markAliveWithCleanup(holder)
+}
+
+func (c *tlsTransportCache) evictEntryIfUnused(key tlsCacheKey, entry *tlsCacheEntry, cancel context.CancelFunc) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Re-check under the lock: revive may have run between the
+	// atomic fast-path in tryEvict and acquiring c.mu.
+	if !entry.holderDead.Load() {
+		return
+	}
+	if entry.liveTransports.Load() > 0 {
+		return
+	}
+	if c.transports[key] != entry {
+		return
+	}
+
+	delete(c.transports, key)
+
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (c *tlsTransportCache) lenLocked() int {
@@ -261,36 +273,18 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 
 	if canCache {
 		c.setLocked(key, holder, entry)
-
-		entry.evict = func() {
-			c.mu.Lock()
-			defer c.mu.Unlock()
-
-			// Re-check under the lock: revive may have run between the
-			// atomic fast-path in tryEvict and acquiring c.mu.
-			if !entry.holderDead.Load() {
-				return
-			}
-			if entry.liveTransports.Load() > 0 {
-				return
-			}
-			if c.transports[key] != entry {
-				return
-			}
-
-			delete(c.transports, key)
-
-			if cancel != nil {
-				cancel()
-			}
-		}
+		entry.evict = func() { c.evictEntryIfUnused(key, entry, cancel) }
 	} else if cancel != nil {
 		// For uncacheable transports, use the same ref-counting as cacheable
 		// transports (to handle CA rotation creating new *http.Transport
 		// instances) but skip cache eviction — just cancel the cert rotation
 		// goroutine when both the holder and all transports are gone.
-		entry.revive(holder)
+		entry.markAliveWithCleanup(holder)
 		entry.evict = cancel
+	}
+
+	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
+		entry.evict = nil
 	}
 
 	return holder, nil
