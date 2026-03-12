@@ -60,6 +60,10 @@ type tlsCacheEntry struct {
 // optimistic fast-path; the actual eviction decision is made under c.mu
 // inside the evict closure.
 func (e *tlsCacheEntry) tryEvict() {
+	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
+		return
+	}
+
 	if !e.holderDead.Load() {
 		return
 	}
@@ -87,6 +91,10 @@ func (e *tlsCacheEntry) onTransportCleanup() {
 // revive marks the holder as alive again and registers a new cleanup so that
 // when this caller drops the holder, the eviction check runs again.
 func (e *tlsCacheEntry) revive(holder *atomicTransportHolder) {
+	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
+		return
+	}
+
 	e.holderDead.Store(false)
 	addCleanup(holder, func() {
 		e.holderDead.Store(true)
@@ -281,11 +289,8 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		// transports (to handle CA rotation creating new *http.Transport
 		// instances) but skip cache eviction — just cancel the cert rotation
 		// goroutine when both the holder and all transports are gone.
+		entry.revive(holder)
 		entry.evict = cancel
-		addCleanup(holder, func() {
-			entry.holderDead.Store(true)
-			entry.tryEvict()
-		})
 	}
 
 	return holder, nil

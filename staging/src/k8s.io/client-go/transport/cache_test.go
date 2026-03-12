@@ -27,6 +27,7 @@ import (
 	"reflect"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -738,6 +739,44 @@ func TestUncacheableCertRotationLeak(t *testing.T) {
 	})
 	if err != nil {
 		t.Errorf("goroutine leak: cert rotation goroutine was not stopped for uncacheable transport (baseline=%d current=%d)", baseline, runtime.NumGoroutine())
+	}
+}
+
+// TestUncacheableCertRotationNotStoppedEarly verifies that for uncacheable
+// transports, the evict function (which cancels the cert rotation goroutine)
+// is not called prematurely when the old *http.Transport is GC'd after CA
+// rotation, as long as the holder (and its new transport) are still alive.
+//
+// This directly tests the tlsCacheEntry eviction logic, simulating the
+// sequence of events that occur during CA rotation and GC.
+func TestUncacheableCertRotationNotStoppedEarly(t *testing.T) {
+	var evicted atomic.Bool
+	entry := &tlsCacheEntry{}
+	entry.evict = func() { evicted.Store(true) }
+
+	// Simulate initial transport creation.
+	entry.onTransportCreated() // liveTransports = 1
+
+	// Simulate CA rotation creating a second transport.
+	entry.onTransportCreated() // liveTransports = 2
+
+	// Simulate GC of the original transport (after CA rotation replaced it).
+	entry.onTransportCleanup() // liveTransports = 1, tryEvict → holderDead=false → no-op
+	if evicted.Load() {
+		t.Fatal("evict called after old transport GC'd — holder is still alive")
+	}
+
+	// Simulate holder being GC'd (caller dropped it).
+	entry.holderDead.Store(true)
+	entry.tryEvict() // liveTransports = 1 → no-op
+	if evicted.Load() {
+		t.Fatal("evict called after holder GC'd — rotated transport is still alive")
+	}
+
+	// Simulate GC of the rotated transport (last reference gone).
+	entry.onTransportCleanup() // liveTransports = 0, tryEvict → holderDead=true, liveTransports=0 → evict!
+	if !evicted.Load() {
+		t.Fatal("evict NOT called after all transports and holder are gone")
 	}
 }
 
