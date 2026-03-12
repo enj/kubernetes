@@ -392,7 +392,7 @@ func TestNew(t *testing.T) {
 			}
 
 			// We only know how to check TLSConfig on http.Transports
-			transport := rt.(*atomicTransportHolder).WrappedRoundTripper().(*http.Transport)
+			transport := rt.(*concreteTransport).WrappedRoundTripper().(*http.Transport)
 			switch {
 			case testCase.TLS && transport.TLSClientConfig == nil:
 				t.Fatalf("got %#v, expected TLSClientConfig", transport)

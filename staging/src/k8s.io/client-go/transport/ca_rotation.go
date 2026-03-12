@@ -35,7 +35,6 @@ var _ utilnet.RoundTripperWrapper = &atomicTransportHolder{}
 // atomicTransportHolder holds a transport that can be atomically updated
 // when CA files change, enabling graceful CA rotation without cache complexity
 type atomicTransportHolder struct {
-	skipReload    bool
 	caFile        string
 	currentCAData []byte // Track the actual CA data currently in use
 	// clock and caRefreshDuration are used to allow for testing time-based logic.
@@ -52,10 +51,6 @@ func (h *atomicTransportHolder) RoundTrip(req *http.Request) (*http.Response, er
 }
 
 func (h *atomicTransportHolder) WrappedRoundTripper() http.RoundTripper {
-	if h.skipReload {
-		return h.transport
-	}
-
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -63,10 +58,6 @@ func (h *atomicTransportHolder) WrappedRoundTripper() http.RoundTripper {
 }
 
 func (h *atomicTransportHolder) getTransport(ctx context.Context) *http.Transport {
-	if h.skipReload {
-		return h.transport
-	}
-
 	if rt := h.getTransportIfFresh(); rt != nil {
 		return rt
 	}
@@ -159,12 +150,5 @@ func newAtomicTransportHolder(caFile string, caData []byte, transport *http.Tran
 		caRefreshDuration:    5 * time.Minute,
 		transport:            transport,
 		transportLastChecked: c.Now(),
-	}
-}
-
-func newAtomicTransportHolderWithoutReload(transport *http.Transport) *atomicTransportHolder {
-	return &atomicTransportHolder{
-		skipReload: true,
-		transport:  transport,
 	}
 }
