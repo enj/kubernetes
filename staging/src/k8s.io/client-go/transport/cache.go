@@ -185,20 +185,23 @@ func (c *tlsTransportCache) setLocked(key tlsCacheKey, holder *atomicTransportHo
 		return
 	}
 
-	c.transports[key] = weak.Make(holder)
+	wp := weak.Make(holder)
+	c.transports[key] = wp
 	// When the holder is GC'd (all callers dropped it), clean up the
 	// cache entry and stop the cert rotation goroutine if one is running.
 	addCleanup(holder, func() {
 		if cancel != nil {
 			cancel()
 		}
+
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		// Only delete if the entry still points to this holder.
-		// A new get() for the same key may have already replaced it.
-		if wp, ok := c.transports[key]; ok && wp.Value() == nil {
-			delete(c.transports, key)
+
+		// Only delete if the entry has not been replaced by a new setLocked call.
+		if c.transports[key] != wp {
+			return
 		}
+		delete(c.transports, key)
 	})
 }
 
