@@ -694,6 +694,53 @@ func TestCacheReviveAfterDrop(t *testing.T) {
 	pollCacheSizeWithGC(t, tlsCache, 0)
 }
 
+// TestUncacheableCertRotationLeak verifies that the cert rotation goroutine
+// is stopped when an uncacheable transport is garbage collected.
+//
+// BUG: When canCache=false (e.g. Proxy is set), entry.evict is never set,
+// so cancel is never called and the dynamicCertDialer goroutine runs forever.
+func TestUncacheableCertRotationLeak(t *testing.T) {
+	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
+
+	// Write cert and key files so ReloadTLSFiles is triggered.
+	certFile := writeCAFile(t, []byte(certData))
+	keyFile := writeCAFile(t, []byte(keyData))
+
+	baseline := runtime.NumGoroutine()
+
+	// Create an uncacheable config: Proxy makes it uncacheable,
+	// CertFile+KeyFile triggers ReloadTLSFiles and the cert rotation goroutine.
+	rt, err := tlsCache.get(&Config{
+		TLS: TLSConfig{
+			CertFile: certFile,
+			KeyFile:  keyFile,
+		},
+		Proxy: func(*http.Request) (*url.URL, error) { return nil, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The cert rotation goroutine should have started.
+	afterCreate := runtime.NumGoroutine()
+	if afterCreate <= baseline {
+		t.Fatalf("expected goroutine count to increase after creating transport with cert rotation, got baseline=%d after=%d", baseline, afterCreate)
+	}
+
+	// Drop all references to the transport.
+	runtime.KeepAlive(rt)
+
+	// The cert rotation goroutine should be stopped after GC.
+	// Poll because cleanup callbacks and goroutine shutdown are async.
+	err = wait.PollUntilContextTimeout(t.Context(), 10*time.Millisecond, 10*time.Second, true, func(_ context.Context) (bool, error) {
+		runtime.GC()
+		return runtime.NumGoroutine() <= baseline, nil
+	})
+	if err != nil {
+		t.Errorf("goroutine leak: cert rotation goroutine was not stopped for uncacheable transport (baseline=%d current=%d)", baseline, runtime.NumGoroutine())
+	}
+}
+
 func TestCacheLeak(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
 
