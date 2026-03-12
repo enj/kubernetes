@@ -174,7 +174,7 @@ func TestCheckCAFileAndRotate(t *testing.T) {
 			}
 
 			clock := testingclock.NewFakeClock(time.Now())
-			holder := newAtomicTransportHolder(caFile, tt.setupCA, transport)
+			holder := newAtomicTransportHolder(caFile, tt.setupCA, transport, func() {}, func() {})
 			holder.clock = clock
 			holder.transportLastChecked = clock.Now()
 
@@ -252,9 +252,7 @@ func TestCARotationConnectionBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create transport: %v", err)
 	}
-	// Unwrap cachedTransport to access the atomicTransportHolder inside
-	inner := unwrapCachedTransport(transport)
-	inner.(*atomicTransportHolder).caRefreshDuration = 500 * time.Millisecond
+	transport.(*atomicTransportHolder).caRefreshDuration = 500 * time.Millisecond
 
 	client := &http.Client{
 		Transport: transport,
@@ -359,9 +357,12 @@ func TestCARotationConnectionBehavior_Disabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create transport: %v", err)
 	}
-	inner := unwrapCachedTransport(transport)
-	if _, ok := inner.(*atomicTransportHolder); ok {
-		t.Fatal("Expected plain transport when the feature gate is disabled, got atomicTransportHolder")
+	holder, ok := transport.(*atomicTransportHolder)
+	if !ok {
+		t.Fatalf("Expected *atomicTransportHolder, got %T", transport)
+	}
+	if !holder.skipReload {
+		t.Fatal("Expected skipReload=true when the CA rotation feature gate is disabled")
 	}
 
 	client := &http.Client{
@@ -470,7 +471,7 @@ func TestCARotationMetricsEmitted(t *testing.T) {
 	transport := createTestTransport(t, caData)
 
 	clock := testingclock.NewFakeClock(time.Now())
-	holder := newAtomicTransportHolder(caFile, caData, transport)
+	holder := newAtomicTransportHolder(caFile, caData, transport, func() {}, func() {})
 	holder.clock = clock
 	holder.transportLastChecked = clock.Now()
 

@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -239,19 +238,11 @@ func TestTLSConfigKeyCARotationDisabled(t *testing.T) {
 	}
 }
 
-// unwrapCachedTransport returns the inner RoundTripper from a cachedTransport,
-// or the original RoundTripper if it is not a cachedTransport.
-func unwrapCachedTransport(rt http.RoundTripper) http.RoundTripper {
-	if ct, ok := rt.(*cachedTransport); ok {
-		return ct.RoundTripper
-	}
-	return rt
-}
-
 // newTestTLSTransportCache creates a new tlsTransportCache for testing.
 func newTestTLSTransportCache() *tlsTransportCache {
 	return &tlsTransportCache{
-		transports: make(map[tlsCacheKey]cacheEntry),
+		transports:       make(map[tlsCacheKey]tlsCacheEntry),
+		strongTransports: make(map[tlsCacheKey]*atomicTransportHolder),
 	}
 }
 
@@ -263,7 +254,7 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 	testCases := []struct {
 		name            string
 		config          *Config
-		expectWrapper   bool
+		expectCAReload  bool
 		expectCacheable bool
 	}{
 		{
@@ -273,7 +264,7 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 					CAFile: caFile,
 				},
 			},
-			expectWrapper:   true,
+			expectCAReload:  true,
 			expectCacheable: true,
 		},
 		{
@@ -284,7 +275,7 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 					CAData: []byte(testCACert1),
 				},
 			},
-			expectWrapper:   false,
+			expectCAReload:  false,
 			expectCacheable: true,
 		},
 		{
@@ -294,7 +285,7 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 					CAData: []byte(testCACert1),
 				},
 			},
-			expectWrapper:   false,
+			expectCAReload:  false,
 			expectCacheable: true,
 		},
 		{
@@ -302,14 +293,13 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 			config: &Config{
 				TLS: TLSConfig{},
 			},
-			expectWrapper:   false,
+			expectCAReload:  false,
 			expectCacheable: false, // No TLS config means default transport
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Create new cache for testing
 			tlsCaches := newTestTLSTransportCache()
 
 			rt, err := tlsCaches.get(tc.config)
@@ -318,26 +308,26 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 			}
 
 			if !tc.expectCacheable {
-				// Should return default transport
 				if rt != http.DefaultTransport {
 					t.Errorf("Expected default transport, got %T", rt)
 				}
 				return
 			}
 
-			inner := unwrapCachedTransport(rt)
-			if tc.expectWrapper {
-				// Should be wrapped in atomicTransportHolder
-				if _, ok := inner.(*atomicTransportHolder); !ok {
-					t.Errorf("Expected atomicTransportHolder, got %T", inner)
+			holder, ok := rt.(*atomicTransportHolder)
+			if !ok {
+				t.Fatalf("Expected *atomicTransportHolder, got %T", rt)
+			}
+			if tc.expectCAReload {
+				if holder.skipReload {
+					t.Error("Expected skipReload=false for CA rotation")
 				}
 				if !tc.config.TLS.ReloadCAFiles {
 					t.Errorf("Expected ReloadCAFiles to be true, got %v", tc.config.TLS.ReloadCAFiles)
 				}
 			} else {
-				// Should be a regular http.Transport
-				if _, ok := inner.(*http.Transport); !ok {
-					t.Errorf("Expected *http.Transport, got %T", inner)
+				if !holder.skipReload {
+					t.Error("Expected skipReload=true without CA rotation")
 				}
 			}
 
@@ -353,7 +343,7 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 
 			// Verify cache size
 			tlsCaches.mu.Lock()
-			cacheSize := len(tlsCaches.transports)
+			cacheSize := tlsCaches.lenLocked()
 			tlsCaches.mu.Unlock()
 
 			expectedCacheSize := 1
@@ -379,20 +369,18 @@ func TestTLSTransportCacheCARotationDisabled(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	inner := unwrapCachedTransport(rt)
-	if _, ok := inner.(*atomicTransportHolder); ok {
-		t.Error("Expected plain *http.Transport when feature gate is disabled, got atomicTransportHolder")
+	holder, ok := rt.(*atomicTransportHolder)
+	if !ok {
+		t.Fatalf("Expected *atomicTransportHolder, got %T", rt)
 	}
-	if _, ok := inner.(*http.Transport); !ok {
-		t.Errorf("Expected *http.Transport, got %T", inner)
+	if !holder.skipReload {
+		t.Error("Expected skipReload=true when CA rotation feature gate is disabled")
 	}
 }
 
 func TestEmptyCAFileRotationLifecycle(t *testing.T) {
-	// Enable the feature gate for the duration of the test
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowCARotation, true)
 
-	// Create a valid file path, but with empty cert data
 	emptyFile := writeCAFile(t, []byte{})
 
 	config := &Config{
@@ -408,14 +396,11 @@ func TestEmptyCAFileRotationLifecycle(t *testing.T) {
 		t.Fatalf("Unexpected error getting transport: %v", err)
 	}
 
-	// Verify newAtomicTransportHolder is successfully generated
-	inner := unwrapCachedTransport(rt)
-	holder, ok := inner.(*atomicTransportHolder)
+	holder, ok := rt.(*atomicTransportHolder)
 	if !ok {
-		t.Fatalf("Expected atomicTransportHolder, got %T", inner)
+		t.Fatalf("Expected *atomicTransportHolder, got %T", rt)
 	}
 
-	// Verify the initial state: RootCAs should be non-nil but empty
 	initialTransport := holder.getTransport(context.Background())
 
 	if initialTransport.TLSClientConfig == nil || initialTransport.TLSClientConfig.RootCAs == nil {
@@ -426,47 +411,40 @@ func TestEmptyCAFileRotationLifecycle(t *testing.T) {
 		t.Fatal("Expected initially empty RootCAs")
 	}
 
-	// Write valid cert data into the CA file
 	if err := os.WriteFile(emptyFile, []byte(testCACert1), 0644); err != nil {
 		t.Fatalf("Failed to write to CA file: %v", err)
 	}
 
 	holder.mu.Lock()
-	// Set last checked time far in the past to force a refresh on next getTransport call
 	holder.transportLastChecked = time.Now().Add(-time.Hour)
 	holder.mu.Unlock()
 
 	refreshedTransport := holder.getTransport(context.Background())
 
-	// Verify the refresh succeeded and the cert pool is now populated
 	if refreshedTransport.TLSClientConfig.RootCAs.Equal(emptyPool) {
 		t.Fatal("Expected RootCAs to be populated after writing valid cert data and refreshing")
 	}
 }
 
-// TestCacheUnwrapBug demonstrates that unwrapping the cachedTransport via
-// WrappedRoundTripper and holding only the inner transport causes the cache
-// entry to be garbage collected, even though the caller is still using the
-// underlying transport. This is a known bug: the weak reference tracks the
-// cachedTransport wrapper, not the inner transport that the caller holds.
-func TestCacheUnwrapBug(t *testing.T) {
+// TestCacheUnwrapHoldInner verifies that unwrapping the atomicTransportHolder
+// via WrappedRoundTripper and holding only the inner *http.Transport keeps the
+// cache entry alive. The transport being alive in any way must prevent the
+// cache entry from being evicted.
+func TestCacheUnwrapHoldInner(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowCARotation, true)
 
 	tests := []struct {
-		name      string
-		config    *Config
-		innerType string
+		name   string
+		config *Config
 	}{
 		{
-			name:      "inner is *http.Transport",
-			config:    &Config{TLS: TLSConfig{ServerName: "unwrap-test-plain"}},
-			innerType: "*http.Transport",
+			name:   "without CA rotation",
+			config: &Config{TLS: TLSConfig{ServerName: "unwrap-test-plain"}},
 		},
 		{
-			name:      "inner is *atomicTransportHolder",
-			config:    &Config{TLS: TLSConfig{ServerName: "unwrap-test-ca", CAFile: writeCAFile(t, []byte(testCACert1))}},
-			innerType: "*transport.atomicTransportHolder",
+			name:   "with CA rotation",
+			config: &Config{TLS: TLSConfig{ServerName: "unwrap-test-ca", CAFile: writeCAFile(t, []byte(testCACert1))}},
 		},
 	}
 	for _, tt := range tests {
@@ -480,34 +458,181 @@ func TestCacheUnwrapBug(t *testing.T) {
 
 			requireCacheLen(t, tlsCache, 1)
 
-			// Unwrap to get the inner transport, simulating what a caller
-			// that uses utilnet.RoundTripperWrapper would do.
-			inner := rt.(*cachedTransport).WrappedRoundTripper()
-			if got := fmt.Sprintf("%T", inner); got != tt.innerType {
-				t.Fatalf("expected inner type %s, got %s", tt.innerType, got)
+			// Unwrap to get the inner *http.Transport.
+			holder := rt.(*atomicTransportHolder)
+			inner := holder.WrappedRoundTripper()
+			if _, ok := inner.(*http.Transport); !ok {
+				t.Fatalf("expected *http.Transport, got %T", inner)
 			}
 
-			// Drop the only reference to the cachedTransport wrapper.
-			// The caller still has `inner` (the real transport) alive.
-			rt = nil //nolint:ineffassign
+			// Drop the holder. The caller still holds the inner *http.Transport.
+			rt = nil     //nolint:ineffassign
+			holder = nil //nolint:ineffassign
 
-			// The cache entry should survive because the caller is still using the
-			// transport. But because the weak pointer tracks the cachedTransport
-			// wrapper (which is now unreachable), the entry gets collected.
-			pollCacheSizeWithGC(t, tlsCache, 0) // BUG: this should be 1, not 0
+			// The cache entry must survive because the inner *http.Transport
+			// is still alive — the transport being held must prevent eviction.
+			for range 5 {
+				runtime.GC()
+			}
+			requireCacheLen(t, tlsCache, 1) // must still be 1
 
-			runtime.KeepAlive(inner) // inner is still alive — the caller is using it
+			runtime.KeepAlive(inner)
+
+			pollCacheSizeWithGC(t, tlsCache, 0) // now inner is unreachable
 		})
 	}
+}
+
+// TestCacheHoldAfterCARotation verifies that holding the *atomicTransportHolder
+// keeps the cache entry alive even after CA rotation swaps the inner transport.
+// After rotation, the old transport is no longer referenced by the holder, so
+// dropping references to the old transport should not evict the cache entry.
+func TestCacheHoldAfterCARotation(t *testing.T) {
+	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
+	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowCARotation, true)
+
+	caFile := writeCAFile(t, []byte(testCACert1))
+
+	pollCacheSizeWithGC(t, tlsCache, 0) // clean start
+
+	rt, err := New(&Config{TLS: TLSConfig{ServerName: "reload-test", CAFile: caFile}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requireCacheLen(t, tlsCache, 1)
+
+	holder := rt.(*atomicTransportHolder)
+
+	// Grab the original inner transport.
+	originalInner := holder.getTransport(context.Background())
+	if originalInner == nil {
+		t.Fatal("expected non-nil transport")
+	}
+
+	// Simulate CA rotation: write new CA data and force a refresh.
+	if err := os.WriteFile(caFile, []byte(testCACert2), 0644); err != nil {
+		t.Fatal(err)
+	}
+	holder.mu.Lock()
+	holder.transportLastChecked = time.Now().Add(-time.Hour)
+	holder.mu.Unlock()
+
+	newInner := holder.getTransport(context.Background())
+	if newInner == nil {
+		t.Fatal("expected non-nil transport after rotation")
+	}
+	if newInner == originalInner {
+		t.Fatal("expected transport to change after CA rotation")
+	}
+
+	// Drop reference to the old inner transport.
+	originalInner = nil //nolint:ineffassign
+
+	// The holder still holds the new transport strongly. The cache entry
+	// must survive because the holder is alive (caller holds rt) and
+	// the new transport is alive (holder holds it strongly).
+	for range 5 {
+		runtime.GC()
+	}
+	requireCacheLen(t, tlsCache, 1) // holder is alive, cache entry must survive
+
+	runtime.KeepAlive(rt)
+
+	pollCacheSizeWithGC(t, tlsCache, 0) // now rt is unreachable
+}
+
+// TestCacheUnwrapAfterCARotation verifies the interaction of CA rotation with
+// unwrapping. After CA rotation, if the caller drops the holder but holds the
+// new inner transport, the cache entry must survive. Only when the final
+// rotated transport is also dropped should the entry be evicted.
+func TestCacheUnwrapAfterCARotation(t *testing.T) {
+	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
+	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowCARotation, true)
+
+	caFile := writeCAFile(t, []byte(testCACert1))
+
+	pollCacheSizeWithGC(t, tlsCache, 0) // clean start
+
+	rt, err := New(&Config{TLS: TLSConfig{ServerName: "unwrap-rotate-test", CAFile: caFile}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requireCacheLen(t, tlsCache, 1)
+
+	holder := rt.(*atomicTransportHolder)
+
+	// Simulate CA rotation.
+	if err := os.WriteFile(caFile, []byte(testCACert2), 0644); err != nil {
+		t.Fatal(err)
+	}
+	holder.mu.Lock()
+	holder.transportLastChecked = time.Now().Add(-time.Hour)
+	holder.mu.Unlock()
+
+	// Unwrap to get the new (rotated) inner transport.
+	newInner := holder.getTransport(context.Background())
+	if newInner == nil {
+		t.Fatal("expected non-nil transport after rotation")
+	}
+
+	// Drop the holder. Caller only holds the rotated *http.Transport.
+	rt = nil     //nolint:ineffassign
+	holder = nil //nolint:ineffassign
+
+	// The cache entry must survive because the rotated transport is alive.
+	for range 5 {
+		runtime.GC()
+	}
+	requireCacheLen(t, tlsCache, 1) // rotated transport is alive, cache must survive
+
+	runtime.KeepAlive(newInner)
+
+	pollCacheSizeWithGC(t, tlsCache, 0) // now newInner is unreachable
+}
+
+// TestCacheReviveAfterDrop verifies that after all callers drop a holder,
+// a new get() for the same key revives the cache entry. The new caller
+// should get the same transport back (cache hit), and dropping it should
+// eventually evict the entry.
+func TestCacheReviveAfterDrop(t *testing.T) {
+	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
+
+	pollCacheSizeWithGC(t, tlsCache, 0)
+
+	config := &Config{TLS: TLSConfig{ServerName: "revive-test"}}
+
+	rt1, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireCacheLen(t, tlsCache, 1)
+
+	// Drop rt1. The holder becomes unreachable but the cache entry may
+	// still exist (weak pointer not guaranteed to go nil).
+	runtime.KeepAlive(rt1)
+
+	// A new caller requests the same config. If the weak pointer still
+	// resolves, it should get a cache hit with the holder revived.
+	// If the weak pointer went nil, it gets a new holder (miss-gc).
+	// Either way the cache should have exactly 1 entry.
+	rt2, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireCacheLen(t, tlsCache, 1)
+
+	// Now drop rt2. Everything should be evicted.
+	runtime.KeepAlive(rt2)
+	pollCacheSizeWithGC(t, tlsCache, 0)
 }
 
 func TestCacheLeak(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
 
-	pollCacheSizeWithGC(t, tlsCache, 0) // clean start - wait for any transports from other tests to be GC'd
+	pollCacheSizeWithGC(t, tlsCache, 0) // clean start
 
-	// manually create some transports that have some overlap
-	// these 3 calls result in 2 transports in the cache
 	rt1, err := New(&Config{TLS: TLSConfig{ServerName: "1"}})
 	if err != nil {
 		t.Fatal(err)
@@ -568,7 +693,7 @@ func cacheLen(c *tlsTransportCache) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	return len(c.transports)
+	return c.lenLocked()
 }
 
 func pollCacheSizeWithGC(t *testing.T, c *tlsTransportCache, want int) {
