@@ -116,15 +116,15 @@ func (c *tlsTransportCache) getLocked(key tlsCacheKey) (*atomicTransportHolder, 
 	return t, true
 }
 
-func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport *atomicTransportHolder, entry *tlsCacheEntry) {
+func (c *tlsTransportCache) setLocked(key tlsCacheKey, holder *atomicTransportHolder, entry *tlsCacheEntry) {
 	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
-		c.strongTransports[key] = transport
+		c.strongTransports[key] = holder
 		return
 	}
 
-	entry.wp = weak.Make(transport)
+	entry.wp = weak.Make(holder)
 	c.transports[key] = entry
-	entry.revive(transport)
+	entry.revive(holder)
 }
 
 func (c *tlsTransportCache) lenLocked() int {
@@ -244,15 +244,15 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 
 	entry := &tlsCacheEntry{}
 
-	var transport *atomicTransportHolder
+	var holder *atomicTransportHolder
 	if config.TLS.ReloadCAFiles && tlsConfig != nil && tlsConfig.RootCAs != nil && len(config.TLS.CAFile) > 0 {
-		transport = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport, entry.onTransportCleanup, entry.onTransportCreated)
+		holder = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport, entry.onTransportCleanup, entry.onTransportCreated)
 	} else {
-		transport = newAtomicTransportHolderWithoutReload(httpTransport, entry.onTransportCleanup, entry.onTransportCreated)
+		holder = newAtomicTransportHolderWithoutReload(httpTransport, entry.onTransportCleanup, entry.onTransportCreated)
 	}
 
 	if canCache {
-		c.setLocked(key, transport, entry)
+		c.setLocked(key, holder, entry)
 
 		entry.evict = func() {
 			c.mu.Lock()
@@ -276,9 +276,19 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 				cancel()
 			}
 		}
+	} else if cancel != nil {
+		// For uncacheable transports, use the same ref-counting as cacheable
+		// transports (to handle CA rotation creating new *http.Transport
+		// instances) but skip cache eviction — just cancel the cert rotation
+		// goroutine when both the holder and all transports are gone.
+		entry.evict = cancel
+		addCleanup(holder, func() {
+			entry.holderDead.Store(true)
+			entry.tryEvict()
+		})
 	}
 
-	return transport, nil
+	return holder, nil
 }
 
 // tlsConfigKey returns a unique key for tls.Config objects returned from TLSConfigFor
