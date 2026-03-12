@@ -187,6 +187,7 @@ func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport http.RoundTripp
 				return
 			}
 			delete(c.transports, key)
+			metrics.TransportCacheEntries.Observe(c.lenLocked())
 		}, key)
 	}
 
