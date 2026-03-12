@@ -24,7 +24,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"weak"
 
@@ -39,14 +38,14 @@ import (
 // the config has no custom TLS options, http.DefaultTransport is returned.
 type tlsTransportCache struct {
 	mu               sync.Mutex
-	transports       map[tlsCacheKey]*tlsCacheEntry           // GC-enabled: weak refs
-	strongTransports map[tlsCacheKey]*atomicTransportHolder   // GC-disabled: strong refs
+	transports       map[tlsCacheKey]weak.Pointer[atomicTransportHolder] // GC-enabled
+	strongTransports map[tlsCacheKey]*atomicTransportHolder              // GC-disabled
 }
 
 const idleConnsPerHost = 25
 
 var tlsCache = &tlsTransportCache{
-	transports:       make(map[tlsCacheKey]*tlsCacheEntry),
+	transports:       make(map[tlsCacheKey]weak.Pointer[atomicTransportHolder]),
 	strongTransports: make(map[tlsCacheKey]*atomicTransportHolder),
 }
 
@@ -150,33 +149,46 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		DisableCompression:  config.DisableCompression,
 	})
 
-	entry := &tlsCacheEntry{}
 	var holder *atomicTransportHolder
 	if config.TLS.ReloadCAFiles && tlsConfig != nil && tlsConfig.RootCAs != nil && len(config.TLS.CAFile) > 0 {
-		holder = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport, entry.onTransportCreated, entry.onTransportCleanup)
+		holder = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport)
 	} else {
-		holder = newAtomicTransportHolderWithoutReload(httpTransport, entry.onTransportCreated, entry.onTransportCleanup)
+		holder = newAtomicTransportHolderWithoutReload(httpTransport)
 	}
 
-	if canCache {
-		c.setLocked(key, holder, entry)
-		entry.evict = func() { c.evictEntryIfUnused(key, entry, cancel) }
-	} else if cancel != nil {
-		// Uncacheable transports still need cert rotation goroutine cleanup.
-		// Same lifecycle tracking as cached entries, but evict just calls cancel
-		// without a lock re-check — there is no cache map to protect and no
-		// revive path (no getLocked can race with tryEvict).
-		entry.markAliveWithCleanup(holder)
-		entry.evict = cancel
-	}
-
-	// Preserves pre-GC behavior: cached entries live forever, cert rotation
-	// goroutines run indefinitely.
-	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
-		entry.evict = nil
+	if clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
+		if canCache {
+			c.setLocked(key, holder)
+		}
+		// When the holder is GC'd (all callers dropped it), clean up the
+		// cache entry and stop the cert rotation goroutine if one is running.
+		c.addHolderCleanup(holder, key, canCache, cancel)
+	} else if canCache {
+		c.strongTransports[key] = holder
 	}
 
 	return holder, nil
+}
+
+// addHolderCleanup registers a runtime.AddCleanup on the holder that will
+// delete the cache entry and cancel the cert rotation goroutine when the
+// holder becomes unreachable.
+func (c *tlsTransportCache) addHolderCleanup(holder *atomicTransportHolder, key tlsCacheKey, canCache bool, cancel context.CancelFunc) {
+	addCleanup(holder, func() {
+		if cancel != nil {
+			cancel()
+		}
+		if !canCache {
+			return
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		// Only delete if the entry still points to this holder.
+		// A new get() for the same key may have already replaced it.
+		if wp, ok := c.transports[key]; ok && wp.Value() == nil {
+			delete(c.transports, key)
+		}
+	})
 }
 
 func (c *tlsTransportCache) getLocked(key tlsCacheKey) (*atomicTransportHolder, bool) {
@@ -185,64 +197,21 @@ func (c *tlsTransportCache) getLocked(key tlsCacheKey) (*atomicTransportHolder, 
 		return v, ok
 	}
 
-	e, ok := c.transports[key]
+	wp, ok := c.transports[key]
 	if !ok {
 		return nil, false
 	}
-	t := e.wp.Value()
-	if t == nil {
-		return nil, true
-	}
-
-	// A new caller obtained the holder — reset holderDead so eviction is
-	// blocked until this caller also drops it.
-	e.markAliveWithCleanup(t)
-
-	return t, true
+	return wp.Value(), true
 }
 
-func (c *tlsTransportCache) setLocked(key tlsCacheKey, holder *atomicTransportHolder, entry *tlsCacheEntry) {
-	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
-		c.strongTransports[key] = holder
-		return
-	}
-
-	entry.wp = weak.Make(holder)
-	c.transports[key] = entry
-	entry.markAliveWithCleanup(holder)
-}
-
-// evictEntryIfUnused re-checks eviction conditions under c.mu.
-//
-// This re-check is necessary because markAliveWithCleanup (called from
-// getLocked under c.mu) may have reset holderDead between tryEvict's
-// lock-free atomic checks and this call.
-func (c *tlsTransportCache) evictEntryIfUnused(key tlsCacheKey, entry *tlsCacheEntry, cancel context.CancelFunc) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if !entry.holderDead.Load() {
-		return
-	}
-	if entry.liveTransports.Load() > 0 {
-		return
-	}
-	if c.transports[key] != entry {
-		return // a new get() for this key already created a replacement entry
-	}
-
-	delete(c.transports, key)
-
-	if cancel != nil {
-		cancel()
-	}
+func (c *tlsTransportCache) setLocked(key tlsCacheKey, holder *atomicTransportHolder) {
+	c.transports[key] = weak.Make(holder)
 }
 
 func (c *tlsTransportCache) lenLocked() int {
 	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
 		return len(c.strongTransports)
 	}
-
 	return len(c.transports)
 }
 
@@ -285,64 +254,6 @@ func tlsConfigKey(c *Config) (tlsCacheKey, bool, error) {
 	}
 
 	return k, true, nil
-}
-
-// tlsCacheEntry manages the GC-based lifecycle of a cached transport.
-//
-// Invariants:
-//   - evict is only called when holderDead is true AND liveTransports is 0.
-//   - holderDead is false while any caller holds the *atomicTransportHolder.
-//     It is set to true by a runtime.AddCleanup callback when the holder
-//     becomes unreachable, and reset to false by markAliveWithCleanup when
-//     a new caller obtains the holder from the cache.
-//   - liveTransports is incremented for each *http.Transport created
-//     (initial + CA rotations) and decremented when each is GC'd.
-//     Because the holder stores its transport strongly, liveTransports > 0
-//     whenever the holder is alive.
-//   - For cached entries, evict acquires c.mu and re-checks holderDead and
-//     liveTransports to prevent races with concurrent markAliveWithCleanup
-//     calls (which also run under c.mu via getLocked).
-//   - For uncacheable entries, evict is a simple cancel call. No lock is
-//     needed because there is no cache map to protect and no revive path.
-type tlsCacheEntry struct {
-	wp             weak.Pointer[atomicTransportHolder]
-	holderDead     atomic.Bool
-	liveTransports atomic.Int64
-	evict          func()
-}
-
-// tryEvict is the lock-free fast-path for eviction. The atomic checks avoid
-// calling evict (which may acquire c.mu) when eviction is clearly not needed.
-func (e *tlsCacheEntry) tryEvict() {
-	if !e.holderDead.Load() {
-		return
-	}
-	if e.liveTransports.Load() > 0 {
-		return
-	}
-	if e.evict != nil {
-		e.evict()
-	}
-}
-
-func (e *tlsCacheEntry) onTransportCreated() {
-	e.liveTransports.Add(1)
-}
-
-func (e *tlsCacheEntry) onTransportCleanup() {
-	e.liveTransports.Add(-1)
-	e.tryEvict()
-}
-
-// markAliveWithCleanup resets holderDead and registers a cleanup that will
-// set it back to true when this caller drops the holder. Must be called
-// under c.mu for cached entries to prevent races with evictEntryIfUnused.
-func (e *tlsCacheEntry) markAliveWithCleanup(holder *atomicTransportHolder) {
-	e.holderDead.Store(false)
-	addCleanup(holder, func() {
-		e.holderDead.Store(true)
-		e.tryEvict()
-	})
 }
 
 func addCleanup[T any](ptr *T, cleanup func()) {

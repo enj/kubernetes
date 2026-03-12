@@ -174,7 +174,7 @@ func TestCheckCAFileAndRotate(t *testing.T) {
 			}
 
 			clock := testingclock.NewFakeClock(time.Now())
-			holder := newAtomicTransportHolder(caFile, tt.setupCA, transport, func() {}, func() {})
+			holder := newAtomicTransportHolder(caFile, tt.setupCA, transport)
 			holder.clock = clock
 			holder.transportLastChecked = clock.Now()
 
@@ -471,7 +471,7 @@ func TestCARotationMetricsEmitted(t *testing.T) {
 	transport := createTestTransport(t, caData)
 
 	clock := testingclock.NewFakeClock(time.Now())
-	holder := newAtomicTransportHolder(caFile, caData, transport, func() {}, func() {})
+	holder := newAtomicTransportHolder(caFile, caData, transport)
 	holder.clock = clock
 	holder.transportLastChecked = clock.Now()
 
