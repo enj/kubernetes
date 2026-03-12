@@ -76,12 +76,6 @@ func (t *cacheEvictionTracker) tryEvict() {
 	})
 }
 
-// onHolderGC is registered via runtime.AddCleanup on the atomicTransportHolder.
-func (t *cacheEvictionTracker) onHolderGC(_ struct{}) {
-	t.holderDead.Store(true)
-	t.tryEvict()
-}
-
 // onTransportCreated is called when a new *http.Transport is created (initial
 // creation and after CA rotation).
 func (t *cacheEvictionTracker) onTransportCreated() {
@@ -92,7 +86,10 @@ func (t *cacheEvictionTracker) onTransportCreated() {
 // when this caller drops the holder, the eviction check runs again.
 func (t *cacheEvictionTracker) revive(holder *atomicTransportHolder) {
 	t.holderDead.Store(false)
-	runtime.AddCleanup(holder, t.onHolderGC, struct{}{})
+	addCleanup(holder, func() {
+		t.holderDead.Store(true)
+		t.tryEvict()
+	})
 }
 
 func (c *tlsTransportCache) getLocked(key tlsCacheKey) (*atomicTransportHolder, bool) {
@@ -285,7 +282,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 			c.deleteLocked(key, gen)
 		}
 
-		runtime.AddCleanup(transport, tracker.onHolderGC, struct{}{})
+		tracker.revive(transport)
 	}
 
 	return transport, nil
@@ -330,4 +327,8 @@ func tlsConfigKey(c *Config) (tlsCacheKey, bool, error) {
 	}
 
 	return k, true, nil
+}
+
+func addCleanup[T any](ptr *T, cleanup func()) {
+	runtime.AddCleanup(ptr, func(_ struct{}) { cleanup() }, struct{}{})
 }

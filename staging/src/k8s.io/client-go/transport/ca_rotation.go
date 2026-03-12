@@ -21,7 +21,6 @@ import (
 	"context"
 	"net/http"
 	"os"
-	"runtime"
 	"sync"
 	"time"
 
@@ -169,9 +168,7 @@ func (h *atomicTransportHolder) tryRefreshTransportLocked(ctx context.Context) {
 // whether the cache entry is still current before evicting.
 func (h *atomicTransportHolder) registerTransportCleanup(transport *http.Transport) {
 	h.onTransportCreated()
-	runtime.AddCleanup(transport, func(cleanup func()) {
-		cleanup()
-	}, h.onTransportCleanup)
+	addCleanup(transport, h.onTransportCleanup)
 }
 
 // newAtomicTransportHolder creates a new holder for CA file reloading scenarios.
