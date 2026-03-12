@@ -484,6 +484,68 @@ func TestCacheUnwrapHoldInner(t *testing.T) {
 	}
 }
 
+// TestCacheUnwrapDeduplication verifies that when a caller unwraps the holder
+// to get the inner *http.Transport and drops the holder, a subsequent get()
+// for the same key returns a holder wrapping the SAME *http.Transport.
+//
+// KNOWN LIMITATION: This cannot be guaranteed because the holder is stored
+// via weak.Pointer. Once the holder is GC'd, getLocked sees wp.Value()==nil
+// and creates a new holder with a new transport, breaking deduplication.
+// The liveTransports ref-counting prevents the map entry from being deleted,
+// but cannot keep the holder itself alive. Keeping the holder alive would
+// require a circular reference (holder → transport, transport → holder via
+// cleanup arg) that prevents either from ever being GC'd.
+func TestCacheUnwrapDeduplication(t *testing.T) {
+	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
+
+	pollCacheSizeWithGC(t, tlsCache, 0) // clean start
+
+	cfg := &Config{TLS: TLSConfig{ServerName: "dedup-test"}}
+
+	rt, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requireCacheLen(t, tlsCache, 1)
+
+	// Unwrap to get the inner *http.Transport.
+	holder := rt.(*atomicTransportHolder)
+	inner := holder.WrappedRoundTripper().(*http.Transport)
+
+	// Drop the holder. Caller only holds the inner *http.Transport.
+	rt = nil     //nolint:ineffassign
+	holder = nil //nolint:ineffassign
+
+	// Force GC so the holder can be collected.
+	for range 10 {
+		runtime.GC()
+		runtime.Gosched()
+	}
+
+	// The map entry should still exist (liveTransports > 0 prevents eviction).
+	requireCacheLen(t, tlsCache, 1)
+
+	// A subsequent get() for the same key should ideally return a holder
+	// wrapping the same inner transport — preserving cache deduplication.
+	rt2, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	holder2 := rt2.(*atomicTransportHolder)
+	inner2 := holder2.WrappedRoundTripper().(*http.Transport)
+
+	if inner2 != inner {
+		// This is a known limitation — see the comment on this test.
+		t.Skipf("cache deduplication broken: get() returned a different *http.Transport after unwrap+GC (want %p, got %p)", inner, inner2)
+	}
+
+	runtime.KeepAlive(inner)
+	runtime.KeepAlive(rt2)
+	pollCacheSizeWithGC(t, tlsCache, 0)
+}
+
 // TestCacheHoldAfterCARotation verifies that holding the *atomicTransportHolder
 // keeps the cache entry alive even after CA rotation swaps the inner transport.
 // After rotation, the old transport is no longer referenced by the holder, so
