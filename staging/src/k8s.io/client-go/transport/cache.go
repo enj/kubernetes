@@ -163,7 +163,9 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		entry.evict = func() { c.evictEntryIfUnused(key, entry, cancel) }
 	} else if cancel != nil {
 		// Uncacheable transports still need cert rotation goroutine cleanup.
-		// Same lifecycle tracking as cached entries, but evict just calls cancel.
+		// Same lifecycle tracking as cached entries, but evict just calls cancel
+		// without a lock re-check — there is no cache map to protect and no
+		// revive path (no getLocked can race with tryEvict).
 		entry.markAliveWithCleanup(holder)
 		entry.evict = cancel
 	}
@@ -226,7 +228,7 @@ func (c *tlsTransportCache) evictEntryIfUnused(key tlsCacheKey, entry *tlsCacheE
 		return
 	}
 	if c.transports[key] != entry {
-		return
+		return // a new get() for this key already created a replacement entry
 	}
 
 	delete(c.transports, key)
