@@ -153,9 +153,9 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 	entry := &tlsCacheEntry{}
 	var holder *atomicTransportHolder
 	if config.TLS.ReloadCAFiles && tlsConfig != nil && tlsConfig.RootCAs != nil && len(config.TLS.CAFile) > 0 {
-		holder = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport, entry.onTransportCleanup, entry.onTransportCreated)
+		holder = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport, entry.onTransportCreated, entry.onTransportCleanup)
 	} else {
-		holder = newAtomicTransportHolderWithoutReload(httpTransport, entry.onTransportCleanup, entry.onTransportCreated)
+		holder = newAtomicTransportHolderWithoutReload(httpTransport, entry.onTransportCreated, entry.onTransportCleanup)
 	}
 
 	if canCache {

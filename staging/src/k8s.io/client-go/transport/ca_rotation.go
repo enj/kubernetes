@@ -50,8 +50,8 @@ type atomicTransportHolder struct {
 	// clock and caRefreshDuration are used to allow for testing time-based logic.
 	clock             clock.Clock
 	caRefreshDuration time.Duration
-	onTransportCleanup func()
 	onTransportCreated func()
+	onTransportCleanup func()
 	// mu covers transport and transportLastChecked
 	mu                   sync.RWMutex
 	transport            *http.Transport
@@ -165,15 +165,15 @@ func (h *atomicTransportHolder) registerTransportCleanup(transport *http.Transpo
 // The caFile must be specified.
 // caData may be empty but should correspond to the contents of caFile.
 // transport must have a TLS config and its root CAs should match caData.
-func newAtomicTransportHolder(caFile string, caData []byte, transport *http.Transport, onTransportCleanup, onTransportCreated func()) *atomicTransportHolder {
+func newAtomicTransportHolder(caFile string, caData []byte, transport *http.Transport, onTransportCreated, onTransportCleanup func()) *atomicTransportHolder {
 	c := clock.RealClock{}
 	h := &atomicTransportHolder{
 		caFile:               caFile,
 		currentCAData:        caData,
 		clock:                c,
 		caRefreshDuration:    5 * time.Minute,
-		onTransportCleanup:   onTransportCleanup,
 		onTransportCreated:   onTransportCreated,
+		onTransportCleanup:   onTransportCleanup,
 		transport:            transport,
 		transportLastChecked: c.Now(),
 	}
@@ -181,11 +181,11 @@ func newAtomicTransportHolder(caFile string, caData []byte, transport *http.Tran
 	return h
 }
 
-func newAtomicTransportHolderWithoutReload(transport *http.Transport, onTransportCleanup, onTransportCreated func()) *atomicTransportHolder {
+func newAtomicTransportHolderWithoutReload(transport *http.Transport, onTransportCreated, onTransportCleanup func()) *atomicTransportHolder {
 	h := &atomicTransportHolder{
 		skipReload:         true,
-		onTransportCleanup: onTransportCleanup,
 		onTransportCreated: onTransportCreated,
+		onTransportCleanup: onTransportCleanup,
 		transport:          transport,
 	}
 	h.registerTransportCleanup(transport)
