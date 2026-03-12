@@ -122,7 +122,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 
 	// If we use are reloading files, we need to handle certificate rotation properly
 	// TODO(jackkleeman): We can also add rotation here when config.HasCertCallback() is true
-	var cancel context.CancelFunc
+	var cancel context.CancelCauseFunc
 	if config.TLS.ReloadTLSFiles && tlsConfig != nil && tlsConfig.GetClientCertificate != nil {
 		// The TLS cache is a singleton, so sharing the same name for all of its
 		// background activity seems okay.
@@ -131,7 +131,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		tlsConfig.GetClientCertificate = dynamicCertDialer.GetClientCertificate
 		dial = dynamicCertDialer.connDialer.DialContext
 		var ctx context.Context
-		ctx, cancel = context.WithCancel(context.Background())
+		ctx, cancel = context.WithCancelCause(context.Background())
 		go dynamicCertDialer.run(ctx.Done())
 	}
 
@@ -157,7 +157,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 	return c.setLocked(key, transport, canCache, cancel), nil
 }
 
-func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport http.RoundTripper, canCache bool, cancel context.CancelFunc) http.RoundTripper {
+func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport http.RoundTripper, canCache bool, cancel context.CancelCauseFunc) http.RoundTripper {
 	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
 		if canCache {
 			c.strongTransports[key] = transport
@@ -166,19 +166,19 @@ func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport http.RoundTripp
 	}
 
 	if !canCache && cancel == nil {
-		return transport
+		return transport // nothing to GC
 	}
 
 	transportWithGC := &concreteTransport{rt: transport}
 
 	if cancel != nil {
-		addCleanup(transportWithGC, cancel)
+		runtime.AddCleanup(transportWithGC, cancel, fmt.Errorf("transport garbage collected"))
 	}
 
 	if canCache {
 		wp := weak.Make(transportWithGC)
 		c.transports[key] = wp
-		addCleanup(transportWithGC, func() {
+		runtime.AddCleanup(transportWithGC, func(key tlsCacheKey) {
 			c.mu.Lock()
 			defer c.mu.Unlock()
 
@@ -187,7 +187,7 @@ func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport http.RoundTripp
 				return
 			}
 			delete(c.transports, key)
-		})
+		}, key)
 	}
 
 	return transportWithGC
@@ -203,13 +203,14 @@ func (c *tlsTransportCache) getLocked(key tlsCacheKey) (http.RoundTripper, bool)
 	if !ok {
 		return nil, false
 	}
-	// Avoid returning a typed nil (*concreteTransport)(nil) inside the
-	// http.RoundTripper interface — callers check "if t != nil" which
-	// would incorrectly pass for a non-nil interface with a nil value.
-	if v := wp.Value(); v != nil {
-		return v, true
+
+	v := wp.Value()
+
+	if v == nil { // avoid typed nil
+		return nil, true
 	}
-	return nil, true
+
+	return v, true
 }
 
 func (c *tlsTransportCache) lenLocked() int {
@@ -219,6 +220,7 @@ func (c *tlsTransportCache) lenLocked() int {
 	return len(c.transports)
 }
 
+// concreteTransport is just indirection to allow the http.RoundTripper interface to be used with a weak.Pointer
 type concreteTransport struct {
 	rt http.RoundTripper
 }
@@ -232,10 +234,6 @@ func (v *concreteTransport) RoundTrip(req *http.Request) (*http.Response, error)
 
 func (v *concreteTransport) WrappedRoundTripper() http.RoundTripper {
 	return v.rt
-}
-
-func addCleanup[T any](ptr *T, cleanup func()) {
-	runtime.AddCleanup(ptr, func(_ struct{}) { cleanup() }, struct{}{})
 }
 
 // tlsConfigKey returns a unique key for tls.Config objects returned from TLSConfigFor
