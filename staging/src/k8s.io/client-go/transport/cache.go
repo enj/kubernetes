@@ -154,23 +154,43 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		transport = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport)
 	}
 
+	return c.setLocked(key, transport, canCache, cancel), nil
+}
+
+func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport http.RoundTripper, canCache bool, cancel context.CancelFunc) http.RoundTripper {
 	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
 		if canCache {
 			c.strongTransports[key] = transport
 		}
-		return transport, nil
+		return transport
 	}
 
-	cached := &concreteTransport{rt: transport}
+	if !canCache && cancel == nil {
+		return transport
+	}
+
+	transportWithGC := &concreteTransport{rt: transport}
+
+	if cancel != nil {
+		addCleanup(transportWithGC, cancel)
+	}
 
 	if canCache {
-		c.setLocked(key, cached, cancel)
-	} else if cancel != nil {
-		// Uncacheable transports still need cert rotation goroutine cleanup.
-		addCleanup(cached, cancel)
+		wp := weak.Make(transportWithGC)
+		c.transports[key] = wp
+		addCleanup(transportWithGC, func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+
+			// make sure we only delete the weak pointer created by this specific setLocked call
+			if c.transports[key] != wp {
+				return
+			}
+			delete(c.transports, key)
+		})
 	}
 
-	return cached, nil
+	return transportWithGC
 }
 
 func (c *tlsTransportCache) getLocked(key tlsCacheKey) (http.RoundTripper, bool) {
@@ -190,27 +210,6 @@ func (c *tlsTransportCache) getLocked(key tlsCacheKey) (http.RoundTripper, bool)
 		return v, true
 	}
 	return nil, true
-}
-
-func (c *tlsTransportCache) setLocked(key tlsCacheKey, cached *concreteTransport, cancel context.CancelFunc) {
-	wp := weak.Make(cached)
-	c.transports[key] = wp
-	// When the cached value is GC'd (all callers dropped it), clean up the
-	// cache entry and stop the cert rotation goroutine if one is running.
-	addCleanup(cached, func() {
-		if cancel != nil {
-			cancel()
-		}
-
-		c.mu.Lock()
-		defer c.mu.Unlock()
-
-		// Only delete if the entry has not been replaced by a new setLocked call.
-		if c.transports[key] != wp {
-			return
-		}
-		delete(c.transports, key)
-	})
 }
 
 func (c *tlsTransportCache) lenLocked() int {
