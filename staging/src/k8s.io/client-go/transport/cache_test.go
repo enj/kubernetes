@@ -696,10 +696,9 @@ func TestCacheReviveAfterDrop(t *testing.T) {
 }
 
 // TestUncacheableCertRotationLeak verifies that the cert rotation goroutine
-// is stopped when an uncacheable transport is garbage collected.
-//
-// BUG: When canCache=false (e.g. Proxy is set), entry.evict is never set,
-// so cancel is never called and the dynamicCertDialer goroutine runs forever.
+// is stopped when an uncacheable transport is garbage collected. Without the
+// fix, when canCache=false (e.g. Proxy is set), the cert rotation goroutine
+// would run forever because cancel was never wired up to the GC lifecycle.
 func TestUncacheableCertRotationLeak(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
 

@@ -35,14 +35,14 @@ var _ utilnet.RoundTripperWrapper = &atomicTransportHolder{}
 // atomicTransportHolder holds a transport that can be atomically updated
 // when CA files change, enabling graceful CA rotation without cache complexity.
 //
-// When the GC feature gate is enabled, the holder is stored in the cache via
-// weak.Pointer[atomicTransportHolder] and the inner *http.Transport is stored
-// strongly.  This means:
-//   - Holding the *atomicTransportHolder keeps the *http.Transport alive.
-//   - Holding the *http.Transport (via unwrap) keeps only the transport alive
-//     (the holder may be GC'd, but the transport's cleanup will handle eviction).
-//   - When both the holder and all extracted *http.Transport references are gone,
-//     the cleanup fires and the cache entry is evicted.
+// Invariants:
+//   - The holder always stores its *http.Transport strongly, so holding
+//     the holder keeps the transport alive.
+//   - CA rotation replaces the inner transport but does not change the
+//     holder's identity — callers continue using the same holder.
+//   - Each *http.Transport created (initial + rotated) is tracked via
+//     onTransportCreated/onTransportCleanup to support GC-based cache
+//     eviction (see tlsCacheEntry).
 type atomicTransportHolder struct {
 	skipReload    bool
 	caFile        string
@@ -50,10 +50,7 @@ type atomicTransportHolder struct {
 	// clock and caRefreshDuration are used to allow for testing time-based logic.
 	clock             clock.Clock
 	caRefreshDuration time.Duration
-	// onTransportCleanup is called when a *http.Transport is garbage collected.
 	onTransportCleanup func()
-	// onTransportCreated is called when a new *http.Transport is created
-	// (initial creation and after CA rotation).
 	onTransportCreated func()
 	// mu covers transport and transportLastChecked
 	mu                   sync.RWMutex
@@ -149,9 +146,7 @@ func (h *atomicTransportHolder) tryRefreshTransportLocked(ctx context.Context) {
 	// Update our tracking of current CA data
 	h.currentCAData = newCAData
 
-	// Register cleanup on the new transport so that if the holder is GC'd
-	// (caller dropped it) and this transport is eventually also GC'd,
-	// the cache entry will be evicted.
+	// The new transport must be tracked so liveTransports stays accurate.
 	h.registerTransportCleanup(newTransport)
 
 	// Close idle connections on the old transport to encourage migration
@@ -161,17 +156,15 @@ func (h *atomicTransportHolder) tryRefreshTransportLocked(ctx context.Context) {
 	metrics.TransportCAReloads.Increment("success", "updated")
 }
 
-// registerTransportCleanup registers a runtime.AddCleanup on the given transport
-// that will call the holder's cleanup function when the transport is garbage
-// collected. This is safe to call multiple times for different transports
-// (e.g. after CA rotation) — the cleanup function is responsible for checking
-// whether the cache entry is still current before evicting.
 func (h *atomicTransportHolder) registerTransportCleanup(transport *http.Transport) {
 	h.onTransportCreated()
 	addCleanup(transport, h.onTransportCleanup)
 }
 
 // newAtomicTransportHolder creates a new holder for CA file reloading scenarios.
+// The caFile must be specified.
+// caData may be empty but should correspond to the contents of caFile.
+// transport must have a TLS config and its root CAs should match caData.
 func newAtomicTransportHolder(caFile string, caData []byte, transport *http.Transport, onTransportCleanup, onTransportCreated func()) *atomicTransportHolder {
 	c := clock.RealClock{}
 	h := &atomicTransportHolder{
