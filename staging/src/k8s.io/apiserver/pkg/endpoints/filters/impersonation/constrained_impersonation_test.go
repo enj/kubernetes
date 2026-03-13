@@ -101,6 +101,10 @@ func (c *constrainedImpersonationTest) Authorize(ctx context.Context, a authoriz
 		return authorizer.DecisionAllow, "", nil
 	}
 
+	if u.GetName() == "user-impersonater" && a.GetVerb() == "impersonate:user-info" && a.GetResource() == "uids" {
+		return authorizer.DecisionAllow, "", nil
+	}
+
 	if len(u.GetGroups()) > 0 && u.GetGroups()[0] == "group-impersonater" && a.GetVerb() == "impersonate:user-info" && a.GetResource() == "groups" {
 		return authorizer.DecisionAllow, "", nil
 	}
@@ -1622,8 +1626,252 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "impersonating-user-with-uid",
+			requests: []testRequest{
+				{
+					request:   getPodRequest,
+					requestor: &user.DefaultInfo{Name: "user-impersonater", UID: "requestor-uid-123"},
+					impersonatedUser: &user.DefaultInfo{
+						Name: "anyone",
+						UID:  "wanted-uid-456",
+					},
+					expectedImpersonatedUser: &user.DefaultInfo{
+						Name:   "anyone",
+						UID:    "wanted-uid-456",
+						Groups: []string{"system:authenticated"},
+					},
+					expectedAuthzChecks: []authzCheck{
+						expectAllow(withImpersonateOnAttributes(getPodRequest, "user-info")),
+						expectAllow(withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "users", Name: "anyone"}, "user-info")),
+						expectAllow(withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "uids", Name: "wanted-uid-456"}, "user-info")),
+					},
+					expectedCache: &expectedCache{
+						modeIdx: map[string]string{
+							"user-impersonater": "impersonate:user-info",
+						},
+						modes: map[string]expectedModeCache{
+							"impersonate:user-info": {
+								outer: map[outerKey]*user.DefaultInfo{
+									outerCacheKey(
+										&user.DefaultInfo{Name: "anyone", UID: "wanted-uid-456"},
+										&user.DefaultInfo{Name: "user-impersonater", UID: "requestor-uid-123"},
+										getPodRequest,
+										"\x00\x00\x00$\x00\x00\x00\x06anyone\x00\x00\x00\x0ewanted-uid-456\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x002\x00\x00\x00\x11user-impersonater\x00\x00\x00\x11requestor-uid-123\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x001\x00\x00\x00\x03get\x01\x00\x00\x00\x03bar\x00\x00\x00\x04pods\x00\x00\x00\x00\x00\x00\x00\x03foo\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									): {
+										Name:   "anyone",
+										UID:    "wanted-uid-456",
+										Groups: []string{"system:authenticated"},
+									},
+								},
+								inner: map[innerKey]*user.DefaultInfo{
+									{
+										wantedUser: &user.DefaultInfo{Name: "anyone", UID: "wanted-uid-456"},
+										requestor:  &user.DefaultInfo{Name: "user-impersonater", UID: "requestor-uid-123"},
+										rawKey:     "\x00\x00\x00$\x00\x00\x00\x06anyone\x00\x00\x00\x0ewanted-uid-456\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x002\x00\x00\x00\x11user-impersonater\x00\x00\x00\x11requestor-uid-123\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									}: {
+										Name:   "anyone",
+										UID:    "wanted-uid-456",
+										Groups: []string{"system:authenticated"},
+									},
+								},
+							},
+						},
+					},
+					expectedCode:            http.StatusOK,
+					expectedAttemptMode:     "user-info",
+					expectedAttemptDecision: "allowed",
+					expectedAuthorizationMetrics: map[string]int{
+						"user-info/allowed": 3, // impersonate-on + impersonate:user-info users + uids
+					},
+				},
+			},
+		},
+		{
+			name: "impersonating-user-subresource-request",
+			requests: []testRequest{
+				{
+					request: &request.RequestInfo{
+						IsResourceRequest: true,
+						Verb:              "get",
+						APIVersion:        "v1",
+						Resource:          "pods",
+						Subresource:       "status",
+						Name:              "foo",
+						Namespace:         "bar",
+					},
+					requestor:                userImpersonator,
+					impersonatedUser:         anyone,
+					expectedImpersonatedUser: anyoneAuthenticated,
+					expectedAuthzChecks: []authzCheck{
+						expectAllow(withImpersonateOnAttributes(&request.RequestInfo{
+							IsResourceRequest: true,
+							Verb:              "get",
+							APIVersion:        "v1",
+							Resource:          "pods",
+							Subresource:       "status",
+							Name:              "foo",
+							Namespace:         "bar",
+						}, "user-info")),
+						expectAllow(withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "users", Name: "anyone"}, "user-info")),
+					},
+					expectedCache: &expectedCache{
+						modeIdx: map[string]string{
+							userImpersonator.Name: "impersonate:user-info",
+						},
+						modes: map[string]expectedModeCache{
+							"impersonate:user-info": {
+								outer: map[outerKey]*user.DefaultInfo{
+									outerCacheKey(anyone, userImpersonator, &request.RequestInfo{
+										IsResourceRequest: true,
+										Verb:              "get",
+										APIVersion:        "v1",
+										Resource:          "pods",
+										Subresource:       "status",
+										Name:              "foo",
+										Namespace:         "bar",
+									},
+										"\x00\x00\x00\x16\x00\x00\x00\x06anyone\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x007\x00\x00\x00\x03get\x01\x00\x00\x00\x03bar\x00\x00\x00\x04pods\x00\x00\x00\x06status\x00\x00\x00\x03foo\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									): anyoneAuthenticated,
+								},
+								inner: map[innerKey]*user.DefaultInfo{
+									{
+										wantedUser: anyone,
+										requestor:  userImpersonator,
+										rawKey:     "\x00\x00\x00\x16\x00\x00\x00\x06anyone\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									}: anyoneAuthenticated,
+								},
+							},
+						},
+					},
+					expectedCode:            http.StatusOK,
+					expectedAttemptMode:     "user-info",
+					expectedAttemptDecision: "allowed",
+					expectedAuthorizationMetrics: map[string]int{
+						"user-info/allowed": 2, // impersonate-on + impersonate:user-info
+					},
+				},
+			},
+		},
+		{
+			name: "impersonating-user-non-resource-request",
+			requests: []testRequest{
+				{
+					request: &request.RequestInfo{
+						IsResourceRequest: false,
+						Verb:              "get",
+						Path:              "/healthz",
+					},
+					requestor:                userImpersonator,
+					impersonatedUser:         anyone,
+					expectedImpersonatedUser: anyoneAuthenticated,
+					expectedAuthzChecks: []authzCheck{
+						expectAllow(withImpersonateOnAttributes(&request.RequestInfo{
+							IsResourceRequest: false,
+							Verb:              "get",
+							Path:              "/healthz",
+						}, "user-info")),
+						expectAllow(withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "users", Name: "anyone"}, "user-info")),
+					},
+					expectedCache: &expectedCache{
+						modeIdx: map[string]string{
+							userImpersonator.Name: "impersonate:user-info",
+						},
+						modes: map[string]expectedModeCache{
+							"impersonate:user-info": {
+								outer: map[outerKey]*user.DefaultInfo{
+									outerCacheKey(anyone, userImpersonator, &request.RequestInfo{
+										IsResourceRequest: false,
+										Verb:              "get",
+										Path:              "/healthz",
+									},
+										"\x00\x00\x00\x16\x00\x00\x00\x06anyone\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00-\x00\x00\x00\x03get\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\b/healthz\x00\x00\x00\x00\x00\x00\x00\x00",
+									): anyoneAuthenticated,
+								},
+								inner: map[innerKey]*user.DefaultInfo{
+									{
+										wantedUser: anyone,
+										requestor:  userImpersonator,
+										rawKey:     "\x00\x00\x00\x16\x00\x00\x00\x06anyone\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									}: anyoneAuthenticated,
+								},
+							},
+						},
+					},
+					expectedCode:            http.StatusOK,
+					expectedAttemptMode:     "user-info",
+					expectedAttemptDecision: "allowed",
+					expectedAuthorizationMetrics: map[string]int{
+						"user-info/allowed": 2, // impersonate-on + impersonate:user-info
+					},
+				},
+			},
+		},
+		{
+			name: "impersonating-user-with-field-and-label-selectors",
+			requests: []testRequest{
+				{
+					request: &request.RequestInfo{
+						IsResourceRequest: true,
+						Verb:              "list",
+						APIVersion:        "v1",
+						Resource:          "pods",
+						Namespace:         "bar",
+						FieldSelector:     "spec.nodeName=node1",
+						LabelSelector:     "app=web",
+					},
+					requestor:                userImpersonator,
+					impersonatedUser:         anyone,
+					expectedImpersonatedUser: anyoneAuthenticated,
+					expectedAuthzChecks: []authzCheck{
+						expectAllow(withImpersonateOnAttributes(&request.RequestInfo{
+							IsResourceRequest: true,
+							Verb:              "list",
+							APIVersion:        "v1",
+							Resource:          "pods",
+							Namespace:         "bar",
+							FieldSelector:     "spec.nodeName=node1",
+							LabelSelector:     "app=web",
+						}, "user-info")),
+						expectAllow(withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "users", Name: "anyone"}, "user-info")),
+					},
+					expectedCache: &expectedCache{
+						modeIdx: map[string]string{
+							userImpersonator.Name: "impersonate:user-info",
+						},
+						modes: map[string]expectedModeCache{
+							"impersonate:user-info": {
+								outer: map[outerKey]*user.DefaultInfo{
+									outerCacheKey(anyone, userImpersonator, &request.RequestInfo{
+										IsResourceRequest: true,
+										Verb:              "list",
+										APIVersion:        "v1",
+										Resource:          "pods",
+										Namespace:         "bar",
+										FieldSelector:     "spec.nodeName=node1",
+										LabelSelector:     "app=web",
+									}, "\x00\x00\x00\x16\x00\x00\x00\x06anyone\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00/\x00\x00\x00\x04list\x01\x00\x00\x00\x03bar\x00\x00\x00\x04pods\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00#\x00\x00\x00\x1f\x00\x00\x00\rspec.nodeName\x00\x00\x00\x01=\x00\x00\x00\x05node1\x00\x00\x00\v\x00\x00\x00\aapp=web"): anyoneAuthenticated,
+								},
+								inner: map[innerKey]*user.DefaultInfo{
+									{
+										wantedUser: anyone,
+										requestor:  userImpersonator,
+										rawKey:     "\x00\x00\x00\x16\x00\x00\x00\x06anyone\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									}: anyoneAuthenticated,
+								},
+							},
+						},
+					},
+					expectedCode:            http.StatusOK,
+					expectedAttemptMode:     "user-info",
+					expectedAttemptDecision: "allowed",
+					expectedAuthorizationMetrics: map[string]int{
+						"user-info/allowed": 2, // impersonate-on + impersonate:user-info
+					},
+				},
+			},
+		},
 	}
-
 	var mux http.ServeMux
 	tests := make([]*constrainedImpersonationTest, len(testCases))
 	handlers := make([]http.Handler, len(testCases))
