@@ -239,7 +239,6 @@ func TestTLSConfigKeyCARotationDisabled(t *testing.T) {
 	}
 }
 
-// newTestTLSTransportCache creates a new tlsTransportCache for testing.
 func newTestTLSTransportCache() *tlsTransportCache {
 	return &tlsTransportCache{
 		transports:       make(map[tlsCacheKey]weak.Pointer[trackedTransport]),
@@ -343,16 +342,12 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 				t.Error("Expected same transport instance from cache")
 			}
 
-			cacheSize := cacheLen(tlsCaches)
-
 			expectedCacheSize := 1
 			if !tc.expectCacheable {
 				expectedCacheSize = 0
 			}
 
-			if cacheSize != expectedCacheSize {
-				t.Errorf("Expected %d transports in cache, got %d", expectedCacheSize, cacheSize)
-			}
+			requireCacheLen(t, tlsCaches, expectedCacheSize)
 		})
 	}
 }
