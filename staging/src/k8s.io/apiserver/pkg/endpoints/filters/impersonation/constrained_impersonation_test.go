@@ -48,7 +48,7 @@ import (
 )
 
 type constrainedImpersonationTest struct {
-	t *testing.T
+	t testing.TB
 
 	constrainedImpersonationHandler *constrainedImpersonationHandler
 	authzChecks                     []authzCheck
@@ -2253,4 +2253,197 @@ func TestConstrainedImpersonationParallel(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (c *constrainedImpersonationTest) benchmarkHandler(withImpersonation func(http.Handler, authorizer.Authorizer, runtime.NegotiatedSerializer) http.Handler) http.Handler {
+	s := runtime.NewScheme()
+	metav1.AddToGroupVersion(s, metav1.SchemeGroupVersion)
+	addImpersonation := withImpersonation(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {}), c, serializer.NewCodecFactory(s))
+	if h, ok := addImpersonation.(*constrainedImpersonationHandler); ok {
+		h.recordAttempt = func(ctx context.Context, mode, decision string, _ time.Duration) {}
+		h.metricsAuthorizer.recordAuthorizationCall = func(mode, decision string, _ time.Duration) {}
+	}
+	addAuthentication := c.authenticationHandler(addImpersonation)
+	addRequestInfo := c.requestInfoHandler(addAuthentication)
+	return addRequestInfo
+}
+
+func BenchmarkImpersonation(b *testing.B) {
+	getPodRequest := &request.RequestInfo{
+		IsResourceRequest: true,
+		Verb:              "get",
+		APIVersion:        "v1",
+		Resource:          "pods",
+		Name:              "foo",
+		Namespace:         "bar",
+	}
+	getDeploymentRequest := &request.RequestInfo{
+		IsResourceRequest: true,
+		Verb:              "get",
+		APIVersion:        "v1",
+		APIGroup:          "apps",
+		Resource:          "deployments",
+		Name:              "foo",
+		Namespace:         "bar",
+	}
+
+	userImpersonator := &user.DefaultInfo{Name: "user-impersonater"}
+	saImpersonator := &user.DefaultInfo{Name: "sa-impersonater"}
+	nodeImpersonator := &user.DefaultInfo{Name: "node-impersonater"}
+
+	anyone := &user.DefaultInfo{Name: "anyone"}
+	saUser := &user.DefaultInfo{Name: "system:serviceaccount:default:default"}
+	nodeUser := &user.DefaultInfo{Name: "system:node:node1"}
+
+	legacyImpersonator := &user.DefaultInfo{Name: "legacy-impersonater"}
+
+	testCases := []struct {
+		name    string
+		request testRequest
+	}{
+		{
+			name: "user-info",
+			request: testRequest{
+				request:          getPodRequest,
+				requestor:        userImpersonator,
+				impersonatedUser: anyone,
+				expectedCode:     http.StatusOK,
+			},
+		},
+		{
+			name: "user-info-cached",
+			request: testRequest{
+				request:          getDeploymentRequest,
+				requestor:        userImpersonator,
+				impersonatedUser: anyone,
+				expectedCode:     http.StatusOK,
+			},
+		},
+		{
+			name: "serviceaccount",
+			request: testRequest{
+				request:          getPodRequest,
+				requestor:        saImpersonator,
+				impersonatedUser: saUser,
+				expectedCode:     http.StatusOK,
+			},
+		},
+		{
+			name: "node",
+			request: testRequest{
+				request:          getPodRequest,
+				requestor:        nodeImpersonator,
+				impersonatedUser: nodeUser,
+				expectedCode:     http.StatusOK,
+			},
+		},
+		{
+			name: "legacy-fallback",
+			request: testRequest{
+				request:          getPodRequest,
+				requestor:        legacyImpersonator,
+				impersonatedUser: anyone,
+				expectedCode:     http.StatusOK,
+			},
+		},
+		{
+			name: "denied",
+			request: testRequest{
+				request:          getPodRequest,
+				requestor:        &user.DefaultInfo{Name: "tester"},
+				impersonatedUser: anyone,
+				expectedCode:     http.StatusForbidden,
+			},
+		},
+	}
+
+	type impersonationHandler struct {
+		name string
+		fn   func(http.Handler, authorizer.Authorizer, runtime.NegotiatedSerializer) http.Handler
+		// skipCases lists test case names that are not applicable for this handler
+		skipCases map[string]bool
+	}
+
+	impersonators := []impersonationHandler{
+		{
+			name: "constrained",
+			fn:   WithConstrainedImpersonation,
+		},
+		{
+			name: "legacy",
+			fn:   WithImpersonation,
+			// legacy WithImpersonation only works with legacy-impersonater (verb "impersonate")
+			// and denies any user that only has constrained impersonation verbs
+			skipCases: map[string]bool{
+				"user-info":        true,
+				"user-info-cached": true,
+				"serviceaccount":   true,
+				"node":             true,
+			},
+		},
+	}
+
+	for _, imp := range impersonators {
+		b.Run(imp.name, func(b *testing.B) {
+			for _, tc := range testCases {
+				if imp.skipCases[tc.name] {
+					continue
+				}
+				b.Run(tc.name, func(b *testing.B) {
+					test := &constrainedImpersonationTest{t: b}
+					handler := test.benchmarkHandler(imp.fn)
+
+					r := tc.request
+
+					// warm up the cache with an initial request
+					req := buildBenchmarkRequest(b, r)
+					rec := httptest.NewRecorder()
+					handler.ServeHTTP(rec, req)
+					require.Equal(b, r.expectedCode, rec.Code)
+
+					b.ResetTimer()
+					for b.Loop() {
+						req = buildBenchmarkRequest(b, r)
+						rec = httptest.NewRecorder()
+						handler.ServeHTTP(rec, req)
+					}
+					b.StopTimer()
+
+					require.Equal(b, r.expectedCode, rec.Code)
+				})
+			}
+		})
+	}
+}
+
+func buildBenchmarkRequest(tb testing.TB, r testRequest) *http.Request {
+	tb.Helper()
+
+	userData, err := json.Marshal(r.requestor)
+	require.NoError(tb, err)
+	requestInfoData, err := json.Marshal(r.request)
+	require.NoError(tb, err)
+
+	req, err := http.NewRequest(http.MethodGet, "http://localhost", nil)
+	require.NoError(tb, err)
+
+	req.Header.Set(testUserHeader, string(userData))
+	req.Header.Set(testRequestInfoHeader, string(requestInfoData))
+
+	if r.impersonatedUser.Name != "" {
+		req.Header.Set(authenticationv1.ImpersonateUserHeader, r.impersonatedUser.Name)
+	}
+	if r.impersonatedUser.UID != "" {
+		req.Header.Set(authenticationv1.ImpersonateUIDHeader, r.impersonatedUser.UID)
+	}
+	for _, group := range r.impersonatedUser.Groups {
+		req.Header.Add(authenticationv1.ImpersonateGroupHeader, group)
+	}
+	for key, values := range r.impersonatedUser.Extra {
+		for _, value := range values {
+			req.Header.Add(authenticationv1.ImpersonateUserExtraHeaderPrefix+key, value)
+		}
+	}
+
+	return req
 }
