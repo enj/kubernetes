@@ -363,8 +363,6 @@ func TestTLSTransportCacheCARotationDisabled(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	// Without CA rotation, the transport should be a plain *http.Transport
-	// (possibly wrapped in trackedTransport if GC is enabled).
 	inner := rt
 	if ct, ok := rt.(*trackedTransport); ok {
 		inner = ct.rt
@@ -467,7 +465,6 @@ func TestCacheHoldAfterCARotation(t *testing.T) {
 		t.Fatal("expected transport to change after CA rotation")
 	}
 
-	// Drop reference to the old inner transport.
 	originalInner = nil //nolint:ineffassign
 
 	// Cache entry must survive because the holder is alive.
@@ -550,8 +547,7 @@ func TestUncacheableCertRotationLeak(t *testing.T) {
 
 // TestCacheableCertRotationLeak verifies that the cert rotation goroutine
 // is stopped when a cacheable transport with cert rotation is garbage collected.
-// This exercises the canCache=true && cancel != nil path through setLocked,
-// where both the cache-eviction cleanup and the cancel cleanup are registered.
+// This exercises the canCache=true && cancel != nil path through setLocked.
 func TestCacheableCertRotationLeak(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
 
@@ -582,10 +578,8 @@ func TestCacheableCertRotationLeak(t *testing.T) {
 		t.Fatalf("expected goroutine count to increase after creating transport with cert rotation, got baseline=%d after=%d", baseline, afterCreate)
 	}
 
-	// Drop all references.
 	runtime.KeepAlive(rt)
 
-	// Both the cache entry and the cert rotation goroutine should be cleaned up.
 	pollCacheSizeWithGC(t, tlsCache, 0)
 
 	err = wait.PollUntilContextTimeout(t.Context(), 10*time.Millisecond, 10*time.Second, true, func(_ context.Context) (bool, error) {
@@ -675,7 +669,9 @@ func pollCacheSizeWithGC(t *testing.T, c *tlsTransportCache, want int) {
 		t.Fatalf("cache len %d, want %d: %v", cacheLen(c), want, err)
 	}
 
-	for range 3 { // make sure the cache size is stable even when more GC's happen
+	// make sure the cache size is stable even when more GC's happen
+	// three times should be enough to make the test flake if the implementation is buggy
+	for range 3 {
 		runtime.GC()
 	}
 	requireCacheLen(t, c, want)
