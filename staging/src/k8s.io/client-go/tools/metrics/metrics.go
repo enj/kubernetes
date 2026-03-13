@@ -140,7 +140,8 @@ var (
 	// TransportCertRotationGCCalls counts the number of times a cert rotation goroutine
 	// cancel func is called via GC cleanup
 	TransportCertRotationGCCalls TransportCertRotationGCCallsMetric = noopTransportCertRotationGCCalls{}
-	// TransportCacheGCCalls TODO
+	// TransportCacheGCCalls counts the number of times a GC cleanup attempts
+	// to delete a transport cache entry, partitioned by result: deleted, skipped.
 	TransportCacheGCCalls TransportCacheGCCallsMetric = noopTransportCacheGCCalls{}
 )
 

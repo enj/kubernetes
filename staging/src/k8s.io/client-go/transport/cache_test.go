@@ -242,7 +242,7 @@ func TestTLSConfigKeyCARotationDisabled(t *testing.T) {
 // newTestTLSTransportCache creates a new tlsTransportCache for testing.
 func newTestTLSTransportCache() *tlsTransportCache {
 	return &tlsTransportCache{
-		transports:       make(map[tlsCacheKey]weak.Pointer[concreteTransport]),
+		transports:       make(map[tlsCacheKey]weak.Pointer[trackedTransport]),
 		strongTransports: make(map[tlsCacheKey]http.RoundTripper),
 	}
 }
@@ -315,9 +315,9 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 				return
 			}
 
-			// Unwrap concreteTransport if present (GC-enabled path wraps the transport).
+			// Unwrap trackedTransport if present (GC-enabled path wraps the transport).
 			inner := rt
-			if ct, ok := rt.(*concreteTransport); ok {
+			if ct, ok := rt.(*trackedTransport); ok {
 				inner = ct.rt
 			}
 			if tc.expectCAReload {
@@ -343,10 +343,7 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 				t.Error("Expected same transport instance from cache")
 			}
 
-			// Verify cache size
-			tlsCaches.mu.Lock()
-			cacheSize := tlsCaches.lenLocked()
-			tlsCaches.mu.Unlock()
+			cacheSize := cacheLen(tlsCaches)
 
 			expectedCacheSize := 1
 			if !tc.expectCacheable {
@@ -372,9 +369,9 @@ func TestTLSTransportCacheCARotationDisabled(t *testing.T) {
 	}
 
 	// Without CA rotation, the transport should be a plain *http.Transport
-	// (possibly wrapped in concreteTransport if GC is enabled).
+	// (possibly wrapped in trackedTransport if GC is enabled).
 	inner := rt
-	if ct, ok := rt.(*concreteTransport); ok {
+	if ct, ok := rt.(*trackedTransport); ok {
 		inner = ct.rt
 	}
 	if _, ok := inner.(*atomicTransportHolder); ok {
@@ -401,7 +398,7 @@ func TestEmptyCAFileRotationLifecycle(t *testing.T) {
 	}
 
 	inner := rt
-	if ct, ok := rt.(*concreteTransport); ok {
+	if ct, ok := rt.(*trackedTransport); ok {
 		inner = ct.rt
 	}
 
@@ -452,7 +449,7 @@ func TestCacheHoldAfterCARotation(t *testing.T) {
 
 	requireCacheLen(t, tlsCache, 1)
 
-	holder := rt.(*concreteTransport).rt.(*atomicTransportHolder)
+	holder := rt.(*trackedTransport).rt.(*atomicTransportHolder)
 
 	originalInner := holder.getTransport(context.Background())
 	if originalInner == nil {
@@ -553,6 +550,55 @@ func TestUncacheableCertRotationLeak(t *testing.T) {
 	})
 	if err != nil {
 		t.Errorf("goroutine leak: cert rotation goroutine was not stopped for uncacheable transport (baseline=%d current=%d)", baseline, runtime.NumGoroutine())
+	}
+}
+
+// TestCacheableCertRotationLeak verifies that the cert rotation goroutine
+// is stopped when a cacheable transport with cert rotation is garbage collected.
+// This exercises the canCache=true && cancel != nil path through setLocked,
+// where both the cache-eviction cleanup and the cancel cleanup are registered.
+func TestCacheableCertRotationLeak(t *testing.T) {
+	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
+
+	certFile := writeCAFile(t, []byte(certData))
+	keyFile := writeCAFile(t, []byte(keyData))
+
+	pollCacheSizeWithGC(t, tlsCache, 0) // clean start
+
+	baseline := runtime.NumGoroutine()
+
+	// CertFile+KeyFile triggers ReloadTLSFiles and the cert rotation goroutine.
+	// No Proxy means canCache=true.
+	rt, err := New(&Config{
+		TLS: TLSConfig{
+			CertFile:   certFile,
+			KeyFile:    keyFile,
+			ServerName: "cacheable-cert-rotation-test",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requireCacheLen(t, tlsCache, 1)
+
+	afterCreate := runtime.NumGoroutine()
+	if afterCreate <= baseline {
+		t.Fatalf("expected goroutine count to increase after creating transport with cert rotation, got baseline=%d after=%d", baseline, afterCreate)
+	}
+
+	// Drop all references.
+	runtime.KeepAlive(rt)
+
+	// Both the cache entry and the cert rotation goroutine should be cleaned up.
+	pollCacheSizeWithGC(t, tlsCache, 0)
+
+	err = wait.PollUntilContextTimeout(t.Context(), 10*time.Millisecond, 10*time.Second, true, func(_ context.Context) (bool, error) {
+		runtime.GC()
+		return runtime.NumGoroutine() <= baseline, nil
+	})
+	if err != nil {
+		t.Errorf("goroutine leak: cert rotation goroutine was not stopped for cacheable transport (baseline=%d current=%d)", baseline, runtime.NumGoroutine())
 	}
 }
 

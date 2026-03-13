@@ -392,9 +392,9 @@ func TestNew(t *testing.T) {
 			}
 
 			// We only know how to check TLSConfig on http.Transports.
-			// Unwrap concreteTransport if present (GC-enabled path).
+			// Unwrap trackedTransport if present (GC-enabled path).
 			inner := rt
-			if ct, ok := rt.(*concreteTransport); ok {
+			if ct, ok := rt.(*trackedTransport); ok {
 				inner = ct.WrappedRoundTripper()
 			}
 			transport := inner.(*http.Transport)

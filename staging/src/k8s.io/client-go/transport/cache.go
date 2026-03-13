@@ -38,14 +38,14 @@ import (
 // the config has no custom TLS options, http.DefaultTransport is returned.
 type tlsTransportCache struct {
 	mu               sync.Mutex
-	transports       map[tlsCacheKey]weak.Pointer[concreteTransport] // GC-enabled
-	strongTransports map[tlsCacheKey]http.RoundTripper               // GC-disabled
+	transports       map[tlsCacheKey]weak.Pointer[trackedTransport] // GC-enabled
+	strongTransports map[tlsCacheKey]http.RoundTripper              // GC-disabled
 }
 
 const idleConnsPerHost = 25
 
 var tlsCache = &tlsTransportCache{
-	transports:       make(map[tlsCacheKey]weak.Pointer[concreteTransport]),
+	transports:       make(map[tlsCacheKey]weak.Pointer[trackedTransport]),
 	strongTransports: make(map[tlsCacheKey]http.RoundTripper),
 }
 
@@ -84,7 +84,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		// Ensure we only create a single transport for the given TLS options
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		defer metrics.TransportCacheEntries.Observe(c.lenLocked())
+		defer func() { metrics.TransportCacheEntries.Observe(c.lenLocked()) }()
 
 		// See if we already have a custom transport for this config
 		if t, ok := c.getLocked(key); ok {
@@ -157,6 +157,10 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 	return c.setLocked(key, transport, canCache, cancel), nil
 }
 
+// setLocked stores the transport and returns the value to hand back to the
+// caller. When the GC feature gate is disabled, cancel is intentionally
+// discarded and the cert rotation goroutine runs indefinitely (pre-GC
+// behavior). When !canCache && cancel == nil, no GC tracking is needed.
 func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport http.RoundTripper, canCache bool, cancel context.CancelFunc) http.RoundTripper {
 	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
 		if canCache {
@@ -169,7 +173,7 @@ func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport http.RoundTripp
 		return transport // nothing to GC
 	}
 
-	transportWithGC := &concreteTransport{rt: transport}
+	transportWithGC := &trackedTransport{rt: transport}
 
 	if cancel != nil {
 		runtime.AddCleanup(transportWithGC, func(_ struct{}) {
@@ -226,19 +230,21 @@ func (c *tlsTransportCache) lenLocked() int {
 	return len(c.transports)
 }
 
-// concreteTransport is just indirection to allow the http.RoundTripper interface to be used with a weak.Pointer
-type concreteTransport struct {
+// trackedTransport wraps an http.RoundTripper to serve as the weak.Pointer
+// target in the TLS transport cache. Dropping all references to this object
+// triggers GC cleanup of the cache entry and any cert rotation goroutine.
+type trackedTransport struct {
 	rt http.RoundTripper
 }
 
-var _ http.RoundTripper = &concreteTransport{}
-var _ utilnet.RoundTripperWrapper = &concreteTransport{}
+var _ http.RoundTripper = &trackedTransport{}
+var _ utilnet.RoundTripperWrapper = &trackedTransport{}
 
-func (v *concreteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (v *trackedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return v.rt.RoundTrip(req)
 }
 
-func (v *concreteTransport) WrappedRoundTripper() http.RoundTripper {
+func (v *trackedTransport) WrappedRoundTripper() http.RoundTripper {
 	return v.rt
 }
 

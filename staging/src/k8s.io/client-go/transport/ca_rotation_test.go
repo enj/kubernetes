@@ -252,9 +252,9 @@ func TestCARotationConnectionBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create transport: %v", err)
 	}
-	// Unwrap concreteTransport if present (GC-enabled path wraps the transport).
+	// Unwrap trackedTransport if present (GC-enabled path wraps the transport).
 	var innerRT http.RoundTripper = transport
-	if ct, ok := transport.(*concreteTransport); ok {
+	if ct, ok := transport.(*trackedTransport); ok {
 		innerRT = ct.rt
 	}
 	innerRT.(*atomicTransportHolder).caRefreshDuration = 500 * time.Millisecond
@@ -362,9 +362,9 @@ func TestCARotationConnectionBehavior_Disabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create transport: %v", err)
 	}
-	// Unwrap concreteTransport if present (GC-enabled path wraps the transport).
+	// Unwrap trackedTransport if present (GC-enabled path wraps the transport).
 	inner := http.RoundTripper(transport)
-	if ct, ok := transport.(*concreteTransport); ok {
+	if ct, ok := transport.(*trackedTransport); ok {
 		inner = ct.rt
 	}
 	if _, ok := inner.(*atomicTransportHolder); ok {
