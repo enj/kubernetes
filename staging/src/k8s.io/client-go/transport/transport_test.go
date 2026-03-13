@@ -387,17 +387,12 @@ func TestNew(t *testing.T) {
 			case !testCase.Default && rt == http.DefaultTransport:
 				t.Fatalf("got %#v, expected non-default transport", rt)
 			}
-			if testCase.Default {
-				return
-			}
 
-			// We only know how to check TLSConfig on http.Transports.
-			// Unwrap trackedTransport if present (GC-enabled path).
-			inner := rt
-			if ct, ok := rt.(*trackedTransport); ok {
-				inner = ct.WrappedRoundTripper()
+			// We only know how to check TLSConfig on http.Transports
+			transport, ok := rt.(*http.Transport)
+			if !ok {
+				transport = rt.(*trackedTransport).rt.(*http.Transport)
 			}
-			transport := inner.(*http.Transport)
 			switch {
 			case testCase.TLS && transport.TLSClientConfig == nil:
 				t.Fatalf("got %#v, expected TLSClientConfig", transport)

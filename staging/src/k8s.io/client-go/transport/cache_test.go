@@ -38,98 +38,6 @@ import (
 	"k8s.io/client-go/tools/metrics"
 )
 
-// --- metric recording helpers ---
-
-type recordingCreateCalls struct {
-	mu    sync.Mutex
-	calls []string
-}
-
-func (r *recordingCreateCalls) Increment(result string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.calls = append(r.calls, result)
-}
-
-func (r *recordingCreateCalls) reset() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	c := r.calls
-	r.calls = nil
-	return c
-}
-
-type recordingCacheGCCalls struct {
-	mu    sync.Mutex
-	calls []string
-}
-
-func (r *recordingCacheGCCalls) Increment(result string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.calls = append(r.calls, result)
-}
-
-func (r *recordingCacheGCCalls) reset() []string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	c := r.calls
-	r.calls = nil
-	return c
-}
-
-type recordingCertRotationGCCalls struct {
-	count atomic.Int64
-}
-
-func (r *recordingCertRotationGCCalls) Increment() {
-	r.count.Add(1)
-}
-
-type recordingCacheEntries struct {
-	mu     sync.Mutex
-	values []int
-}
-
-func (r *recordingCacheEntries) Observe(n int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.values = append(r.values, n)
-}
-
-func (r *recordingCacheEntries) reset() []int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	v := r.values
-	r.values = nil
-	return v
-}
-
-func installFakeMetrics(t *testing.T) (*recordingCreateCalls, *recordingCacheGCCalls, *recordingCertRotationGCCalls, *recordingCacheEntries) {
-	createCalls := &recordingCreateCalls{}
-	gcCalls := &recordingCacheGCCalls{}
-	rotationGCCalls := &recordingCertRotationGCCalls{}
-	cacheEntries := &recordingCacheEntries{}
-
-	origCreate := metrics.TransportCreateCalls
-	origGC := metrics.TransportCacheGCCalls
-	origRotationGC := metrics.TransportCertRotationGCCalls
-	origEntries := metrics.TransportCacheEntries
-	metrics.TransportCreateCalls = createCalls
-	metrics.TransportCacheGCCalls = gcCalls
-	metrics.TransportCertRotationGCCalls = rotationGCCalls
-	metrics.TransportCacheEntries = cacheEntries
-	t.Cleanup(func() {
-		metrics.TransportCreateCalls = origCreate
-		metrics.TransportCacheGCCalls = origGC
-		metrics.TransportCertRotationGCCalls = origRotationGC
-		metrics.TransportCacheEntries = origEntries
-	})
-	return createCalls, gcCalls, rotationGCCalls, cacheEntries
-}
-
-// --- tests ---
-
 func TestTLSConfigKey(t *testing.T) {
 
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowCARotation, true)
@@ -503,8 +411,10 @@ func TestTLSTransportCacheCARotationDisabled(t *testing.T) {
 }
 
 func TestEmptyCAFileRotationLifecycle(t *testing.T) {
+	// Enable the feature gate for the duration of the test
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowCARotation, true)
 
+	// Create a valid file path, but with empty cert data
 	emptyFile := writeCAFile(t, []byte{})
 
 	config := &Config{
@@ -520,16 +430,13 @@ func TestEmptyCAFileRotationLifecycle(t *testing.T) {
 		t.Fatalf("Unexpected error getting transport: %v", err)
 	}
 
-	inner := rt
-	if ct, ok := rt.(*trackedTransport); ok {
-		inner = ct.rt
-	}
-
-	holder, ok := inner.(*atomicTransportHolder)
+	// Verify newAtomicTransportHolder is successfully generated
+	holder, ok := rt.(*atomicTransportHolder)
 	if !ok {
-		t.Fatalf("Expected atomicTransportHolder, got %T", inner)
+		t.Fatalf("Expected atomicTransportHolder, got %T", rt)
 	}
 
+	// Verify the initial state: RootCAs should be non-nil but empty
 	initialTransport := holder.getTransport(context.Background())
 
 	if initialTransport.TLSClientConfig == nil || initialTransport.TLSClientConfig.RootCAs == nil {
@@ -540,16 +447,19 @@ func TestEmptyCAFileRotationLifecycle(t *testing.T) {
 		t.Fatal("Expected initially empty RootCAs")
 	}
 
+	// Write valid cert data into the CA file
 	if err := os.WriteFile(emptyFile, []byte(testCACert1), 0644); err != nil {
 		t.Fatalf("Failed to write to CA file: %v", err)
 	}
 
 	holder.mu.Lock()
+	// Set last checked time far in the past to force a refresh on next getTransport call
 	holder.transportLastChecked = time.Now().Add(-time.Hour)
 	holder.mu.Unlock()
 
 	refreshedTransport := holder.getTransport(context.Background())
 
+	// Verify the refresh succeeded and the cert pool is now populated
 	if refreshedTransport.TLSClientConfig.RootCAs.Equal(emptyPool) {
 		t.Fatal("Expected RootCAs to be populated after writing valid cert data and refreshing")
 	}
@@ -1023,4 +933,92 @@ func pollCacheSizeWithGC(t *testing.T, c *tlsTransportCache, want int) {
 		runtime.GC()
 	}
 	requireCacheLen(t, c, want)
+}
+
+type recordingCreateCalls struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (r *recordingCreateCalls) Increment(result string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, result)
+}
+
+func (r *recordingCreateCalls) reset() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c := r.calls
+	r.calls = nil
+	return c
+}
+
+type recordingCacheGCCalls struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (r *recordingCacheGCCalls) Increment(result string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, result)
+}
+
+func (r *recordingCacheGCCalls) reset() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c := r.calls
+	r.calls = nil
+	return c
+}
+
+type recordingCertRotationGCCalls struct {
+	count atomic.Int64
+}
+
+func (r *recordingCertRotationGCCalls) Increment() {
+	r.count.Add(1)
+}
+
+type recordingCacheEntries struct {
+	mu     sync.Mutex
+	values []int
+}
+
+func (r *recordingCacheEntries) Observe(n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.values = append(r.values, n)
+}
+
+func (r *recordingCacheEntries) reset() []int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	v := r.values
+	r.values = nil
+	return v
+}
+
+func installFakeMetrics(t *testing.T) (*recordingCreateCalls, *recordingCacheGCCalls, *recordingCertRotationGCCalls, *recordingCacheEntries) {
+	createCalls := &recordingCreateCalls{}
+	gcCalls := &recordingCacheGCCalls{}
+	rotationGCCalls := &recordingCertRotationGCCalls{}
+	cacheEntries := &recordingCacheEntries{}
+
+	origCreate := metrics.TransportCreateCalls
+	origGC := metrics.TransportCacheGCCalls
+	origRotationGC := metrics.TransportCertRotationGCCalls
+	origEntries := metrics.TransportCacheEntries
+	metrics.TransportCreateCalls = createCalls
+	metrics.TransportCacheGCCalls = gcCalls
+	metrics.TransportCertRotationGCCalls = rotationGCCalls
+	metrics.TransportCacheEntries = cacheEntries
+	t.Cleanup(func() {
+		metrics.TransportCreateCalls = origCreate
+		metrics.TransportCacheGCCalls = origGC
+		metrics.TransportCertRotationGCCalls = origRotationGC
+		metrics.TransportCacheEntries = origEntries
+	})
+	return createCalls, gcCalls, rotationGCCalls, cacheEntries
 }
