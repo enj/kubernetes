@@ -241,13 +241,7 @@ func TestTLSConfigKeyCARotationDisabled(t *testing.T) {
 	}
 }
 
-func newTestTLSTransportCache() *tlsTransportCache {
-	return &tlsTransportCache{
-		transports:       make(map[tlsCacheKey]weak.Pointer[trackedTransport]),
-		strongTransports: make(map[tlsCacheKey]http.RoundTripper),
-	}
-}
-
+// TestTLSTransportCacheCARotation tests transport cache behavior with CA rotation
 func TestTLSTransportCacheCARotation(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowCARotation, true)
 	caFile := writeCAFile(t, []byte(testCACert1))
@@ -303,7 +297,7 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			createCalls, _, _, _ := installFakeMetrics(t)
-			tlsCaches := newTestTLSTransportCache()
+			tlsCaches := newTLSCache()
 
 			rt, err := tlsCaches.get(tc.config)
 			if err != nil {
@@ -331,6 +325,8 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 				if calls := createCalls.reset(); len(calls) != 1 || calls[0] != "miss" {
 					t.Errorf("expected [miss] on second call (nothing stored), got %v", calls)
 				}
+
+				requireCacheLen(t, tlsCaches, 0)
 				return
 			}
 
@@ -338,21 +334,16 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 				t.Errorf("expected [miss] on first get, got %v", calls)
 			}
 
-			// Unwrap trackedTransport if present (GC-enabled path wraps the transport).
-			inner := rt
-			if ct, ok := rt.(*trackedTransport); ok {
-				inner = ct.rt
-			}
-			if tc.expectCAReload {
-				if _, ok := inner.(*atomicTransportHolder); !ok {
-					t.Errorf("Expected atomicTransportHolder for CA rotation, got %T", inner)
+			if rt := rt.(*trackedTransport).rt; tc.expectCAReload {
+				if _, ok := rt.(*atomicTransportHolder); !ok {
+					t.Errorf("Expected atomicTransportHolder for CA rotation, got %T", rt)
 				}
 				if !tc.config.TLS.ReloadCAFiles {
 					t.Errorf("Expected ReloadCAFiles to be true, got %v", tc.config.TLS.ReloadCAFiles)
 				}
 			} else {
-				if _, ok := inner.(*http.Transport); !ok {
-					t.Errorf("Expected *http.Transport without CA rotation, got %T", inner)
+				if _, ok := rt.(*http.Transport); !ok {
+					t.Errorf("Expected *http.Transport without CA rotation, got %T", rt)
 				}
 			}
 
@@ -378,7 +369,7 @@ func TestTLSTransportCacheCARotationDisabled(t *testing.T) {
 	createCalls, _, _, _ := installFakeMetrics(t)
 
 	caFile := writeCAFile(t, []byte(testCACert1))
-	cache := newTestTLSTransportCache()
+	cache := newTLSCache()
 
 	rt, err := cache.get(&Config{TLS: TLSConfig{CAFile: caFile}})
 	if err != nil {
@@ -389,12 +380,12 @@ func TestTLSTransportCacheCARotationDisabled(t *testing.T) {
 		t.Errorf("expected [miss], got %v", calls)
 	}
 
-	inner := rt
-	if ct, ok := rt.(*trackedTransport); ok {
-		inner = ct.rt
+	tt := rt.(*trackedTransport).rt
+	if _, ok := tt.(*atomicTransportHolder); ok {
+		t.Error("Expected plain *http.Transport when feature gate is disabled, got atomicTransportHolder")
 	}
-	if _, ok := inner.(*atomicTransportHolder); ok {
-		t.Error("Expected plain *http.Transport when CA rotation feature gate is disabled, got atomicTransportHolder")
+	if _, ok := tt.(*http.Transport); !ok {
+		t.Errorf("Expected *http.Transport, got %T", tt)
 	}
 
 	// Second call should hit.
@@ -423,7 +414,7 @@ func TestEmptyCAFileRotationLifecycle(t *testing.T) {
 		},
 	}
 
-	tlsCaches := newTestTLSTransportCache()
+	tlsCaches := newTLSCache()
 
 	rt, err := tlsCaches.get(config)
 	if err != nil {
@@ -431,7 +422,7 @@ func TestEmptyCAFileRotationLifecycle(t *testing.T) {
 	}
 
 	// Verify newAtomicTransportHolder is successfully generated
-	holder, ok := rt.(*atomicTransportHolder)
+	holder, ok := rt.(*trackedTransport).rt.(*atomicTransportHolder)
 	if !ok {
 		t.Fatalf("Expected atomicTransportHolder, got %T", rt)
 	}
@@ -475,7 +466,7 @@ func TestCacheHoldAfterCARotation(t *testing.T) {
 	caFile := writeCAFile(t, []byte(testCACert1))
 
 	// Private cache to isolate GC metric assertions from other tests.
-	cache := newTestTLSTransportCache()
+	cache := newTLSCache()
 
 	rt, err := cache.get(&Config{TLS: TLSConfig{ServerName: "reload-test", CAFile: caFile}})
 	if err != nil {
@@ -530,7 +521,7 @@ func TestCacheGCDisabledNoEviction(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, false)
 	createCalls, gcCalls, _, cacheEntries := installFakeMetrics(t)
 
-	cache := newTestTLSTransportCache()
+	cache := newTLSCache()
 
 	rt, err := cache.get(&Config{TLS: TLSConfig{ServerName: "gc-disabled-test"}})
 	if err != nil {
@@ -580,7 +571,7 @@ func TestCacheReviveAfterDrop(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
 	createCalls, _, _, _ := installFakeMetrics(t)
 
-	cache := newTestTLSTransportCache()
+	cache := newTLSCache()
 
 	config := &Config{TLS: TLSConfig{ServerName: "revive-test"}}
 
@@ -618,7 +609,7 @@ func TestUncacheableCertRotationLeak(t *testing.T) {
 	certFile := writeCAFile(t, []byte(certData))
 	keyFile := writeCAFile(t, []byte(keyData))
 
-	cache := newTestTLSTransportCache()
+	cache := newTLSCache()
 
 	baseline := runtime.NumGoroutine()
 
@@ -664,7 +655,7 @@ func TestCacheableCertRotationLeak(t *testing.T) {
 	keyFile := writeCAFile(t, []byte(keyData))
 
 	// Private cache to isolate GC metric assertions.
-	cache := newTestTLSTransportCache()
+	cache := newTLSCache()
 
 	baseline := runtime.NumGoroutine()
 
@@ -718,7 +709,7 @@ func TestCacheGCDisabledCertRotationNoCancel(t *testing.T) {
 	certFile := writeCAFile(t, []byte(certData))
 	keyFile := writeCAFile(t, []byte(keyData))
 
-	cache := newTestTLSTransportCache()
+	cache := newTLSCache()
 
 	baseline := runtime.NumGoroutine()
 
@@ -766,7 +757,7 @@ func TestCacheStaleEvictionSkipped(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
 	_, gcCalls, _, _ := installFakeMetrics(t)
 
-	cache := newTestTLSTransportCache()
+	cache := newTLSCache()
 
 	cfg := &Config{TLS: TLSConfig{ServerName: "stale-test"}}
 	rt1, err := cache.get(cfg)

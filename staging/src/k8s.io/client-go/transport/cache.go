@@ -44,9 +44,13 @@ type tlsTransportCache struct {
 
 const idleConnsPerHost = 25
 
-var tlsCache = &tlsTransportCache{
-	transports:       make(map[tlsCacheKey]weak.Pointer[trackedTransport]),
-	strongTransports: make(map[tlsCacheKey]http.RoundTripper),
+var tlsCache = newTLSCache()
+
+func newTLSCache() *tlsTransportCache {
+	return &tlsTransportCache{
+		transports:       make(map[tlsCacheKey]weak.Pointer[trackedTransport]),
+		strongTransports: make(map[tlsCacheKey]http.RoundTripper),
+	}
 }
 
 type tlsCacheKey struct {
