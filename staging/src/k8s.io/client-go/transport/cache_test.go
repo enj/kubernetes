@@ -899,7 +899,7 @@ func TestCacheStaleEvictionSkipped(t *testing.T) {
 
 func TestCacheLeak(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
-	_, gcCalls, _, _ := installFakeMetrics(t)
+	_, gcCalls, _, cacheEntries := installFakeMetrics(t)
 
 	pollCacheSizeWithGC(t, tlsCache, 0) // clean start
 
@@ -944,6 +944,7 @@ func TestCacheLeak(t *testing.T) {
 
 	// Reset before the eviction we want to measure.
 	gcCalls.reset()
+	cacheEntries.reset()
 
 	pollCacheSizeWithGC(t, tlsCache, 2) // rt1 and rt2 (rt3 is the same as rt1)
 
@@ -960,6 +961,15 @@ func TestCacheLeak(t *testing.T) {
 	}
 	if deletedCount != 1_000 {
 		t.Errorf("expected 1000 deleted calls, got %d (total calls: %d)", deletedCount, len(calls))
+	}
+
+	// Each "deleted" cleanup calls Observe(lenLocked()). The last observation
+	// should be 2 (rt1 and rt2 remain).
+	evictionObservations := cacheEntries.reset()
+	if len(evictionObservations) < 1000 {
+		t.Errorf("expected at least 1000 cache entries observations from GC cleanup, got %d", len(evictionObservations))
+	} else if last := evictionObservations[len(evictionObservations)-1]; last != 2 {
+		t.Errorf("expected last cache entries observation to be 2 (rt1+rt2 remain), got %d", last)
 	}
 
 	runtime.KeepAlive(rt1)
