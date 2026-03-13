@@ -154,23 +154,15 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		transport = newAtomicTransportHolder(config.TLS.CAFile, config.TLS.CAData, httpTransport)
 	}
 
-	return c.setLocked(key, transport, canCache, cancel), nil
-}
+	if !canCache && cancel == nil {
+		return transport, nil // uncacheable config with no cert rotation - nothing to GC
+	}
 
-// setLocked stores the transport and returns the value to hand back to the
-// caller. When the GC feature gate is disabled, cancel is intentionally
-// discarded and the cert rotation goroutine runs indefinitely (pre-GC
-// behavior). When !canCache && cancel == nil, no GC tracking is needed.
-func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport http.RoundTripper, canCache bool, cancel context.CancelFunc) http.RoundTripper {
 	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
 		if canCache {
 			c.strongTransports[key] = transport
 		}
-		return transport
-	}
-
-	if !canCache && cancel == nil {
-		return transport // uncacheable config with no cert rotation - nothing to GC
+		return transport, nil // cancel is intentionally discarded and the cert rotation go routine leaks
 	}
 
 	transportWithGC := &trackedTransport{rt: transport}
@@ -200,7 +192,7 @@ func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport http.RoundTripp
 		}, key)
 	}
 
-	return transportWithGC
+	return transportWithGC, nil
 }
 
 func (c *tlsTransportCache) getLocked(key tlsCacheKey) (http.RoundTripper, bool) {
