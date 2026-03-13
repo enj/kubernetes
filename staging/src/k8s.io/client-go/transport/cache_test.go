@@ -86,21 +86,44 @@ func (r *recordingCertRotationGCCalls) Increment() {
 	r.count.Add(1)
 }
 
+type recordingCacheEntries struct {
+	mu     sync.Mutex
+	values []int
+}
+
+func (r *recordingCacheEntries) Observe(n int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.values = append(r.values, n)
+}
+
+func (r *recordingCacheEntries) reset() []int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	v := r.values
+	r.values = nil
+	return v
+}
+
 func installFakeMetrics(t *testing.T) (*recordingCreateCalls, *recordingCacheGCCalls, *recordingCertRotationGCCalls) {
 	createCalls := &recordingCreateCalls{}
 	gcCalls := &recordingCacheGCCalls{}
 	rotationGCCalls := &recordingCertRotationGCCalls{}
+	cacheEntries := &recordingCacheEntries{}
 
 	origCreate := metrics.TransportCreateCalls
 	origGC := metrics.TransportCacheGCCalls
 	origRotationGC := metrics.TransportCertRotationGCCalls
+	origEntries := metrics.TransportCacheEntries
 	metrics.TransportCreateCalls = createCalls
 	metrics.TransportCacheGCCalls = gcCalls
 	metrics.TransportCertRotationGCCalls = rotationGCCalls
+	metrics.TransportCacheEntries = cacheEntries
 	t.Cleanup(func() {
 		metrics.TransportCreateCalls = origCreate
 		metrics.TransportCacheGCCalls = origGC
 		metrics.TransportCertRotationGCCalls = origRotationGC
+		metrics.TransportCacheEntries = origEntries
 	})
 	return createCalls, gcCalls, rotationGCCalls
 }
@@ -383,8 +406,8 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 				if rt != http.DefaultTransport {
 					t.Errorf("Expected default transport, got %T", rt)
 				}
-				// canCache=true so getLocked fires "miss", but get() returns
-				// DefaultTransport before setLocked — the entry is never stored.
+				// canCache=true so getLocked fires "miss", but DefaultTransport
+				// is returned before setLocked — the entry is never stored.
 				if calls := createCalls.reset(); len(calls) != 1 || calls[0] != "miss" {
 					t.Errorf("expected [miss], got %v", calls)
 				}
@@ -798,19 +821,75 @@ func TestCacheGCDisabledCertRotationNoCancel(t *testing.T) {
 		t.Fatalf("expected cert rotation goroutine to start, got baseline=%d after=%d", baseline, afterCreate)
 	}
 
+	// Drop rt so it becomes unreachable — if GC cleanup were enabled,
+	// cancel would fire and the goroutine would stop.
 	runtime.KeepAlive(rt)
+
 	for range 10 {
 		runtime.GC()
+		runtime.Gosched()
 	}
+	time.Sleep(50 * time.Millisecond) // let any potential cleanup callbacks run
 
 	if n := rotationGCCalls.count.Load(); n != 0 {
 		t.Errorf("expected TransportCertRotationGCCalls=0 when GC disabled, got %d", n)
 	}
 
-	// Goroutine should still be running (cancel was intentionally discarded).
+	// Goroutine must still be running — cancel was intentionally discarded.
 	if runtime.NumGoroutine() <= baseline {
 		t.Error("cert rotation goroutine was stopped — it should run indefinitely when GC is disabled")
 	}
+}
+
+// TestCacheStaleEvictionSkipped verifies that when a GC cleanup fires for an
+// old entry after the map slot has been replaced, the deletion is skipped.
+// We force this by replacing the map entry while the old trackedTransport
+// is still alive, then dropping it so its cleanup fires against the new entry.
+func TestCacheStaleEvictionSkipped(t *testing.T) {
+	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
+	_, gcCalls, _ := installFakeMetrics(t)
+
+	cache := newTestTLSTransportCache()
+
+	cfg := &Config{TLS: TLSConfig{ServerName: "stale-test"}}
+	rt1, err := cache.get(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireCacheLen(t, cache, 1)
+
+	// Replace the map entry while rt1 is still alive. This simulates a
+	// concurrent get() that created a new entry for the same key.
+	key, _, _ := tlsConfigKey(cfg)
+	cache.mu.Lock()
+	replacement := &trackedTransport{rt: &http.Transport{}}
+	cache.transports[key] = weak.Make(replacement)
+	cache.mu.Unlock()
+
+	// Drop rt1. Its cleanup fires and sees c.transports[key] != wp → "skipped".
+	runtime.KeepAlive(rt1)
+	gcCalls.reset()
+
+	err = wait.PollUntilContextTimeout(t.Context(), 10*time.Millisecond, 10*time.Second, true, func(_ context.Context) (bool, error) {
+		runtime.GC()
+		gcCalls.mu.Lock()
+		n := len(gcCalls.calls)
+		gcCalls.mu.Unlock()
+		return n > 0, nil
+	})
+	if err != nil {
+		t.Fatal("timed out waiting for stale cleanup to fire")
+	}
+
+	calls := gcCalls.reset()
+	if len(calls) != 1 || calls[0] != "skipped" {
+		t.Errorf("expected [skipped], got %v", calls)
+	}
+
+	// The replacement entry must still be in the map.
+	requireCacheLen(t, cache, 1)
+
+	runtime.KeepAlive(replacement)
 }
 
 func TestCacheLeak(t *testing.T) {
