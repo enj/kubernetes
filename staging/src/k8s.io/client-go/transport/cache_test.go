@@ -670,19 +670,19 @@ func TestCacheReviveAfterDrop(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
 	createCalls, _, _, _ := installFakeMetrics(t)
 
-	pollCacheSizeWithGC(t, tlsCache, 0)
+	cache := newTestTLSTransportCache()
 
 	config := &Config{TLS: TLSConfig{ServerName: "revive-test"}}
 
-	rt1, err := New(config)
+	rt1, err := cache.get(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireCacheLen(t, tlsCache, 1)
+	requireCacheLen(t, cache, 1)
 	createCalls.reset()
 
 	// rt1 is alive here, so the weak pointer must still resolve.
-	rt2, err := New(config)
+	rt2, err := cache.get(config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -693,10 +693,10 @@ func TestCacheReviveAfterDrop(t *testing.T) {
 	if calls := createCalls.reset(); len(calls) != 1 || calls[0] != "hit" {
 		t.Errorf("expected [hit], got %v", calls)
 	}
-	requireCacheLen(t, tlsCache, 1)
+	requireCacheLen(t, cache, 1)
 
 	runtime.KeepAlive(rt1)
-	pollCacheSizeWithGC(t, tlsCache, 0)
+	pollCacheSizeWithGC(t, cache, 0)
 }
 
 // TestUncacheableCertRotationLeak verifies that the cert rotation goroutine
@@ -708,9 +708,11 @@ func TestUncacheableCertRotationLeak(t *testing.T) {
 	certFile := writeCAFile(t, []byte(certData))
 	keyFile := writeCAFile(t, []byte(keyData))
 
+	cache := newTestTLSTransportCache()
+
 	baseline := runtime.NumGoroutine()
 
-	rt, err := tlsCache.get(&Config{
+	rt, err := cache.get(&Config{
 		TLS: TLSConfig{
 			CertFile: certFile,
 			KeyFile:  keyFile,
@@ -966,8 +968,8 @@ func TestCacheLeak(t *testing.T) {
 	// Each "deleted" cleanup calls Observe(lenLocked()). The last observation
 	// should be 2 (rt1 and rt2 remain).
 	evictionObservations := cacheEntries.reset()
-	if len(evictionObservations) < 1000 {
-		t.Errorf("expected at least 1000 cache entries observations from GC cleanup, got %d", len(evictionObservations))
+	if len(evictionObservations) != 1000 {
+		t.Errorf("expected exactly 1000 cache entries observations from GC cleanup, got %d", len(evictionObservations))
 	} else if last := evictionObservations[len(evictionObservations)-1]; last != 2 {
 		t.Errorf("expected last cache entries observation to be 2 (rt1+rt2 remain), got %d", last)
 	}

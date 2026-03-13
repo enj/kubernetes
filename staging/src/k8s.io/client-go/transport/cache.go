@@ -170,7 +170,7 @@ func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport http.RoundTripp
 	}
 
 	if !canCache && cancel == nil {
-		return transport // nothing to GC
+		return transport // uncacheable config with no cert rotation - nothing to GC
 	}
 
 	transportWithGC := &trackedTransport{rt: transport}
@@ -217,7 +217,7 @@ func (c *tlsTransportCache) getLocked(key tlsCacheKey) (http.RoundTripper, bool)
 	v := wp.Value()
 
 	if v == nil { // avoid typed nil
-		return nil, true
+		return nil, true // key exists but value has been garbage collected
 	}
 
 	return v, true
