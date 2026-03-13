@@ -105,7 +105,7 @@ func (r *recordingCacheEntries) reset() []int {
 	return v
 }
 
-func installFakeMetrics(t *testing.T) (*recordingCreateCalls, *recordingCacheGCCalls, *recordingCertRotationGCCalls) {
+func installFakeMetrics(t *testing.T) (*recordingCreateCalls, *recordingCacheGCCalls, *recordingCertRotationGCCalls, *recordingCacheEntries) {
 	createCalls := &recordingCreateCalls{}
 	gcCalls := &recordingCacheGCCalls{}
 	rotationGCCalls := &recordingCertRotationGCCalls{}
@@ -125,7 +125,7 @@ func installFakeMetrics(t *testing.T) (*recordingCreateCalls, *recordingCacheGCC
 		metrics.TransportCertRotationGCCalls = origRotationGC
 		metrics.TransportCacheEntries = origEntries
 	})
-	return createCalls, gcCalls, rotationGCCalls
+	return createCalls, gcCalls, rotationGCCalls, cacheEntries
 }
 
 // --- tests ---
@@ -394,7 +394,7 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			createCalls, _, _ := installFakeMetrics(t)
+			createCalls, _, _, _ := installFakeMetrics(t)
 			tlsCaches := newTestTLSTransportCache()
 
 			rt, err := tlsCaches.get(tc.config)
@@ -467,7 +467,7 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 
 func TestTLSTransportCacheCARotationDisabled(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowCARotation, false)
-	createCalls, _, _ := installFakeMetrics(t)
+	createCalls, _, _, _ := installFakeMetrics(t)
 
 	caFile := writeCAFile(t, []byte(testCACert1))
 	cache := newTestTLSTransportCache()
@@ -560,7 +560,7 @@ func TestEmptyCAFileRotationLifecycle(t *testing.T) {
 func TestCacheHoldAfterCARotation(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowCARotation, true)
-	_, gcCalls, _ := installFakeMetrics(t)
+	_, gcCalls, _, _ := installFakeMetrics(t)
 
 	caFile := writeCAFile(t, []byte(testCACert1))
 
@@ -618,7 +618,7 @@ func TestCacheHoldAfterCARotation(t *testing.T) {
 // cache entries are stored in strongTransports and never evicted.
 func TestCacheGCDisabledNoEviction(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, false)
-	createCalls, gcCalls, _ := installFakeMetrics(t)
+	createCalls, gcCalls, _, cacheEntries := installFakeMetrics(t)
 
 	cache := newTestTLSTransportCache()
 
@@ -657,13 +657,18 @@ func TestCacheGCDisabledNoEviction(t *testing.T) {
 	if calls := gcCalls.reset(); len(calls) != 0 {
 		t.Errorf("expected no GC cache calls when GC is disabled, got %v", calls)
 	}
+
+	// Both get() calls observe 1 — the defer evaluates lenLocked() after setLocked stores.
+	if values := cacheEntries.reset(); len(values) != 2 || values[0] != 1 || values[1] != 1 {
+		t.Errorf("expected cache entries observations [1 1], got %v", values)
+	}
 }
 
 // TestCacheReviveAfterDrop verifies that when rt1 is still alive (via KeepAlive),
 // a second get() for the same key is a deterministic cache hit.
 func TestCacheReviveAfterDrop(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
-	createCalls, _, _ := installFakeMetrics(t)
+	createCalls, _, _, _ := installFakeMetrics(t)
 
 	pollCacheSizeWithGC(t, tlsCache, 0)
 
@@ -698,7 +703,7 @@ func TestCacheReviveAfterDrop(t *testing.T) {
 // is stopped when an uncacheable transport is garbage collected.
 func TestUncacheableCertRotationLeak(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
-	_, _, rotationGCCalls := installFakeMetrics(t)
+	_, _, rotationGCCalls, _ := installFakeMetrics(t)
 
 	certFile := writeCAFile(t, []byte(certData))
 	keyFile := writeCAFile(t, []byte(keyData))
@@ -741,7 +746,7 @@ func TestUncacheableCertRotationLeak(t *testing.T) {
 // This exercises the canCache=true && cancel != nil path through setLocked.
 func TestCacheableCertRotationLeak(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
-	_, gcCalls, rotationGCCalls := installFakeMetrics(t)
+	_, gcCalls, rotationGCCalls, _ := installFakeMetrics(t)
 
 	certFile := writeCAFile(t, []byte(certData))
 	keyFile := writeCAFile(t, []byte(keyData))
@@ -796,7 +801,7 @@ func TestCacheableCertRotationLeak(t *testing.T) {
 // disabled, the cert rotation goroutine is NOT stopped (pre-GC behavior).
 func TestCacheGCDisabledCertRotationNoCancel(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, false)
-	_, _, rotationGCCalls := installFakeMetrics(t)
+	_, _, rotationGCCalls, _ := installFakeMetrics(t)
 
 	certFile := writeCAFile(t, []byte(certData))
 	keyFile := writeCAFile(t, []byte(keyData))
@@ -847,7 +852,7 @@ func TestCacheGCDisabledCertRotationNoCancel(t *testing.T) {
 // is still alive, then dropping it so its cleanup fires against the new entry.
 func TestCacheStaleEvictionSkipped(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
-	_, gcCalls, _ := installFakeMetrics(t)
+	_, gcCalls, _, _ := installFakeMetrics(t)
 
 	cache := newTestTLSTransportCache()
 
@@ -894,7 +899,7 @@ func TestCacheStaleEvictionSkipped(t *testing.T) {
 
 func TestCacheLeak(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
-	_, gcCalls, _ := installFakeMetrics(t)
+	_, gcCalls, _, _ := installFakeMetrics(t)
 
 	pollCacheSizeWithGC(t, tlsCache, 0) // clean start
 
