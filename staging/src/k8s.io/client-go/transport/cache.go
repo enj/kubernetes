@@ -172,7 +172,10 @@ func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport http.RoundTripp
 	transportWithGC := &concreteTransport{rt: transport}
 
 	if cancel != nil {
-		runtime.AddCleanup(transportWithGC, cancel, fmt.Errorf("transport garbage collected"))
+		runtime.AddCleanup(transportWithGC, func(cause error) {
+			metrics.TransportCertRotationGCCalls.Increment()
+			cancel(cause)
+		}, fmt.Errorf("transport garbage collected"))
 	}
 
 	if canCache {
@@ -184,9 +187,11 @@ func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport http.RoundTripp
 
 			// make sure we only delete the weak pointer created by this specific setLocked call
 			if c.transports[key] != wp {
+				metrics.TransportCacheGCCalls.Increment("skipped")
 				return
 			}
 			delete(c.transports, key)
+			metrics.TransportCacheGCCalls.Increment("deleted")
 			metrics.TransportCacheEntries.Observe(c.lenLocked())
 		}, key)
 	}

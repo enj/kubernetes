@@ -202,6 +202,23 @@ var (
 		},
 		[]string{"result", "reason"},
 	)
+
+	transportCertRotationGCCalls = k8smetrics.NewCounter(
+		&k8smetrics.CounterOpts{
+			Name:           "rest_client_transport_cert_rotation_gc_calls_total",
+			StabilityLevel: k8smetrics.ALPHA,
+			Help:           "Number of times a cert rotation goroutine cancel func is called via GC cleanup of the associated transport",
+		},
+	)
+
+	transportCacheGCCalls = k8smetrics.NewCounterVec(
+		&k8smetrics.CounterOpts{
+			Name:           "rest_client_transport_cache_gc_calls_total",
+			StabilityLevel: k8smetrics.ALPHA,
+			Help:           "Number of times a GC cleanup attempts to delete a transport cache entry, partitioned by the result: deleted, skipped",
+		},
+		[]string{"result"},
+	)
 )
 
 func init() {
@@ -218,6 +235,8 @@ func init() {
 	legacyregistry.MustRegister(transportCacheEntries)
 	legacyregistry.MustRegister(transportCacheCalls)
 	legacyregistry.MustRegister(transportCAReloads)
+	legacyregistry.MustRegister(transportCertRotationGCCalls)
+	legacyregistry.MustRegister(transportCacheGCCalls)
 	metrics.Register(metrics.RegisterOpts{
 		ClientCertExpiry:      execPluginCertTTLAdapter,
 		ClientCertRotationAge: &rotationAdapter{m: execPluginCertRotation},
@@ -231,8 +250,10 @@ func init() {
 		ExecPluginCalls:       &callsAdapter{m: execPluginCalls},
 		ExecPluginPolicyCalls: &policyAdapter{m: execPluginPolicyCalls},
 		TransportCacheEntries: &transportCacheAdapter{m: transportCacheEntries},
-		TransportCreateCalls:  &transportCacheCallsAdapter{m: transportCacheCalls},
-		TransportCAReloads:    &transportCAReloadsAdapter{m: transportCAReloads},
+		TransportCreateCalls:        &transportCacheCallsAdapter{m: transportCacheCalls},
+		TransportCAReloads:          &transportCAReloadsAdapter{m: transportCAReloads},
+		TransportCertRotationGCCalls: &transportCertRotationGCCallsAdapter{m: transportCertRotationGCCalls},
+		TransportCacheGCCalls: &transportCacheGCCallsAdapter{m: transportCacheGCCalls},
 	})
 }
 
@@ -330,4 +351,20 @@ type transportCAReloadsAdapter struct {
 
 func (t *transportCAReloadsAdapter) Increment(result, reason string) {
 	t.m.WithLabelValues(result, reason).Inc()
+}
+
+type transportCertRotationGCCallsAdapter struct {
+	m *k8smetrics.Counter
+}
+
+func (t *transportCertRotationGCCallsAdapter) Increment() {
+	t.m.Inc()
+}
+
+type transportCacheGCCallsAdapter struct {
+	m *k8smetrics.CounterVec
+}
+
+func (t *transportCacheGCCallsAdapter) Increment(result string) {
+	t.m.WithLabelValues(result).Inc()
 }

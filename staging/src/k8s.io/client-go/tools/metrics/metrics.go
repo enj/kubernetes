@@ -91,6 +91,18 @@ type TransportCAReloadsMetric interface {
 	Increment(result, reason string)
 }
 
+// TransportCertRotationGCCallsMetric counts the number of times a cert rotation
+// goroutine cancel func is called via GC cleanup.
+type TransportCertRotationGCCallsMetric interface {
+	Increment()
+}
+
+// TransportCacheGCCallsMetric counts the number of times a GC cleanup
+// attempts to delete a cache entry, partitioned by the result: deleted, skipped.
+type TransportCacheGCCallsMetric interface {
+	Increment(result string)
+}
+
 var (
 	// ClientCertExpiry is the expiry time of a client certificate
 	ClientCertExpiry ExpiryMetric = noopExpiry{}
@@ -126,6 +138,12 @@ var (
 
 	// TransportCAReloads is the metric that counts the number of times a CA reload is attempted
 	TransportCAReloads TransportCAReloadsMetric = noopTransportCAReloads{}
+
+	// TransportCertRotationGCCalls counts the number of times a cert rotation goroutine
+	// cancel func is called via GC cleanup
+	TransportCertRotationGCCalls TransportCertRotationGCCallsMetric = noopTransportCertRotationGCCalls{}
+
+	TransportCacheGCCalls TransportCacheGCCallsMetric = noopTransportCacheGCCalls{}
 )
 
 // RegisterOpts contains all the metrics to register. Metrics may be nil.
@@ -141,9 +159,11 @@ type RegisterOpts struct {
 	ExecPluginCalls       CallsMetric
 	ExecPluginPolicyCalls PolicyCallsMetric
 	RequestRetry          RetryMetric
-	TransportCacheEntries TransportCacheMetric
-	TransportCreateCalls  TransportCreateCallsMetric
-	TransportCAReloads    TransportCAReloadsMetric
+	TransportCacheEntries       TransportCacheMetric
+	TransportCreateCalls        TransportCreateCallsMetric
+	TransportCAReloads          TransportCAReloadsMetric
+	TransportCertRotationGCCalls TransportCertRotationGCCallsMetric
+	TransportCacheGCCalls TransportCacheGCCallsMetric
 }
 
 // Register registers metrics for the rest client to use. This can
@@ -191,6 +211,12 @@ func Register(opts RegisterOpts) {
 		}
 		if opts.TransportCAReloads != nil {
 			TransportCAReloads = opts.TransportCAReloads
+		}
+		if opts.TransportCertRotationGCCalls != nil {
+			TransportCertRotationGCCalls = opts.TransportCertRotationGCCalls
+		}
+		if opts.TransportCacheGCCalls != nil {
+			TransportCacheGCCalls = opts.TransportCacheGCCalls
 		}
 	})
 }
@@ -243,3 +269,11 @@ func (noopTransportCreateCalls) Increment(string) {}
 type noopTransportCAReloads struct{}
 
 func (noopTransportCAReloads) Increment(result, reason string) {}
+
+type noopTransportCertRotationGCCalls struct{}
+
+func (noopTransportCertRotationGCCalls) Increment() {}
+
+type noopTransportCacheGCCalls struct{}
+
+func (noopTransportCacheGCCalls) Increment(string) {}
