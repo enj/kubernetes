@@ -18,6 +18,7 @@ package impersonation
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -428,12 +429,12 @@ func (c *constrainedImpersonationTest) assertCache(r testRequest) {
 		}
 		rr.Equal(len(expectedMode.outer), outer.cache.Len())
 		for expectedKey, expectedUser := range expectedMode.outer {
-			c.checkCacheEntry(outer, expectedKey.wantedUser, expectedKey.attributes, expectedUser, verb)
+			c.checkCacheEntry(outer, expectedKey.wantedUser, expectedKey.attributes, expectedKey.rawKey, expectedUser, verb)
 		}
 
 		rr.Equal(len(expectedMode.inner), inner.cache.Len())
 		for expectedKey, expectedUser := range expectedMode.inner {
-			c.checkCacheEntry(inner, expectedKey.wantedUser, authorizer.AttributesRecord{User: expectedKey.requestor}, expectedUser, verb)
+			c.checkCacheEntry(inner, expectedKey.wantedUser, authorizer.AttributesRecord{User: expectedKey.requestor}, expectedKey.rawKey, expectedUser, verb)
 		}
 	}
 }
@@ -443,7 +444,7 @@ func usernameHash(username string) string {
 	return fmt.Sprintf("%x", hash)
 }
 
-func (c *constrainedImpersonationTest) checkCacheEntry(cache *impersonationCache, wantedUser *user.DefaultInfo, attributes authorizer.Attributes, expectedUser *user.DefaultInfo, expectedVerb string) {
+func (c *constrainedImpersonationTest) checkCacheEntry(cache *impersonationCache, wantedUser *user.DefaultInfo, attributes authorizer.Attributes, rawKey string, expectedUser *user.DefaultInfo, expectedVerb string) {
 	rr := require.New(c.t)
 	keyString, err := buildKey(wantedUser, attributes)
 	rr.NoError(err)
@@ -452,7 +453,12 @@ func (c *constrainedImpersonationTest) checkCacheEntry(cache *impersonationCache
 	impersonatedUser := val.(*impersonatedUserInfo)
 	rr.Equal(expectedVerb, impersonatedUser.constraint)
 	rr.Equal(expectedUser, impersonatedUser.user)
-	rr.True(strings.HasSuffix(keyString, "/"+attributes.GetUser().GetName()))
+	rr.Equal(keyHash(rawKey)+"/"+attributes.GetUser().GetName(), keyString, "hash of %q does not match", rawKey)
+}
+
+func keyHash(rawKey string) string {
+	hash := sha256.Sum256([]byte(rawKey))
+	return fmt.Sprintf("%x", hash[:])
 }
 
 func withConstrainedImpersonationAttributes(a authorizer.AttributesRecord, mode string) authorizer.AttributesRecord {
@@ -505,11 +511,12 @@ func expectDeny(attributes authorizer.AttributesRecord) authzCheck {
 	return expectAuthzCheck(attributes, authorizer.DecisionNoOpinion)
 }
 
-func outerCacheKey(wantedUser, requestor *user.DefaultInfo, req *request.RequestInfo) impersonationCacheKey {
+func outerCacheKey(wantedUser, requestor *user.DefaultInfo, req *request.RequestInfo, rawKey string) outerKey {
 	attributes := withUser(requestInfoToAttributes(req), requestor)
-	return impersonationCacheKey{
+	return outerKey{
 		wantedUser: wantedUser,
 		attributes: &attributes, // use a *authorizer.AttributesRecord so that it can be used in a map key
+		rawKey:     rawKey,
 	}
 }
 
@@ -519,12 +526,19 @@ type expectedCache struct {
 }
 
 type expectedModeCache struct {
-	outer map[impersonationCacheKey]*user.DefaultInfo
+	outer map[outerKey]*user.DefaultInfo
 	inner map[innerKey]*user.DefaultInfo
+}
+
+type outerKey struct {
+	wantedUser *user.DefaultInfo
+	attributes *authorizer.AttributesRecord
+	rawKey     string
 }
 
 type innerKey struct {
 	wantedUser, requestor *user.DefaultInfo
+	rawKey                string
 }
 
 type testRequest struct {
@@ -597,13 +611,16 @@ func associatedNodeTestCase() []testRequest {
 		},
 		modes: map[string]expectedModeCache{
 			"impersonate:associated-node": {
-				outer: map[impersonationCacheKey]*user.DefaultInfo{
-					outerCacheKey(&user.DefaultInfo{Name: "system:node:*"}, saDefaultOnAnyNode, getSecretRequest): node1FullUserInfo,
+				outer: map[outerKey]*user.DefaultInfo{
+					outerCacheKey(&user.DefaultInfo{Name: "system:node:*"}, saDefaultOnAnyNode, getSecretRequest,
+						"\x00\x00\x00\x1d\x00\x00\x00\rsystem:node:*\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xb7\x00\x00\x00%system:serviceaccount:default:default\x00\x00\x00\x00\x00\x00\x00\x1f\x00\x00\x00\x1bassociate-node-impersonater\x00\x00\x00c\x00\x00\x001authentication.kubernetes.io/associated-node-keys\x00\x00\x00*\x00\x00\x00&authentication.kubernetes.io/node-name\x00\x00\x004\x00\x00\x00\x03get\x01\x00\x00\x00\x03bar\x00\x00\x00\asecrets\x00\x00\x00\x00\x00\x00\x00\x03foo\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+					): node1FullUserInfo,
 				},
 				inner: map[innerKey]*user.DefaultInfo{
 					{
 						wantedUser: &user.DefaultInfo{Name: "system:node:*"},
 						requestor:  saDefaultOnAnyNode,
+						rawKey:     "\x00\x00\x00\x1d\x00\x00\x00\rsystem:node:*\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xb7\x00\x00\x00%system:serviceaccount:default:default\x00\x00\x00\x00\x00\x00\x00\x1f\x00\x00\x00\x1bassociate-node-impersonater\x00\x00\x00c\x00\x00\x001authentication.kubernetes.io/associated-node-keys\x00\x00\x00*\x00\x00\x00&authentication.kubernetes.io/node-name\x00\x00\x00\"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 					}: node1FullUserInfo,
 				},
 			},
@@ -613,10 +630,14 @@ func associatedNodeTestCase() []testRequest {
 		modeIdx: cacheWithOnlyNode1Data.modeIdx,
 		modes: map[string]expectedModeCache{
 			"impersonate:associated-node": {
-				outer: map[impersonationCacheKey]*user.DefaultInfo{
-					outerCacheKey(&user.DefaultInfo{Name: "system:node:*"}, saDefaultOnAnyNode, getSecretRequest): node1FullUserInfo,
+				outer: map[outerKey]*user.DefaultInfo{
+					outerCacheKey(&user.DefaultInfo{Name: "system:node:*"}, saDefaultOnAnyNode, getSecretRequest,
+						"\x00\x00\x00\x1d\x00\x00\x00\rsystem:node:*\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xb7\x00\x00\x00%system:serviceaccount:default:default\x00\x00\x00\x00\x00\x00\x00\x1f\x00\x00\x00\x1bassociate-node-impersonater\x00\x00\x00c\x00\x00\x001authentication.kubernetes.io/associated-node-keys\x00\x00\x00*\x00\x00\x00&authentication.kubernetes.io/node-name\x00\x00\x004\x00\x00\x00\x03get\x01\x00\x00\x00\x03bar\x00\x00\x00\asecrets\x00\x00\x00\x00\x00\x00\x00\x03foo\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+					): node1FullUserInfo,
 					// even though this request was made on node2, since the inner cache matched it returned a value for node1
-					outerCacheKey(&user.DefaultInfo{Name: "system:node:*"}, saDefaultOnAnyNode, getPodRequest): node1FullUserInfo,
+					outerCacheKey(&user.DefaultInfo{Name: "system:node:*"}, saDefaultOnAnyNode, getPodRequest,
+						"\x00\x00\x00\x1d\x00\x00\x00\rsystem:node:*\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xb7\x00\x00\x00%system:serviceaccount:default:default\x00\x00\x00\x00\x00\x00\x00\x1f\x00\x00\x00\x1bassociate-node-impersonater\x00\x00\x00c\x00\x00\x001authentication.kubernetes.io/associated-node-keys\x00\x00\x00*\x00\x00\x00&authentication.kubernetes.io/node-name\x00\x00\x001\x00\x00\x00\x03get\x01\x00\x00\x00\x03bar\x00\x00\x00\x04pods\x00\x00\x00\x00\x00\x00\x00\x03foo\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+					): node1FullUserInfo,
 				},
 				inner: cacheWithOnlyNode1Data.modes["impersonate:associated-node"].inner,
 			},
@@ -809,11 +830,13 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						},
 						modes: map[string]expectedModeCache{
 							"impersonate:user-info": {
-								outer: map[impersonationCacheKey]*user.DefaultInfo{
-									outerCacheKey(anyone, userImpersonator, getPodRequest): anyoneAuthenticated,
+								outer: map[outerKey]*user.DefaultInfo{
+									outerCacheKey(anyone, userImpersonator, getPodRequest,
+										"\x00\x00\x00\x16\x00\x00\x00\x06anyone\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x001\x00\x00\x00\x03get\x01\x00\x00\x00\x03bar\x00\x00\x00\x04pods\x00\x00\x00\x00\x00\x00\x00\x03foo\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									): anyoneAuthenticated,
 								},
 								inner: map[innerKey]*user.DefaultInfo{
-									{wantedUser: anyone, requestor: userImpersonator}: anyoneAuthenticated,
+									{wantedUser: anyone, requestor: userImpersonator, rawKey: "\x00\x00\x00\x16\x00\x00\x00\x06anyone\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"}: anyoneAuthenticated,
 								},
 							},
 						},
@@ -839,12 +862,16 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						},
 						modes: map[string]expectedModeCache{
 							"impersonate:user-info": {
-								outer: map[impersonationCacheKey]*user.DefaultInfo{
-									outerCacheKey(anyone, userImpersonator, getPodRequest):        anyoneAuthenticated,
-									outerCacheKey(anyone, userImpersonator, getAnotherPodRequest): anyoneAuthenticated,
+								outer: map[outerKey]*user.DefaultInfo{
+									outerCacheKey(anyone, userImpersonator, getPodRequest,
+										"\x00\x00\x00\x16\x00\x00\x00\x06anyone\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x001\x00\x00\x00\x03get\x01\x00\x00\x00\x03bar\x00\x00\x00\x04pods\x00\x00\x00\x00\x00\x00\x00\x03foo\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									): anyoneAuthenticated,
+									outerCacheKey(anyone, userImpersonator, getAnotherPodRequest,
+										"\x00\x00\x00\x16\x00\x00\x00\x06anyone\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x003\x00\x00\x00\x03get\x01\x00\x00\x00\x04bar1\x00\x00\x00\x04pods\x00\x00\x00\x00\x00\x00\x00\x04foo1\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									): anyoneAuthenticated,
 								},
 								inner: map[innerKey]*user.DefaultInfo{
-									{wantedUser: anyone, requestor: userImpersonator}: anyoneAuthenticated,
+									{wantedUser: anyone, requestor: userImpersonator, rawKey: "\x00\x00\x00\x16\x00\x00\x00\x06anyone\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"}: anyoneAuthenticated,
 								},
 							},
 						},
@@ -870,12 +897,16 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						},
 						modes: map[string]expectedModeCache{
 							"impersonate:user-info": {
-								outer: map[impersonationCacheKey]*user.DefaultInfo{
-									outerCacheKey(anyone, userImpersonator, getPodRequest):        anyoneAuthenticated,
-									outerCacheKey(anyone, userImpersonator, getAnotherPodRequest): anyoneAuthenticated,
+								outer: map[outerKey]*user.DefaultInfo{
+									outerCacheKey(anyone, userImpersonator, getPodRequest,
+										"\x00\x00\x00\x16\x00\x00\x00\x06anyone\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x001\x00\x00\x00\x03get\x01\x00\x00\x00\x03bar\x00\x00\x00\x04pods\x00\x00\x00\x00\x00\x00\x00\x03foo\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									): anyoneAuthenticated,
+									outerCacheKey(anyone, userImpersonator, getAnotherPodRequest,
+										"\x00\x00\x00\x16\x00\x00\x00\x06anyone\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x003\x00\x00\x00\x03get\x01\x00\x00\x00\x04bar1\x00\x00\x00\x04pods\x00\x00\x00\x00\x00\x00\x00\x04foo1\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									): anyoneAuthenticated,
 								},
 								inner: map[innerKey]*user.DefaultInfo{
-									{wantedUser: anyone, requestor: userImpersonator}: anyoneAuthenticated,
+									{wantedUser: anyone, requestor: userImpersonator, rawKey: "\x00\x00\x00\x16\x00\x00\x00\x06anyone\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"}: anyoneAuthenticated,
 								},
 							},
 						},
@@ -909,13 +940,16 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						},
 						modes: map[string]expectedModeCache{
 							"impersonate:serviceaccount": {
-								outer: map[impersonationCacheKey]*user.DefaultInfo{
-									outerCacheKey(saUser, saImpersonator, getPodRequest): saUserAuthenticated,
+								outer: map[outerKey]*user.DefaultInfo{
+									outerCacheKey(saUser, saImpersonator, getPodRequest,
+										"\x00\x00\x005\x00\x00\x00%system:serviceaccount:default:default\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1f\x00\x00\x00\x0fsa-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x001\x00\x00\x00\x03get\x01\x00\x00\x00\x03bar\x00\x00\x00\x04pods\x00\x00\x00\x00\x00\x00\x00\x03foo\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									): saUserAuthenticated,
 								},
 								inner: map[innerKey]*user.DefaultInfo{
 									{
 										wantedUser: saUser,
 										requestor:  saImpersonator,
+										rawKey:     "\x00\x00\x005\x00\x00\x00%system:serviceaccount:default:default\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1f\x00\x00\x00\x0fsa-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 									}: saUserAuthenticated,
 								},
 							},
@@ -996,11 +1030,13 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						},
 						modes: map[string]expectedModeCache{
 							"impersonate:arbitrary-node": {
-								outer: map[impersonationCacheKey]*user.DefaultInfo{
-									outerCacheKey(nodeUser, nodeImpersonator, getPodRequest): nodeUserAuthenticated,
+								outer: map[outerKey]*user.DefaultInfo{
+									outerCacheKey(nodeUser, nodeImpersonator, getPodRequest,
+										"\x00\x00\x00!\x00\x00\x00\x11system:node:node1\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11node-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x001\x00\x00\x00\x03get\x01\x00\x00\x00\x03bar\x00\x00\x00\x04pods\x00\x00\x00\x00\x00\x00\x00\x03foo\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									): nodeUserAuthenticated,
 								},
 								inner: map[innerKey]*user.DefaultInfo{
-									{wantedUser: nodeUser, requestor: nodeImpersonator}: nodeUserAuthenticated,
+									{wantedUser: nodeUser, requestor: nodeImpersonator, rawKey: "\x00\x00\x00!\x00\x00\x00\x11system:node:node1\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11node-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"}: nodeUserAuthenticated,
 								},
 							},
 						},
@@ -1084,7 +1120,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						},
 						modes: map[string]expectedModeCache{
 							"impersonate:user-info": {
-								outer: map[impersonationCacheKey]*user.DefaultInfo{
+								outer: map[outerKey]*user.DefaultInfo{
 									outerCacheKey(
 										&user.DefaultInfo{
 											Name:  "system:admin",
@@ -1094,7 +1130,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 											Name:   "user-impersonater",
 											Groups: []string{"extra-setter-scopes"},
 										},
-										getPodRequest): {
+										getPodRequest, "\x00\x00\x00c\x00\x00\x00\fsystem:admin\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00G\x00\x00\x00\x10pandas.io/scopes\x00\x00\x00/\x00\x00\x00\ascope-a\x00\x00\x00\ascope-b\x00\x00\x00\x015\x00\x00\x00\x014\x00\x00\x00\x013\x00\x00\x00\x012\x00\x00\x00\x011\x00\x00\x008\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x17\x00\x00\x00\x13extra-setter-scopes\x00\x00\x00\x00\x00\x00\x001\x00\x00\x00\x03get\x01\x00\x00\x00\x03bar\x00\x00\x00\x04pods\x00\x00\x00\x00\x00\x00\x00\x03foo\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"): {
 										Name:   "system:admin",
 										Groups: []string{"system:authenticated"},
 										Extra:  map[string][]string{"pandas.io/scopes": {"scope-a", "scope-b", "5", "4", "3", "2", "1"}},
@@ -1110,6 +1146,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 											Name:   "user-impersonater",
 											Groups: []string{"extra-setter-scopes"},
 										},
+										rawKey: "\x00\x00\x00c\x00\x00\x00\fsystem:admin\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00G\x00\x00\x00\x10pandas.io/scopes\x00\x00\x00/\x00\x00\x00\ascope-a\x00\x00\x00\ascope-b\x00\x00\x00\x015\x00\x00\x00\x014\x00\x00\x00\x013\x00\x00\x00\x012\x00\x00\x00\x011\x00\x00\x008\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x17\x00\x00\x00\x13extra-setter-scopes\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 									}: {
 										Name:   "system:admin",
 										Groups: []string{"system:authenticated"},
@@ -1251,11 +1288,13 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						},
 						modes: map[string]expectedModeCache{
 							"impersonate:user-info": {
-								outer: map[impersonationCacheKey]*user.DefaultInfo{
+								outer: map[outerKey]*user.DefaultInfo{
 									outerCacheKey(&user.DefaultInfo{
 										Name:   "bob",
 										Groups: []string{"group1", "group2", "group3", "group4"},
-									}, &user.DefaultInfo{Name: "many-groups-impersonater"}, getPodRequest): {
+									}, &user.DefaultInfo{Name: "many-groups-impersonater"}, getPodRequest,
+										"\x00\x00\x00;\x00\x00\x00\x03bob\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00\x06group1\x00\x00\x00\x06group2\x00\x00\x00\x06group3\x00\x00\x00\x06group4\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00\x18many-groups-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x001\x00\x00\x00\x03get\x01\x00\x00\x00\x03bar\x00\x00\x00\x04pods\x00\x00\x00\x00\x00\x00\x00\x03foo\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									): {
 										Name:   "bob",
 										Groups: []string{"group1", "group2", "group3", "group4", "system:authenticated"},
 									},
@@ -1267,6 +1306,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 											Groups: []string{"group1", "group2", "group3", "group4"},
 										},
 										requestor: &user.DefaultInfo{Name: "many-groups-impersonater"},
+										rawKey:    "\x00\x00\x00;\x00\x00\x00\x03bob\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00\x06group1\x00\x00\x00\x06group2\x00\x00\x00\x06group3\x00\x00\x00\x06group4\x00\x00\x00\x00\x00\x00\x00(\x00\x00\x00\x18many-groups-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 									}: {
 										Name:   "bob",
 										Groups: []string{"group1", "group2", "group3", "group4", "system:authenticated"},
@@ -1322,7 +1362,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						},
 						modes: map[string]expectedModeCache{
 							"impersonate:user-info": {
-								outer: map[impersonationCacheKey]*user.DefaultInfo{
+								outer: map[outerKey]*user.DefaultInfo{
 									outerCacheKey(&user.DefaultInfo{
 										Name: "alice",
 										Extra: map[string][]string{
@@ -1331,7 +1371,9 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 											"scopes.example.com/key3": {"val3"},
 											"scopes.example.com/key4": {"val4"},
 										},
-									}, &user.DefaultInfo{Name: "many-extras-impersonater"}, getPodRequest): {
+									}, &user.DefaultInfo{Name: "many-extras-impersonater"}, getPodRequest,
+										"\x00\x00\x00\xb1\x00\x00\x00\x05alice\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9c\x00\x00\x00\x17scopes.example.com/key1\x00\x00\x00\b\x00\x00\x00\x04val1\x00\x00\x00\x17scopes.example.com/key2\x00\x00\x00\b\x00\x00\x00\x04val2\x00\x00\x00\x17scopes.example.com/key3\x00\x00\x00\b\x00\x00\x00\x04val3\x00\x00\x00\x17scopes.example.com/key4\x00\x00\x00\b\x00\x00\x00\x04val4\x00\x00\x00(\x00\x00\x00\x18many-extras-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x001\x00\x00\x00\x03get\x01\x00\x00\x00\x03bar\x00\x00\x00\x04pods\x00\x00\x00\x00\x00\x00\x00\x03foo\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									): {
 										Name:   "alice",
 										Groups: []string{"system:authenticated"},
 										Extra: map[string][]string{
@@ -1354,6 +1396,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 											},
 										},
 										requestor: &user.DefaultInfo{Name: "many-extras-impersonater"},
+										rawKey:    "\x00\x00\x00\xb1\x00\x00\x00\x05alice\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x9c\x00\x00\x00\x17scopes.example.com/key1\x00\x00\x00\b\x00\x00\x00\x04val1\x00\x00\x00\x17scopes.example.com/key2\x00\x00\x00\b\x00\x00\x00\x04val2\x00\x00\x00\x17scopes.example.com/key3\x00\x00\x00\b\x00\x00\x00\x04val3\x00\x00\x00\x17scopes.example.com/key4\x00\x00\x00\b\x00\x00\x00\x04val4\x00\x00\x00(\x00\x00\x00\x18many-extras-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 									}: {
 										Name:   "alice",
 										Groups: []string{"system:authenticated"},
@@ -1422,14 +1465,16 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						},
 						modes: map[string]expectedModeCache{
 							"impersonate:user-info": {
-								outer: map[impersonationCacheKey]*user.DefaultInfo{
+								outer: map[outerKey]*user.DefaultInfo{
 									outerCacheKey(&user.DefaultInfo{
 										Name:   "frank",
 										Groups: []string{"dev", "ops", "security", "audit"},
 										Extra: map[string][]string{
 											"tags.io/env": {"prod", "staging", "dev"},
 										},
-									}, &user.DefaultInfo{Name: "mixed-impersonater"}, getPodRequest): {
+									}, &user.DefaultInfo{Name: "mixed-impersonater"}, getPodRequest,
+										"\x00\x00\x00e\x00\x00\x00\x05frank\x00\x00\x00\x00\x00\x00\x00#\x00\x00\x00\x03dev\x00\x00\x00\x03ops\x00\x00\x00\bsecurity\x00\x00\x00\x05audit\x00\x00\x00-\x00\x00\x00\vtags.io/env\x00\x00\x00\x1a\x00\x00\x00\x04prod\x00\x00\x00\astaging\x00\x00\x00\x03dev\x00\x00\x00\"\x00\x00\x00\x12mixed-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x001\x00\x00\x00\x03get\x01\x00\x00\x00\x03bar\x00\x00\x00\x04pods\x00\x00\x00\x00\x00\x00\x00\x03foo\x00\x00\x00\x00\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									): {
 										Name:   "frank",
 										Groups: []string{"dev", "ops", "security", "audit", "system:authenticated"},
 										Extra: map[string][]string{
@@ -1447,6 +1492,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 											},
 										},
 										requestor: &user.DefaultInfo{Name: "mixed-impersonater"},
+										rawKey:    "\x00\x00\x00e\x00\x00\x00\x05frank\x00\x00\x00\x00\x00\x00\x00#\x00\x00\x00\x03dev\x00\x00\x00\x03ops\x00\x00\x00\bsecurity\x00\x00\x00\x05audit\x00\x00\x00-\x00\x00\x00\vtags.io/env\x00\x00\x00\x1a\x00\x00\x00\x04prod\x00\x00\x00\astaging\x00\x00\x00\x03dev\x00\x00\x00\"\x00\x00\x00\x12mixed-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
 									}: {
 										Name:   "frank",
 										Groups: []string{"dev", "ops", "security", "audit", "system:authenticated"},
@@ -1489,14 +1535,16 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						},
 						modes: map[string]expectedModeCache{
 							"impersonate:user-info": {
-								outer: map[impersonationCacheKey]*user.DefaultInfo{
-									outerCacheKey(&user.DefaultInfo{Name: "bob"}, userImpersonator, getDeploymentRequest): {
+								outer: map[outerKey]*user.DefaultInfo{
+									outerCacheKey(&user.DefaultInfo{Name: "bob"}, userImpersonator, getDeploymentRequest,
+										"\x00\x00\x00\x13\x00\x00\x00\x03bob\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00<\x00\x00\x00\x03get\x01\x00\x00\x00\x03bar\x00\x00\x00\vdeployments\x00\x00\x00\x00\x00\x00\x00\x03foo\x00\x00\x00\x04apps\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									): {
 										Name:   "bob",
 										Groups: []string{"system:authenticated"},
 									},
 								},
 								inner: map[innerKey]*user.DefaultInfo{
-									{wantedUser: &user.DefaultInfo{Name: "bob"}, requestor: userImpersonator}: {
+									{wantedUser: &user.DefaultInfo{Name: "bob"}, requestor: userImpersonator, rawKey: "\x00\x00\x00\x13\x00\x00\x00\x03bob\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"}: {
 										Name:   "bob",
 										Groups: []string{"system:authenticated"},
 									},
@@ -1527,14 +1575,16 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 						},
 						modes: map[string]expectedModeCache{
 							"impersonate:user-info": {
-								outer: map[impersonationCacheKey]*user.DefaultInfo{
-									outerCacheKey(&user.DefaultInfo{Name: "bob"}, userImpersonator, getDeploymentRequest): {
+								outer: map[outerKey]*user.DefaultInfo{
+									outerCacheKey(&user.DefaultInfo{Name: "bob"}, userImpersonator, getDeploymentRequest,
+										"\x00\x00\x00\x13\x00\x00\x00\x03bob\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00<\x00\x00\x00\x03get\x01\x00\x00\x00\x03bar\x00\x00\x00\vdeployments\x00\x00\x00\x00\x00\x00\x00\x03foo\x00\x00\x00\x04apps\x00\x00\x00\x02v1\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+									): {
 										Name:   "bob",
 										Groups: []string{"system:authenticated"},
 									},
 								},
 								inner: map[innerKey]*user.DefaultInfo{
-									{wantedUser: &user.DefaultInfo{Name: "bob"}, requestor: userImpersonator}: {
+									{wantedUser: &user.DefaultInfo{Name: "bob"}, requestor: userImpersonator, rawKey: "\x00\x00\x00\x13\x00\x00\x00\x03bob\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!\x00\x00\x00\x11user-impersonater\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"}: {
 										Name:   "bob",
 										Groups: []string{"system:authenticated"},
 									},
