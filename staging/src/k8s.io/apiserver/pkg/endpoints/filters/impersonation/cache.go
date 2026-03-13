@@ -18,11 +18,10 @@ package impersonation
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"hash/fnv"
 	"time"
-
-	"golang.org/x/crypto/cryptobyte"
 
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
@@ -246,7 +245,7 @@ func buildKey(wantedUser *user.DefaultInfo, attributes authorizer.Attributes) (s
 		}
 	})
 
-	return b.build()
+	return b.build(), nil
 }
 
 func addUser(b *cacheKeyBuilder, u user.Info) {
@@ -265,20 +264,21 @@ func addUser(b *cacheKeyBuilder, u user.Info) {
 	})
 }
 
-// cacheKeyBuilder adds syntactic sugar on top of cryptobyte.Builder to make it easier to use for complex inputs.
+// cacheKeyBuilder builds a binary key from structured inputs using uint32 length-prefixed encoding, then hashes
+// it with SHA-256.  All methods operate on a single shared buffer to avoid closure and child-builder allocations.
 type cacheKeyBuilder struct {
 	namespace string // in the programming sense, not the Kubernetes concept
-	builder   *cryptobyte.Builder
+	builder   []byte
 }
 
 func newCacheKeyBuilder(namespace string) *cacheKeyBuilder {
 	// start with a reasonable size to avoid too many allocations
-	return &cacheKeyBuilder{namespace: namespace, builder: cryptobyte.NewBuilder(make([]byte, 0, 384))}
+	return &cacheKeyBuilder{namespace: namespace, builder: make([]byte, 0, 384)}
 }
 
 func (c *cacheKeyBuilder) addString(value string) *cacheKeyBuilder {
 	c.addLengthPrefixed(func(c *cacheKeyBuilder) {
-		c.builder.AddBytes([]byte(value))
+		c.builder = append(c.builder, value...)
 	})
 	return c
 }
@@ -297,24 +297,20 @@ func (c *cacheKeyBuilder) addBool(value bool) *cacheKeyBuilder {
 	if value {
 		b = 1
 	}
-	c.builder.AddUint8(b)
+	c.builder = append(c.builder, b)
 	return c
 }
 
 type builderContinuation func(child *cacheKeyBuilder)
 
 func (c *cacheKeyBuilder) addLengthPrefixed(f builderContinuation) {
-	c.builder.AddUint32LengthPrefixed(func(b *cryptobyte.Builder) {
-		c := &cacheKeyBuilder{namespace: c.namespace, builder: b}
-		f(c)
-	})
+	offset := len(c.builder)
+	c.builder = append(c.builder, 0, 0, 0, 0) // placeholder for uint32 length
+	f(c)
+	binary.BigEndian.PutUint32(c.builder[offset:], uint32(len(c.builder)-offset-4))
 }
 
-func (c *cacheKeyBuilder) build() (string, error) {
-	key, err := c.builder.Bytes()
-	if err != nil {
-		return "", err
-	}
-	hash := sha256.Sum256(key) // reduce the size of the cache key to keep the overall cache size small
-	return fmt.Sprintf("%x/%s", hash[:], c.namespace), nil
+func (c *cacheKeyBuilder) build() string {
+	hash := sha256.Sum256(c.builder) // reduce the size of the cache key to keep the overall cache size small
+	return fmt.Sprintf("%x/%s", hash[:], c.namespace)
 }
