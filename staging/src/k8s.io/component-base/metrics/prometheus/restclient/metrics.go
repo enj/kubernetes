@@ -238,22 +238,22 @@ func init() {
 	legacyregistry.MustRegister(transportCertRotationGCCalls)
 	legacyregistry.MustRegister(transportCacheGCCalls)
 	metrics.Register(metrics.RegisterOpts{
-		ClientCertExpiry:      execPluginCertTTLAdapter,
-		ClientCertRotationAge: &rotationAdapter{m: execPluginCertRotation},
-		RequestLatency:        &latencyAdapter{m: requestLatency},
-		ResolverLatency:       &resolverLatencyAdapter{m: resolverLatency},
-		RequestSize:           &sizeAdapter{m: requestSize},
-		ResponseSize:          &sizeAdapter{m: responseSize},
-		RateLimiterLatency:    &latencyAdapter{m: rateLimiterLatency},
-		RequestResult:         &resultAdapter{requestResult},
-		RequestRetry:          &retryAdapter{requestRetry},
-		ExecPluginCalls:       &callsAdapter{m: execPluginCalls},
-		ExecPluginPolicyCalls: &policyAdapter{m: execPluginPolicyCalls},
-		TransportCacheEntries: &transportCacheAdapter{m: transportCacheEntries},
-		TransportCreateCalls:        &transportCacheCallsAdapter{m: transportCacheCalls},
-		TransportCAReloads:          &transportCAReloadsAdapter{m: transportCAReloads},
+		ClientCertExpiry:             execPluginCertTTLAdapter,
+		ClientCertRotationAge:        &rotationAdapter{m: execPluginCertRotation},
+		RequestLatency:               &latencyAdapter{m: requestLatency},
+		ResolverLatency:              &resolverLatencyAdapter{m: resolverLatency},
+		RequestSize:                  &sizeAdapter{m: requestSize},
+		ResponseSize:                 &sizeAdapter{m: responseSize},
+		RateLimiterLatency:           &latencyAdapter{m: rateLimiterLatency},
+		RequestResult:                &resultAdapter{requestResult},
+		RequestRetry:                 &retryAdapter{requestRetry},
+		ExecPluginCalls:              &callsAdapter{m: execPluginCalls},
+		ExecPluginPolicyCalls:        &policyAdapter{m: execPluginPolicyCalls},
+		TransportCacheEntries:        &transportCacheAdapter{m: transportCacheEntries},
+		TransportCreateCalls:         &transportCacheCallsAdapter{m: transportCacheCalls},
+		TransportCAReloads:           &transportCAReloadsAdapter{m: transportCAReloads},
 		TransportCertRotationGCCalls: &transportCertRotationGCCallsAdapter{m: transportCertRotationGCCalls},
-		TransportCacheGCCalls: &transportCacheGCCallsAdapter{m: transportCacheGCCalls},
+		TransportCacheGCCalls:        &transportCacheGCCallsAdapter{m: transportCacheGCCalls},
 	})
 }
 

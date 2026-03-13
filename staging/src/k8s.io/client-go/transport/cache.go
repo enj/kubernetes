@@ -122,7 +122,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 
 	// If we use are reloading files, we need to handle certificate rotation properly
 	// TODO(jackkleeman): We can also add rotation here when config.HasCertCallback() is true
-	var cancel context.CancelCauseFunc
+	var cancel context.CancelFunc
 	if config.TLS.ReloadTLSFiles && tlsConfig != nil && tlsConfig.GetClientCertificate != nil {
 		// The TLS cache is a singleton, so sharing the same name for all of its
 		// background activity seems okay.
@@ -131,7 +131,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 		tlsConfig.GetClientCertificate = dynamicCertDialer.GetClientCertificate
 		dial = dynamicCertDialer.connDialer.DialContext
 		var ctx context.Context
-		ctx, cancel = context.WithCancelCause(context.Background())
+		ctx, cancel = context.WithCancel(context.Background())
 		go dynamicCertDialer.run(ctx.Done())
 	}
 
@@ -157,7 +157,7 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 	return c.setLocked(key, transport, canCache, cancel), nil
 }
 
-func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport http.RoundTripper, canCache bool, cancel context.CancelCauseFunc) http.RoundTripper {
+func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport http.RoundTripper, canCache bool, cancel context.CancelFunc) http.RoundTripper {
 	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
 		if canCache {
 			c.strongTransports[key] = transport
@@ -172,10 +172,10 @@ func (c *tlsTransportCache) setLocked(key tlsCacheKey, transport http.RoundTripp
 	transportWithGC := &concreteTransport{rt: transport}
 
 	if cancel != nil {
-		runtime.AddCleanup(transportWithGC, func(cause error) {
+		runtime.AddCleanup(transportWithGC, func(_ struct{}) {
+			cancel()
 			metrics.TransportCertRotationGCCalls.Increment()
-			cancel(cause)
-		}, fmt.Errorf("transport garbage collected"))
+		}, struct{}{})
 	}
 
 	if canCache {

@@ -135,35 +135,33 @@ var (
 	// TransportCreateCalls is the metric that counts the number of times a new transport
 	// is created
 	TransportCreateCalls TransportCreateCallsMetric = noopTransportCreateCalls{}
-
 	// TransportCAReloads is the metric that counts the number of times a CA reload is attempted
 	TransportCAReloads TransportCAReloadsMetric = noopTransportCAReloads{}
-
 	// TransportCertRotationGCCalls counts the number of times a cert rotation goroutine
 	// cancel func is called via GC cleanup
 	TransportCertRotationGCCalls TransportCertRotationGCCallsMetric = noopTransportCertRotationGCCalls{}
-
+	// TransportCacheGCCalls TODO
 	TransportCacheGCCalls TransportCacheGCCallsMetric = noopTransportCacheGCCalls{}
 )
 
 // RegisterOpts contains all the metrics to register. Metrics may be nil.
 type RegisterOpts struct {
-	ClientCertExpiry      ExpiryMetric
-	ClientCertRotationAge DurationMetric
-	RequestLatency        LatencyMetric
-	ResolverLatency       ResolverLatencyMetric
-	RequestSize           SizeMetric
-	ResponseSize          SizeMetric
-	RateLimiterLatency    LatencyMetric
-	RequestResult         ResultMetric
-	ExecPluginCalls       CallsMetric
-	ExecPluginPolicyCalls PolicyCallsMetric
-	RequestRetry          RetryMetric
-	TransportCacheEntries       TransportCacheMetric
-	TransportCreateCalls        TransportCreateCallsMetric
-	TransportCAReloads          TransportCAReloadsMetric
+	ClientCertExpiry             ExpiryMetric
+	ClientCertRotationAge        DurationMetric
+	RequestLatency               LatencyMetric
+	ResolverLatency              ResolverLatencyMetric
+	RequestSize                  SizeMetric
+	ResponseSize                 SizeMetric
+	RateLimiterLatency           LatencyMetric
+	RequestResult                ResultMetric
+	ExecPluginCalls              CallsMetric
+	ExecPluginPolicyCalls        PolicyCallsMetric
+	RequestRetry                 RetryMetric
+	TransportCacheEntries        TransportCacheMetric
+	TransportCreateCalls         TransportCreateCallsMetric
+	TransportCAReloads           TransportCAReloadsMetric
 	TransportCertRotationGCCalls TransportCertRotationGCCallsMetric
-	TransportCacheGCCalls TransportCacheGCCallsMetric
+	TransportCacheGCCalls        TransportCacheGCCallsMetric
 }
 
 // Register registers metrics for the rest client to use. This can
