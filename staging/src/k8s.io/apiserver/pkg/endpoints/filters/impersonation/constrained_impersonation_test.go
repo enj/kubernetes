@@ -1923,7 +1923,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 			handlers[i] = test.handler()
 
 			for _, r := range tc.requests {
-				resp := doImpersonationRequest(t, server.URL+"/"+strconv.Itoa(i), r)
+				resp := doImpersonationRequest(t, http.DefaultTransport, server.URL+"/"+strconv.Itoa(i), r)
 
 				body, err := io.ReadAll(resp.Body)
 				require.NoError(t, err)
@@ -2328,18 +2328,22 @@ func BenchmarkImpersonation(b *testing.B) {
 					handler := test.benchmarkHandler(imp.fn)
 
 					server := httptest.NewServer(handler)
-					b.Cleanup(server.Close)
+					defer server.Close()
+
+					baseTransport := &http.Transport{
+						DisableKeepAlives: true,
+					}
 
 					// warm up the cache by running all requests once
 					for _, r := range tc.requests {
-						resp := doImpersonationRequest(b, server.URL, r)
+						resp := doImpersonationRequest(b, baseTransport, server.URL, r)
 						resp.Body.Close()
 					}
 
 					b.ResetTimer()
 					for b.Loop() {
 						for _, r := range tc.requests {
-							resp := doImpersonationRequest(b, server.URL, r)
+							resp := doImpersonationRequest(b, baseTransport, server.URL, r)
 							resp.Body.Close()
 						}
 					}
@@ -2350,7 +2354,7 @@ func BenchmarkImpersonation(b *testing.B) {
 	}
 }
 
-func doImpersonationRequest(tb testing.TB, url string, r testRequest) *http.Response {
+func doImpersonationRequest(tb testing.TB, baseTransport http.RoundTripper, url string, r testRequest) *http.Response {
 	tb.Helper()
 
 	client := &http.Client{
@@ -2364,7 +2368,7 @@ func doImpersonationRequest(tb testing.TB, url string, r testRequest) *http.Resp
 					Groups:   r.impersonatedUser.Groups,
 					Extra:    r.impersonatedUser.Extra,
 				},
-				http.DefaultTransport,
+				baseTransport,
 			),
 		},
 	}
