@@ -768,7 +768,7 @@ type impersonationTestCase struct {
 	requests []testRequest
 }
 
-func constrainedImpersonationTestCases() ([]impersonationTestCase, *request.RequestInfo, *request.RequestInfo) {
+func constrainedImpersonationTestCases() []impersonationTestCase {
 	getPodRequest := &request.RequestInfo{
 		IsResourceRequest: true,
 		Verb:              "get",
@@ -1903,12 +1903,69 @@ func constrainedImpersonationTestCases() ([]impersonationTestCase, *request.Requ
 				},
 			},
 		},
+		{
+			name: "legacy-fallback",
+			requests: []testRequest{
+				{
+					request:          getPodRequest,
+					requestor:        &user.DefaultInfo{Name: "legacy-impersonater"},
+					impersonatedUser: anyone,
+					expectedImpersonatedUser: &user.DefaultInfo{
+						Name:   "anyone",
+						Groups: []string{"system:authenticated"},
+					},
+					expectedAuthzChecks: []authzCheck{
+						expectAllow(withImpersonateOnAttributes(getPodRequest, "user-info")),
+						expectDeny(withConstrainedImpersonationAttributes(authorizer.AttributesRecord{Resource: "users", Name: "anyone"}, "user-info")),
+						expectAllow(withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "anyone"})),
+					},
+					expectedCache: &expectedCache{
+						modeIdx: map[string]string{
+							"legacy-impersonater": "impersonate",
+						},
+						modes: nil, // legacy impersonation does not cache
+					},
+					expectedCode:            http.StatusOK,
+					expectedAttemptMode:     "legacy",
+					expectedAttemptDecision: "allowed",
+					expectedAuthorizationMetrics: map[string]int{
+						"user-info/allowed": 1, // impersonate-on:user-info:get
+						"user-info/denied":  1, // impersonate:user-info users
+						"legacy/allowed":    1, // impersonate users
+					},
+				},
+				{
+					request:          getDeploymentRequest,
+					requestor:        &user.DefaultInfo{Name: "legacy-impersonater"},
+					impersonatedUser: anyone,
+					expectedImpersonatedUser: &user.DefaultInfo{
+						Name:   "anyone",
+						Groups: []string{"system:authenticated"},
+					},
+					expectedAuthzChecks: []authzCheck{
+						expectAllow(withLegacyImpersonateAttributes(authorizer.AttributesRecord{Resource: "users", Name: "anyone"})),
+					},
+					expectedCache: &expectedCache{
+						modeIdx: map[string]string{
+							"legacy-impersonater": "impersonate",
+						},
+						modes: nil, // legacy impersonation does not cache
+					},
+					expectedCode:            http.StatusOK,
+					expectedAttemptMode:     "legacy",
+					expectedAttemptDecision: "allowed",
+					expectedAuthorizationMetrics: map[string]int{
+						"legacy/allowed": 1, // impersonate users (mode index cache hit skips constrained checks)
+					},
+				},
+			},
+		},
 	}
-	return testCases, getPodRequest, getDeploymentRequest
+	return testCases
 }
 
 func TestConstrainedImpersonationFilter(t *testing.T) {
-	testCases, _, _ := constrainedImpersonationTestCases()
+	testCases := constrainedImpersonationTestCases()
 
 	var mux http.ServeMux
 	tests := make([]*constrainedImpersonationTest, len(testCases))
@@ -2264,31 +2321,7 @@ func (c *constrainedImpersonationTest) benchmarkHandler(withImpersonation func(h
 }
 
 func BenchmarkImpersonation(b *testing.B) {
-	testCases, getPodRequest, getDeploymentRequest := constrainedImpersonationTestCases()
-
-	anyone := &user.DefaultInfo{Name: "anyone"}
-	legacyImpersonator := &user.DefaultInfo{Name: "legacy-impersonater"}
-
-	// add benchmark-specific cases that are not in the main test
-	testCases = append(testCases,
-		impersonationTestCase{
-			name: "legacy-fallback",
-			requests: []testRequest{
-				{
-					request:          getPodRequest,
-					requestor:        legacyImpersonator,
-					impersonatedUser: anyone,
-					expectedCode:     http.StatusOK,
-				},
-				{
-					request:          getDeploymentRequest,
-					requestor:        legacyImpersonator,
-					impersonatedUser: anyone,
-					expectedCode:     http.StatusOK,
-				},
-			},
-		},
-	)
+	testCases := constrainedImpersonationTestCases()
 
 	type impersonationHandler struct {
 		name string
