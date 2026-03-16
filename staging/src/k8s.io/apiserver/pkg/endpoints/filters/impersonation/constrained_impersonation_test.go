@@ -1988,7 +1988,7 @@ func TestConstrainedImpersonationFilter(t *testing.T) {
 			handlers[i] = test.handler()
 
 			for _, r := range tc.requests {
-				resp := doImpersonationRequest(t, http.DefaultTransport, server.URL+"/"+strconv.Itoa(i), r)
+				resp := doImpersonationRequest(t, http.DefaultTransport, server.URL+"/"+strconv.Itoa(i), r, r.expectedCode)
 
 				body, err := io.ReadAll(resp.Body)
 				require.NoError(t, err)
@@ -2324,10 +2324,9 @@ func BenchmarkImpersonation(b *testing.B) {
 	testCases := constrainedImpersonationTestCases()
 
 	type impersonationHandler struct {
-		name string
-		fn   func(http.Handler, authorizer.Authorizer, runtime.NegotiatedSerializer) http.Handler
-		// skipCases lists test case names that are not applicable for this handler
-		skipCases map[string]bool
+		name     string
+		fn       func(http.Handler, authorizer.Authorizer, runtime.NegotiatedSerializer) http.Handler
+		isLegacy bool
 	}
 
 	impersonators := []impersonationHandler{
@@ -2336,34 +2335,15 @@ func BenchmarkImpersonation(b *testing.B) {
 			fn:   WithConstrainedImpersonation,
 		},
 		{
-			name: "legacy",
-			fn:   WithImpersonation,
-			// legacy WithImpersonation only works with legacy-impersonater (verb "impersonate")
-			// and denies any user that only has constrained impersonation verbs
-			skipCases: map[string]bool{
-				"impersonating-user-get-allowed-create-disallowed":        true,
-				"impersonating-sa-allowed":                                true,
-				"impersonating-node-allowed":                              true,
-				"impersonating-user-with-uid":                             true,
-				"impersonating-user-subresource-request":                  true,
-				"impersonating-user-non-resource-request":                 true,
-				"impersonating-user-with-field-and-label-selectors":       true,
-				"allowed-associate-node":                                  true,
-				"allowed-userextras":                                      true,
-				"many-groups-wildcard-allowed":                            true,
-				"many-extras-wildcard-allowed":                            true,
-				"mixed-groups-extras-wildcard-denied-individuals-allowed": true,
-				"continuous-same-allowed-user-requests":                   true,
-			},
+			name:     "legacy",
+			fn:       WithImpersonation,
+			isLegacy: true,
 		},
 	}
 
 	for _, imp := range impersonators {
 		b.Run(imp.name, func(b *testing.B) {
 			for _, tc := range testCases {
-				if imp.skipCases[tc.name] {
-					continue
-				}
 				b.Run(tc.name, func(b *testing.B) {
 					test := &constrainedImpersonationTest{t: b}
 					handler := test.benchmarkHandler(imp.fn)
@@ -2377,14 +2357,14 @@ func BenchmarkImpersonation(b *testing.B) {
 
 					// warm up the cache by running all requests once
 					for _, r := range tc.requests {
-						resp := doImpersonationRequest(b, baseTransport, server.URL, r)
+						resp := doImpersonationRequest(b, baseTransport, server.URL, r, benchmarkExpectedCode(r, imp.isLegacy))
 						resp.Body.Close()
 					}
 
 					b.ResetTimer()
 					for b.Loop() {
 						for _, r := range tc.requests {
-							resp := doImpersonationRequest(b, baseTransport, server.URL, r)
+							resp := doImpersonationRequest(b, baseTransport, server.URL, r, benchmarkExpectedCode(r, imp.isLegacy))
 							resp.Body.Close()
 						}
 					}
@@ -2395,7 +2375,15 @@ func BenchmarkImpersonation(b *testing.B) {
 	}
 }
 
-func doImpersonationRequest(tb testing.TB, baseTransport http.RoundTripper, url string, r testRequest) *http.Response {
+func benchmarkExpectedCode(r testRequest, isLegacy bool) int {
+	if isLegacy && r.expectedCode == http.StatusOK && r.requestor.Name != "legacy-impersonater" {
+		// legacy WithImpersonation denies any requestor that only has constrained impersonation verbs
+		return http.StatusForbidden
+	}
+	return r.expectedCode
+}
+
+func doImpersonationRequest(tb testing.TB, baseTransport http.RoundTripper, url string, r testRequest, expectedCode int) *http.Response {
 	tb.Helper()
 
 	client := &http.Client{
@@ -2419,7 +2407,7 @@ func doImpersonationRequest(tb testing.TB, baseTransport http.RoundTripper, url 
 
 	resp, err := client.Do(req)
 	require.NoError(tb, err)
-	require.Equal(tb, r.expectedCode, resp.StatusCode)
+	require.Equal(tb, expectedCode, resp.StatusCode)
 
 	return resp
 }
