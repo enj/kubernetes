@@ -21,10 +21,9 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"hash"
 	"hash/fnv"
-	"sync"
 	"time"
+	"unsafe"
 
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
@@ -62,19 +61,13 @@ func modeIndexCacheKey(attributes authorizer.Attributes) string {
 	key := attributes.GetUser().GetName()
 	// hash the name so our cache size is predicable regardless of the size of usernames
 	// collisions do not matter for this logic as it simply changes the ordering of the modes used
-	h := fnvPool.Get().(hash.Hash)
-	defer fnvPool.Put(h)
-	h.Reset()
+	h := fnv.New128a()
 	h.Write([]byte(key))
 	var sum [16]byte
 	h.Sum(sum[:0])
 	var buf [32]byte // 16 bytes of hash -> 32 hex chars
 	hex.Encode(buf[:], sum[:])
-	return string(buf[:])
-}
-
-var fnvPool = sync.Pool{
-	New: func() any { return fnv.New128a() },
+	return toString(buf[:])
 }
 
 func newModeIndexCache() *modeIndexCache {
@@ -279,15 +272,8 @@ type cacheKeyBuilder struct {
 }
 
 func newCacheKeyBuilder(namespace string) *cacheKeyBuilder {
-	buf := builderBufPool.Get().([]byte)
-	return &cacheKeyBuilder{namespace: namespace, builder: buf[:0]}
-}
-
-var builderBufPool = sync.Pool{
-	New: func() any {
-		// start with a reasonable size to avoid too many allocations
-		return make([]byte, 0, 384)
-	},
+	// start with a reasonable size to avoid too many allocations
+	return &cacheKeyBuilder{namespace: namespace, builder: make([]byte, 0, 384)}
 }
 
 func (c *cacheKeyBuilder) addString(value string) *cacheKeyBuilder {
@@ -325,12 +311,22 @@ func (c *cacheKeyBuilder) addLengthPrefixed(f builderContinuation) {
 }
 
 func (c *cacheKeyBuilder) build() string {
-	hash := sha256.Sum256(c.builder) // reduce the size of the cache key to keep the overall cache size small
-	builderBufPool.Put(c.builder)    // return the buffer to the pool now that we're done with it
+	hashed := sha256.Sum256(c.builder) // reduce the size of the cache key to keep the overall cache size small
 	// sha256 = 32 bytes -> 64 hex chars + "/" + namespace
 	buf := make([]byte, 0, 64+1+len(c.namespace))
-	buf = hex.AppendEncode(buf, hash[:])
+	buf = hex.AppendEncode(buf, hashed[:])
 	buf = append(buf, '/')
 	buf = append(buf, c.namespace...)
-	return string(buf)
+	return toString(buf)
+}
+
+// toString performs unholy acts to avoid allocations
+func toString(b []byte) string {
+	// unsafe.SliceData relies on cap whereas we want to rely on len
+	if len(b) == 0 {
+		return ""
+	}
+	// Copied from go 1.20.1 strings.Builder.String
+	// https://github.com/golang/go/blob/202a1a57064127c3f19d96df57b9f9586145e21c/src/strings/builder.go#L48
+	return unsafe.String(unsafe.SliceData(b), len(b))
 }
