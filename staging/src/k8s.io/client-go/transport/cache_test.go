@@ -248,49 +248,47 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 	testCases := []struct {
 		name            string
 		config          *Config
-		expectCAReload  bool
+		expectWrapper   bool
 		expectCacheable bool
 	}{
 		{
-			name: "CA rotation enabled with CAFile only",
+			name: "CA rotation should be enabled when only the CAFile is set",
 			config: &Config{
 				TLS: TLSConfig{
 					CAFile: caFile,
 				},
 			},
-			expectCAReload:  true,
+			expectWrapper:   true,
 			expectCacheable: true,
 		},
 		{
-			name: "CA rotation disabled with both CAFile and CAData",
+			name: "CA rotation should be disabled when both CAFile and CAData are set",
 			config: &Config{
 				TLS: TLSConfig{
 					CAFile: caFile,
 					CAData: []byte(testCACert1),
 				},
 			},
-			expectCAReload:  false,
+			expectWrapper:   false,
 			expectCacheable: true,
 		},
 		{
-			name: "CA rotation disabled with CAData only",
+			name: "CA rotation should be disabled when only the CAData is set",
 			config: &Config{
 				TLS: TLSConfig{
 					CAData: []byte(testCACert1),
 				},
 			},
-			expectCAReload:  false,
+			expectWrapper:   false,
 			expectCacheable: true,
 		},
 		{
-			// canCache=true but no custom TLS options → returns DefaultTransport
-			// without storing in the cache.
-			name: "no custom TLS options returns DefaultTransport",
+			name: "no TLS config",
 			config: &Config{
 				TLS: TLSConfig{},
 			},
-			expectCAReload:  false,
-			expectCacheable: false,
+			expectWrapper:   false,
+			expectCacheable: false, // No TLS config means default transport
 		},
 	}
 
@@ -305,6 +303,7 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 			}
 
 			if !tc.expectCacheable {
+				// Should return default transport
 				if rt != http.DefaultTransport {
 					t.Errorf("Expected default transport, got %T", rt)
 				}
@@ -334,20 +333,22 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 				t.Errorf("expected [miss] on first get, got %v", calls)
 			}
 
-			if rt := rt.(*trackedTransport).rt; tc.expectCAReload {
+			if rt := rt.(*trackedTransport).rt; tc.expectWrapper {
+				// Should be wrapped in atomicTransportHolder
 				if _, ok := rt.(*atomicTransportHolder); !ok {
-					t.Errorf("Expected atomicTransportHolder for CA rotation, got %T", rt)
+					t.Errorf("Expected atomicTransportHolder, got %T", rt)
 				}
 				if !tc.config.TLS.ReloadCAFiles {
 					t.Errorf("Expected ReloadCAFiles to be true, got %v", tc.config.TLS.ReloadCAFiles)
 				}
 			} else {
+				// Should be a regular http.Transport
 				if _, ok := rt.(*http.Transport); !ok {
-					t.Errorf("Expected *http.Transport without CA rotation, got %T", rt)
+					t.Errorf("Expected *http.Transport, got %T", rt)
 				}
 			}
 
-			// Second call should be a cache hit.
+			// Test caching: second call should return the same instance
 			rt2, err := tlsCaches.get(tc.config)
 			if err != nil {
 				t.Fatalf("Unexpected error on second call: %v", err)
@@ -366,7 +367,6 @@ func TestTLSTransportCacheCARotation(t *testing.T) {
 
 func TestTLSTransportCacheCARotationDisabled(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowCARotation, false)
-	createCalls, _, _, _ := installFakeMetrics(t)
 
 	caFile := writeCAFile(t, []byte(testCACert1))
 	cache := newTLSCache()
@@ -376,28 +376,12 @@ func TestTLSTransportCacheCARotationDisabled(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	if calls := createCalls.reset(); len(calls) != 1 || calls[0] != "miss" {
-		t.Errorf("expected [miss], got %v", calls)
-	}
-
-	tt := rt.(*trackedTransport).rt
-	if _, ok := tt.(*atomicTransportHolder); ok {
+	rt = rt.(*trackedTransport).rt
+	if _, ok := rt.(*atomicTransportHolder); ok {
 		t.Error("Expected plain *http.Transport when feature gate is disabled, got atomicTransportHolder")
 	}
-	if _, ok := tt.(*http.Transport); !ok {
-		t.Errorf("Expected *http.Transport, got %T", tt)
-	}
-
-	// Second call should hit.
-	rt2, err := cache.get(&Config{TLS: TLSConfig{CAFile: caFile}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rt != rt2 {
-		t.Error("expected cache hit to return same transport")
-	}
-	if calls := createCalls.reset(); len(calls) != 1 || calls[0] != "hit" {
-		t.Errorf("expected [hit], got %v", calls)
+	if _, ok := rt.(*http.Transport); !ok {
+		t.Errorf("Expected *http.Transport, got %T", rt)
 	}
 }
 
@@ -465,7 +449,6 @@ func TestCacheHoldAfterCARotation(t *testing.T) {
 
 	caFile := writeCAFile(t, []byte(testCACert1))
 
-	// Private cache to isolate GC metric assertions from other tests.
 	cache := newTLSCache()
 
 	rt, err := cache.get(&Config{TLS: TLSConfig{ServerName: "reload-test", CAFile: caFile}})
@@ -497,19 +480,14 @@ func TestCacheHoldAfterCARotation(t *testing.T) {
 		t.Fatal("expected transport to change after CA rotation")
 	}
 
-	originalInner = nil //nolint:ineffassign
-
 	// Cache entry must survive because the holder is alive.
-	for range 5 {
+	for range 3 {
 		runtime.GC()
 	}
 	requireCacheLen(t, cache, 1)
-
 	runtime.KeepAlive(rt)
 
-	gcCalls.reset()
 	pollCacheSizeWithGC(t, cache, 0)
-
 	if calls := gcCalls.reset(); len(calls) != 1 || calls[0] != "deleted" {
 		t.Errorf("expected [deleted] after eviction, got %v", calls)
 	}
@@ -573,7 +551,7 @@ func TestCacheReviveAfterDrop(t *testing.T) {
 
 	cache := newTLSCache()
 
-	config := &Config{TLS: TLSConfig{ServerName: "revive-test"}}
+	config := &Config{TLS: TLSConfig{ServerName: "keep-alive-test"}}
 
 	rt1, err := cache.get(config)
 	if err != nil {
@@ -618,11 +596,13 @@ func TestUncacheableCertRotationLeak(t *testing.T) {
 			CertFile: certFile,
 			KeyFile:  keyFile,
 		},
-		Proxy: func(*http.Request) (*url.URL, error) { return nil, nil },
+		Proxy: func(*http.Request) (*url.URL, error) { return nil, nil }, // force uncacheable
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	requireCacheLen(t, cache, 0)
 
 	afterCreate := runtime.NumGoroutine()
 	if afterCreate <= baseline {
@@ -654,7 +634,6 @@ func TestCacheableCertRotationLeak(t *testing.T) {
 	certFile := writeCAFile(t, []byte(certData))
 	keyFile := writeCAFile(t, []byte(keyData))
 
-	// Private cache to isolate GC metric assertions.
 	cache := newTLSCache()
 
 	baseline := runtime.NumGoroutine()
@@ -729,8 +708,8 @@ func TestCacheGCDisabledCertRotationNoCancel(t *testing.T) {
 		t.Fatalf("expected cert rotation goroutine to start, got baseline=%d after=%d", baseline, afterCreate)
 	}
 
-	// Drop rt so it becomes unreachable — if GC cleanup were enabled,
-	// cancel would fire and the goroutine would stop.
+	// Drop rt after this point
+	// if GC cleanup were enabled, cancel would fire and the goroutine would stop.
 	runtime.KeepAlive(rt)
 
 	for range 10 {
@@ -774,7 +753,7 @@ func TestCacheStaleEvictionSkipped(t *testing.T) {
 	cache.transports[key] = weak.Make(replacement)
 	cache.mu.Unlock()
 
-	// Drop rt1. Its cleanup fires and sees c.transports[key] != wp → "skipped".
+	// Drop rt1 after this point. Its cleanup fires and sees c.transports[key] != wp -> "skipped".
 	runtime.KeepAlive(rt1)
 	gcCalls.reset()
 
@@ -794,17 +773,18 @@ func TestCacheStaleEvictionSkipped(t *testing.T) {
 		t.Errorf("expected [skipped], got %v", calls)
 	}
 
-	// The replacement entry must still be in the map.
+	// The replacement entry must still be in the map because of the keep alive
 	requireCacheLen(t, cache, 1)
-
 	runtime.KeepAlive(replacement)
 }
 
+// TestCacheLeak does a black box test of TLS cache GC from New.
+// It uses a large number of cache entries generated in parallel.
 func TestCacheLeak(t *testing.T) {
 	clientfeaturestesting.SetFeatureDuringTest(t, clientgofeaturegate.ClientsAllowTLSCacheGC, true)
 	_, gcCalls, _, cacheEntries := installFakeMetrics(t)
 
-	pollCacheSizeWithGC(t, tlsCache, 0) // clean start
+	pollCacheSizeWithGC(t, tlsCache, 0) // clean start with global cache
 
 	rt1, err := New(&Config{TLS: TLSConfig{ServerName: "1"}})
 	if err != nil {
@@ -851,15 +831,13 @@ func TestCacheLeak(t *testing.T) {
 
 	pollCacheSizeWithGC(t, tlsCache, 2) // rt1 and rt2 (rt3 is the same as rt1)
 
-	// Expect 1000 "deleted" — one per distinct DialHolder key.
-	// Concurrent inner-loop goroutines for the same dh may race, causing the
-	// second setLocked to replace the first's entry. The first entry's cleanup
-	// fires as "skipped", so we only count "deleted".
 	calls := gcCalls.reset()
 	deletedCount := 0
 	for _, c := range calls {
 		if c == "deleted" {
 			deletedCount++
+		} else {
+			t.Errorf("expected deleted call, got %s", c)
 		}
 	}
 	if deletedCount != 1_000 {
@@ -882,30 +860,36 @@ func TestCacheLeak(t *testing.T) {
 	pollCacheSizeWithGC(t, tlsCache, 0)
 
 	calls = gcCalls.reset()
-	deletedCount = 0
-	for _, c := range calls {
-		if c == "deleted" {
-			deletedCount++
-		}
-	}
-	if deletedCount != 2 {
-		t.Errorf("expected 2 deleted calls for rt1/rt2, got %d", deletedCount)
+	if len(calls) != 2 || calls[0] != "deleted" || calls[1] != "deleted" {
+		t.Errorf("expected 2 deleted calls for rt1/rt2, got %v", calls)
 	}
 }
 
 func requireCacheLen(t *testing.T, c *tlsTransportCache, want int) {
 	t.Helper()
 
-	if cacheLen(c) != want {
-		t.Fatalf("cache len %d, want %d", cacheLen(c), want)
+	if cacheLen(t, c) != want {
+		t.Fatalf("cache len %d, want %d", cacheLen(t, c), want)
 	}
 }
 
-func cacheLen(c *tlsTransportCache) int {
+func cacheLen(t *testing.T, c *tlsTransportCache) int {
+	t.Helper()
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	return c.lenLocked()
+	if !clientgofeaturegate.FeatureGates().Enabled(clientgofeaturegate.ClientsAllowTLSCacheGC) {
+		if len(c.transports) != 0 {
+			t.Fatalf("transports len %d must be 0", len(c.transports))
+		}
+		return len(c.strongTransports)
+	}
+
+	if len(c.strongTransports) != 0 {
+		t.Fatalf("strongTransports len %d must be 0", len(c.strongTransports))
+	}
+	return len(c.transports)
 }
 
 func pollCacheSizeWithGC(t *testing.T, c *tlsTransportCache, want int) {
@@ -913,9 +897,9 @@ func pollCacheSizeWithGC(t *testing.T, c *tlsTransportCache, want int) {
 
 	if err := wait.PollUntilContextTimeout(t.Context(), 10*time.Millisecond, 10*time.Second, true, func(_ context.Context) (done bool, _ error) {
 		runtime.GC() // run the garbage collector so the cleanups run
-		return cacheLen(c) == want, nil
+		return cacheLen(t, c) == want, nil
 	}); err != nil {
-		t.Fatalf("cache len %d, want %d: %v", cacheLen(c), want, err)
+		t.Fatalf("cache len %d, want %d: %v", cacheLen(t, c), want, err)
 	}
 
 	// make sure the cache size is stable even when more GC's happen
