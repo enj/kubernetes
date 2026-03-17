@@ -172,27 +172,32 @@ func (c *tlsTransportCache) get(config *Config) (http.RoundTripper, error) {
 	transportWithGC := &trackedTransport{rt: transport}
 
 	if cancel != nil {
+		// capture metric as local var so that cleanups do not influence other tests via globals
+		transportCertRotationGCCalls := metrics.TransportCertRotationGCCalls
 		runtime.AddCleanup(transportWithGC, func(_ struct{}) {
 			cancel()
-			metrics.TransportCertRotationGCCalls.Increment()
+			transportCertRotationGCCalls.Increment()
 		}, struct{}{})
 	}
 
 	if canCache {
 		wp := weak.Make(transportWithGC)
 		c.transports[key] = wp
+		// capture metrics as local vars so that cleanups do not influence other tests via globals
+		transportCacheGCCalls := metrics.TransportCacheGCCalls
+		transportCacheEntries := metrics.TransportCacheEntries
 		runtime.AddCleanup(transportWithGC, func(key tlsCacheKey) {
 			c.mu.Lock()
 			defer c.mu.Unlock()
 
 			// make sure we only delete the weak pointer created by this specific setLocked call
 			if c.transports[key] != wp {
-				metrics.TransportCacheGCCalls.Increment("skipped")
+				transportCacheGCCalls.Increment("skipped")
 				return
 			}
 			delete(c.transports, key)
-			metrics.TransportCacheGCCalls.Increment("deleted")
-			metrics.TransportCacheEntries.Observe(c.lenLocked())
+			transportCacheGCCalls.Increment("deleted")
+			transportCacheEntries.Observe(c.lenLocked())
 		}, key)
 	}
 
