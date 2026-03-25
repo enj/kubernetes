@@ -35,6 +35,7 @@ import (
 	testclient "k8s.io/client-go/testing"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/apis/resource"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/utils/ptr"
@@ -378,7 +379,7 @@ var metadataError = "a lowercase RFC 1123 subdomain must consist of lower case a
 var deviceRequestError = "exactly one of `exactly` or `firstAvailable` is required"
 var constraintError = "matchAttribute: Required value"
 var bindingUpdateError = `status.allocation: Forbidden: cannot bind resource claim: resourceclaims.resource.k8s.io is forbidden: User "test-user" cannot update resource "resourceclaims/binding" in API group "resource.k8s.io" at the cluster scope: denied`
-var deviceAssociatedNodeUpdateError = `status.devices: Forbidden: cannot modify resource claim device: resourceclaims.resource.k8s.io "test-driver" is forbidden: User "test-user" cannot associated-node:update resource "resourceclaims/driver" in API group "resource.k8s.io" in the namespace "default": denied`
+var deviceAssociatedNodeUpdateError = `status.devices: Forbidden: cannot modify resource claim device: resourceclaims.resource.k8s.io "test-driver" is forbidden: User "system:serviceaccount:kube-system:dra-driver" cannot associated-node:update resource "resourceclaims/driver" in API group "resource.k8s.io" in the namespace "default": denied`
 var deviceArbitraryNodeUpdateError = `status.devices: Forbidden: cannot modify resource claim device: resourceclaims.resource.k8s.io "test-driver" is forbidden: User "test-user" cannot arbitrary-node:update resource "resourceclaims/driver" in API group "resource.k8s.io" in the namespace "default": denied`
 
 const (
@@ -1020,6 +1021,7 @@ func TestStatusStrategyUpdate(t *testing.T) {
 		oldObj                        *resource.ResourceClaim
 		newObj                        *resource.ResourceClaim
 		authz                         authorizer.Authorizer
+		ctxOverride                   func(context.Context) context.Context // if set, transforms the default ctx
 		adminAccess                   bool
 		deviceStatusFeatureGate       bool
 		consumableCapacityFeatureGate bool
@@ -1290,6 +1292,64 @@ func TestStatusStrategyUpdate(t *testing.T) {
 				return obj
 			}(),
 			authz: &fakeAuthorizer{false},
+			verify: func(t *testing.T, as []testclient.Action) {
+				if len(as) != 0 {
+					t.Errorf("expected no action to be taken")
+				}
+			},
+		},
+		"fail-update-fields-devices-status-associated-node-without-permissions": {
+			oldObj: func() *resource.ResourceClaim {
+				obj := obj.DeepCopy()
+				addSpecDevicesRequest(obj, testRequest)
+				addStatusAllocationDevicesResults(obj, testDriver, testPool, testDevice, testRequest, nil, nil)
+				obj.Status.Allocation.NodeSelector = &core.NodeSelector{
+					NodeSelectorTerms: []core.NodeSelectorTerm{{
+						MatchFields: []core.NodeSelectorRequirement{{
+							Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"test-node"},
+						}},
+					}},
+				}
+				return obj
+			}(),
+			newObj: func() *resource.ResourceClaim {
+				obj := obj.DeepCopy()
+				addSpecDevicesRequest(obj, testRequest)
+				addStatusAllocationDevicesResults(obj, testDriver, testPool, testDevice, testRequest, nil, nil)
+				obj.Status.Allocation.NodeSelector = &core.NodeSelector{
+					NodeSelectorTerms: []core.NodeSelectorTerm{{
+						MatchFields: []core.NodeSelectorRequirement{{
+							Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"test-node"},
+						}},
+					}},
+				}
+				addStatusDevices(obj, testDriver, testPool, testDevice, nil)
+				return obj
+			}(),
+			ctxOverride: func(ctx context.Context) context.Context {
+				return genericapirequest.WithUser(ctx, &user.DefaultInfo{
+					Name:   "system:serviceaccount:kube-system:dra-driver",
+					Groups: []string{"system:authenticated"},
+					Extra:  map[string][]string{"authentication.kubernetes.io/node-name": {"test-node"}},
+				})
+			},
+			adminAccess:             true,
+			deviceStatusFeatureGate: true,
+			authz:                   &fakeAuthorizer{false},
+			expectValidationErrors:  []string{deviceAssociatedNodeUpdateError},
+			expectObj: func() *resource.ResourceClaim {
+				obj := obj.DeepCopy()
+				addSpecDevicesRequest(obj, testRequest)
+				addStatusAllocationDevicesResults(obj, testDriver, testPool, testDevice, testRequest, nil, nil)
+				obj.Status.Allocation.NodeSelector = &core.NodeSelector{
+					NodeSelectorTerms: []core.NodeSelectorTerm{{
+						MatchFields: []core.NodeSelectorRequirement{{
+							Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"test-node"},
+						}},
+					}},
+				}
+				return obj
+			}(),
 			verify: func(t *testing.T, as []testclient.Action) {
 				if len(as) != 0 {
 					t.Errorf("expected no action to be taken")
@@ -1663,6 +1723,11 @@ func TestStatusStrategyUpdate(t *testing.T) {
 				features.DRAPrioritizedList:    tc.prioritizedListFeatureGate,
 			})
 			statusStrategy := NewStatusStrategy(strategy)
+
+			ctx := ctx
+			if tc.ctxOverride != nil {
+				ctx = tc.ctxOverride(ctx)
+			}
 
 			oldObj := tc.oldObj.DeepCopy()
 			newObj := tc.newObj.DeepCopy()
