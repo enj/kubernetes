@@ -1,5 +1,5 @@
 /*
-Copyright 2025 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,7 +23,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
@@ -643,103 +642,37 @@ func TestNodeNameFromAllocation(t *testing.T) {
 	}
 }
 
-func TestNodeSelectorMatches(t *testing.T) {
-	nodeName := "test-node"
-
-	testCases := []struct {
-		name     string
-		selector core.NodeSelector
-		expected bool
-	}{
-		{
-			name: "matches metadata.name",
-			selector: core.NodeSelector{
-				NodeSelectorTerms: []core.NodeSelectorTerm{
-					{
-						MatchFields: []core.NodeSelectorRequirement{
-							{Key: "metadata.name", Operator: "In", Values: []string{nodeName}},
-						},
-					},
-				},
-			},
-			expected: true,
-		},
-		{
-			name: "does not match kubernetes.io/hostname same node",
-			selector: core.NodeSelector{
-				NodeSelectorTerms: []core.NodeSelectorTerm{
-					{
-						MatchExpressions: []core.NodeSelectorRequirement{
-							{Key: "kubernetes.io/hostname", Operator: "In", Values: []string{nodeName}},
-						},
-					},
-				},
-			},
-			expected: false,
-		},
-		{
-			name: "does not match metadata.name",
-			selector: core.NodeSelector{
-				NodeSelectorTerms: []core.NodeSelectorTerm{
-					{
-						MatchFields: []core.NodeSelectorRequirement{
-							{Key: "metadata.name", Operator: "In", Values: []string{"other-node"}},
-						},
-					},
-				},
-			},
-			expected: false,
-		},
-		{
-			name: "does not match kubernetes.io/hostname",
-			selector: core.NodeSelector{
-				NodeSelectorTerms: []core.NodeSelectorTerm{
-					{
-						MatchExpressions: []core.NodeSelectorRequirement{
-							{Key: "kubernetes.io/hostname", Operator: "In", Values: []string{"other-node"}},
-						},
-					},
-				},
-			},
-			expected: false,
-		},
-		{
-			name:     "empty selector does not match",
-			selector: core.NodeSelector{},
-			expected: false,
+func TestSAAssociatedWithAllocatedNode(t *testing.T) {
+	validSA := &user.DefaultInfo{
+		Name: "system:serviceaccount:default:dra-driver-sa",
+		Extra: map[string][]string{
+			serviceaccount.NodeNameKey: {"worker-node-1"},
 		},
 	}
 
-	_ = testCases
-	_ = nodeName
-	// Note: nodeSelectorMatches has been replaced by nodeNameFromAllocation.
-	// Keeping TestNodeSelectorMatches as a reference for the old pattern;
-	// the new equivalent tests are in TestNodeNameFromAllocation.
-}
-
-func TestNodeNameFromNodeBoundToken(t *testing.T) {
 	testCases := []struct {
-		name             string
-		userInfo         user.Info
-		expectedNodeName string
-		expectedIsNode   bool
+		name              string
+		userInfo          user.Info
+		allocatedNodeName string
+		expected          bool
 	}{
 		{
-			name: "valid node-bound service account",
-			userInfo: &user.DefaultInfo{
-				Name: "system:serviceaccount:default:dra-driver-sa",
-				Extra: map[string][]string{
-					serviceaccount.NodeNameKey: {"worker-node-1"},
-				},
-			},
-			expectedNodeName: "worker-node-1",
-			expectedIsNode:   true,
+			name:              "SA on matching node",
+			userInfo:          validSA,
+			allocatedNodeName: "worker-node-1",
+			expected:          true,
 		},
 		{
-			name:             "nil user info",
-			userInfo:         nil,
-			expectedNodeName: "",
-			expectedIsNode:   false,
+			name:              "SA on different node",
+			userInfo:          validSA,
+			allocatedNodeName: "worker-node-2",
+			expected:          false,
+		},
+		{
+			name:              "empty allocated node name",
+			userInfo:          validSA,
+			allocatedNodeName: "",
+			expected:          false,
 		},
 		{
 			name: "not a service account (kubelet identity)",
@@ -749,8 +682,8 @@ func TestNodeNameFromNodeBoundToken(t *testing.T) {
 					serviceaccount.NodeNameKey: {"worker-node-1"},
 				},
 			},
-			expectedNodeName: "",
-			expectedIsNode:   false,
+			allocatedNodeName: "worker-node-1",
+			expected:          false,
 		},
 		{
 			name: "not a service account (regular user)",
@@ -760,8 +693,8 @@ func TestNodeNameFromNodeBoundToken(t *testing.T) {
 					serviceaccount.NodeNameKey: {"worker-node-1"},
 				},
 			},
-			expectedNodeName: "",
-			expectedIsNode:   false,
+			allocatedNodeName: "worker-node-1",
+			expected:          false,
 		},
 		{
 			name: "service account missing node name extra attribute",
@@ -769,8 +702,8 @@ func TestNodeNameFromNodeBoundToken(t *testing.T) {
 				Name:  "system:serviceaccount:default:dra-driver-sa",
 				Extra: map[string][]string{},
 			},
-			expectedNodeName: "",
-			expectedIsNode:   false,
+			allocatedNodeName: "worker-node-1",
+			expected:          false,
 		},
 		{
 			name: "service account with multiple node names in extra attribute",
@@ -780,37 +713,28 @@ func TestNodeNameFromNodeBoundToken(t *testing.T) {
 					serviceaccount.NodeNameKey: {"worker-node-1", "worker-node-2"},
 				},
 			},
-			expectedNodeName: "",
-			expectedIsNode:   false, // Strict rejection of ambiguous node claims
+			allocatedNodeName: "worker-node-1",
+			expected:          false,
 		},
 		{
 			name: "service account with invalid node name format",
 			userInfo: &user.DefaultInfo{
 				Name: "system:serviceaccount:default:dra-driver-sa",
 				Extra: map[string][]string{
-					// Underscores and special characters are invalid for DNS subdomains
 					serviceaccount.NodeNameKey: {"invalid_node_name!"},
 				},
 			},
-			expectedNodeName: "",
-			expectedIsNode:   false,
+			allocatedNodeName: "invalid_node_name!",
+			expected:          false,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			nodeName, isNode := saAssociatedWithAllocatedNode(tc.userInfo)
-
-			if nodeName != tc.expectedNodeName {
-				t.Errorf("Expected nodeName %q, but got %q", tc.expectedNodeName, nodeName)
-			}
-
-			if isNode != tc.expectedIsNode {
-				t.Errorf("Expected isNode %v, but got %v", tc.expectedIsNode, isNode)
+			result := saAssociatedWithAllocatedNode(tc.userInfo, tc.allocatedNodeName)
+			if result != tc.expected {
+				t.Errorf("Expected %v, got %v", tc.expected, result)
 			}
 		})
 	}
 }
-
-// Suppress unused import warnings.
-var _ = cmp.Diff

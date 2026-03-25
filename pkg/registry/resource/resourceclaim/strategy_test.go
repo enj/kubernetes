@@ -18,7 +18,6 @@ package resourceclaim
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -379,6 +378,7 @@ var metadataError = "a lowercase RFC 1123 subdomain must consist of lower case a
 var deviceRequestError = "exactly one of `exactly` or `firstAvailable` is required"
 var constraintError = "matchAttribute: Required value"
 var deviceUpdateError = "is forbidden"
+var bindingUpdateError = "is forbidden"
 
 const (
 	req0        = "req-0"
@@ -1024,7 +1024,7 @@ func TestStatusStrategyUpdate(t *testing.T) {
 		consumableCapacityFeatureGate bool
 		prioritizedListFeatureGate    bool
 		bindingConditions             bool
-		expectValidationError         string
+		expectValidationErrors        []string
 		expectObj                     *resource.ResourceClaim
 		verify                        func(*testing.T, []testclient.Action)
 	}{
@@ -1045,7 +1045,7 @@ func TestStatusStrategyUpdate(t *testing.T) {
 				obj.Name += "-2"
 				return obj
 			}(),
-			expectValidationError: fieldImmutableError,
+			expectValidationErrors: []string{fieldImmutableError},
 			verify: func(t *testing.T, as []testclient.Action) {
 				if len(as) != 0 {
 					t.Errorf("expected no action to be taken")
@@ -1102,10 +1102,10 @@ func TestStatusStrategyUpdate(t *testing.T) {
 			},
 		},
 		"keep-fields-admin-access-NonAdminNamespace": {
-			oldObj:                objInNonAdminNamespace,
-			newObj:                objWithAdminAccessStatusInNonAdminNamespace,
-			adminAccess:           true,
-			expectValidationError: adminAccessError,
+			oldObj:                 objInNonAdminNamespace,
+			newObj:                 objWithAdminAccessStatusInNonAdminNamespace,
+			adminAccess:            true,
+			expectValidationErrors: []string{adminAccessError},
 			verify: func(t *testing.T, as []testclient.Action) {
 				if len(as) != 1 {
 					t.Errorf("expected one action but got %d", len(as))
@@ -1279,9 +1279,9 @@ func TestStatusStrategyUpdate(t *testing.T) {
 				addStatusDevices(obj, testDriver, testPool, testDevice, nil)
 				return obj
 			}(),
-			adminAccess:            true, // Keep emulation version at 1.36 so DRAResourceClaimGranularStatusAuthorization is active
+			adminAccess:             true, // Keep emulation version at 1.36 so DRAResourceClaimGranularStatusAuthorization is active
 			deviceStatusFeatureGate: true,
-			expectValidationError:   deviceUpdateError,
+			expectValidationErrors:  []string{deviceUpdateError},
 			expectObj: func() *resource.ResourceClaim { // Status is not updated
 				obj := obj.DeepCopy()
 				addSpecDevicesRequest(obj, testRequest)
@@ -1312,7 +1312,7 @@ func TestStatusStrategyUpdate(t *testing.T) {
 			adminAccess:             true, // Keep emulation version at 1.36 so DRAResourceClaimGranularStatusAuthorization is active
 			authz:                   &fakeAuthorizer{false},
 			deviceStatusFeatureGate: true,
-			expectValidationError:   deviceUpdateError,
+			expectValidationErrors:  []string{bindingUpdateError, deviceUpdateError},
 			expectObj: func() *resource.ResourceClaim { // Status is no longer there
 				obj := obj.DeepCopy()
 				addSpecDevicesRequest(obj, testRequest)
@@ -1669,22 +1669,16 @@ func TestStatusStrategyUpdate(t *testing.T) {
 
 			statusStrategy.PrepareForUpdate(ctx, newObj, oldObj)
 			if errs := statusStrategy.ValidateUpdate(ctx, newObj, oldObj); len(errs) != 0 {
-				if tc.expectValidationError == "" {
+				if len(tc.expectValidationErrors) == 0 {
 					t.Fatalf("unexpected error(s): %v", errs)
 				}
-				found := false
-				for _, err := range errs {
-					if strings.Contains(err.Error(), tc.expectValidationError) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					t.Errorf("expected at least one error containing %q, got: %v", tc.expectValidationError, errs)
+				assert.Len(t, errs, len(tc.expectValidationErrors), "wrong number of validation errors")
+				for i, expectValidationError := range tc.expectValidationErrors {
+					assert.ErrorContains(t, errs[i], expectValidationError, "the error message should have contained the expected error message")
 				}
 				return
 			}
-			if tc.expectValidationError != "" {
+			if len(tc.expectValidationErrors) != 0 {
 				t.Fatal("expected validation error(s), got none")
 			}
 			if warnings := statusStrategy.WarningsOnUpdate(ctx, newObj, oldObj); len(warnings) != 0 {
