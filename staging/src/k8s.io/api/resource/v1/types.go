@@ -46,12 +46,23 @@ const (
 	// in pod.Spec.Resources.Requests, in that case, a valid name has to be specified
 	// explicitly in device class.
 	ResourceDeviceClassPrefix string = "deviceclass.resource.kubernetes.io/"
-	// VerbUpdateDriverStatus is the synthetic verb used for updating driver status
-	// so it guarantees proper authorization checks on the driver name.
-	VerbUpdateDriverStatus = "update-device-status"
-	// ResourceUpdateDriverStatus is the synthetic resource used for updating driver status.
-	// It guarantees proper authorization checks on the driver name.
-	ResourceUpdateDriverStatus = "drivers"
+
+	// The constants below are all related to synthetic authorization checks for resourceclaims.status writes.
+
+	// SubresourceBinding is the synthetic subresource used for authorization
+	// of updates to status.allocation and status.reservedFor.
+	SubresourceBinding = "binding"
+	// SubresourceDriver is the synthetic subresource used for per-driver
+	// authorization of updates to status.devices.
+	SubresourceDriver = "driver"
+	// VerbPrefixAssociatedNode is the verb prefix for requests from a service account
+	// on the same node as the claim's allocation. The full verb is
+	// "associated-node:<request-verb>", e.g. "associated-node:update".
+	VerbPrefixAssociatedNode = "associated-node:"
+	// VerbPrefixArbitraryNode is the verb prefix for requests not associated
+	// with a specific node (controllers, etc.). The full verb is
+	// "arbitrary-node:<request-verb>", e.g. "arbitrary-node:update".
+	VerbPrefixArbitraryNode = "arbitrary-node:"
 )
 
 // +genclient

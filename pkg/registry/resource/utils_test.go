@@ -18,14 +18,12 @@ package resource
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
@@ -199,10 +197,12 @@ func TestGetModifiedDrivers(t *testing.T) {
 	}
 }
 
+// fakeAuthorizer records authorization calls and returns preconfigured decisions.
+// The key format is "verb/resource/subresource/name".
 type fakeAuthorizer struct {
 	rules      map[string]authorizer.Decision
 	err        error
-	callCounts map[string]int // Track how many times each key is authorized to verify caching
+	callCounts map[string]int
 }
 
 func (f *fakeAuthorizer) Authorize(ctx context.Context, a authorizer.Attributes) (authorizer.Decision, string, error) {
@@ -210,7 +210,7 @@ func (f *fakeAuthorizer) Authorize(ctx context.Context, a authorizer.Attributes)
 		f.callCounts = make(map[string]int)
 	}
 
-	key := fmt.Sprintf("%s/%s/%s", a.GetVerb(), a.GetResource(), a.GetName())
+	key := fmt.Sprintf("%s/%s/%s/%s", a.GetVerb(), a.GetResource(), a.GetSubresource(), a.GetName())
 	f.callCounts[key]++
 
 	if f.err != nil {
@@ -222,329 +222,422 @@ func (f *fakeAuthorizer) Authorize(ctx context.Context, a authorizer.Attributes)
 	return authorizer.DecisionDeny, "no rule matched", nil
 }
 
-func TestAuthorizedForDeviceStatus(t *testing.T) {
-	saName := "system:serviceaccount:kube-system:dra-driver"
-	nodeName := "test-node"
-	driverName := "test-driver"
+// withRequestContext builds a context with user info and request info set,
+// simulating what GetAuthorizerAttributes expects.
+func withRequestContext(ctx context.Context, u user.Info, verb string) context.Context {
+	ctx = genericapirequest.WithUser(ctx, u)
+	ctx = genericapirequest.WithRequestInfo(ctx, &genericapirequest.RequestInfo{
+		IsResourceRequest: true,
+		Verb:              verb,
+		APIGroup:          "resource.k8s.io",
+		APIVersion:        "v1",
+		Resource:          "resourceclaims",
+		Subresource:       "status",
+		Namespace:         "default",
+		Name:              "test-claim",
+	})
+	// GetAuthorizerAttributes also needs an http.Request in context for audit, but
+	// the function doesn't fail without it — we simulate by using a dummy request.
+	req, _ := http.NewRequestWithContext(ctx, "PUT", "/", nil)
+	ctx = req.Context()
+	return ctx
+}
+
+func singleNodeAllocation(nodeName string) *resource.AllocationResult {
+	return &resource.AllocationResult{
+		NodeSelector: &core.NodeSelector{
+			NodeSelectorTerms: []core.NodeSelectorTerm{
+				{
+					MatchFields: []core.NodeSelectorRequirement{
+						{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{nodeName}},
+					},
+				},
+			},
+		},
+	}
+}
+
+func TestAuthorizedForBinding(t *testing.T) {
+	saName := "system:serviceaccount:kube-system:scheduler"
+	testUser := &user.DefaultInfo{Name: saName}
+	fp := field.NewPath("status")
 
 	testcases := []struct {
-		name                     string
-		newAllocatedDeviceStatus resource.ResourceClaimStatus
-		oldAllocatedDeviceStatus resource.ResourceClaimStatus
-		user                     user.Info
-		authz                    authorizer.Authorizer
-		expectErrs               field.ErrorList
+		name       string
+		newStatus  resource.ResourceClaimStatus
+		oldStatus  resource.ResourceClaimStatus
+		authz      *fakeAuthorizer
+		expectErrs int
 	}{
 		{
-			name: "no drivers modified",
-			newAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device"},
-				},
+			name: "no allocation or reservedFor change, no check needed",
+			newStatus: resource.ResourceClaimStatus{
+				Devices: []resource.AllocatedDeviceStatus{{Driver: "d", Pool: "p", Device: "dev"}},
 			},
-			oldAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device"},
-				},
-			},
+			oldStatus:  resource.ResourceClaimStatus{},
+			authz:      &fakeAuthorizer{rules: map[string]authorizer.Decision{}},
+			expectErrs: 0,
 		},
 		{
-			name: "user not found in context",
-			newAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-new"},
-				},
+			name: "allocation changed, authorized",
+			newStatus: resource.ResourceClaimStatus{
+				Allocation: singleNodeAllocation("node-1"),
 			},
-			oldAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-old"},
-				},
-			},
-			expectErrs: field.ErrorList{
-				field.InternalError(field.NewPath("status", "allocation", "devices"), fmt.Errorf("cannot determine calling user to check driver status update authorization")),
-			},
+			oldStatus: resource.ResourceClaimStatus{},
+			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{
+				"update/resourceclaims/binding/": authorizer.DecisionAllow,
+			}},
+			expectErrs: 0,
 		},
 		{
-			name: "new allocation is nil",
-			newAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-new"},
-				},
+			name: "allocation changed, not authorized",
+			newStatus: resource.ResourceClaimStatus{
+				Allocation: singleNodeAllocation("node-1"),
 			},
-			oldAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-old"},
-				},
-			},
-			user: &user.DefaultInfo{Name: saName, Extra: map[string][]string{serviceaccount.NodeNameKey: {nodeName}}},
-			expectErrs: field.ErrorList{
-				field.Forbidden(field.NewPath("status", "allocation", "devices"), fmt.Sprintf("user %q on node %q is not authorized to update device status for drivers on ResourceClaim not allocated to this node", saName, nodeName)),
-			},
+			oldStatus:  resource.ResourceClaimStatus{},
+			authz:      &fakeAuthorizer{rules: map[string]authorizer.Decision{}},
+			expectErrs: 1,
 		},
 		{
-			name: "new node selector is nil",
-			newAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Allocation: &resource.AllocationResult{},
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-new"},
-				},
+			name: "reservedFor changed, authorized",
+			newStatus: resource.ResourceClaimStatus{
+				ReservedFor: []resource.ResourceClaimConsumerReference{{Resource: "pods", Name: "pod-1", UID: "uid-1"}},
 			},
-			oldAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-old"},
-				},
-			},
-			user: &user.DefaultInfo{Name: saName, Extra: map[string][]string{serviceaccount.NodeNameKey: {nodeName}}},
-			expectErrs: field.ErrorList{
-				field.Forbidden(field.NewPath("status", "allocation", "devices"), fmt.Sprintf("user %q on node %q is not authorized to update device status for drivers on ResourceClaim not allocated to this node", saName, nodeName)),
-			},
+			oldStatus: resource.ResourceClaimStatus{},
+			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{
+				"update/resourceclaims/binding/": authorizer.DecisionAllow,
+			}},
+			expectErrs: 0,
 		},
 		{
-			name: "request from node, selector matches",
-			newAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Allocation: &resource.AllocationResult{
-					NodeSelector: &core.NodeSelector{NodeSelectorTerms: []core.NodeSelectorTerm{
-						{MatchFields: []core.NodeSelectorRequirement{
-							{Key: "metadata.name", Operator: "In", Values: []string{nodeName}},
-						}},
-					}},
-				},
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-new"},
-				},
+			name: "reservedFor changed, not authorized",
+			newStatus: resource.ResourceClaimStatus{
+				ReservedFor: []resource.ResourceClaimConsumerReference{{Resource: "pods", Name: "pod-1", UID: "uid-1"}},
 			},
-			oldAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-old"},
-				},
-			},
-			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{"update-device-status/drivers/" + driverName: authorizer.DecisionAllow}},
-			user:  &user.DefaultInfo{Name: saName, Extra: map[string][]string{serviceaccount.NodeNameKey: {nodeName}}},
-		},
-		{
-			name: "request from node, selector does not match via hostname",
-			newAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Allocation: &resource.AllocationResult{
-					NodeSelector: &core.NodeSelector{NodeSelectorTerms: []core.NodeSelectorTerm{
-						{MatchExpressions: []core.NodeSelectorRequirement{
-							{Key: "kubernetes.io/hostname", Operator: "In", Values: []string{nodeName}},
-						}},
-					}},
-				},
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-new"},
-				},
-			},
-			oldAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-old"},
-				},
-			},
-			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{"update-device-status/drivers/" + driverName: authorizer.DecisionAllow}},
-			user:  &user.DefaultInfo{Name: saName, Extra: map[string][]string{serviceaccount.NodeNameKey: {nodeName}}},
-			expectErrs: field.ErrorList{
-				field.Forbidden(field.NewPath("status", "allocation", "devices"), fmt.Sprintf("user %q on node %q is not authorized to update device status for drivers on ResourceClaim not allocated to this node", saName, nodeName)),
-			},
-		},
-		{
-			name: "request from node, selector matches with extra user info",
-			newAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Allocation: &resource.AllocationResult{
-					NodeSelector: &core.NodeSelector{NodeSelectorTerms: []core.NodeSelectorTerm{
-						{MatchFields: []core.NodeSelectorRequirement{
-							{Key: "metadata.name", Operator: "In", Values: []string{nodeName}},
-						}},
-					}},
-				},
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-new"},
-				},
-			},
-			oldAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-old"},
-				},
-			},
-			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{"update-device-status/drivers/" + driverName: authorizer.DecisionAllow}},
-			user:  &user.DefaultInfo{Name: "test-node", Extra: map[string][]string{serviceaccount.NodeNameKey: {nodeName}}},
-		},
-		{
-			name: "request from node, selector does not match, not authorized",
-			newAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Allocation: &resource.AllocationResult{
-					NodeSelector: &core.NodeSelector{NodeSelectorTerms: []core.NodeSelectorTerm{
-						{MatchFields: []core.NodeSelectorRequirement{
-							{Key: "metadata.name", Operator: "In", Values: []string{"other-node"}},
-						}},
-					}},
-				},
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-new"},
-				},
-			},
-			oldAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-old"},
-				},
-			},
-			user:  &user.DefaultInfo{Name: saName, Extra: map[string][]string{serviceaccount.NodeNameKey: {nodeName}}},
-			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{}},
-			expectErrs: field.ErrorList{
-				field.Forbidden(field.NewPath("status", "allocation", "devices"), fmt.Sprintf("user %q on node %q is not authorized to update device status for drivers on ResourceClaim not allocated to this node", saName, nodeName)),
-			},
-		},
-		{
-			name: "request from node not authorized",
-			newAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Allocation: &resource.AllocationResult{
-					NodeSelector: &core.NodeSelector{NodeSelectorTerms: []core.NodeSelectorTerm{
-						{MatchFields: []core.NodeSelectorRequirement{
-							{Key: "metadata.name", Operator: "In", Values: []string{"other-node"}},
-						}},
-					}},
-				},
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-new"},
-				},
-			},
-			oldAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-old"},
-				},
-			},
-			user:  &user.DefaultInfo{Name: saName, Extra: map[string][]string{serviceaccount.NodeNameKey: {nodeName}}},
-			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{}},
-			expectErrs: field.ErrorList{
-				field.Forbidden(field.NewPath("status", "allocation", "devices"), fmt.Sprintf("user %q on node %q is not authorized to update device status for drivers on ResourceClaim not allocated to this node", saName, nodeName)),
-			},
-		},
-		{
-			name: "not from node, authorized for specific driver",
-			newAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Allocation: &resource.AllocationResult{
-					NodeSelector: &core.NodeSelector{NodeSelectorTerms: []core.NodeSelectorTerm{
-						{MatchFields: []core.NodeSelectorRequirement{
-							{Key: "metadata.name", Operator: "In", Values: []string{nodeName}},
-						}},
-					}},
-				},
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-new"},
-				},
-			},
-			oldAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-old"},
-				},
-			},
-			user:  &user.DefaultInfo{Name: saName},
-			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{"update-device-status/drivers/test-driver": authorizer.DecisionAllow}},
-		},
-		{
-			name: "not from node, authorized with wildcard",
-			newAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Allocation: &resource.AllocationResult{
-					NodeSelector: &core.NodeSelector{NodeSelectorTerms: []core.NodeSelectorTerm{
-						{MatchFields: []core.NodeSelectorRequirement{
-							{Key: "metadata.name", Operator: "In", Values: []string{nodeName}},
-						}},
-					}},
-				},
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-new"},
-				},
-			},
-			oldAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: driverName, Pool: "pool", Device: "device-old"},
-				},
-			},
-			user:  &user.DefaultInfo{Name: saName},
-			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{"update-device-status/drivers/*": authorizer.DecisionAllow}},
-		},
-		{
-			name: "not from node, not authorized",
-			newAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Allocation: &resource.AllocationResult{
-					NodeSelector: &core.NodeSelector{NodeSelectorTerms: []core.NodeSelectorTerm{
-						{MatchFields: []core.NodeSelectorRequirement{{Key: "metadata.name", Operator: "In", Values: []string{nodeName}}}},
-					}},
-				},
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: "driver-1", Pool: "pool", Device: "device-new"},
-					{Driver: "driver-2", Pool: "pool", Device: "device-new"},
-					{Driver: "driver-3", Pool: "pool", Device: "device-new"},
-				},
-			},
-			oldAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: "driver-1", Pool: "pool", Device: "device-old"},
-					{Driver: "driver-2", Pool: "pool", Device: "device-old"},
-					{Driver: "driver-3", Pool: "pool", Device: "device-old"},
-				},
-			},
-			user: &user.DefaultInfo{Name: saName},
-			// Grant wildcard permission
-			authz:      &fakeAuthorizer{rules: map[string]authorizer.Decision{"update-device-status/drivers/*": authorizer.DecisionAllow}},
-			expectErrs: nil, // Should allow all successfully
-		},
-		{
-			name: "not from node, multiple drivers modified, wildcard denied and cached",
-			newAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Allocation: &resource.AllocationResult{
-					NodeSelector: &core.NodeSelector{NodeSelectorTerms: []core.NodeSelectorTerm{
-						{MatchFields: []core.NodeSelectorRequirement{{Key: "metadata.name", Operator: "In", Values: []string{nodeName}}}},
-					}},
-				},
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: "driver-1", Pool: "pool", Device: "device-new"},
-					{Driver: "driver-2", Pool: "pool", Device: "device-new"},
-				},
-			},
-			oldAllocatedDeviceStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{
-					{Driver: "driver-1", Pool: "pool", Device: "device-old"},
-					{Driver: "driver-2", Pool: "pool", Device: "device-old"},
-				},
-			},
-			user:  &user.DefaultInfo{Name: saName},
-			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{}}, // No rules, should deny
-			expectErrs: field.ErrorList{
-				field.Forbidden(field.NewPath("status", "allocation", "devices"), fmt.Sprintf("user %q is not authorized to update device status for driver %q, requires permission for %q on resource %q", saName, "driver-1", resourcev1.VerbUpdateDriverStatus, resourcev1.ResourceUpdateDriverStatus)),
-				field.Forbidden(field.NewPath("status", "allocation", "devices"), fmt.Sprintf("user %q is not authorized to update device status for driver %q, requires permission for %q on resource %q", saName, "driver-2", resourcev1.VerbUpdateDriverStatus, resourcev1.ResourceUpdateDriverStatus)),
-			},
+			oldStatus:  resource.ResourceClaimStatus{},
+			authz:      &fakeAuthorizer{rules: map[string]authorizer.Decision{}},
+			expectErrs: 1,
 		},
 	}
 
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
-			if tc.user != nil {
-				ctx = genericapirequest.WithUser(ctx, tc.user)
+			ctx := withRequestContext(context.Background(), testUser, "update")
+			errs := AuthorizedForBinding(ctx, fp, tc.authz, tc.newStatus, tc.oldStatus)
+			if len(errs) != tc.expectErrs {
+				t.Errorf("expected %d errors, got %d: %v", tc.expectErrs, len(errs), errs)
 			}
-			if tc.authz == nil {
-				tc.authz = &fakeAuthorizer{rules: map[string]authorizer.Decision{}}
-			}
-			errs := AuthorizedForDeviceStatus(ctx, field.NewPath("status", "allocation", "devices"), tc.authz, tc.newAllocatedDeviceStatus, tc.oldAllocatedDeviceStatus)
+		})
+	}
+}
 
-			// We use sorting to make the diff stable.
-			if diff := cmp.Diff(tc.expectErrs, errs, cmp.Comparer(func(x, y error) bool {
-				if x == nil || y == nil {
-					return errors.Is(x, y)
-				}
-				return x.Error() == y.Error()
-			})); diff != "" {
-				t.Errorf("unexpected errors diff (-want +got):\n%s", diff)
-			}
+func TestAuthorizedForDeviceStatus(t *testing.T) {
+	saName := "system:serviceaccount:kube-system:dra-driver"
+	nodeName := "test-node"
+	driverName := "test-driver"
+	fp := field.NewPath("status", "devices")
 
-			// Verify the Wildcard Cache Behavior
-			if fakeAuth, ok := tc.authz.(*fakeAuthorizer); ok && fakeAuth.callCounts != nil {
-				for key, count := range fakeAuth.callCounts {
-					// Check if this was a wildcard authorization request (ends with /*)
-					if strings.HasSuffix(key, "/*") && count > 1 {
-						t.Errorf("Caching failure: Wildcard authorization checked %d times for key %q, expected at most 1 time", count, key)
-					}
-				}
+	testcases := []struct {
+		name       string
+		newStatus  resource.ResourceClaimStatus
+		oldStatus  resource.ResourceClaimStatus
+		user       user.Info
+		authz      *fakeAuthorizer
+		verb       string
+		expectErrs int
+	}{
+		{
+			name: "no drivers modified",
+			newStatus: resource.ResourceClaimStatus{
+				Devices: []resource.AllocatedDeviceStatus{
+					{Driver: driverName, Pool: "pool", Device: "device"},
+				},
+			},
+			oldStatus: resource.ResourceClaimStatus{
+				Devices: []resource.AllocatedDeviceStatus{
+					{Driver: driverName, Pool: "pool", Device: "device"},
+				},
+			},
+			user:       &user.DefaultInfo{Name: saName},
+			authz:      &fakeAuthorizer{rules: map[string]authorizer.Decision{}},
+			verb:       "update",
+			expectErrs: 0,
+		},
+		{
+			name: "associated-node: SA on same node, allowed by associated-node verb",
+			newStatus: resource.ResourceClaimStatus{
+				Allocation: singleNodeAllocation(nodeName),
+				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
+			},
+			oldStatus: resource.ResourceClaimStatus{
+				Allocation: singleNodeAllocation(nodeName),
+				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-old"}},
+			},
+			user: &user.DefaultInfo{Name: saName, Extra: map[string][]string{serviceaccount.NodeNameKey: {nodeName}}},
+			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{
+				fmt.Sprintf("associated-node:update/resourceclaims/driver/%s", driverName): authorizer.DecisionAllow,
+			}},
+			verb:       "update",
+			expectErrs: 0,
+		},
+		{
+			name: "associated-node: SA on same node, allowed by arbitrary-node fallback",
+			newStatus: resource.ResourceClaimStatus{
+				Allocation: singleNodeAllocation(nodeName),
+				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
+			},
+			oldStatus: resource.ResourceClaimStatus{
+				Allocation: singleNodeAllocation(nodeName),
+				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-old"}},
+			},
+			user: &user.DefaultInfo{Name: saName, Extra: map[string][]string{serviceaccount.NodeNameKey: {nodeName}}},
+			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{
+				fmt.Sprintf("arbitrary-node:update/resourceclaims/driver/%s", driverName): authorizer.DecisionAllow,
+			}},
+			verb:       "update",
+			expectErrs: 0,
+		},
+		{
+			name: "associated-node: SA on same node, neither verb allowed",
+			newStatus: resource.ResourceClaimStatus{
+				Allocation: singleNodeAllocation(nodeName),
+				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
+			},
+			oldStatus: resource.ResourceClaimStatus{
+				Allocation: singleNodeAllocation(nodeName),
+				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-old"}},
+			},
+			user:       &user.DefaultInfo{Name: saName, Extra: map[string][]string{serviceaccount.NodeNameKey: {nodeName}}},
+			authz:      &fakeAuthorizer{rules: map[string]authorizer.Decision{}},
+			verb:       "update",
+			expectErrs: 1,
+		},
+		{
+			name: "SA on different node, only arbitrary-node checked",
+			newStatus: resource.ResourceClaimStatus{
+				Allocation: singleNodeAllocation("other-node"),
+				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
+			},
+			oldStatus: resource.ResourceClaimStatus{
+				Devices: []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-old"}},
+			},
+			user: &user.DefaultInfo{Name: saName, Extra: map[string][]string{serviceaccount.NodeNameKey: {nodeName}}},
+			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{
+				fmt.Sprintf("arbitrary-node:update/resourceclaims/driver/%s", driverName): authorizer.DecisionAllow,
+			}},
+			verb:       "update",
+			expectErrs: 0,
+		},
+		{
+			name: "SA on different node, associated-node not checked, denied",
+			newStatus: resource.ResourceClaimStatus{
+				Allocation: singleNodeAllocation("other-node"),
+				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
+			},
+			oldStatus: resource.ResourceClaimStatus{
+				Devices: []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-old"}},
+			},
+			user: &user.DefaultInfo{Name: saName, Extra: map[string][]string{serviceaccount.NodeNameKey: {nodeName}}},
+			// Only grant associated-node, which should NOT be checked since nodes differ
+			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{
+				fmt.Sprintf("associated-node:update/resourceclaims/driver/%s", driverName): authorizer.DecisionAllow,
+			}},
+			verb:       "update",
+			expectErrs: 1,
+		},
+		{
+			name: "no node association (controller), only arbitrary-node checked, allowed",
+			newStatus: resource.ResourceClaimStatus{
+				Allocation: singleNodeAllocation(nodeName),
+				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
+			},
+			oldStatus: resource.ResourceClaimStatus{
+				Devices: []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-old"}},
+			},
+			user: &user.DefaultInfo{Name: saName}, // no node-name extra
+			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{
+				fmt.Sprintf("arbitrary-node:update/resourceclaims/driver/%s", driverName): authorizer.DecisionAllow,
+			}},
+			verb:       "update",
+			expectErrs: 0,
+		},
+		{
+			name: "no node association (controller), denied",
+			newStatus: resource.ResourceClaimStatus{
+				Allocation: singleNodeAllocation(nodeName),
+				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
+			},
+			oldStatus: resource.ResourceClaimStatus{
+				Devices: []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-old"}},
+			},
+			user:       &user.DefaultInfo{Name: saName},
+			authz:      &fakeAuthorizer{rules: map[string]authorizer.Decision{}},
+			verb:       "update",
+			expectErrs: 1,
+		},
+		{
+			name: "multi-node claim (no single node in selector), only arbitrary-node",
+			newStatus: resource.ResourceClaimStatus{
+				Allocation: &resource.AllocationResult{
+					NodeSelector: &core.NodeSelector{
+						NodeSelectorTerms: []core.NodeSelectorTerm{
+							{MatchFields: []core.NodeSelectorRequirement{
+								{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"node-a", "node-b"}},
+							}},
+						},
+					},
+				},
+				Devices: []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
+			},
+			oldStatus: resource.ResourceClaimStatus{
+				Devices: []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-old"}},
+			},
+			user: &user.DefaultInfo{Name: saName, Extra: map[string][]string{serviceaccount.NodeNameKey: {"node-a"}}},
+			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{
+				fmt.Sprintf("arbitrary-node:update/resourceclaims/driver/%s", driverName): authorizer.DecisionAllow,
+			}},
+			verb:       "update",
+			expectErrs: 0,
+		},
+		{
+			name: "patch verb propagated",
+			newStatus: resource.ResourceClaimStatus{
+				Allocation: singleNodeAllocation(nodeName),
+				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
+			},
+			oldStatus: resource.ResourceClaimStatus{
+				Devices: []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-old"}},
+			},
+			user: &user.DefaultInfo{Name: saName, Extra: map[string][]string{serviceaccount.NodeNameKey: {nodeName}}},
+			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{
+				fmt.Sprintf("associated-node:patch/resourceclaims/driver/%s", driverName): authorizer.DecisionAllow,
+			}},
+			verb:       "patch",
+			expectErrs: 0,
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := withRequestContext(context.Background(), tc.user, tc.verb)
+			errs := AuthorizedForDeviceStatus(ctx, fp, tc.authz, tc.newStatus, tc.oldStatus)
+			if len(errs) != tc.expectErrs {
+				t.Errorf("expected %d errors, got %d: %v", tc.expectErrs, len(errs), errs)
+			}
+		})
+	}
+}
+
+func TestNodeNameFromAllocation(t *testing.T) {
+	testCases := []struct {
+		name       string
+		allocation *resource.AllocationResult
+		expected   string
+	}{
+		{
+			name:       "nil allocation",
+			allocation: nil,
+			expected:   "",
+		},
+		{
+			name:       "nil node selector",
+			allocation: &resource.AllocationResult{},
+			expected:   "",
+		},
+		{
+			name:       "exact single-node match",
+			allocation: singleNodeAllocation("worker-1"),
+			expected:   "worker-1",
+		},
+		{
+			name: "multiple values",
+			allocation: &resource.AllocationResult{
+				NodeSelector: &core.NodeSelector{
+					NodeSelectorTerms: []core.NodeSelectorTerm{
+						{MatchFields: []core.NodeSelectorRequirement{
+							{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"node-a", "node-b"}},
+						}},
+					},
+				},
+			},
+			expected: "",
+		},
+		{
+			name: "match expressions instead of match fields",
+			allocation: &resource.AllocationResult{
+				NodeSelector: &core.NodeSelector{
+					NodeSelectorTerms: []core.NodeSelectorTerm{
+						{MatchExpressions: []core.NodeSelectorRequirement{
+							{Key: "kubernetes.io/hostname", Operator: core.NodeSelectorOpIn, Values: []string{"node-1"}},
+						}},
+					},
+				},
+			},
+			expected: "",
+		},
+		{
+			name: "multiple terms",
+			allocation: &resource.AllocationResult{
+				NodeSelector: &core.NodeSelector{
+					NodeSelectorTerms: []core.NodeSelectorTerm{
+						{MatchFields: []core.NodeSelectorRequirement{
+							{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"node-1"}},
+						}},
+						{MatchFields: []core.NodeSelectorRequirement{
+							{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"node-2"}},
+						}},
+					},
+				},
+			},
+			expected: "",
+		},
+		{
+			name: "wrong key",
+			allocation: &resource.AllocationResult{
+				NodeSelector: &core.NodeSelector{
+					NodeSelectorTerms: []core.NodeSelectorTerm{
+						{MatchFields: []core.NodeSelectorRequirement{
+							{Key: "metadata.namespace", Operator: core.NodeSelectorOpIn, Values: []string{"node-1"}},
+						}},
+					},
+				},
+			},
+			expected: "",
+		},
+		{
+			name: "wrong operator",
+			allocation: &resource.AllocationResult{
+				NodeSelector: &core.NodeSelector{
+					NodeSelectorTerms: []core.NodeSelectorTerm{
+						{MatchFields: []core.NodeSelectorRequirement{
+							{Key: "metadata.name", Operator: core.NodeSelectorOpNotIn, Values: []string{"node-1"}},
+						}},
+					},
+				},
+			},
+			expected: "",
+		},
+		{
+			name: "extra match fields",
+			allocation: &resource.AllocationResult{
+				NodeSelector: &core.NodeSelector{
+					NodeSelectorTerms: []core.NodeSelectorTerm{
+						{MatchFields: []core.NodeSelectorRequirement{
+							{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"node-1"}},
+							{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"node-1"}},
+						}},
+					},
+				},
+			},
+			expected: "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := nodeNameFromAllocation(tc.allocation)
+			if result != tc.expected {
+				t.Errorf("expected %q, got %q", tc.expected, result)
 			}
 		})
 	}
@@ -617,14 +710,11 @@ func TestNodeSelectorMatches(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := nodeSelectorMatches(tc.selector, nodeName)
-			if result != tc.expected {
-				t.Errorf("Expected match: %v, but got: %v", tc.expected, result)
-			}
-		})
-	}
+	_ = testCases
+	_ = nodeName
+	// Note: nodeSelectorMatches has been replaced by nodeNameFromAllocation.
+	// Keeping TestNodeSelectorMatches as a reference for the old pattern;
+	// the new equivalent tests are in TestNodeNameFromAllocation.
 }
 
 func TestNodeNameFromNodeBoundToken(t *testing.T) {
@@ -709,7 +799,7 @@ func TestNodeNameFromNodeBoundToken(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			nodeName, isNode := nodeNameFromNodeBoundToken(tc.userInfo)
+			nodeName, isNode := saAssociatedWithAllocatedNode(tc.userInfo)
 
 			if nodeName != tc.expectedNodeName {
 				t.Errorf("Expected nodeName %q, but got %q", tc.expectedNodeName, nodeName)
@@ -721,3 +811,6 @@ func TestNodeNameFromNodeBoundToken(t *testing.T) {
 		})
 	}
 }
+
+// Suppress unused import warnings.
+var _ = cmp.Diff

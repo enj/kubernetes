@@ -198,8 +198,9 @@ func (r *resourceclaimStatusStrategy) ValidateUpdate(ctx context.Context, obj, o
 	}
 	errs := resourceutils.AuthorizedForAdminStatus(ctx, newAllocationResult, oldAllocationResult, newClaim.Namespace, r.nsClient)
 
-	if utilfeature.DefaultFeatureGate.Enabled(features.DRAResourceClaimDeviceStatus) {
-		errs = append(errs, resourceutils.AuthorizedForDeviceStatus(ctx, field.NewPath("status", "allocation", "devices"), r.authorizer, newClaim.Status, oldClaim.Status)...)
+	if utilfeature.DefaultFeatureGate.Enabled(features.DRAResourceClaimGranularStatusAuthorization) {
+		errs = append(errs, resourceutils.AuthorizedForBinding(ctx, field.NewPath("status", "allocation"), r.authorizer, newClaim.Status, oldClaim.Status)...)
+		errs = append(errs, resourceutils.AuthorizedForDeviceStatus(ctx, field.NewPath("status", "devices"), r.authorizer, newClaim.Status, oldClaim.Status)...)
 	}
 	errs = append(errs, validation.ValidateResourceClaimStatusUpdate(newClaim, oldClaim)...)
 	return rest.ValidateDeclarativelyWithMigrationChecks(ctx, legacyscheme.Scheme, newClaim, oldClaim, errs, operation.Update)

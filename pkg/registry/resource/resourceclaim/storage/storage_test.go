@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/registry/generic"
@@ -168,6 +169,17 @@ func TestUpdateStatus(t *testing.T) {
 	defer server.Terminate(t)
 	defer storage.Store.DestroyFunc()
 	ctx := genericapirequest.NewDefaultContext()
+	ctx = genericapirequest.WithUser(ctx, &user.DefaultInfo{Name: "system:serviceaccount:kube-system:test"})
+	ctx = genericapirequest.WithRequestInfo(ctx, &genericapirequest.RequestInfo{
+		IsResourceRequest: true,
+		Verb:              "update",
+		APIGroup:          "resource.k8s.io",
+		APIVersion:        "v1",
+		Resource:          "resourceclaims",
+		Subresource:       "status",
+		Namespace:         metav1.NamespaceDefault,
+		Name:              "foo",
+	})
 
 	key, _ := storage.KeyFunc(ctx, "foo")
 	claimStart := validNewClaim("foo", metav1.NamespaceDefault)

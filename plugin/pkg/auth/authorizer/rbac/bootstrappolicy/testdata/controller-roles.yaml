@@ -1312,9 +1312,10 @@ items:
   - apiGroups:
     - resource.k8s.io
     resources:
-    - drivers
+    - resourceclaims/binding
     verbs:
-    - update-device-status
+    - patch
+    - update
 - apiVersion: rbac.authorization.k8s.io/v1
   kind: ClusterRole
   metadata:

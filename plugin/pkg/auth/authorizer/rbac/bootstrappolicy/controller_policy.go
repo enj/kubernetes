@@ -212,8 +212,10 @@ func buildControllerRoles() ([]rbacv1.ClusterRole, []rbacv1.ClusterRoleBinding) 
 				eventsRule(),
 			},
 		}
-		if utilfeature.DefaultFeatureGate.Enabled(features.DRAResourceClaimDeviceStatus) {
-			clusterRoleDRA.Rules = append(clusterRoleDRA.Rules, rbacv1helpers.NewRule("update-device-status").Groups(resourceGroup).Resources("drivers").RuleOrDie())
+		if utilfeature.DefaultFeatureGate.Enabled(features.DRAResourceClaimGranularStatusAuthorization) {
+			clusterRoleDRA.Rules = append(clusterRoleDRA.Rules,
+				rbacv1helpers.NewRule("update", "patch").Groups(resourceGroup).Resources("resourceclaims/binding").RuleOrDie(),
+			)
 		}
 		addControllerRole(&controllerRoles, &controllerRoleBindings, clusterRoleDRA)
 

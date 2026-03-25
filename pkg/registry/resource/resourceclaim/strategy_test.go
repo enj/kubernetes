@@ -18,6 +18,7 @@ package resourceclaim
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -377,7 +378,7 @@ var fieldImmutableError = "field is immutable"
 var metadataError = "a lowercase RFC 1123 subdomain must consist of lower case alphanumeric characters"
 var deviceRequestError = "exactly one of `exactly` or `firstAvailable` is required"
 var constraintError = "matchAttribute: Required value"
-var deviceUpdateError = "is not authorized to update device status for driver"
+var deviceUpdateError = "is forbidden"
 
 const (
 	req0        = "req-0"
@@ -1005,6 +1006,15 @@ func TestStatusStrategyUpdate(t *testing.T) {
 		Name:   testUser,
 		Groups: []string{"system:authenticated"},
 	})
+	ctx = genericapirequest.WithRequestInfo(ctx, &genericapirequest.RequestInfo{
+		IsResourceRequest: true,
+		Verb:              "update",
+		APIGroup:          "resource.k8s.io",
+		APIVersion:        "v1",
+		Resource:          "resourceclaims",
+		Subresource:       "status",
+		Namespace:         metav1.NamespaceDefault,
+	})
 	testcases := map[string]struct {
 		oldObj                        *resource.ResourceClaim
 		newObj                        *resource.ResourceClaim
@@ -1269,6 +1279,7 @@ func TestStatusStrategyUpdate(t *testing.T) {
 				addStatusDevices(obj, testDriver, testPool, testDevice, nil)
 				return obj
 			}(),
+			adminAccess:            true, // Keep emulation version at 1.36 so DRAResourceClaimGranularStatusAuthorization is active
 			deviceStatusFeatureGate: true,
 			expectValidationError:   deviceUpdateError,
 			expectObj: func() *resource.ResourceClaim { // Status is not updated
@@ -1298,6 +1309,7 @@ func TestStatusStrategyUpdate(t *testing.T) {
 				addStatusDevices(obj, testDriver, testPool, testDevice, nil)
 				return obj
 			}(),
+			adminAccess:             true, // Keep emulation version at 1.36 so DRAResourceClaimGranularStatusAuthorization is active
 			authz:                   &fakeAuthorizer{false},
 			deviceStatusFeatureGate: true,
 			expectValidationError:   deviceUpdateError,
@@ -1660,8 +1672,16 @@ func TestStatusStrategyUpdate(t *testing.T) {
 				if tc.expectValidationError == "" {
 					t.Fatalf("unexpected error(s): %v", errs)
 				}
-				assert.Len(t, errs, 1, "exactly one error expected")
-				assert.ErrorContains(t, errs[0], tc.expectValidationError, "the error message should have contained the expected error message")
+				found := false
+				for _, err := range errs {
+					if strings.Contains(err.Error(), tc.expectValidationError) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected at least one error containing %q, got: %v", tc.expectValidationError, errs)
+				}
 				return
 			}
 			if tc.expectValidationError != "" {

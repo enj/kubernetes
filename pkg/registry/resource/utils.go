@@ -19,10 +19,9 @@ package resource
 import (
 	"context"
 	"fmt"
-	"reflect"
-	"slices"
 
 	resourcev1 "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -30,7 +29,8 @@ import (
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
-	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
+	"k8s.io/apiserver/pkg/endpoints/filters"
+	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
 	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/apis/resource"
@@ -113,98 +113,96 @@ func adminRequested(deviceRequestResults []resource.DeviceRequestAllocationResul
 	return false, nil
 }
 
-// AuthorizedForDeviceStatus checks if the request status is authorized update the device status
-func AuthorizedForDeviceStatus(ctx context.Context, fieldPath *field.Path, authz authorizer.Authorizer, newAllocatedDeviceStatus, oldAllocatedDeviceStatus resource.ResourceClaimStatus) field.ErrorList {
+// AuthorizedForBinding checks if the caller is authorized to update
+// status.allocation and status.reservedFor by verifying permission on the
+// synthetic resourceclaims/binding subresource.
+func AuthorizedForBinding(ctx context.Context, fieldPath *field.Path, authz authorizer.Authorizer, newStatus, oldStatus resource.ResourceClaimStatus) field.ErrorList {
 	var allErrs field.ErrorList
-	if fieldPath == nil {
-		return append(allErrs, field.InternalError(fieldPath, fmt.Errorf("fieldPath is required for authorization errors")))
+
+	if equality.Semantic.DeepEqual(newStatus.Allocation, oldStatus.Allocation) &&
+		equality.Semantic.DeepEqual(newStatus.ReservedFor, oldStatus.ReservedFor) {
+		return allErrs
 	}
-	// check the drivers that have changes in status
-	driversToAuthz := getModifiedDrivers(newAllocatedDeviceStatus, oldAllocatedDeviceStatus)
+
+	baseAttrs, err := filters.GetAuthorizerAttributes(ctx)
+	if err != nil {
+		return append(allErrs, field.InternalError(fieldPath, fmt.Errorf("cannot build authorizer attributes: %w", err)))
+	}
+
+	attrs := &syntheticSubresourceAttrs{
+		Attributes:  baseAttrs,
+		verb:        baseAttrs.GetVerb(),           // verb is unchanged but must be specified
+		subresource: resourcev1.SubresourceBinding, // the scheduler calls this "bind claim"
+		namespace:   "",                            // cluster-wide
+		name:        "",                            // all names
+	}
+
+	if err := checkAuthorization(ctx, authz, attrs); err != nil {
+		return append(allErrs, field.Forbidden(fieldPath, fmt.Sprintf("cannot bind resource claim: %s", err)))
+	}
+	return allErrs
+}
+
+// AuthorizedForDeviceStatus checks if the caller is authorized to update
+// status.devices by performing per-driver authorization checks using the
+// associated-node / arbitrary-node verb prefix pattern on the synthetic
+// resourceclaims/driver subresource.
+func AuthorizedForDeviceStatus(ctx context.Context, fieldPath *field.Path, a authorizer.Authorizer, newStatus, oldStatus resource.ResourceClaimStatus) field.ErrorList {
+	var allErrs field.ErrorList
+
+	driversToAuthz := getModifiedDrivers(newStatus, oldStatus)
 	if len(driversToAuthz) == 0 {
 		return allErrs
 	}
 
-	user, ok := genericapirequest.UserFrom(ctx)
-	if !ok {
-		return append(allErrs, field.InternalError(fieldPath, fmt.Errorf("cannot determine calling user to check driver status update authorization")))
+	baseAttrs, err := filters.GetAuthorizerAttributes(ctx)
+	if err != nil {
+		return append(allErrs, field.InternalError(fieldPath, fmt.Errorf("cannot build authorizer attributes: %w", err)))
 	}
 
-	associatedNodeName, isAssociatedWithNode := nodeNameFromNodeBoundToken(user)
-	// If the request is from a node, check if the claim is allocated to that node,
-	// drivers on nodes are not authorized to update device status for allocations on different nodes.
-	if isAssociatedWithNode && !isClaimAllocatedNode(newAllocatedDeviceStatus, associatedNodeName) {
-		return append(allErrs, field.Forbidden(fieldPath, fmt.Sprintf("user %q on node %q is not authorized to update device status for drivers on ResourceClaim not allocated to this node", user.GetName(), associatedNodeName)))
+	// if service account is on the same node as the claim, check associated-node verb first, fall back to arbitrary-node
+	// Otherwise, only try arbitrary-node
+	requestVerb := baseAttrs.GetVerb()
+	var verbs []string
+	if saAssociatedWithAllocatedNode(baseAttrs.GetUser(), nodeNameFromAllocation(newStatus.Allocation)) {
+		verbs = []string{resourcev1.VerbPrefixAssociatedNode + requestVerb, resourcev1.VerbPrefixArbitraryNode + requestVerb}
+	} else {
+		verbs = []string{resourcev1.VerbPrefixArbitraryNode + requestVerb}
 	}
 
-	// Variables to cache the wildcard authorization result so we only check it once.
-	var wildcardAllowed *bool
-	var wildcardErr error
-
-	// Check authorization for the specific driver name
 	for _, driverName := range sets.List(driversToAuthz) {
-		// First try the specific permission (on 'drivers/driverName').
-		authzAttrs := authorizer.AttributesRecord{
-			User:            user,
-			Verb:            resourcev1.VerbUpdateDriverStatus,
-			Name:            driverName,
-			APIGroup:        "resource.k8s.io",
-			APIVersion:      "*",
-			Resource:        resourcev1.ResourceUpdateDriverStatus,
-			ResourceRequest: true,
+		if err := checkDriverAuthorization(ctx, baseAttrs, verbs, driverName, a); err != nil {
+			allErrs = append(allErrs, field.Forbidden(fieldPath, fmt.Sprintf("cannot modify resource claim device status for %q driver: %s", driverName, err)))
 		}
 
-		decision, _, err := authz.Authorize(ctx, authzAttrs)
-		if err != nil {
-			allErrs = append(allErrs, field.InternalError(fieldPath, fmt.Errorf("authorization check failed for driver %q: %w", driverName, err)))
-			continue
-		}
-
-		if decision == authorizer.DecisionAllow {
-			continue // Success! Move to the next driver.
-		}
-
-		// If specific auth fails, node-bound requests are immediately forbidden.
-		// They do not get to use the wildcard fallback.
-		if isAssociatedWithNode {
-			msg := fmt.Sprintf("user %q on node %q is not authorized to update device status for driver %q, requires explicit permission for %q on resource %q", user.GetName(), associatedNodeName, driverName, resourcev1.VerbUpdateDriverStatus, resourcev1.ResourceUpdateDriverStatus)
-			allErrs = append(allErrs, field.Forbidden(fieldPath, msg))
-			continue
-		}
-
-		// For non-node requests, evaluate the wildcard fallback lazily.
-		if wildcardAllowed == nil {
-			authzAttrsWildcard := authorizer.AttributesRecord{
-				User:            user,
-				Verb:            resourcev1.VerbUpdateDriverStatus,
-				Name:            "*",
-				APIGroup:        "resource.k8s.io",
-				APIVersion:      "*",
-				Resource:        resourcev1.ResourceUpdateDriverStatus,
-				ResourceRequest: true,
-			}
-
-			wDecision, _, wErr := authz.Authorize(ctx, authzAttrsWildcard)
-			allowed := wDecision == authorizer.DecisionAllow
-			wildcardAllowed = &allowed
-			wildcardErr = wErr
-		}
-
-		// Handle any error that occurred during the cached wildcard check
-		if wildcardErr != nil {
-			allErrs = append(allErrs, field.InternalError(fieldPath, fmt.Errorf("authorization check failed for driver %q with wildcard: %w", driverName, wildcardErr)))
-			continue
-		}
-
-		// Finally, if the wildcard check resolved to anything other than Allow, reject.
-		if !*wildcardAllowed {
-			msg := fmt.Sprintf("user %q is not authorized to update device status for driver %q, requires permission for %q on resource %q", user.GetName(), driverName, resourcev1.VerbUpdateDriverStatus, resourcev1.ResourceUpdateDriverStatus)
-			allErrs = append(allErrs, field.Forbidden(fieldPath, msg))
-			continue
-		}
 	}
 
 	return allErrs
+}
+
+func checkDriverAuthorization(ctx context.Context, baseAttrs authorizer.Attributes, verbs []string, driverName string, a authorizer.Authorizer) error {
+	if len(verbs) == 0 {
+		return fmt.Errorf("no verbs set for driver %s", driverName) // impossible for all inputs today
+	}
+
+	var firstErr error
+	for _, verb := range verbs { // verbs are OR'd with each other
+		attrs := &syntheticSubresourceAttrs{
+			Attributes:  baseAttrs,
+			verb:        verb,
+			subresource: resourcev1.SubresourceDriver,
+			namespace:   baseAttrs.GetNamespace(),
+			name:        driverName,
+		}
+		err := checkAuthorization(ctx, a, attrs)
+		if err == nil {
+			return nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // getModifiedDrivers identifies all drivers whose status entries were added,
@@ -224,7 +222,7 @@ func getModifiedDrivers(newAllocatedDeviceStatus, oldAllocatedDeviceStatus resou
 		delete(oldDevices, key) // Remove from map to track processed devices
 
 		// If entry is new or changed, we need to authorize this driver.
-		if !ok || !reflect.DeepEqual(oldDevice, d) {
+		if !ok || !equality.Semantic.DeepEqual(oldDevice, d) {
 			driversToAuthz.Insert(d.Driver)
 		}
 	}
@@ -238,56 +236,82 @@ func getModifiedDrivers(newAllocatedDeviceStatus, oldAllocatedDeviceStatus resou
 	return driversToAuthz
 }
 
-func isClaimAllocatedNode(status resource.ResourceClaimStatus, nodeName string) bool {
-	if status.Allocation == nil || status.Allocation.NodeSelector == nil {
-		return false
-	}
-	return nodeSelectorMatches(*status.Allocation.NodeSelector, nodeName)
-}
-
-// nodeSelectorMatches checks if NodeSelector matches the given nodeName in metadata.name
-// or kubernetes.io/hostname.
-// This is a convention over the NodeSelector structure applied by DRA.
-func nodeSelectorMatches(nodeSelector core.NodeSelector, nodeName string) bool {
-	for _, term := range nodeSelector.NodeSelectorTerms {
-		for _, field := range term.MatchFields {
-			if field.Key == "metadata.name" && field.Operator == "In" {
-				if slices.Contains(field.Values, nodeName) {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
 func deviceKey(d resource.AllocatedDeviceStatus) string {
 	return d.Driver + "/" + d.Pool + "/" + d.Device
 }
 
-// nodeNameFromNodeBoundToken strictly checks if the user is a ServiceAccount
-// using a node-bound token and returns the bound node name.
-func nodeNameFromNodeBoundToken(u user.Info) (string, bool) {
-	if u == nil {
-		return "", false
+func nodeNameFromAllocation(allocation *resource.AllocationResult) string {
+	if allocation == nil || allocation.NodeSelector == nil {
+		return ""
+	}
+	ns := allocation.NodeSelector
+	if len(ns.NodeSelectorTerms) != 1 {
+		return ""
+	}
+	term := ns.NodeSelectorTerms[0]
+	if len(term.MatchExpressions) != 0 || len(term.MatchFields) != 1 {
+		return ""
+	}
+	f := term.MatchFields[0]
+	if f.Key != "metadata.name" || f.Operator != core.NodeSelectorOpIn || len(f.Values) != 1 {
+		return ""
+	}
+	return f.Values[0]
+}
+
+func saAssociatedWithAllocatedNode(u user.Info, allocatedNodeName string) bool {
+	if len(allocatedNodeName) == 0 {
+		return false
 	}
 
 	// Must be a ServiceAccount
 	if _, _, err := serviceaccount.SplitUsername(u.GetName()); err != nil {
-		return "", false
+		return false
 	}
 
 	// Must have exactly one node-name extra attribute
 	nodeNames := u.GetExtra()[serviceaccount.NodeNameKey]
 	if len(nodeNames) != 1 {
-		return "", false
+		return false
 	}
 	nodeName := nodeNames[0]
 
 	// Must be a valid node name format
 	if len(validation.NameIsDNSSubdomain(nodeName, false)) != 0 {
-		return "", false
+		return false
 	}
 
-	return nodeName, true
+	return nodeName == allocatedNodeName
 }
+
+func checkAuthorization(ctx context.Context, a authorizer.Authorizer, attributes authorizer.Attributes) error {
+	authorized, reason, err := a.Authorize(ctx, attributes)
+
+	// an authorizer like RBAC could encounter evaluation errors and still allow the request, so authorizer decision is checked before error here.
+	if authorized == authorizer.DecisionAllow {
+		return nil
+	}
+
+	msg := reason
+	switch {
+	case err != nil && len(reason) > 0:
+		msg = fmt.Sprintf("%v: %s", err, reason)
+	case err != nil:
+		msg = err.Error()
+	}
+
+	return responsewriters.ForbiddenStatusError(attributes, msg)
+}
+
+type syntheticSubresourceAttrs struct {
+	authorizer.Attributes
+	verb        string
+	subresource string
+	namespace   string
+	name        string
+}
+
+func (a *syntheticSubresourceAttrs) GetVerb() string        { return a.verb }
+func (a *syntheticSubresourceAttrs) GetSubresource() string { return a.subresource }
+func (a *syntheticSubresourceAttrs) GetNamespace() string   { return a.namespace }
+func (a *syntheticSubresourceAttrs) GetName() string        { return a.name }
