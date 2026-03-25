@@ -2441,7 +2441,7 @@ var defaultKubernetesFeatureGateDependencies = map[featuregate.Feature][]feature
 
 	DRAResourceClaimDeviceStatus: {}, // Soft dependency on DynamicResourceAllocation due to on/off-by-default conflict.
 
-	DRAResourceClaimGranularStatusAuthorization: {}, // Soft dependency on DynamicResourceAllocation due to on/off-by-default conflict.
+	DRAResourceClaimGranularStatusAuthorization: {DynamicResourceAllocation, DRAResourceClaimDeviceStatus},
 
 	DRAResourcePoolStatus: {DynamicResourceAllocation},
 

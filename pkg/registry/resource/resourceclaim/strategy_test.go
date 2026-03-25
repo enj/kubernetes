@@ -377,8 +377,9 @@ var fieldImmutableError = "field is immutable"
 var metadataError = "a lowercase RFC 1123 subdomain must consist of lower case alphanumeric characters"
 var deviceRequestError = "exactly one of `exactly` or `firstAvailable` is required"
 var constraintError = "matchAttribute: Required value"
-var deviceUpdateError = "is forbidden"
-var bindingUpdateError = "is forbidden"
+var bindingUpdateError = `status.allocation: Forbidden: cannot bind resource claim: resourceclaims.resource.k8s.io is forbidden: User "test-user" cannot update resource "resourceclaims/binding" in API group "resource.k8s.io" at the cluster scope: denied`
+var deviceAssociatedNodeUpdateError = `status.devices: Forbidden: cannot modify resource claim device: resourceclaims.resource.k8s.io "test-driver" is forbidden: User "test-user" cannot associated-node:update resource "resourceclaims/driver" in API group "resource.k8s.io" in the namespace "default": denied`
+var deviceArbitraryNodeUpdateError = `status.devices: Forbidden: cannot modify resource claim device: resourceclaims.resource.k8s.io "test-driver" is forbidden: User "test-user" cannot arbitrary-node:update resource "resourceclaims/driver" in API group "resource.k8s.io" in the namespace "default": denied`
 
 const (
 	req0        = "req-0"
@@ -1281,7 +1282,7 @@ func TestStatusStrategyUpdate(t *testing.T) {
 			}(),
 			adminAccess:             true, // Keep emulation version at 1.36 so DRAResourceClaimGranularStatusAuthorization is active
 			deviceStatusFeatureGate: true,
-			expectValidationErrors:  []string{deviceUpdateError},
+			expectValidationErrors:  []string{deviceArbitraryNodeUpdateError},
 			expectObj: func() *resource.ResourceClaim { // Status is not updated
 				obj := obj.DeepCopy()
 				addSpecDevicesRequest(obj, testRequest)
@@ -1312,7 +1313,7 @@ func TestStatusStrategyUpdate(t *testing.T) {
 			adminAccess:             true, // Keep emulation version at 1.36 so DRAResourceClaimGranularStatusAuthorization is active
 			authz:                   &fakeAuthorizer{false},
 			deviceStatusFeatureGate: true,
-			expectValidationErrors:  []string{bindingUpdateError, deviceUpdateError},
+			expectValidationErrors:  []string{bindingUpdateError, deviceArbitraryNodeUpdateError},
 			expectObj: func() *resource.ResourceClaim { // Status is no longer there
 				obj := obj.DeepCopy()
 				addSpecDevicesRequest(obj, testRequest)

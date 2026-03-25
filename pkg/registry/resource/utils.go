@@ -172,7 +172,7 @@ func AuthorizedForDeviceStatus(ctx context.Context, fieldPath *field.Path, a aut
 
 	for _, driverName := range sets.List(driversToAuthz) {
 		if err := checkDriverAuthorization(ctx, baseAttrs, verbs, driverName, a); err != nil {
-			allErrs = append(allErrs, field.Forbidden(fieldPath, fmt.Sprintf("cannot modify resource claim device status for %q driver: %s", driverName, err)))
+			allErrs = append(allErrs, field.Forbidden(fieldPath, fmt.Sprintf("cannot modify resource claim device: %s", err)))
 		}
 
 	}
