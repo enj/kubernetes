@@ -138,7 +138,7 @@ func AuthorizedForBinding(ctx context.Context, fieldPath *field.Path, authz auth
 	}
 
 	if err := checkAuthorization(ctx, authz, attrs); err != nil {
-		return append(allErrs, field.Forbidden(fieldPath, fmt.Sprintf(`changing status.allocation or status.reservedFor requires resource="resourceclaims/binding", verb="%s" permission: %s`, attrs.verb, err)))
+		return append(allErrs, field.Forbidden(fieldPath, fmt.Sprintf("changing status.allocation or status.reservedFor requires extra permission: %s", err)))
 	}
 	return allErrs
 }
@@ -172,7 +172,7 @@ func AuthorizedForDeviceStatus(ctx context.Context, fieldPath *field.Path, a aut
 
 	for _, driverName := range sets.List(driversToAuthz) {
 		if err := checkDriverAuthorization(ctx, baseAttrs, verbs, driverName, a); err != nil {
-			allErrs = append(allErrs, field.Forbidden(fieldPath, fmt.Sprintf(`changing status.devices requires resource="resourceclaims/driver", verb="%s" permission: %s`, verbs, err)))
+			allErrs = append(allErrs, field.Forbidden(fieldPath, fmt.Sprintf("changing status.devices requires extra permission: %s", err)))
 		}
 
 	}

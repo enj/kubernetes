@@ -3158,6 +3158,7 @@ var _ = framework.SIGDescribe("node")(framework.WithLabel("DRA"), func() {
 			}
 			_, err = plugin.UpdateStatus(ctx, allocatedResourceClaim)
 			gomega.Expect(apierrors.IsInvalid(err)).To(gomega.BeTrueBecause("expected invalid error: %v", err))
+			gomega.Expect(apierrors.HasStatusCause(err, metav1.CauseTypeForbidden)).To(gomega.BeTrueBecause("expected forbidden error cause: %v", err))
 			gomega.Expect(err.Error()).To(gomega.ContainSubstring("cannot arbitrary-node:update"))
 		})
 

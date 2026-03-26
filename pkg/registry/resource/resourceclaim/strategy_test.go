@@ -378,9 +378,9 @@ var fieldImmutableError = "field is immutable"
 var metadataError = "a lowercase RFC 1123 subdomain must consist of lower case alphanumeric characters"
 var deviceRequestError = "exactly one of `exactly` or `firstAvailable` is required"
 var constraintError = "matchAttribute: Required value"
-var bindingUpdateError = `User "test-user" cannot update resource "resourceclaims/binding" in API group "resource.k8s.io" at the cluster scope: denied`
-var deviceAssociatedNodeUpdateError = `User "system:serviceaccount:kube-system:dra-driver" cannot associated-node:update resource "resourceclaims/driver" in API group "resource.k8s.io" in the namespace "default": denied`
-var deviceArbitraryNodeUpdateError = `User "test-user" cannot arbitrary-node:update resource "resourceclaims/driver" in API group "resource.k8s.io" in the namespace "default": denied`
+var bindingUpdateError = `status.allocation: Forbidden: changing status.allocation or status.reservedFor requires extra permission: resourceclaims.resource.k8s.io is forbidden: User "test-user" cannot update resource "resourceclaims/binding" in API group "resource.k8s.io" at the cluster scope: denied`
+var deviceAssociatedNodeUpdateError = `status.devices: Forbidden: changing status.devices requires extra permission: resourceclaims.resource.k8s.io "test-driver" is forbidden: User "system:serviceaccount:kube-system:dra-driver" cannot associated-node:update resource "resourceclaims/driver" in API group "resource.k8s.io" in the namespace "default": denied`
+var deviceArbitraryNodeUpdateError = `status.devices: Forbidden: changing status.devices requires extra permission: resourceclaims.resource.k8s.io "test-driver" is forbidden: User "test-user" cannot arbitrary-node:update resource "resourceclaims/driver" in API group "resource.k8s.io" in the namespace "default": denied`
 
 const (
 	req0        = "req-0"

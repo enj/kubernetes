@@ -33,6 +33,7 @@ import (
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	kubeapiservertesting "k8s.io/kubernetes/cmd/kube-apiserver/app/testing"
 	"k8s.io/kubernetes/pkg/features"
+	"k8s.io/kubernetes/test/integration/authutil"
 	"k8s.io/kubernetes/test/integration/framework"
 )
 
@@ -53,14 +54,14 @@ func TestResourceClaimGranularStatusAuthorization(t *testing.T) {
 		name             string
 		preAllocate      bool
 		impersonateExtra map[string][]string
-		setupRBAC        func(t *testing.T, adminClient clientset.Interface)
+		extraRules       []rbacv1.PolicyRule
 		updateClaim      func(c *resourceapi.ResourceClaim)
 		verifyErr        func(t *testing.T, err error)
 	}{
 		{
 			name:        "fails to update status.devices without driver permission",
 			preAllocate: true,
-			setupRBAC:   func(t *testing.T, adminClient clientset.Interface) {}, // No extra RBAC beyond front-door
+			// No extra RBAC beyond front-door
 			updateClaim: func(c *resourceapi.ResourceClaim) {
 				c.Status.Devices = []resourceapi.AllocatedDeviceStatus{
 					{Driver: "test-driver", Pool: "pool1", Device: "dev1"},
@@ -78,10 +79,11 @@ func TestResourceClaimGranularStatusAuthorization(t *testing.T) {
 			impersonateExtra: map[string][]string{
 				"authentication.kubernetes.io/node-name": {nodeName},
 			},
-			setupRBAC: func(t *testing.T, adminClient clientset.Interface) {
-				createRoleAndBinding(t, adminClient, ns, saName, "node-local-driver",
-					[]string{"resourceclaims/driver"}, []string{"associated-node:update"})
-			},
+			extraRules: []rbacv1.PolicyRule{{
+				APIGroups: []string{"resource.k8s.io"},
+				Resources: []string{"resourceclaims/driver"},
+				Verbs:     []string{"associated-node:update"},
+			}},
 			updateClaim: func(c *resourceapi.ResourceClaim) {
 				c.Status.Devices = []resourceapi.AllocatedDeviceStatus{
 					{Driver: "test-driver", Pool: "pool1", Device: "dev1"},
@@ -96,7 +98,6 @@ func TestResourceClaimGranularStatusAuthorization(t *testing.T) {
 		{
 			name:        "fails deallocation without binding permission",
 			preAllocate: true,
-			setupRBAC:   func(t *testing.T, adminClient clientset.Interface) {},
 			updateClaim: func(c *resourceapi.ResourceClaim) {
 				c.Status.Allocation = nil
 			},
@@ -109,10 +110,11 @@ func TestResourceClaimGranularStatusAuthorization(t *testing.T) {
 		{
 			name:        "succeeds to update status.reservedFor with binding permission",
 			preAllocate: true,
-			setupRBAC: func(t *testing.T, adminClient clientset.Interface) {
-				createClusterRoleAndBinding(t, adminClient, ns, saName, "cluster-binding-updater-reserved",
-					[]string{"resourceclaims/binding"}, []string{"update"})
-			},
+			extraRules: []rbacv1.PolicyRule{{
+				APIGroups: []string{"resource.k8s.io"},
+				Resources: []string{"resourceclaims/binding"},
+				Verbs:     []string{"update"},
+			}},
 			updateClaim: func(c *resourceapi.ResourceClaim) {
 				c.Status.ReservedFor = []resourceapi.ResourceClaimConsumerReference{
 					{Resource: "pods", Name: "pod-1", UID: "uid-1"},
@@ -127,11 +129,12 @@ func TestResourceClaimGranularStatusAuthorization(t *testing.T) {
 		{
 			name:        "fails when updating both allocation and devices but missing binding permission",
 			preAllocate: true,
-			setupRBAC: func(t *testing.T, adminClient clientset.Interface) {
+			extraRules: []rbacv1.PolicyRule{{
 				// Has driver permission, but LACKS binding permission
-				createRoleAndBinding(t, adminClient, ns, saName, "driver-only",
-					[]string{"resourceclaims/driver"}, []string{"arbitrary-node:update"})
-			},
+				APIGroups: []string{"resource.k8s.io"},
+				Resources: []string{"resourceclaims/driver"},
+				Verbs:     []string{"arbitrary-node:update"},
+			}},
 			updateClaim: func(c *resourceapi.ResourceClaim) {
 				// Re-allocate to a different node (requires binding)
 				if c.Status.Allocation != nil && c.Status.Allocation.NodeSelector != nil {
@@ -152,6 +155,8 @@ func TestResourceClaimGranularStatusAuthorization(t *testing.T) {
 
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+
 			server := kubeapiservertesting.StartTestServerOrDie(t, nil, []string{
 				"--runtime-config=api/all=true",
 				"--authorization-mode=RBAC",
@@ -161,12 +166,7 @@ func TestResourceClaimGranularStatusAuthorization(t *testing.T) {
 			adminClient := clientset.NewForConfigOrDie(server.ClientConfig)
 
 			// Setup Namespace and Service Account
-			_, err := adminClient.CoreV1().Namespaces().Create(context.TODO(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}, metav1.CreateOptions{})
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			_, err = adminClient.CoreV1().ServiceAccounts(ns).Create(context.TODO(), &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: saName}}, metav1.CreateOptions{})
+			_, err := adminClient.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}, metav1.CreateOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -186,14 +186,14 @@ func TestResourceClaimGranularStatusAuthorization(t *testing.T) {
 					},
 				},
 			}
-			_, err = adminClient.ResourceV1().ResourceClaims(ns).Create(context.TODO(), claim, metav1.CreateOptions{})
+			_, err = adminClient.ResourceV1().ResourceClaims(ns).Create(ctx, claim, metav1.CreateOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
 
 			// Admin Pre-allocation (if required by test)
 			if tc.preAllocate {
-				c, err := adminClient.ResourceV1().ResourceClaims(ns).Get(context.TODO(), claimName, metav1.GetOptions{})
+				c, err := adminClient.ResourceV1().ResourceClaims(ns).Get(ctx, claimName, metav1.GetOptions{})
 				if err != nil {
 					t.Fatalf("Failed to fetch claim for pre-allocation: %v", err)
 				}
@@ -209,16 +209,22 @@ func TestResourceClaimGranularStatusAuthorization(t *testing.T) {
 						},
 					},
 				}
-				_, err = adminClient.ResourceV1().ResourceClaims(ns).UpdateStatus(context.TODO(), c, metav1.UpdateOptions{})
+				_, err = adminClient.ResourceV1().ResourceClaims(ns).UpdateStatus(ctx, c, metav1.UpdateOptions{})
 				if err != nil {
 					t.Fatalf("Admin failed to set baseline allocation: %v", err)
 				}
 			}
 
-			// Setup RBAC
-			createRoleAndBinding(t, adminClient, ns, saName, "base-status-updater", []string{"resourceclaims/status"}, []string{"update", "patch"})
-			createRoleAndBinding(t, adminClient, ns, saName, "base-claim-reader", []string{"resourceclaims"}, []string{"get"})
-			tc.setupRBAC(t, adminClient)
+			// Setup RBAC using authutil helpers — these poll via SubjectAccessReview
+			// to avoid CI flakes from RBAC propagation delay.
+			baseRules := []rbacv1.PolicyRule{
+				{APIGroups: []string{"resource.k8s.io"}, Resources: []string{"resourceclaims/status"}, Verbs: []string{"update", "patch"}},
+				{APIGroups: []string{"resource.k8s.io"}, Resources: []string{"resourceclaims"}, Verbs: []string{"get"}},
+			}
+			allRules := append(baseRules, tc.extraRules...)
+			for _, rule := range allRules {
+				authutil.GrantServiceAccountAuthorization(t, ctx, adminClient, saName, ns, rule)
+			}
 
 			// Build the Impersonated Client
 			saConfig := rest.CopyConfig(server.ClientConfig)
@@ -229,67 +235,15 @@ func TestResourceClaimGranularStatusAuthorization(t *testing.T) {
 			saClient := clientset.NewForConfigOrDie(saConfig)
 
 			// Execute Test Update
-			cToUpdate, err := adminClient.ResourceV1().ResourceClaims(ns).Get(context.TODO(), claimName, metav1.GetOptions{})
+			cToUpdate, err := adminClient.ResourceV1().ResourceClaims(ns).Get(ctx, claimName, metav1.GetOptions{})
 			if err != nil {
 				t.Fatalf("Failed to fetch claim before test execution: %v", err)
 			}
 			tc.updateClaim(cToUpdate)
-			_, testErr := saClient.ResourceV1().ResourceClaims(ns).UpdateStatus(context.TODO(), cToUpdate, metav1.UpdateOptions{})
+			_, testErr := saClient.ResourceV1().ResourceClaims(ns).UpdateStatus(ctx, cToUpdate, metav1.UpdateOptions{})
 
-			// 7. Verify Results
+			// Verify Results
 			tc.verifyErr(t, testErr)
 		})
-	}
-}
-
-// createRoleAndBinding is a quick helper to assign namespaced RBAC rules
-func createRoleAndBinding(t *testing.T, client clientset.Interface, ns, saName, roleName string, resources, verbs []string) {
-	role := &rbacv1.Role{
-		ObjectMeta: metav1.ObjectMeta{Name: roleName},
-		Rules: []rbacv1.PolicyRule{{
-			APIGroups: []string{"resource.k8s.io"},
-			Resources: resources,
-			Verbs:     verbs,
-		}},
-	}
-	_, err := client.RbacV1().Roles(ns).Create(context.TODO(), role, metav1.CreateOptions{})
-	if err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatal(err)
-	}
-
-	binding := &rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: roleName + "-binding"},
-		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: saName, Namespace: ns}},
-		RoleRef:    rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "Role", Name: roleName},
-	}
-	_, err = client.RbacV1().RoleBindings(ns).Create(context.TODO(), binding, metav1.CreateOptions{})
-	if err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatal(err)
-	}
-}
-
-// createClusterRoleAndBinding is a helper for cluster-scoped synthetic checks (like binding)
-func createClusterRoleAndBinding(t *testing.T, client clientset.Interface, ns, saName, roleName string, resources, verbs []string) {
-	role := &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{Name: roleName},
-		Rules: []rbacv1.PolicyRule{{
-			APIGroups: []string{"resource.k8s.io"},
-			Resources: resources,
-			Verbs:     verbs,
-		}},
-	}
-	_, err := client.RbacV1().ClusterRoles().Create(context.TODO(), role, metav1.CreateOptions{})
-	if err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatal(err)
-	}
-
-	binding := &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: roleName + "-binding"},
-		Subjects:   []rbacv1.Subject{{Kind: "ServiceAccount", Name: saName, Namespace: ns}},
-		RoleRef:    rbacv1.RoleRef{APIGroup: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: roleName},
-	}
-	_, err = client.RbacV1().ClusterRoleBindings().Create(context.TODO(), binding, metav1.CreateOptions{})
-	if err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatal(err)
 	}
 }
