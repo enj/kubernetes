@@ -36,6 +36,7 @@ import (
 
 // TestGetModifiedDrivers contains the unit tests for the getModifiedDrivers function.
 func TestGetModifiedDrivers(t *testing.T) {
+	// Helper to create AllocatedDeviceStatus
 	devStatus := func(driver, pool, device string, network *resource.NetworkDeviceData) resource.AllocatedDeviceStatus {
 		return resource.AllocatedDeviceStatus{
 			Driver:      driver,
@@ -45,6 +46,7 @@ func TestGetModifiedDrivers(t *testing.T) {
 		}
 	}
 
+	// Helper to create ResourceClaimStatus
 	claimStatus := func(devices ...resource.AllocatedDeviceStatus) resource.ResourceClaimStatus {
 		return resource.ResourceClaimStatus{
 			Devices: devices,
@@ -70,7 +72,7 @@ func TestGetModifiedDrivers(t *testing.T) {
 		"add one device": {
 			newStatus: claimStatus(
 				devStatus("driver-a", "pool-1", "dev-1", nil),
-				devStatus("driver-b", "pool-1", "dev-2", nil),
+				devStatus("driver-b", "pool-1", "dev-2", nil), // New
 			),
 			oldStatus: claimStatus(
 				devStatus("driver-a", "pool-1", "dev-1", nil),
@@ -80,7 +82,7 @@ func TestGetModifiedDrivers(t *testing.T) {
 		"add device for existing driver": {
 			newStatus: claimStatus(
 				devStatus("driver-a", "pool-1", "dev-1", nil),
-				devStatus("driver-a", "pool-1", "dev-2", nil),
+				devStatus("driver-a", "pool-1", "dev-2", nil), // New
 			),
 			oldStatus: claimStatus(
 				devStatus("driver-a", "pool-1", "dev-1", nil),
@@ -93,28 +95,55 @@ func TestGetModifiedDrivers(t *testing.T) {
 			),
 			oldStatus: claimStatus(
 				devStatus("driver-a", "pool-1", "dev-1", nil),
-				devStatus("driver-b", "pool-1", "dev-2", nil),
+				devStatus("driver-b", "pool-1", "dev-2", nil), // Removed
 			),
 			expected: sets.New[string]("driver-b"),
 		},
+		"remove device for driver that still has other devices": {
+			newStatus: claimStatus(
+				devStatus("driver-a", "pool-1", "dev-1", nil),
+			),
+			oldStatus: claimStatus(
+				devStatus("driver-a", "pool-1", "dev-1", nil),
+				devStatus("driver-a", "pool-1", "dev-2", nil), // Removed
+			),
+			expected: sets.New[string]("driver-a"),
+		},
 		"modify one device": {
 			newStatus: claimStatus(
-				devStatus("driver-a", "pool-1", "dev-1", &resource.NetworkDeviceData{InterfaceName: "eth0", IPs: []string{"192.168.7.1/24"}}),
+				devStatus("driver-a", "pool-1", "dev-1", &resource.NetworkDeviceData{InterfaceName: "eth0", IPs: []string{"192.168.7.1/24"}}), // Modified
 			),
 			oldStatus: claimStatus(
 				devStatus("driver-a", "pool-1", "dev-1", &resource.NetworkDeviceData{InterfaceName: "eth0"}),
 			),
 			expected: sets.New[string]("driver-a"),
 		},
-		"complex change (add, remove, modify)": {
+		"modify device for driver, no change for other driver": {
 			newStatus: claimStatus(
-				devStatus("driver-a", "pool-1", "dev-1", &resource.NetworkDeviceData{InterfaceName: "eth0", IPs: []string{"192.168.7.1/24"}}),
+				devStatus("driver-a", "pool-1", "dev-1", &resource.NetworkDeviceData{InterfaceName: "eth0", IPs: []string{"192.168.7.1/24"}}), // Modified
 				devStatus("driver-b", "pool-1", "dev-2", nil),
-				devStatus("driver-c", "pool-1", "dev-3", nil),
 			),
 			oldStatus: claimStatus(
 				devStatus("driver-a", "pool-1", "dev-1", &resource.NetworkDeviceData{InterfaceName: "eth0"}),
 				devStatus("driver-b", "pool-1", "dev-2", nil),
+			),
+			expected: sets.New[string]("driver-a"),
+		},
+		"complex change (add, remove, modify)": {
+			newStatus: claimStatus(
+				// driver-a: dev-1 modified
+				devStatus("driver-a", "pool-1", "dev-1", &resource.NetworkDeviceData{InterfaceName: "eth0", IPs: []string{"192.168.7.1/24"}}), // Modified
+				// driver-b: dev-2 unchanged
+				devStatus("driver-b", "pool-1", "dev-2", nil),
+				// driver-c: dev-3 added
+				devStatus("driver-c", "pool-1", "dev-3", nil),
+			),
+			oldStatus: claimStatus(
+				// driver-a: dev-1 old state
+				devStatus("driver-a", "pool-1", "dev-1", &resource.NetworkDeviceData{InterfaceName: "eth0"}),
+				// driver-b: dev-2 unchanged
+				devStatus("driver-b", "pool-1", "dev-2", nil),
+				// driver-d: dev-4 removed
 				devStatus("driver-d", "pool-1", "dev-4", nil),
 			),
 			expected: sets.New[string]("driver-a", "driver-c", "driver-d"),
@@ -125,14 +154,36 @@ func TestGetModifiedDrivers(t *testing.T) {
 			expected:  sets.Set[string]{},
 		},
 		"empty to one device": {
-			newStatus: claimStatus(devStatus("driver-a", "pool-1", "dev-1", nil)),
+			newStatus: claimStatus(
+				devStatus("driver-a", "pool-1", "dev-1", nil),
+			),
 			oldStatus: claimStatus(),
 			expected:  sets.New[string]("driver-a"),
 		},
 		"one device to empty": {
 			newStatus: claimStatus(),
-			oldStatus: claimStatus(devStatus("driver-a", "pool-1", "dev-1", nil)),
-			expected:  sets.New[string]("driver-a"),
+			oldStatus: claimStatus(
+				devStatus("driver-a", "pool-1", "dev-1", nil),
+			),
+			expected: sets.New[string]("driver-a"),
+		},
+		"replace device with same key but different content": {
+			newStatus: claimStatus(
+				devStatus("driver-a", "pool-1", "dev-1", &resource.NetworkDeviceData{InterfaceName: "eth0", IPs: []string{"192.168.7.1/24"}}),
+			),
+			oldStatus: claimStatus(
+				devStatus("driver-a", "pool-1", "dev-1", &resource.NetworkDeviceData{InterfaceName: "eth0"}),
+			),
+			expected: sets.New[string]("driver-a"),
+		},
+		"replace device with different key for same driver": {
+			newStatus: claimStatus(
+				devStatus("driver-a", "pool-1", "dev-NEW", nil),
+			),
+			oldStatus: claimStatus(
+				devStatus("driver-a", "pool-1", "dev-OLD", nil),
+			),
+			expected: sets.New[string]("driver-a"),
 		},
 	}
 
@@ -140,7 +191,7 @@ func TestGetModifiedDrivers(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			result := getModifiedDrivers(tc.newStatus, tc.oldStatus)
 			if !reflect.DeepEqual(result, tc.expected) {
-				t.Errorf("expected %v, got %v", tc.expected, result)
+				t.Errorf("Expected driver set %v, but got %v", tc.expected, result)
 			}
 		})
 	}
@@ -184,7 +235,8 @@ func (f *fakeAuthorizer) Authorize(ctx context.Context, a authorizer.Attributes)
 	return authorizer.DecisionDeny, "no rule matched", f.err
 }
 
-// withRequestContext builds a context simulating what GetAuthorizerAttributes expects.
+// withRequestContext builds a context with user info and request info set,
+// simulating what GetAuthorizerAttributes expects.
 func withRequestContext(ctx context.Context, u user.Info, verb string) context.Context {
 	ctx = genericapirequest.WithUser(ctx, u)
 	ctx = genericapirequest.WithRequestInfo(ctx, &genericapirequest.RequestInfo{
@@ -197,18 +249,23 @@ func withRequestContext(ctx context.Context, u user.Info, verb string) context.C
 		Namespace:         "default",
 		Name:              "test-claim",
 	})
+	// GetAuthorizerAttributes also needs an http.Request in context for audit, but
+	// the function doesn't fail without it — we simulate by using a dummy request.
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPut, "/", nil)
-	return req.Context()
+	ctx = req.Context()
+	return ctx
 }
 
 func singleNodeAllocation(nodeName string) *resource.AllocationResult {
 	return &resource.AllocationResult{
 		NodeSelector: &core.NodeSelector{
-			NodeSelectorTerms: []core.NodeSelectorTerm{{
-				MatchFields: []core.NodeSelectorRequirement{
-					{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{nodeName}},
+			NodeSelectorTerms: []core.NodeSelectorTerm{
+				{
+					MatchFields: []core.NodeSelectorRequirement{
+						{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{nodeName}},
+					},
 				},
-			}},
+			},
 		},
 	}
 }
@@ -280,7 +337,7 @@ func TestAuthorizedForBinding(t *testing.T) {
 			expectCalls: []authzCall{bindingCall},
 		},
 		{
-			name: "allocation changed, denied",
+			name: "allocation changed, not authorized",
 			newStatus: resource.ResourceClaimStatus{
 				Allocation: singleNodeAllocation("node-1"),
 			},
@@ -301,7 +358,7 @@ func TestAuthorizedForBinding(t *testing.T) {
 			expectCalls: []authzCall{bindingCall},
 		},
 		{
-			name: "reservedFor changed, denied",
+			name: "reservedFor changed, not authorized",
 			newStatus: resource.ResourceClaimStatus{
 				ReservedFor: []resource.ResourceClaimConsumerReference{{Resource: "pods", Name: "pod-1", UID: "uid-1"}},
 			},
@@ -376,17 +433,21 @@ func TestAuthorizedForDeviceStatus(t *testing.T) {
 		{
 			name: "no drivers modified",
 			newStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "device"}},
+				Devices: []resource.AllocatedDeviceStatus{
+					{Driver: driverName, Pool: "pool", Device: "device"},
+				},
 			},
 			oldStatus: resource.ResourceClaimStatus{
-				Devices: []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "device"}},
+				Devices: []resource.AllocatedDeviceStatus{
+					{Driver: driverName, Pool: "pool", Device: "device"},
+				},
 			},
 			user:  &user.DefaultInfo{Name: saName},
 			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{}},
 			verb:  "update",
 		},
 		{
-			name: "associated-node: allowed by associated-node verb",
+			name: "associated-node: SA on same node, allowed by associated-node verb",
 			newStatus: resource.ResourceClaimStatus{
 				Allocation: singleNodeAllocation(nodeName),
 				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
@@ -403,7 +464,7 @@ func TestAuthorizedForDeviceStatus(t *testing.T) {
 			expectCalls: []authzCall{associatedCall("update", driverName)},
 		},
 		{
-			name: "associated-node: denied by associated-node, allowed by arbitrary-node fallback",
+			name: "associated-node: SA on same node, allowed by arbitrary-node fallback",
 			newStatus: resource.ResourceClaimStatus{
 				Allocation: singleNodeAllocation(nodeName),
 				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
@@ -421,7 +482,7 @@ func TestAuthorizedForDeviceStatus(t *testing.T) {
 			expectCalls: []authzCall{associatedCall("update", driverName), arbitraryCall("update", driverName)},
 		},
 		{
-			name: "associated-node: neither verb allowed",
+			name: "associated-node: SA on same node, neither verb allowed",
 			newStatus: resource.ResourceClaimStatus{
 				Allocation: singleNodeAllocation(nodeName),
 				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
@@ -430,15 +491,15 @@ func TestAuthorizedForDeviceStatus(t *testing.T) {
 				Allocation: singleNodeAllocation(nodeName),
 				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-old"}},
 			},
-			user:  &user.DefaultInfo{Name: saName, Extra: map[string][]string{serviceaccount.NodeNameKey: {nodeName}}},
-			authz: &fakeAuthorizer{rules: map[string]authorizer.Decision{}},
-			verb:  "update",
+			user:       &user.DefaultInfo{Name: saName, Extra: map[string][]string{serviceaccount.NodeNameKey: {nodeName}}},
+			authz:      &fakeAuthorizer{rules: map[string]authorizer.Decision{}},
+			verb:       "update",
+			expectErrs: []string{"changing status.devices requires extra permission"},
 			// Both verbs tried, both denied
-			expectErrs:  []string{"changing status.devices requires extra permission"},
 			expectCalls: []authzCall{associatedCall("update", driverName), arbitraryCall("update", driverName)},
 		},
 		{
-			name: "SA on different node: only arbitrary-node checked, allowed",
+			name: "SA on different node, only arbitrary-node checked",
 			newStatus: resource.ResourceClaimStatus{
 				Allocation: singleNodeAllocation("other-node"),
 				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
@@ -454,7 +515,7 @@ func TestAuthorizedForDeviceStatus(t *testing.T) {
 			expectCalls: []authzCall{arbitraryCall("update", driverName)},
 		},
 		{
-			name: "SA on different node: associated-node not checked, denied",
+			name: "SA on different node, associated-node not checked, denied",
 			newStatus: resource.ResourceClaimStatus{
 				Allocation: singleNodeAllocation("other-node"),
 				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
@@ -472,7 +533,7 @@ func TestAuthorizedForDeviceStatus(t *testing.T) {
 			expectCalls: []authzCall{arbitraryCall("update", driverName)},
 		},
 		{
-			name: "controller (no node association): allowed by arbitrary-node",
+			name: "no node association (controller), only arbitrary-node checked, allowed",
 			newStatus: resource.ResourceClaimStatus{
 				Allocation: singleNodeAllocation(nodeName),
 				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
@@ -488,7 +549,7 @@ func TestAuthorizedForDeviceStatus(t *testing.T) {
 			expectCalls: []authzCall{arbitraryCall("update", driverName)},
 		},
 		{
-			name: "controller (no node association): denied",
+			name: "no node association (controller), denied",
 			newStatus: resource.ResourceClaimStatus{
 				Allocation: singleNodeAllocation(nodeName),
 				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
@@ -503,15 +564,15 @@ func TestAuthorizedForDeviceStatus(t *testing.T) {
 			expectCalls: []authzCall{arbitraryCall("update", driverName)},
 		},
 		{
-			name: "multi-node claim (no single node in selector): only arbitrary-node",
+			name: "multi-node claim (no single node in selector), only arbitrary-node",
 			newStatus: resource.ResourceClaimStatus{
 				Allocation: &resource.AllocationResult{
 					NodeSelector: &core.NodeSelector{
-						NodeSelectorTerms: []core.NodeSelectorTerm{{
-							MatchFields: []core.NodeSelectorRequirement{
+						NodeSelectorTerms: []core.NodeSelectorTerm{
+							{MatchFields: []core.NodeSelectorRequirement{
 								{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"node-a", "node-b"}},
-							},
-						}},
+							}},
+						},
 					},
 				},
 				Devices: []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
@@ -527,7 +588,7 @@ func TestAuthorizedForDeviceStatus(t *testing.T) {
 			expectCalls: []authzCall{arbitraryCall("update", driverName)},
 		},
 		{
-			name: "patch verb propagated to authz check",
+			name: "patch verb propagated",
 			newStatus: resource.ResourceClaimStatus{
 				Allocation: singleNodeAllocation(nodeName),
 				Devices:    []resource.AllocatedDeviceStatus{{Driver: driverName, Pool: "pool", Device: "dev-new"}},
@@ -630,56 +691,100 @@ func TestNodeNameFromAllocation(t *testing.T) {
 		allocation *resource.AllocationResult
 		expected   string
 	}{
-		{name: "nil allocation", allocation: nil, expected: ""},
-		{name: "nil node selector", allocation: &resource.AllocationResult{}, expected: ""},
-		{name: "exact single-node match", allocation: singleNodeAllocation("worker-1"), expected: "worker-1"},
+		{
+			name:       "nil allocation",
+			allocation: nil,
+			expected:   "",
+		},
+		{
+			name:       "nil node selector",
+			allocation: &resource.AllocationResult{},
+			expected:   "",
+		},
+		{
+			name:       "exact single-node match",
+			allocation: singleNodeAllocation("worker-1"),
+			expected:   "worker-1",
+		},
 		{
 			name: "multiple values",
 			allocation: &resource.AllocationResult{
-				NodeSelector: &core.NodeSelector{NodeSelectorTerms: []core.NodeSelectorTerm{{
-					MatchFields: []core.NodeSelectorRequirement{
-						{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"node-a", "node-b"}},
+				NodeSelector: &core.NodeSelector{
+					NodeSelectorTerms: []core.NodeSelectorTerm{
+						{MatchFields: []core.NodeSelectorRequirement{
+							{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"node-a", "node-b"}},
+						}},
 					},
-				}}},
+				},
 			},
 			expected: "",
 		},
 		{
 			name: "match expressions instead of match fields",
 			allocation: &resource.AllocationResult{
-				NodeSelector: &core.NodeSelector{NodeSelectorTerms: []core.NodeSelectorTerm{{
-					MatchExpressions: []core.NodeSelectorRequirement{
-						{Key: "kubernetes.io/hostname", Operator: core.NodeSelectorOpIn, Values: []string{"node-1"}},
+				NodeSelector: &core.NodeSelector{
+					NodeSelectorTerms: []core.NodeSelectorTerm{
+						{MatchExpressions: []core.NodeSelectorRequirement{
+							{Key: "kubernetes.io/hostname", Operator: core.NodeSelectorOpIn, Values: []string{"node-1"}},
+						}},
 					},
-				}}},
+				},
 			},
 			expected: "",
 		},
 		{
 			name: "multiple terms",
 			allocation: &resource.AllocationResult{
-				NodeSelector: &core.NodeSelector{NodeSelectorTerms: []core.NodeSelectorTerm{
-					{MatchFields: []core.NodeSelectorRequirement{{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"node-1"}}}},
-					{MatchFields: []core.NodeSelectorRequirement{{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"node-2"}}}},
-				}},
+				NodeSelector: &core.NodeSelector{
+					NodeSelectorTerms: []core.NodeSelectorTerm{
+						{MatchFields: []core.NodeSelectorRequirement{
+							{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"node-1"}},
+						}},
+						{MatchFields: []core.NodeSelectorRequirement{
+							{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"node-2"}},
+						}},
+					},
+				},
 			},
 			expected: "",
 		},
 		{
 			name: "wrong key",
 			allocation: &resource.AllocationResult{
-				NodeSelector: &core.NodeSelector{NodeSelectorTerms: []core.NodeSelectorTerm{{
-					MatchFields: []core.NodeSelectorRequirement{{Key: "metadata.namespace", Operator: core.NodeSelectorOpIn, Values: []string{"node-1"}}},
-				}}},
+				NodeSelector: &core.NodeSelector{
+					NodeSelectorTerms: []core.NodeSelectorTerm{
+						{MatchFields: []core.NodeSelectorRequirement{
+							{Key: "metadata.namespace", Operator: core.NodeSelectorOpIn, Values: []string{"node-1"}},
+						}},
+					},
+				},
 			},
 			expected: "",
 		},
 		{
 			name: "wrong operator",
 			allocation: &resource.AllocationResult{
-				NodeSelector: &core.NodeSelector{NodeSelectorTerms: []core.NodeSelectorTerm{{
-					MatchFields: []core.NodeSelectorRequirement{{Key: "metadata.name", Operator: core.NodeSelectorOpNotIn, Values: []string{"node-1"}}},
-				}}},
+				NodeSelector: &core.NodeSelector{
+					NodeSelectorTerms: []core.NodeSelectorTerm{
+						{MatchFields: []core.NodeSelectorRequirement{
+							{Key: "metadata.name", Operator: core.NodeSelectorOpNotIn, Values: []string{"node-1"}},
+						}},
+					},
+				},
+			},
+			expected: "",
+		},
+		{
+			name: "extra match fields",
+			allocation: &resource.AllocationResult{
+				NodeSelector: &core.NodeSelector{
+					NodeSelectorTerms: []core.NodeSelectorTerm{
+						{MatchFields: []core.NodeSelectorRequirement{
+							{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"node-1"}},
+							{Key: "metadata.name", Operator: core.NodeSelectorOpIn, Values: []string{"node-1"}},
+						}},
+					},
+				},
 			},
 			expected: "",
 		},
@@ -697,8 +802,10 @@ func TestNodeNameFromAllocation(t *testing.T) {
 
 func TestSAAssociatedWithAllocatedNode(t *testing.T) {
 	validSA := &user.DefaultInfo{
-		Name:  "system:serviceaccount:default:dra-driver-sa",
-		Extra: map[string][]string{serviceaccount.NodeNameKey: {"worker-node-1"}},
+		Name: "system:serviceaccount:default:dra-driver-sa",
+		Extra: map[string][]string{
+			serviceaccount.NodeNameKey: {"worker-node-1"},
+		},
 	}
 
 	testCases := []struct {
@@ -707,14 +814,31 @@ func TestSAAssociatedWithAllocatedNode(t *testing.T) {
 		allocatedNodeName string
 		expected          bool
 	}{
-		{name: "SA on matching node", userInfo: validSA, allocatedNodeName: "worker-node-1", expected: true},
-		{name: "SA on different node", userInfo: validSA, allocatedNodeName: "worker-node-2", expected: false},
-		{name: "empty allocated node name", userInfo: validSA, allocatedNodeName: "", expected: false},
+		{
+			name:              "SA on matching node",
+			userInfo:          validSA,
+			allocatedNodeName: "worker-node-1",
+			expected:          true,
+		},
+		{
+			name:              "SA on different node",
+			userInfo:          validSA,
+			allocatedNodeName: "worker-node-2",
+			expected:          false,
+		},
+		{
+			name:              "empty allocated node name",
+			userInfo:          validSA,
+			allocatedNodeName: "",
+			expected:          false,
+		},
 		{
 			name: "not a service account (kubelet identity)",
 			userInfo: &user.DefaultInfo{
-				Name:  "system:node:worker-node-1",
-				Extra: map[string][]string{serviceaccount.NodeNameKey: {"worker-node-1"}},
+				Name: "system:node:worker-node-1",
+				Extra: map[string][]string{
+					serviceaccount.NodeNameKey: {"worker-node-1"},
+				},
 			},
 			allocatedNodeName: "worker-node-1",
 			expected:          false,
@@ -722,23 +846,30 @@ func TestSAAssociatedWithAllocatedNode(t *testing.T) {
 		{
 			name: "not a service account (regular user)",
 			userInfo: &user.DefaultInfo{
-				Name:  "jane-doe",
-				Extra: map[string][]string{serviceaccount.NodeNameKey: {"worker-node-1"}},
+				Name: "jane-doe",
+				Extra: map[string][]string{
+					serviceaccount.NodeNameKey: {"worker-node-1"},
+				},
 			},
 			allocatedNodeName: "worker-node-1",
 			expected:          false,
 		},
 		{
-			name:              "service account missing node name extra attribute",
-			userInfo:          &user.DefaultInfo{Name: "system:serviceaccount:default:dra-driver-sa", Extra: map[string][]string{}},
+			name: "service account missing node name extra attribute",
+			userInfo: &user.DefaultInfo{
+				Name:  "system:serviceaccount:default:dra-driver-sa",
+				Extra: map[string][]string{},
+			},
 			allocatedNodeName: "worker-node-1",
 			expected:          false,
 		},
 		{
 			name: "service account with multiple node names in extra attribute",
 			userInfo: &user.DefaultInfo{
-				Name:  "system:serviceaccount:default:dra-driver-sa",
-				Extra: map[string][]string{serviceaccount.NodeNameKey: {"worker-node-1", "worker-node-2"}},
+				Name: "system:serviceaccount:default:dra-driver-sa",
+				Extra: map[string][]string{
+					serviceaccount.NodeNameKey: {"worker-node-1", "worker-node-2"},
+				},
 			},
 			allocatedNodeName: "worker-node-1",
 			expected:          false,
@@ -746,8 +877,10 @@ func TestSAAssociatedWithAllocatedNode(t *testing.T) {
 		{
 			name: "service account with invalid node name format",
 			userInfo: &user.DefaultInfo{
-				Name:  "system:serviceaccount:default:dra-driver-sa",
-				Extra: map[string][]string{serviceaccount.NodeNameKey: {"invalid_node_name!"}},
+				Name: "system:serviceaccount:default:dra-driver-sa",
+				Extra: map[string][]string{
+					serviceaccount.NodeNameKey: {"invalid_node_name!"},
+				},
 			},
 			allocatedNodeName: "invalid_node_name!",
 			expected:          false,
@@ -758,7 +891,7 @@ func TestSAAssociatedWithAllocatedNode(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			result := saAssociatedWithAllocatedNode(tc.userInfo, tc.allocatedNodeName)
 			if result != tc.expected {
-				t.Errorf("expected %v, got %v", tc.expected, result)
+				t.Errorf("Expected %v, got %v", tc.expected, result)
 			}
 		})
 	}
