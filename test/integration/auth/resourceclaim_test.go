@@ -18,10 +18,10 @@ package auth
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 
+	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	resourceapi "k8s.io/api/resource/v1"
@@ -48,15 +48,18 @@ func TestResourceClaimGranularStatusAuthorization(t *testing.T) {
 		saName    = "dra-plugin-sa"
 		claimName = "test-claim"
 		nodeName  = "worker-1"
+		podName   = "dra-plugin-pod"
 	)
 
 	testcases := []struct {
-		name             string
-		preAllocate      bool
-		impersonateExtra map[string][]string
-		extraRules       []rbacv1.PolicyRule
-		updateClaim      func(c *resourceapi.ResourceClaim)
-		verifyErr        func(t *testing.T, err error)
+		name        string
+		preAllocate bool
+		// bindToNode causes the SA token to be bound to a pod scheduled on nodeName,
+		// which populates the authentication.kubernetes.io/node-name extra.
+		bindToNode  bool
+		extraRules  []rbacv1.PolicyRule
+		updateClaim func(c *resourceapi.ResourceClaim)
+		verifyErr   func(t *testing.T, err error)
 	}{
 		{
 			name:        "fails to update status.devices without driver permission",
@@ -76,9 +79,7 @@ func TestResourceClaimGranularStatusAuthorization(t *testing.T) {
 		{
 			name:        "succeeds with associated-node permission for same-node SA",
 			preAllocate: true,
-			impersonateExtra: map[string][]string{
-				"authentication.kubernetes.io/node-name": {nodeName},
-			},
+			bindToNode:  true,
 			extraRules: []rbacv1.PolicyRule{{
 				APIGroups: []string{"resource.k8s.io"},
 				Resources: []string{"resourceclaims/driver"},
@@ -171,6 +172,11 @@ func TestResourceClaimGranularStatusAuthorization(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			_, err = adminClient.CoreV1().ServiceAccounts(ns).Create(ctx, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: saName}}, metav1.CreateOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+
 			// Create the base ResourceClaim
 			claim := &resourceapi.ResourceClaim{
 				ObjectMeta: metav1.ObjectMeta{Name: claimName},
@@ -226,12 +232,48 @@ func TestResourceClaimGranularStatusAuthorization(t *testing.T) {
 				authutil.GrantServiceAccountAuthorization(t, ctx, adminClient, saName, ns, rule)
 			}
 
-			// Build the Impersonated Client
-			saConfig := rest.CopyConfig(server.ClientConfig)
-			saConfig.Impersonate = rest.ImpersonationConfig{
-				UserName: fmt.Sprintf("system:serviceaccount:%s:%s", ns, saName),
-				Extra:    tc.impersonateExtra,
+			// Build an authenticated client for the service account using a real token.
+			tokenReq := &authenticationv1.TokenRequest{
+				Spec: authenticationv1.TokenRequestSpec{},
 			}
+			if tc.bindToNode {
+				// Create a Node and a Pod scheduled to it so the token gets
+				// the authentication.kubernetes.io/node-name extra.
+				_, err = adminClient.CoreV1().Nodes().Create(ctx, &corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{Name: nodeName},
+				}, metav1.CreateOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				pod := &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{Name: podName, Namespace: ns},
+					Spec: corev1.PodSpec{
+						ServiceAccountName: saName,
+						NodeName:           nodeName,
+						Containers:         []corev1.Container{{Name: "c", Image: "nginx"}},
+					},
+				}
+				pod, err = adminClient.CoreV1().Pods(ns).Create(ctx, pod, metav1.CreateOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				tokenReq.Spec.BoundObjectRef = &authenticationv1.BoundObjectReference{
+					Kind:       "Pod",
+					APIVersion: "v1",
+					Name:       pod.Name,
+					UID:        pod.UID,
+				}
+			}
+			tokenReq, err = adminClient.CoreV1().ServiceAccounts(ns).CreateToken(ctx, saName, tokenReq, metav1.CreateOptions{})
+			if err != nil {
+				t.Fatalf("Failed to create SA token: %v", err)
+			}
+			saConfig := rest.CopyConfig(server.ClientConfig)
+			saConfig.BearerToken = tokenReq.Status.Token
+			saConfig.TLSClientConfig.CertData = nil
+			saConfig.TLSClientConfig.KeyData = nil
+			saConfig.TLSClientConfig.CertFile = ""
+			saConfig.TLSClientConfig.KeyFile = ""
 			saClient := clientset.NewForConfigOrDie(saConfig)
 
 			// Execute Test Update
@@ -242,7 +284,7 @@ func TestResourceClaimGranularStatusAuthorization(t *testing.T) {
 			tc.updateClaim(cToUpdate)
 			_, testErr := saClient.ResourceV1().ResourceClaims(ns).UpdateStatus(ctx, cToUpdate, metav1.UpdateOptions{})
 
-			// Verify Results
+			// 7. Verify Results
 			tc.verifyErr(t, testErr)
 		})
 	}
