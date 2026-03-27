@@ -268,12 +268,8 @@ func TestResourceClaimGranularStatusAuthorization(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create SA token: %v", err)
 			}
-			saConfig := rest.CopyConfig(server.ClientConfig)
+			saConfig := rest.AnonymousClientConfig(server.ClientConfig)
 			saConfig.BearerToken = tokenReq.Status.Token
-			saConfig.TLSClientConfig.CertData = nil
-			saConfig.TLSClientConfig.KeyData = nil
-			saConfig.TLSClientConfig.CertFile = ""
-			saConfig.TLSClientConfig.KeyFile = ""
 			saClient := clientset.NewForConfigOrDie(saConfig)
 
 			// Execute Test Update
