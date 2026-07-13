@@ -84,16 +84,16 @@ func TestUserInfo(t *testing.T) {
 				Name:   "system:serviceaccount:ns:name",
 				Groups: []string{"system:serviceaccounts", "system:serviceaccounts:ns"},
 				Extra: map[string][]string{
-					ValidatingWebhookConfigurationNameKey: {"my-vwc"},
-					ValidatingWebhookConfigurationUIDKey:  {"vwc-uid"},
+					ValidatingWebhookConfigurationNameKey:  {"my-vwc"},
+					ValidatingWebhookConfigurationUIDKey:   {"vwc-uid"},
 					AttestationAdmissionReviewAPIGroupsKey: {"apps"},
 				},
 			},
 		},
 		"extracts mutating webhook configuration name/uid and attestations": {
 			info: ServiceAccountInfo{
-				Name:                            "name",
-				Namespace:                       "ns",
+				Name:                             "name",
+				Namespace:                        "ns",
 				MutatingWebhookConfigurationName: "my-mwc",
 				MutatingWebhookConfigurationUID:  "mwc-uid",
 				Attestations: map[string]authentication.AttestationValue{
@@ -104,8 +104,8 @@ func TestUserInfo(t *testing.T) {
 				Name:   "system:serviceaccount:ns:name",
 				Groups: []string{"system:serviceaccounts", "system:serviceaccounts:ns"},
 				Extra: map[string][]string{
-					MutatingWebhookConfigurationNameKey: {"my-mwc"},
-					MutatingWebhookConfigurationUIDKey:  {"mwc-uid"},
+					MutatingWebhookConfigurationNameKey:    {"my-mwc"},
+					MutatingWebhookConfigurationUIDKey:     {"mwc-uid"},
 					AttestationAdmissionReviewAPIGroupsKey: {"apps"},
 				},
 			},

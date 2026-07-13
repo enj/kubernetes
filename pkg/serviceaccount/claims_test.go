@@ -499,14 +499,14 @@ func TestValidatePrivateClaims(t *testing.T) {
 			expectErr: "service account token has been invalidated",
 		},
 		{
-			name:   "different uid validating webhook config",
-			getter: fakeGetter{serviceAccount: serviceAccount, validatingWebhookConfiguration: &admissionregistrationv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "vwc", UID: "vwc-uid-new"}}},
+			name:      "different uid validating webhook config",
+			getter:    fakeGetter{serviceAccount: serviceAccount, validatingWebhookConfiguration: &admissionregistrationv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "vwc", UID: "vwc-uid-new"}}},
 			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, ValidatingWebhookConfiguration: &ref{Name: "vwc", UID: "vwc-uid-old"}, Namespace: "ns"}},
 			expectErr: "validating UID (vwc-uid-new) does not match service account validating ref claim (vwc-uid-old)",
 		},
 		{
-			name:   "different uid mutating webhook config",
-			getter: fakeGetter{serviceAccount: serviceAccount, mutatingWebhookConfiguration: &admissionregistrationv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "mwc", UID: "mwc-uid-new"}}},
+			name:      "different uid mutating webhook config",
+			getter:    fakeGetter{serviceAccount: serviceAccount, mutatingWebhookConfiguration: &admissionregistrationv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "mwc", UID: "mwc-uid-new"}}},
 			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, MutatingWebhookConfiguration: &ref{Name: "mwc", UID: "mwc-uid-old"}, Namespace: "ns"}},
 			expectErr: "mutating UID (mwc-uid-new) does not match service account mutating ref claim (mwc-uid-old)",
 		},
