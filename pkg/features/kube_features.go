@@ -968,6 +968,14 @@ const (
 	// service account tokens bound to Pod objects.
 	ServiceAccountTokenPodNodeInfo featuregate.Feature = "ServiceAccountTokenPodNodeInfo"
 
+	// owner: @pmengelbert
+	// kep: http://kep.k8s.io/6060
+	// alpha: v1.37
+	//
+	// Controls whether the apiserver supports dispensing tokens for authenticating
+	// the Kubernetes API Server and Aggregated API Servers to webhooks.
+	APIServerWebhookAuthenticationToken featuregate.Feature = "APIServerWebhookAuthenticationToken"
+
 	// owner: @jpbetz
 	//
 	// When enabled, the apiserver ignores changes to status fields in writes to the ServiceCIDR root resource.
@@ -1870,6 +1878,10 @@ var defaultVersionedKubernetesFeatureGates = map[featuregate.Feature]featuregate
 		{Version: version.MustParse("1.32"), Default: true, PreRelease: featuregate.GA, LockToDefault: true},
 	},
 
+	APIServerWebhookAuthenticationToken: {
+		{Version: version.MustParse("1.37"), Default: false, PreRelease: featuregate.Alpha},
+	},
+
 	ServiceCIDRStatusFieldWiping: {
 		{Version: version.MustParse("1.0"), Default: false, PreRelease: featuregate.GA},
 		{Version: version.MustParse("1.36"), Default: true, PreRelease: featuregate.Deprecated},
@@ -2505,6 +2517,8 @@ var defaultKubernetesFeatureGateDependencies = map[featuregate.Feature][]feature
 	ServiceAccountTokenNodeBindingValidation: {},
 
 	ServiceAccountTokenPodNodeInfo: {},
+
+	APIServerWebhookAuthenticationToken: {},
 
 	ServiceCIDRStatusFieldWiping: {},
 
