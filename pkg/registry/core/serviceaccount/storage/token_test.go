@@ -26,6 +26,7 @@ import (
 
 	"gopkg.in/go-jose/go-jose.v2/jwt"
 
+	admissionregistration "k8s.io/api/admissionregistration/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -341,3 +342,135 @@ func (r *dummyRecorder) getWarning() string {
 }
 
 var _ warning.Recorder = &dummyRecorder{}
+
+func TestValidateWebhookAudience(t *testing.T) {
+	clientConfigs := []admissionregistration.WebhookClientConfig{
+		{URL: ptr("https://validate.example.com")},
+		{Service: &admissionregistration.ServiceReference{
+			Name:      "webhook-svc",
+			Namespace: "webhook-ns",
+			Port:      ptr(int32(8443)),
+			Path:      ptr("/validate"),
+		}},
+		{Service: &admissionregistration.ServiceReference{
+			Name:      "default-port-svc",
+			Namespace: "default-ns",
+		}},
+	}
+
+	cases := []struct {
+		name        string
+		audience    string
+		expectErr   bool
+		errContains string
+	}{
+		{
+			name:     "URL match",
+			audience: "https://validate.example.com",
+		},
+		{
+			name:     "service match with port and path",
+			audience: "https://webhook-svc.webhook-ns.svc:8443/validate",
+		},
+		{
+			name:     "service match with default port",
+			audience: "https://default-port-svc.default-ns.svc:443",
+		},
+		{
+			name:        "no match",
+			audience:    "https://unknown.example.com",
+			expectErr:   true,
+			errContains: `audience "https://unknown.example.com" does not match any webhook client config`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateWebhookAudience(tc.audience, clientConfigs)
+			if tc.expectErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q but got nil", tc.errContains)
+				}
+				if !strings.Contains(err.Error(), tc.errContains) {
+					t.Fatalf("expected error containing %q but got: %v", tc.errContains, err)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateAttestationAPIGroup(t *testing.T) {
+	rules := []admissionregistration.RuleWithOperations{
+		{Rule: admissionregistration.Rule{APIGroups: []string{"apps"}, APIVersions: []string{"v1"}, Resources: []string{"deployments"}}},
+		{Rule: admissionregistration.Rule{APIGroups: []string{"batch"}, APIVersions: []string{"v1"}, Resources: []string{"jobs"}}},
+	}
+
+	wildcardRules := []admissionregistration.RuleWithOperations{
+		{Rule: admissionregistration.Rule{APIGroups: []string{"*"}, APIVersions: []string{"v1"}, Resources: []string{"*"}}},
+	}
+
+	cases := []struct {
+		name        string
+		group       string
+		rules       []admissionregistration.RuleWithOperations
+		expectErr   bool
+		errContains string
+	}{
+		{
+			name:  "exact match apps",
+			group: "apps",
+			rules: rules,
+		},
+		{
+			name:  "exact match batch",
+			group: "batch",
+			rules: rules,
+		},
+		{
+			name:  "wildcard attestation skips check",
+			group: "*",
+			rules: rules,
+		},
+		{
+			name:  "wildcard rule matches any group",
+			group: "networking.k8s.io",
+			rules: wildcardRules,
+		},
+		{
+			name:        "no match",
+			group:       "networking.k8s.io",
+			rules:       rules,
+			expectErr:   true,
+			errContains: `attested API group "networking.k8s.io" does not match any rule`,
+		},
+		{
+			name:        "empty rules",
+			group:       "apps",
+			rules:       nil,
+			expectErr:   true,
+			errContains: `attested API group "apps" does not match any rule`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateAttestationAPIGroup(tc.group, tc.rules)
+			if tc.expectErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q but got nil", tc.errContains)
+				}
+				if !strings.Contains(err.Error(), tc.errContains) {
+					t.Fatalf("expected error containing %q but got: %v", tc.errContains, err)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func ptr[T any](v T) *T {
+	return &v
+}

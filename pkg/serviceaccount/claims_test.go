@@ -30,6 +30,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/kubernetes/pkg/apis/authentication"
 	"k8s.io/kubernetes/pkg/apis/core"
 )
 
@@ -75,14 +76,17 @@ func TestClaims(t *testing.T) {
 	}
 	cs := []struct {
 		// input
-		sa        core.ServiceAccount
-		pod       *core.Pod
-		sec       *core.Secret
-		node      *core.Node
-		exp       int64
-		warnafter int64
-		aud       []string
-		err       string
+		sa           core.ServiceAccount
+		pod          *core.Pod
+		sec          *core.Secret
+		node         *core.Node
+		validating   *admissionregistrationv1.ValidatingWebhookConfiguration
+		mutating     *admissionregistrationv1.MutatingWebhookConfiguration
+		exp          int64
+		warnafter    int64
+		aud          []string
+		attestations map[string]authentication.AttestationValue
+		err          string
 		// desired
 		sc *jwt.Claims
 		pc *privateClaims
@@ -275,6 +279,66 @@ func TestClaims(t *testing.T) {
 				},
 			},
 		},
+		{
+			// validating webhook configuration binding
+			sa: sa,
+			validating: &admissionregistrationv1.ValidatingWebhookConfiguration{
+				ObjectMeta: metav1.ObjectMeta{Name: "myvalidating", UID: "myvalidating-uid"},
+			},
+			exp: 100,
+			aud: []string{"https://validate.test"},
+			attestations: map[string]authentication.AttestationValue{
+				authentication.AttestationAdmissionReviewAPIGroups: {"apps"},
+			},
+			sc: &jwt.Claims{
+				Subject:   "system:serviceaccount:myns:mysvcacct",
+				Audience:  []string{"https://validate.test"},
+				IssuedAt:  jwt.NewNumericDate(time.Unix(1514764800, 0)),
+				NotBefore: jwt.NewNumericDate(time.Unix(1514764800, 0)),
+				Expiry:    jwt.NewNumericDate(time.Unix(1514764800+100, 0)),
+				ID:        "fixed",
+			},
+			pc: &privateClaims{
+				Kubernetes: kubernetes{
+					Namespace:                      "myns",
+					Svcacct:                        ref{Name: "mysvcacct", UID: "mysvcacct-uid"},
+					ValidatingWebhookConfiguration: &ref{Name: "myvalidating", UID: "myvalidating-uid"},
+					Attestations: map[string]authentication.AttestationValue{
+						authentication.AttestationAdmissionReviewAPIGroups: {"apps"},
+					},
+				},
+			},
+		},
+		{
+			// mutating webhook configuration binding
+			sa: sa,
+			mutating: &admissionregistrationv1.MutatingWebhookConfiguration{
+				ObjectMeta: metav1.ObjectMeta{Name: "mymutating", UID: "mymutating-uid"},
+			},
+			exp: 100,
+			aud: []string{"https://mutate.test"},
+			attestations: map[string]authentication.AttestationValue{
+				authentication.AttestationAdmissionReviewAPIGroups: {"apps"},
+			},
+			sc: &jwt.Claims{
+				Subject:   "system:serviceaccount:myns:mysvcacct",
+				Audience:  []string{"https://mutate.test"},
+				IssuedAt:  jwt.NewNumericDate(time.Unix(1514764800, 0)),
+				NotBefore: jwt.NewNumericDate(time.Unix(1514764800, 0)),
+				Expiry:    jwt.NewNumericDate(time.Unix(1514764800+100, 0)),
+				ID:        "fixed",
+			},
+			pc: &privateClaims{
+				Kubernetes: kubernetes{
+					Namespace:                    "myns",
+					Svcacct:                      ref{Name: "mysvcacct", UID: "mysvcacct-uid"},
+					MutatingWebhookConfiguration: &ref{Name: "mymutating", UID: "mymutating-uid"},
+					Attestations: map[string]authentication.AttestationValue{
+						authentication.AttestationAdmissionReviewAPIGroups: {"apps"},
+					},
+				},
+			},
+		},
 	}
 	for i, c := range cs {
 		t.Run(fmt.Sprintf("case %d", i), func(t *testing.T) {
@@ -289,7 +353,7 @@ func TestClaims(t *testing.T) {
 				return string(b)
 			}
 
-			sc, pc, err := Claims(c.sa, c.pod, c.sec, c.node, c.exp, c.warnafter, c.aud, nil)
+			sc, pc, err := Claims(c.sa, c.pod, c.sec, c.node, c.validating, c.mutating, c.exp, c.warnafter, c.aud, c.attestations)
 			if err != nil && err.Error() != c.err {
 				t.Errorf("expected error %q but got: %v", c.err, err)
 			}
@@ -362,65 +426,101 @@ func TestValidatePrivateClaims(t *testing.T) {
 	testcases := []claimTestCase{
 		{
 			name:      "good",
-			getter:    fakeGetter{serviceAccount, nil, nil, nil},
+			getter:    fakeGetter{serviceAccount: serviceAccount},
 			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, Namespace: "ns"}},
 			expectErr: "",
 		},
 		{
 			name:      "expired",
-			getter:    fakeGetter{serviceAccount, nil, nil, nil},
+			getter:    fakeGetter{serviceAccount: serviceAccount},
 			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, Namespace: "ns"}},
 			expiry:    *jwt.NewNumericDate(now().Add(-1_000 * time.Hour)),
 			expectErr: "service account token has expired",
 		},
 		{
 			name:      "not yet valid",
-			getter:    fakeGetter{serviceAccount, nil, nil, nil},
+			getter:    fakeGetter{serviceAccount: serviceAccount},
 			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, Namespace: "ns"}},
 			notBefore: *jwt.NewNumericDate(now().Add(1_000 * time.Hour)),
 			expectErr: "service account token is not valid yet",
 		},
 		{
 			name:      "missing serviceaccount",
-			getter:    fakeGetter{nil, nil, nil, nil},
+			getter:    fakeGetter{},
 			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, Namespace: "ns"}},
 			expectErr: `serviceaccounts "saname" not found`,
 		},
 		{
 			name:      "missing secret",
-			getter:    fakeGetter{serviceAccount, nil, nil, nil},
+			getter:    fakeGetter{serviceAccount: serviceAccount},
 			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, Secret: &ref{Name: "secretname", UID: "secretuid"}, Namespace: "ns"}},
 			expectErr: "service account token has been invalidated",
 		},
 		{
 			name:      "missing pod",
-			getter:    fakeGetter{serviceAccount, nil, nil, nil},
+			getter:    fakeGetter{serviceAccount: serviceAccount},
 			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, Pod: &ref{Name: "podname", UID: "poduid"}, Namespace: "ns"}},
 			expectErr: "service account token has been invalidated",
 		},
 		{
 			name:      "missing node",
-			getter:    fakeGetter{serviceAccount, nil, nil, nil},
+			getter:    fakeGetter{serviceAccount: serviceAccount},
 			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, Node: &ref{Name: "nodename", UID: "nodeuid"}, Namespace: "ns"}},
 			expectErr: "service account token has been invalidated",
 		},
 		{
 			name:      "different uid serviceaccount",
-			getter:    fakeGetter{serviceAccount, nil, nil, nil},
+			getter:    fakeGetter{serviceAccount: serviceAccount},
 			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauidold"}, Namespace: "ns"}},
 			expectErr: "service account UID (sauid) does not match claim (sauidold)",
 		},
 		{
 			name:      "different uid secret",
-			getter:    fakeGetter{serviceAccount, secret, nil, nil},
+			getter:    fakeGetter{serviceAccount: serviceAccount, secret: secret},
 			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, Secret: &ref{Name: "secretname", UID: "secretuidold"}, Namespace: "ns"}},
 			expectErr: "secret UID (secretuid) does not match service account secret ref claim (secretuidold)",
 		},
 		{
 			name:      "different uid pod",
-			getter:    fakeGetter{serviceAccount, nil, pod, nil},
+			getter:    fakeGetter{serviceAccount: serviceAccount, pod: pod},
 			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, Pod: &ref{Name: "podname", UID: "poduidold"}, Namespace: "ns"}},
 			expectErr: "pod UID (poduid) does not match service account pod ref claim (poduidold)",
+		},
+		{
+			name:      "missing validating webhook config",
+			getter:    fakeGetter{serviceAccount: serviceAccount},
+			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, ValidatingWebhookConfiguration: &ref{Name: "vwc", UID: "vwc-uid"}, Namespace: "ns"}},
+			expectErr: "service account token has been invalidated",
+		},
+		{
+			name:      "missing mutating webhook config",
+			getter:    fakeGetter{serviceAccount: serviceAccount},
+			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, MutatingWebhookConfiguration: &ref{Name: "mwc", UID: "mwc-uid"}, Namespace: "ns"}},
+			expectErr: "service account token has been invalidated",
+		},
+		{
+			name:   "different uid validating webhook config",
+			getter: fakeGetter{serviceAccount: serviceAccount, validatingWebhookConfiguration: &admissionregistrationv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "vwc", UID: "vwc-uid-new"}}},
+			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, ValidatingWebhookConfiguration: &ref{Name: "vwc", UID: "vwc-uid-old"}, Namespace: "ns"}},
+			expectErr: "validating UID (vwc-uid-new) does not match service account validating ref claim (vwc-uid-old)",
+		},
+		{
+			name:   "different uid mutating webhook config",
+			getter: fakeGetter{serviceAccount: serviceAccount, mutatingWebhookConfiguration: &admissionregistrationv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "mwc", UID: "mwc-uid-new"}}},
+			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, MutatingWebhookConfiguration: &ref{Name: "mwc", UID: "mwc-uid-old"}, Namespace: "ns"}},
+			expectErr: "mutating UID (mwc-uid-new) does not match service account mutating ref claim (mwc-uid-old)",
+		},
+		{
+			name:      "valid validating webhook config",
+			getter:    fakeGetter{serviceAccount: serviceAccount, validatingWebhookConfiguration: &admissionregistrationv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "vwc", UID: "vwc-uid"}}},
+			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, ValidatingWebhookConfiguration: &ref{Name: "vwc", UID: "vwc-uid"}, Namespace: "ns"}},
+			expectErr: "",
+		},
+		{
+			name:      "valid mutating webhook config",
+			getter:    fakeGetter{serviceAccount: serviceAccount, mutatingWebhookConfiguration: &admissionregistrationv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "mwc", UID: "mwc-uid"}}},
+			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, MutatingWebhookConfiguration: &ref{Name: "mwc", UID: "mwc-uid"}, Namespace: "ns"}},
+			expectErr: "",
 		},
 	}
 
@@ -445,25 +545,25 @@ func TestValidatePrivateClaims(t *testing.T) {
 		testcases = append(testcases,
 			claimTestCase{
 				name:      deletionTestCase.name + " serviceaccount",
-				getter:    fakeGetter{deletedServiceAccount, nil, nil, nil},
+				getter:    fakeGetter{serviceAccount: deletedServiceAccount},
 				private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, Namespace: "ns"}},
 				expectErr: saDeletedErr,
 			},
 			claimTestCase{
 				name:      deletionTestCase.name + " secret",
-				getter:    fakeGetter{serviceAccount, deletedSecret, nil, nil},
+				getter:    fakeGetter{serviceAccount: serviceAccount, secret: deletedSecret},
 				private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, Secret: &ref{Name: "secretname", UID: "secretuid"}, Namespace: "ns"}},
 				expectErr: deletedErr,
 			},
 			claimTestCase{
 				name:      deletionTestCase.name + " pod",
-				getter:    fakeGetter{serviceAccount, nil, deletedPod, nil},
+				getter:    fakeGetter{serviceAccount: serviceAccount, pod: deletedPod},
 				private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, Pod: &ref{Name: "podname", UID: "poduid"}, Namespace: "ns"}},
 				expectErr: deletedErr,
 			},
 			claimTestCase{
 				name:      deletionTestCase.name + " node",
-				getter:    fakeGetter{serviceAccount, nil, nil, deletedNode},
+				getter:    fakeGetter{serviceAccount: serviceAccount, node: deletedNode},
 				private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, Node: &ref{Name: "nodename", UID: "nodeuid"}, Namespace: "ns"}},
 				expectErr: deletedErr,
 			},

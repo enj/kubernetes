@@ -23,6 +23,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/authentication/user"
+	"k8s.io/kubernetes/pkg/apis/authentication"
 )
 
 func TestUserInfo(t *testing.T) {
@@ -67,6 +68,46 @@ func TestUserInfo(t *testing.T) {
 			expectedUserInfo: &user.DefaultInfo{
 				Name:   "system:serviceaccount:ns:name",
 				Groups: []string{"system:serviceaccounts", "system:serviceaccounts:ns"},
+			},
+		},
+		"extracts validating webhook configuration name/uid and attestations": {
+			info: ServiceAccountInfo{
+				Name:                               "name",
+				Namespace:                          "ns",
+				ValidatingWebhookConfigurationName: "my-vwc",
+				ValidatingWebhookConfigurationUID:  "vwc-uid",
+				Attestations: map[string]authentication.AttestationValue{
+					authentication.AttestationAdmissionReviewAPIGroups: {"apps"},
+				},
+			},
+			expectedUserInfo: &user.DefaultInfo{
+				Name:   "system:serviceaccount:ns:name",
+				Groups: []string{"system:serviceaccounts", "system:serviceaccounts:ns"},
+				Extra: map[string][]string{
+					ValidatingWebhookConfigurationNameKey: {"my-vwc"},
+					ValidatingWebhookConfigurationUIDKey:  {"vwc-uid"},
+					AttestationAdmissionReviewAPIGroupsKey: {"apps"},
+				},
+			},
+		},
+		"extracts mutating webhook configuration name/uid and attestations": {
+			info: ServiceAccountInfo{
+				Name:                            "name",
+				Namespace:                       "ns",
+				MutatingWebhookConfigurationName: "my-mwc",
+				MutatingWebhookConfigurationUID:  "mwc-uid",
+				Attestations: map[string]authentication.AttestationValue{
+					authentication.AttestationAdmissionReviewAPIGroups: {"apps"},
+				},
+			},
+			expectedUserInfo: &user.DefaultInfo{
+				Name:   "system:serviceaccount:ns:name",
+				Groups: []string{"system:serviceaccounts", "system:serviceaccounts:ns"},
+				Extra: map[string][]string{
+					MutatingWebhookConfigurationNameKey: {"my-mwc"},
+					MutatingWebhookConfigurationUIDKey:  {"mwc-uid"},
+					AttestationAdmissionReviewAPIGroupsKey: {"apps"},
+				},
 			},
 		},
 	}
