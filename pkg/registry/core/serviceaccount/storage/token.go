@@ -391,6 +391,11 @@ func validateAttestationAPIGroup(attestedGroup string, rules []admissionregistra
 	if attestedGroup == "*" {
 		return nil
 	}
+
+	if len(rules) == 0 {
+		return nil
+	}
+
 	for _, rule := range rules {
 		for _, group := range rule.APIGroups {
 			if group == "*" || group == attestedGroup {
@@ -417,9 +422,6 @@ func (r *TokenREST) authorizeAdmissionWebhookAuthnTokenRequest(ctx context.Conte
 	authorized, reason, err := r.authorizer.Authorize(ctx, attributes)
 	if authorized == authorizer.DecisionAllow {
 		return nil
-	}
-	if errors.IsForbidden(err) {
-		return err
 	}
 
 	msg := reason

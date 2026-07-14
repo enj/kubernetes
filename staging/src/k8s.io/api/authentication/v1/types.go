@@ -63,8 +63,8 @@ const (
 	//
 	// The service account for which the TokenRequest is being made must have
 	// "attest" permissions on group "authentication.k8s.io", resource
-	// "admissionReviewAPIGroups, and a resource name matching exactly either
-	// "*", or the api group named in the value to this key.
+	// "admissionReviewAPIGroups", and a resource name matching exactly either
+	// "*", or the API group named in the value to this key.
 	AttestationAdmissionReviewAPIGroups = "admissionReviewAPIGroups"
 )
 

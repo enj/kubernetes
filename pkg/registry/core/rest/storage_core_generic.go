@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
+	"k8s.io/apiserver/pkg/authorization/authorizerfactory"
 	"k8s.io/apiserver/pkg/registry/generic"
 	"k8s.io/apiserver/pkg/registry/rest"
 	genericapiserver "k8s.io/apiserver/pkg/server"
@@ -119,9 +120,9 @@ func (c *GenericConfig) NewRESTStorage(apiResourceConfigSource serverstorage.API
 
 	var serviceAccountStorage *serviceaccountstore.REST
 	if c.ServiceAccountIssuer != nil {
-		serviceAccountStorage, err = serviceaccountstore.NewREST(restOptionsGetter, c.ServiceAccountIssuer, c.APIAudiences, c.Authorizer, c.ServiceAccountMaxExpiration, newNotFoundGetter(schema.GroupResource{Resource: "pods"}), secretStorage.Store, newNotFoundGetter(schema.GroupResource{Resource: "nodes"}), client.AdmissionregistrationV1(), c.ExtendExpiration, c.MaxExtendedExpiration)
+		serviceAccountStorage, err = serviceaccountstore.NewREST(restOptionsGetter, c.ServiceAccountIssuer, c.APIAudiences, authorizerfactory.NewAlwaysDenyAuthorizer(), c.ServiceAccountMaxExpiration, newNotFoundGetter(schema.GroupResource{Resource: "pods"}), secretStorage.Store, newNotFoundGetter(schema.GroupResource{Resource: "nodes"}), client.AdmissionregistrationV1(), c.ExtendExpiration, c.MaxExtendedExpiration)
 	} else {
-		serviceAccountStorage, err = serviceaccountstore.NewREST(restOptionsGetter, nil, nil, c.Authorizer, 0, newNotFoundGetter(schema.GroupResource{Resource: "pods"}), newNotFoundGetter(schema.GroupResource{Resource: "secrets"}), newNotFoundGetter(schema.GroupResource{Resource: "nodes"}), client.AdmissionregistrationV1(), false, c.MaxExtendedExpiration)
+		serviceAccountStorage, err = serviceaccountstore.NewREST(restOptionsGetter, nil, nil, authorizerfactory.NewAlwaysDenyAuthorizer(), 0, newNotFoundGetter(schema.GroupResource{Resource: "pods"}), newNotFoundGetter(schema.GroupResource{Resource: "secrets"}), newNotFoundGetter(schema.GroupResource{Resource: "nodes"}), client.AdmissionregistrationV1(), false, c.MaxExtendedExpiration)
 	}
 	if err != nil {
 		return genericapiserver.APIGroupInfo{}, err

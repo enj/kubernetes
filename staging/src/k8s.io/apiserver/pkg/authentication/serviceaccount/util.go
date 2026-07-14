@@ -66,9 +66,12 @@ const (
 	// "extra" to specify the mutating webhook configuration UID of
 	// the authenticating request.
 	MutatingWebhookConfigurationUIDKey = "authentication.kubernetes.io/mutatingwebhookconfiguration-uid"
+	// AttestationKeyPrefix is the prefix for the user info extra key used to
+	// detail attestations.
+	AttestationKeyPrefix = "attestation.authentication.kubernetes.io/"
 	// AttestationAdmissionReviewAPIGroupsKey is the key used in a user's
 	// "extra" to specify the "admissionReviewAPIGroups" claim.
-	AttestationAdmissionReviewAPIGroupsKey = "attestation.authentication.kubernetes.io/" + authentication.AttestationAdmissionReviewAPIGroups
+	AttestationAdmissionReviewAPIGroupsKey = AttestationKeyPrefix + authentication.AttestationAdmissionReviewAPIGroups
 )
 
 // MakeUsername generates a username from the given namespace and ServiceAccount name.
@@ -207,8 +210,10 @@ func (sa *ServiceAccountInfo) UserInfo() user.Info {
 func populateAttestationExtra(info *user.DefaultInfo, attestations map[string]authentication.AttestationValue) {
 	for k, v := range attestations {
 		switch k {
-		case authentication.AttestationAdmissionReviewAPIGroups:
-			info.Extra[AttestationAdmissionReviewAPIGroupsKey] = v
+		// valid keys should be enumerated in the first case statement, and must
+		// be added here when new valid attestation keys are added
+		case authentication.AttestationAdmissionReviewAPIGroups /*, etc */ :
+			info.Extra[AttestationKeyPrefix+k] = v
 		default:
 			klog.Warning(fmt.Printf("attestation key %s not recognized", k))
 			continue
