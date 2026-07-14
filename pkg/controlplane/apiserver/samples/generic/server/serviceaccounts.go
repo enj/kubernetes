@@ -56,9 +56,9 @@ func (c clientGetter) GetNode(ctx context.Context, name string) (*v1.Node, error
 }
 
 func (c clientGetter) GetValidatingWebhookConfiguration(ctx context.Context, name string) (*admissionregistrationv1.ValidatingWebhookConfiguration, error) {
-	return nil, apierrors.NewNotFound(v1.Resource("validatingWebhookConfigurations"), name)
+	return nil, apierrors.NewNotFound(admissionregistrationv1.Resource("validatingwebhookconfigurations"), name)
 }
 
 func (c clientGetter) GetMutatingWebhookConfiguration(ctx context.Context, name string) (*admissionregistrationv1.MutatingWebhookConfiguration, error) {
-	return nil, apierrors.NewNotFound(v1.Resource("mutatingWebhookConfigurations"), name)
+	return nil, apierrors.NewNotFound(admissionregistrationv1.Resource("mutatingwebhookconfigurations"), name)
 }

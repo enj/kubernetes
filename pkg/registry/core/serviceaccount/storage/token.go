@@ -47,6 +47,7 @@ import (
 	"k8s.io/kubernetes/pkg/apis/authentication"
 	authenticationapi "k8s.io/kubernetes/pkg/apis/authentication"
 	authenticationvalidation "k8s.io/kubernetes/pkg/apis/authentication/validation"
+
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/features"
 	token "k8s.io/kubernetes/pkg/serviceaccount"
@@ -225,8 +226,8 @@ func (r *TokenREST) Create(ctx context.Context, name string, obj runtime.Object,
 			secret = secretObj.(*api.Secret)
 			uid = secret.UID
 		case gvk.Group == "admissionregistration.k8s.io" && (gvk.Kind == "ValidatingWebhookConfiguration" || gvk.Kind == "MutatingWebhookConfiguration"):
-			if !utilfeature.DefaultFeatureGate.Enabled(features.APIServerWebhookAuthenticationToken) {
-				return nil, errors.NewBadRequest(fmt.Sprintf("cannot bind token to object of type %s (feature gate %s is disabled)", gvk.String(), features.APIServerWebhookAuthenticationToken))
+			if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerWebhookAuthenticationToken) {
+				return nil, errors.NewBadRequest(fmt.Sprintf("cannot bind token to object of type %s (feature gate %s is disabled)", gvk.String(), genericfeatures.APIServerWebhookAuthenticationToken))
 			}
 			newCtx := newContext(ctx, firstCharToLower(gvk.Kind), ref.Name, "", gvk)
 			admissionReviewAPIGroups, ok := attestations[authenticationapi.AttestationAdmissionReviewAPIGroups]
@@ -397,6 +398,7 @@ func validateAttestationAPIGroup(attestedGroup string, rules []admissionregistra
 			}
 		}
 	}
+
 	return errors.NewBadRequest(fmt.Sprintf("attested API group %q does not match any rule in the bound webhook configuration", attestedGroup))
 }
 

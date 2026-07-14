@@ -20,15 +20,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"gopkg.in/go-jose/go-jose.v2/jwt"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/audit"
 	apiserverserviceaccount "k8s.io/apiserver/pkg/authentication/serviceaccount"
 	authenticationtokenjwt "k8s.io/apiserver/pkg/authentication/token/jwt"
+	genericfeatures "k8s.io/apiserver/pkg/features"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/apis/authentication"
@@ -280,42 +283,41 @@ func (v *validator) Validate(ctx context.Context, _ string, public *jwt.Claims, 
 		}
 	}
 
-	var validatingName, validatingUID string
-	if valref != nil {
-		validating, err := v.getter.GetValidatingWebhookConfiguration(ctx, valref.Name)
-		if err != nil {
-			klog.V(4).Infof("Could not retrieve validatingwebhookconfiguration object %q for service account %s/%s: %v", valref.Name, namespace, saref.Name, err)
-			return nil, errors.New("service account token has been invalidated")
-		}
-		if valref.UID != string(validating.UID) {
-			klog.V(4).Infof("ValidatingWebhookConfiguration UID no longer matches %s: %q != %q", valref.Name, string(validating.UID), valref.UID)
-			return nil, fmt.Errorf("validating UID (%s) does not match service account validating ref claim (%s)", validating.UID, valref.UID)
-		}
-		if validating.DeletionTimestamp != nil && validating.DeletionTimestamp.Time.Before(invalidIfDeletedBefore) {
-			klog.V(4).Infof("ValidatingWebhookConfiguration %q is deleted and awaiting removal for service account %s/%s", validating.Name, namespace, saref.Name)
-			return nil, errors.New("service account token has been invalidated")
-		}
-		validatingName = valref.Name
-		validatingUID = valref.UID
-	}
+	var (
+		validatingName, validatingUID string
+		mutatingName, mutatingUID     string
+	)
+	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerWebhookAuthenticationToken) {
+		var (
+			ref              *ref
+			webhookCfgKind   string
+			webhookCfgGetter webhookCfgGetterFunc
+			namePtr, uidPtr  *string
+			noop             string
 
-	var mutatingName, mutatingUID string
-	if mutref != nil {
-		mutating, err := v.getter.GetMutatingWebhookConfiguration(ctx, mutref.Name)
+			err error
+		)
+
+		switch {
+		case valref != nil:
+			webhookCfgKind = "ValidatingWebhookConfiguration"
+			ref = valref
+			webhookCfgGetter = toWebhookCfgGetterFunc(v.getter.GetValidatingWebhookConfiguration)
+			namePtr, uidPtr = &validatingName, &validatingUID
+		case mutref != nil:
+			webhookCfgKind = "MutatingWebhookConfiguration"
+			ref = mutref
+			webhookCfgGetter = toWebhookCfgGetterFunc(v.getter.GetMutatingWebhookConfiguration)
+			namePtr, uidPtr = &mutatingName, &mutatingUID
+		default:
+			namePtr, uidPtr = &noop, &noop
+		}
+
+		// this is an errorless no-op returning empty strings when the input reference is nil
+		*namePtr, *uidPtr, err = validateWebhookCfgRef(ctx, &private.Kubernetes, ref, webhookCfgGetter, invalidIfDeletedBefore, webhookCfgKind)
 		if err != nil {
-			klog.V(4).Infof("Could not retrieve mutatingwebhookconfiguration object %q for service account %s/%s: %v", mutref.Name, namespace, saref.Name, err)
-			return nil, errors.New("service account token has been invalidated")
+			return nil, err
 		}
-		if mutref.UID != string(mutating.UID) {
-			klog.V(4).Infof("MutatingWebhookConfiguration UID no longer matches %s: %q != %q", mutref.Name, string(mutating.UID), mutref.UID)
-			return nil, fmt.Errorf("mutating UID (%s) does not match service account mutating ref claim (%s)", mutating.UID, mutref.UID)
-		}
-		if mutating.DeletionTimestamp != nil && mutating.DeletionTimestamp.Time.Before(invalidIfDeletedBefore) {
-			klog.V(4).Infof("MutatingWebhookConfiguration %q is deleted and awaiting removal for service account %s/%s", mutating.Name, namespace, saref.Name)
-			return nil, errors.New("service account token has been invalidated")
-		}
-		mutatingName = mutref.Name
-		mutatingUID = mutref.UID
 	}
 
 	// Check special 'warnafter' field for projected service account token transition.
@@ -351,4 +353,49 @@ func (v *validator) Validate(ctx context.Context, _ string, public *jwt.Claims, 
 		MutatingWebhookConfigurationUID:    mutatingUID,
 		CredentialID:                       authenticationtokenjwt.CredentialIDForJTI(jti),
 	}, nil
+}
+
+type webhookCfg interface {
+	*admissionregistrationv1.ValidatingWebhookConfiguration | *admissionregistrationv1.MutatingWebhookConfiguration
+}
+
+type webhookCfgGetterFunc func(context.Context, string) (metav1.Object, error)
+
+func validateWebhookCfgRef(ctx context.Context, private *kubernetes, ref *ref, get webhookCfgGetterFunc, invalidIfDeletedBefore time.Time, kind string) (string, string, error) {
+	if ref == nil {
+		return "", "", nil
+	}
+
+	obj, err := get(ctx, ref.Name)
+	if err != nil {
+		klog.V(4).Infof("Could not retrieve %s object %q for service account %s/%s: %v", strings.ToLower(kind), ref.Name, private.Namespace, private.Svcacct.Name, err)
+		return "", "", errors.New("service account token has been invalidated")
+	}
+
+	if objUID := string(obj.GetUID()); ref.UID != objUID {
+		klog.V(4).Infof("%s UID no longer matches %s: %q != %q", kind, ref.Name, objUID, ref.UID)
+		return "", "", fmt.Errorf("validating UID (%s) does not match service account validating ref claim (%s)", objUID, ref.UID)
+	}
+	if deltime := obj.GetDeletionTimestamp(); deltime != nil && deltime.Time.Before(invalidIfDeletedBefore) {
+		klog.V(4).Infof("%s %q is deleted and awaiting removal for service account %s/%s", kind, obj.GetName(), private.Namespace, private.Svcacct.Name)
+		return "", "", errors.New("service account token has been invalidated")
+	}
+	return ref.Name, ref.UID, nil
+}
+
+func toWebhookCfgGetterFunc[T webhookCfg](f func(context.Context, string) (T, error)) webhookCfgGetterFunc {
+	return func(ctx context.Context, s string) (metav1.Object, error) {
+		cfg, err := f(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+
+		var p any = cfg
+		o, ok := p.(metav1.Object)
+		if !ok {
+			return nil, fmt.Errorf("could not cast webhookconfig type to metav1.Object")
+		}
+
+		return o, nil
+	}
 }

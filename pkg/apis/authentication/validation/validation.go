@@ -21,6 +21,7 @@ package validation
 import (
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/kubernetes/pkg/apis/authentication"
 )
@@ -76,13 +77,54 @@ func validateAttestations(attestations map[string]authentication.AttestationValu
 				continue
 			}
 
-			if values[0] == "" {
-				errs = append(errs, field.Invalid(specPath.Child("attestations").Child(authentication.AttestationAdmissionReviewAPIGroups), key, "may not be an empty string"))
-				continue
-			}
+			valueErrs := validateAdmissionReviewAPIGroupsValue(values[0], specPath, key)
+			errs = append(errs, valueErrs...)
 		default:
 			errs = append(errs, field.Invalid(specPath.Child("attestations"), key, "may not specify an unknown key"))
 		}
+	}
+
+	return errs
+}
+
+func validateAdmissionReviewAPIGroupsValue(group string, specPath *field.Path, key string) field.ErrorList {
+	var errs field.ErrorList
+
+	// The value "" cannot be allowed for the "admissionReviewAPIGroups"
+	// because "" means two different things depending on the context in
+	// which it is presented. In the context of a resource name in an
+	// authorization request, "" means "all resource names". In the
+	// context of an API Group, "" means "the core API group".
+	//
+	// The only valid requester of an admission review token for the
+	// core API group is the Kubernetes API Server itself. Kubernetes
+	// API Server will always use "admissionReviewAPIGroups": "*" when
+	// it needs a token to authenticate to a webhook, so there is never
+	// a need to allow the value "" for this attestation.
+	if len(group) == 0 {
+		errs = append(errs, field.Invalid(specPath.Child("attestations").Child(authentication.AttestationAdmissionReviewAPIGroups), key, "may not be an empty string"))
+		return errs
+	}
+
+	if group == "*" {
+		return nil
+	}
+
+	// valid label, e.g. "apps"
+	labelErrs := validation.IsDNS1123Label(group)
+	if len(labelErrs) == 0 {
+		return nil
+	}
+
+	// valid subdomain, e.g. "admissionregistration.k8s.io"
+	subdomainErrs := validation.IsDNS1123Subdomain(group)
+	if len(subdomainErrs) == 0 {
+		return nil
+	}
+
+	allErrs := append(labelErrs, subdomainErrs...)
+	for _, err := range allErrs {
+		errs = append(errs, field.Invalid(specPath.Child("attestations").Child(authentication.AttestationAdmissionReviewAPIGroups).Child(key), err, "must specify a valid API Group"))
 	}
 
 	return errs
