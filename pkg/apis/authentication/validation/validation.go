@@ -45,7 +45,7 @@ func ValidateTokenRequest(tr *authentication.TokenRequest) field.ErrorList {
 	}
 
 	allErrs = append(allErrs, validateAttestations(tr, specPath.Child("attestations"))...)
-	if isWebhookConfig(tr.Spec.BoundObjectRef.Kind) && len(tr.Spec.Audiences) != 1 {
+	if tr.Spec.BoundObjectRef != nil && isWebhookConfig(tr.Spec.BoundObjectRef.Kind) && len(tr.Spec.Audiences) != 1 {
 		allErrs = append(allErrs, field.Invalid(specPath, tr.Spec.Audiences, "must be length 1"))
 	}
 

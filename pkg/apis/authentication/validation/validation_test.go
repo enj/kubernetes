@@ -27,6 +27,13 @@ import (
 func TestValidateTokenRequestAttestations(t *testing.T) {
 	validExpiration := int64(MinTokenAgeSec + 1)
 
+	webhookRef := &authentication.BoundObjectReference{
+		Kind:       "ValidatingWebhookConfiguration",
+		APIVersion: "admissionregistration.k8s.io/v1",
+		Name:       "my-webhook",
+		UID:        "uid-123",
+	}
+
 	tests := []struct {
 		name      string
 		tr        *authentication.TokenRequest
@@ -34,7 +41,7 @@ func TestValidateTokenRequestAttestations(t *testing.T) {
 		expectErr bool
 	}{
 		{
-			name: "valid: no attestations",
+			name: "valid: no attestations, no bound object",
 			tr: &authentication.TokenRequest{
 				Spec: authentication.TokenRequestSpec{
 					ExpirationSeconds: validExpiration,
@@ -46,12 +53,8 @@ func TestValidateTokenRequestAttestations(t *testing.T) {
 			tr: &authentication.TokenRequest{
 				Spec: authentication.TokenRequestSpec{
 					ExpirationSeconds: validExpiration,
-					BoundObjectRef: &authentication.BoundObjectReference{
-						Kind:       "ValidatingWebhookConfiguration",
-						APIVersion: "admissionregistration.k8s.io/v1",
-						Name:       "my-webhook",
-						UID:        "uid-123",
-					},
+					Audiences:         []string{"https://example.com"},
+					BoundObjectRef:    webhookRef,
 					Attestations: map[string]authentication.AttestationValue{
 						authentication.AttestationAdmissionReviewAPIGroups: {"apps"},
 					},
@@ -63,12 +66,8 @@ func TestValidateTokenRequestAttestations(t *testing.T) {
 			tr: &authentication.TokenRequest{
 				Spec: authentication.TokenRequestSpec{
 					ExpirationSeconds: validExpiration,
-					BoundObjectRef: &authentication.BoundObjectReference{
-						Kind:       "ValidatingWebhookConfiguration",
-						APIVersion: "admissionregistration.k8s.io/v1",
-						Name:       "my-webhook",
-						UID:        "uid-123",
-					},
+					Audiences:         []string{"https://example.com"},
+					BoundObjectRef:    webhookRef,
 					Attestations: map[string]authentication.AttestationValue{
 						authentication.AttestationAdmissionReviewAPIGroups: {},
 					},
@@ -82,13 +81,10 @@ func TestValidateTokenRequestAttestations(t *testing.T) {
 			tr: &authentication.TokenRequest{
 				Spec: authentication.TokenRequestSpec{
 					ExpirationSeconds: validExpiration,
-					BoundObjectRef: &authentication.BoundObjectReference{
-						Kind:       "ValidatingWebhookConfiguration",
-						APIVersion: "admissionregistration.k8s.io/v1",
-						Name:       "my-webhook",
-						UID:        "uid-123",
-					},
+					Audiences:         []string{"https://example.com"},
+					BoundObjectRef:    webhookRef,
 					Attestations: map[string]authentication.AttestationValue{
+						authentication.AttestationAdmissionReviewAPIGroups: {"apps"},
 						"unknownKey": {"value"},
 					},
 				},
@@ -101,6 +97,7 @@ func TestValidateTokenRequestAttestations(t *testing.T) {
 			tr: &authentication.TokenRequest{
 				Spec: authentication.TokenRequestSpec{
 					ExpirationSeconds: validExpiration,
+					Audiences:         []string{"https://example.com"},
 					BoundObjectRef: &authentication.BoundObjectReference{
 						Kind:       "MutatingWebhookConfiguration",
 						APIVersion: "admissionregistration.k8s.io/v1",
@@ -120,12 +117,8 @@ func TestValidateTokenRequestAttestations(t *testing.T) {
 			tr: &authentication.TokenRequest{
 				Spec: authentication.TokenRequestSpec{
 					ExpirationSeconds: validExpiration,
-					BoundObjectRef: &authentication.BoundObjectReference{
-						Kind:       "ValidatingWebhookConfiguration",
-						APIVersion: "admissionregistration.k8s.io/v1",
-						Name:       "my-webhook",
-						UID:        "uid-123",
-					},
+					Audiences:         []string{"https://example.com"},
+					BoundObjectRef:    webhookRef,
 					Attestations: map[string]authentication.AttestationValue{
 						authentication.AttestationAdmissionReviewAPIGroups: {""},
 					},
@@ -166,6 +159,48 @@ func TestValidateTokenRequestAttestations(t *testing.T) {
 			},
 			expectErr: true,
 			wantErr:   "attestations may not be specified without a bound object reference",
+		},
+		{
+			name: "invalid: webhook bound object with no attestations",
+			tr: &authentication.TokenRequest{
+				Spec: authentication.TokenRequestSpec{
+					ExpirationSeconds: validExpiration,
+					Audiences:         []string{"https://example.com"},
+					BoundObjectRef:    webhookRef,
+				},
+			},
+			expectErr: true,
+			wantErr:   "may not be empty when bound object is webhook configuration",
+		},
+		{
+			name: "invalid: webhook bound object missing admissionReviewAPIGroups",
+			tr: &authentication.TokenRequest{
+				Spec: authentication.TokenRequestSpec{
+					ExpirationSeconds: validExpiration,
+					Audiences:         []string{"https://example.com"},
+					BoundObjectRef:    webhookRef,
+					Attestations: map[string]authentication.AttestationValue{
+						"unknownKey": {"value"},
+					},
+				},
+			},
+			expectErr: true,
+			wantErr:   `attestation "admissionReviewAPIGroups" is required when bound object is a webhook configuration`,
+		},
+		{
+			name: "invalid: multiple audiences with webhook bound object",
+			tr: &authentication.TokenRequest{
+				Spec: authentication.TokenRequestSpec{
+					ExpirationSeconds: validExpiration,
+					Audiences:         []string{"https://a.com", "https://b.com"},
+					BoundObjectRef:    webhookRef,
+					Attestations: map[string]authentication.AttestationValue{
+						authentication.AttestationAdmissionReviewAPIGroups: {"apps"},
+					},
+				},
+			},
+			expectErr: true,
+			wantErr:   "must be length 1",
 		},
 	}
 

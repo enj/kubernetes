@@ -19,6 +19,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -354,13 +355,18 @@ func validateWebhookAudience(audience string, clientConfigs []admissionregistrat
 			}
 			expected := fmt.Sprintf("https://%s.%s.svc:%d", cc.Service.Name, cc.Service.Namespace, port)
 			if cc.Service.Path != nil && *cc.Service.Path != "" {
-				expected += "/" + *cc.Service.Path
+				joined, err := url.JoinPath(expected, *cc.Service.Path)
+				if err != nil {
+					return errors.NewInternalError(fmt.Errorf("%w: unable to validate audience", err))
+				}
+				expected = joined
 			}
 			if audience == expected {
 				return nil
 			}
 		}
 	}
+
 	return errors.NewBadRequest("audience does not match webhook client config in the bound object")
 }
 

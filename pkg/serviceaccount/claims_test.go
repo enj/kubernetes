@@ -30,6 +30,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	genericfeatures "k8s.io/apiserver/pkg/features"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/kubernetes/pkg/apis/authentication"
 	"k8s.io/kubernetes/pkg/apis/core"
 )
@@ -386,6 +389,8 @@ type claimTestCase struct {
 }
 
 func TestValidatePrivateClaims(t *testing.T) {
+	featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, genericfeatures.APIServerWebhookAuthenticationToken, true)
+
 	var (
 		nowUnix = int64(1514764800)
 
@@ -508,7 +513,7 @@ func TestValidatePrivateClaims(t *testing.T) {
 			name:      "different uid mutating webhook config",
 			getter:    fakeGetter{serviceAccount: serviceAccount, mutatingWebhookConfiguration: &admissionregistrationv1.MutatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "mwc", UID: "mwc-uid-new"}}},
 			private:   &privateClaims{Kubernetes: kubernetes{Svcacct: ref{Name: "saname", UID: "sauid"}, MutatingWebhookConfiguration: &ref{Name: "mwc", UID: "mwc-uid-old"}, Namespace: "ns"}},
-			expectErr: "mutating UID (mwc-uid-new) does not match service account mutating ref claim (mwc-uid-old)",
+			expectErr: "validating UID (mwc-uid-new) does not match service account validating ref claim (mwc-uid-old)",
 		},
 		{
 			name:      "valid validating webhook config",

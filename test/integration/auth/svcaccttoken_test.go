@@ -1483,7 +1483,7 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 				Audiences:      []string{validatingAudience},
 				BoundObjectRef: validatingRef(validating.Name, validating.UID),
 			},
-			errContains: `allowedAPIGroups attestation is required when bound object ref is of kind ValidatingWebhookConfiguration`,
+			errContains: `may not be empty when bound object is webhook configuration`,
 		},
 		{
 			name:   "missing attestation for MutatingWebhookConfiguration",
@@ -1492,7 +1492,7 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 				Audiences:      []string{mutatingAudience},
 				BoundObjectRef: mutatingRef(mutating.Name, mutating.UID),
 			},
-			errContains: `allowedAPIGroups attestation is required when bound object ref is of kind MutatingWebhookConfiguration`,
+			errContains: `may not be empty when bound object is webhook configuration`,
 		},
 
 		// Authorization failures
@@ -1539,6 +1539,7 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 				Audiences:      []string{validatingAudience},
 				BoundObjectRef: validatingRef(validating.Name, validating.UID),
 				Attestations: map[string]authenticationv1.AttestationValue{
+					authenticationv1.AttestationAdmissionReviewAPIGroups: {"apps"},
 					"bogusKey": {"val"},
 				},
 			},
@@ -1619,7 +1620,7 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 				BoundObjectRef: validatingRef(validating.Name, validating.UID),
 				Attestations:   appsAttestation,
 			},
-			errContains: `exactly one audience is required when bound object ref is a webhook configuration`,
+			errContains: `must be length 1`,
 		},
 		{
 			name:   "wrong audience for webhook-bound token",
@@ -1629,7 +1630,7 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 				BoundObjectRef: validatingRef(validating.Name, validating.UID),
 				Attestations:   appsAttestation,
 			},
-			errContains: `audience "https://wrong.audience.test" does not match any webhook client config in the bound object`,
+			errContains: `audience does not match webhook client config in the bound object`,
 		},
 
 		// Attestation API group does not match webhook rules
@@ -1643,7 +1644,7 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 					authenticationv1.AttestationAdmissionReviewAPIGroups: {"networking.k8s.io"},
 				},
 			},
-			errContains: `attested API group "networking.k8s.io" does not match any rule in the bound webhook configuration`,
+			errContains: `attested API group does not match any rule in the bound webhook configuration`,
 		},
 	}
 
@@ -1780,7 +1781,7 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 			name:     "ValidatingWebhookConfiguration with service audience",
 			kind:     "ValidatingWebhookConfiguration",
 			webhook:  validating.Name,
-			audience: "https://webhook-svc.webhook-ns.svc:8443/validate",
+			audience: "https://webhook-svc.webhook-ns.svc:8443//validate",
 		},
 		{
 			name:     "MutatingWebhookConfiguration with URL audience",

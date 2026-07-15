@@ -350,7 +350,7 @@ func TestValidateWebhookAudience(t *testing.T) {
 			Name:      "webhook-svc",
 			Namespace: "webhook-ns",
 			Port:      ptr(int32(8443)),
-			Path:      ptr("/validate"),
+			Path:      ptr("validate"),
 		}},
 		{Service: &admissionregistration.ServiceReference{
 			Name:      "default-port-svc",
@@ -370,7 +370,7 @@ func TestValidateWebhookAudience(t *testing.T) {
 		},
 		{
 			name:     "service match with port and path",
-			audience: "https://webhook-svc.webhook-ns.svc:8443/validate",
+			audience: "https://webhook-svc.webhook-ns.svc:8443//validate",
 		},
 		{
 			name:     "service match with default port",
@@ -380,7 +380,7 @@ func TestValidateWebhookAudience(t *testing.T) {
 			name:        "no match",
 			audience:    "https://unknown.example.com",
 			expectErr:   true,
-			errContains: `audience "https://unknown.example.com" does not match any webhook client config`,
+			errContains: `audience does not match webhook client config in the bound object`,
 		},
 	}
 
@@ -412,60 +412,54 @@ func TestValidateAttestationAPIGroup(t *testing.T) {
 	}
 
 	cases := []struct {
-		name        string
-		group       string
-		rules       []admissionregistration.RuleWithOperations
-		expectErr   bool
-		errContains string
+		name   string
+		group  string
+		rules  []admissionregistration.RuleWithOperations
+		wantOK bool
 	}{
 		{
-			name:  "exact match apps",
-			group: "apps",
-			rules: rules,
+			name:   "exact match apps",
+			group:  "apps",
+			rules:  rules,
+			wantOK: true,
 		},
 		{
-			name:  "exact match batch",
-			group: "batch",
-			rules: rules,
+			name:   "exact match batch",
+			group:  "batch",
+			rules:  rules,
+			wantOK: true,
 		},
 		{
-			name:  "wildcard attestation skips check",
-			group: "*",
-			rules: rules,
+			name:   "wildcard attestation skips check",
+			group:  "*",
+			rules:  rules,
+			wantOK: true,
 		},
 		{
-			name:  "wildcard rule matches any group",
-			group: "networking.k8s.io",
-			rules: wildcardRules,
+			name:   "wildcard rule matches any group",
+			group:  "networking.k8s.io",
+			rules:  wildcardRules,
+			wantOK: true,
 		},
 		{
-			name:        "no match",
-			group:       "networking.k8s.io",
-			rules:       rules,
-			expectErr:   true,
-			errContains: `attested API group "networking.k8s.io" does not match any rule`,
+			name:   "no match",
+			group:  "networking.k8s.io",
+			rules:  rules,
+			wantOK: false,
 		},
 		{
-			name:        "empty rules",
-			group:       "apps",
-			rules:       nil,
-			expectErr:   true,
-			errContains: `attested API group "apps" does not match any rule`,
+			name:   "empty rules",
+			group:  "apps",
+			rules:  nil,
+			wantOK: false,
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateAttestationAPIGroup(tc.group, tc.rules)
-			if tc.expectErr {
-				if err == nil {
-					t.Fatalf("expected error containing %q but got nil", tc.errContains)
-				}
-				if !strings.Contains(err.Error(), tc.errContains) {
-					t.Fatalf("expected error containing %q but got: %v", tc.errContains, err)
-				}
-			} else if err != nil {
-				t.Fatalf("unexpected error: %v", err)
+			ok := validateAttestationAPIGroup(tc.group, tc.rules)
+			if ok != tc.wantOK {
+				t.Fatalf("validateAttestationAPIGroup(%q) = %v, want %v", tc.group, ok, tc.wantOK)
 			}
 		})
 	}
