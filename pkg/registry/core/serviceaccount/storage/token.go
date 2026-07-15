@@ -230,24 +230,18 @@ func (r *TokenREST) Create(ctx context.Context, name string, obj runtime.Object,
 			if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerWebhookAuthenticationToken) {
 				return nil, errors.NewBadRequest(fmt.Sprintf("cannot bind token to object of type %s (feature gate %s is disabled)", gvk.String(), genericfeatures.APIServerWebhookAuthenticationToken))
 			}
-			newCtx := newContext(ctx, strings.ToLower(gvk.Kind), ref.Name, "", gvk)
-			admissionReviewAPIGroups, ok := attestations[authenticationapi.AttestationAdmissionReviewAPIGroups]
-			if !ok {
-				return nil, errors.NewBadRequest(fmt.Sprintf("allowedAPIGroups attestation is required when bound object ref is of kind %s", gvk.Kind))
-			}
+			newCtx := newContext(ctx, strings.ToLower(gvk.Kind)+"s", ref.Name, "", gvk)
+			// validation guarantees the presence of this key
+			admissionReviewAPIGroups := attestations[authenticationapi.AttestationAdmissionReviewAPIGroups]
 
 			// indexing is safe to do since validation catches empty attestation values
-			if err := r.authorizeAdmissionWebhookAuthnTokenRequest(newCtx, getSvcAccountUserInfo(req, ref), admissionReviewAPIGroups[0]); err != nil {
+			if err := r.authorizeAdmissionWebhookAuthnTokenRequest(newCtx, getSvcAccountUserInfo(req, ref, string(svcacct.UID)), admissionReviewAPIGroups[0]); err != nil {
 				return nil, err
-			}
-
-			if len(req.Spec.Audiences) != 1 {
-				return nil, errors.NewBadRequest("exactly one audience is required when bound object ref is a webhook configuration")
 			}
 
 			switch gvk.Kind {
 			case "ValidatingWebhookConfiguration":
-				valObj, err := r.validatingWebhookConfigurations.Get(ctx, ref.Name, metav1.GetOptions{})
+				valObj, err := r.validatingWebhookConfigurations.Get(newCtx, ref.Name, metav1.GetOptions{})
 				if err != nil {
 					return nil, err
 				}
@@ -333,21 +327,12 @@ func (r *TokenREST) Create(ctx context.Context, name string, obj runtime.Object,
 	return out, nil
 }
 
-func getSvcAccountUserInfo(req *authenticationapi.TokenRequest, ref *authenticationapi.BoundObjectReference) user.Info {
+func getSvcAccountUserInfo(req *authenticationapi.TokenRequest, ref *authenticationapi.BoundObjectReference, svcacctUID string) user.Info {
 	info := serviceaccount.ServiceAccountInfo{
 		Name:         req.Name,
 		Namespace:    req.Namespace,
-		UID:          string(req.UID),
+		UID:          svcacctUID,
 		Attestations: req.Spec.Attestations,
-	}
-
-	switch ref.Kind {
-	case "ValidatingWebhookConfiguration":
-		info.ValidatingWebhookConfigurationName = ref.Name
-		info.ValidatingWebhookConfigurationUID = string(ref.UID)
-	case "MutatingWebhookConfiguration":
-		info.MutatingWebhookConfigurationName = ref.Name
-		info.MutatingWebhookConfigurationUID = string(ref.UID)
 	}
 
 	return info.UserInfo()
@@ -369,14 +354,14 @@ func validateWebhookAudience(audience string, clientConfigs []admissionregistrat
 			}
 			expected := fmt.Sprintf("https://%s.%s.svc:%d", cc.Service.Name, cc.Service.Namespace, port)
 			if cc.Service.Path != nil && *cc.Service.Path != "" {
-				expected += *cc.Service.Path
+				expected += "/" + *cc.Service.Path
 			}
 			if audience == expected {
 				return nil
 			}
 		}
 	}
-	return errors.NewBadRequest(fmt.Sprintf("audience %q does not match any webhook client config in the bound object", audience))
+	return errors.NewBadRequest("audience does not match webhook client config in the bound object")
 }
 
 // validateAttestationAPIGroup checks that the attested API group matches at least

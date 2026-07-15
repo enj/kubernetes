@@ -45,7 +45,9 @@ func ValidateTokenRequest(tr *authentication.TokenRequest) field.ErrorList {
 	}
 
 	allErrs = append(allErrs, validateAttestations(tr, specPath.Child("attestations"))...)
-	// allErrs = append(allErrs, validateAudience(tr, specPath.Child("attestations"))...)
+	if isWebhookConfig(tr.Spec.BoundObjectRef.Kind) && len(tr.Spec.Audiences) != 1 {
+		allErrs = append(allErrs, field.Invalid(specPath, tr.Spec.Audiences, "must be length 1"))
+	}
 
 	return allErrs
 }
@@ -67,6 +69,14 @@ func validateAttestations(tr *authentication.TokenRequest, specPath *field.Path)
 			return nil
 		}
 		return field.ErrorList{field.Invalid(specPath, boundObjectRef.Kind, fmt.Sprintf("attestations may not be specified when bound object ref is of kind %s", boundObjectRef.Kind))}
+	}
+
+	if len(attestations) == 0 {
+		return field.ErrorList{field.Invalid(specPath, attestations, "may not be empty when bound object is webhook configuration")}
+	}
+
+	if _, ok := tr.Spec.Attestations[authentication.AttestationAdmissionReviewAPIGroups]; !ok {
+		return field.ErrorList{field.Invalid(specPath, attestations, fmt.Sprintf("attestation %q is required when bound object is a webhook configuration", authentication.AttestationAdmissionReviewAPIGroups))}
 	}
 
 	errs := field.ErrorList{}
