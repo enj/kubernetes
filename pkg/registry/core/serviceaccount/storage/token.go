@@ -19,6 +19,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	admissionregistration "k8s.io/api/admissionregistration/v1"
@@ -229,7 +230,7 @@ func (r *TokenREST) Create(ctx context.Context, name string, obj runtime.Object,
 			if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerWebhookAuthenticationToken) {
 				return nil, errors.NewBadRequest(fmt.Sprintf("cannot bind token to object of type %s (feature gate %s is disabled)", gvk.String(), genericfeatures.APIServerWebhookAuthenticationToken))
 			}
-			newCtx := newContext(ctx, firstCharToLower(gvk.Kind), ref.Name, "", gvk)
+			newCtx := newContext(ctx, strings.ToLower(gvk.Kind), ref.Name, "", gvk)
 			admissionReviewAPIGroups, ok := attestations[authenticationapi.AttestationAdmissionReviewAPIGroups]
 			if !ok {
 				return nil, errors.NewBadRequest(fmt.Sprintf("allowedAPIGroups attestation is required when bound object ref is of kind %s", gvk.Kind))
@@ -262,8 +263,8 @@ func (r *TokenREST) Create(ctx context.Context, name string, obj runtime.Object,
 				if err := validateWebhookAudience(req.Spec.Audiences[0], clientConfigs); err != nil {
 					return nil, err
 				}
-				if err := validateAttestationAPIGroup(admissionReviewAPIGroups[0], rules); err != nil {
-					return nil, err
+				if ok := validateAttestationAPIGroup(admissionReviewAPIGroups[0], rules); !ok {
+					return nil, errors.NewForbidden(schema.GroupResource{Group: "", Resource: "serviceaccounts/token"}, svcacct.Name, fmt.Errorf("attested API group does not match any rule in the bound webhook configuration"))
 				}
 			case "MutatingWebhookConfiguration":
 				mutObj, err := r.mutatingWebhookConfigurations.Get(newCtx, ref.Name, metav1.GetOptions{})
@@ -282,8 +283,8 @@ func (r *TokenREST) Create(ctx context.Context, name string, obj runtime.Object,
 				if err := validateWebhookAudience(req.Spec.Audiences[0], clientConfigs); err != nil {
 					return nil, err
 				}
-				if err := validateAttestationAPIGroup(admissionReviewAPIGroups[0], rules); err != nil {
-					return nil, err
+				if ok := validateAttestationAPIGroup(admissionReviewAPIGroups[0], rules); !ok {
+					return nil, errors.NewForbidden(schema.GroupResource{Group: "", Resource: "serviceaccounts/token"}, svcacct.Name, fmt.Errorf("attested API group does not match any rule in the bound webhook configuration"))
 				}
 			}
 		default:
@@ -352,10 +353,6 @@ func getSvcAccountUserInfo(req *authenticationapi.TokenRequest, ref *authenticat
 	return info.UserInfo()
 }
 
-func firstCharToLower(kind string) string {
-	return string([]byte(kind)[0]+0x20) + string([]byte(kind)[1:])
-}
-
 // validateWebhookAudience checks that the requested audience matches at least one
 // webhook's client config. For URL-configured webhooks the audience must be the URL
 // verbatim. For service-configured webhooks the audience must be
@@ -385,26 +382,32 @@ func validateWebhookAudience(audience string, clientConfigs []admissionregistrat
 // validateAttestationAPIGroup checks that the attested API group matches at least
 // one Rule in the webhook configuration. A "*" attestation value skips this check
 // since it represents all API groups. A "*" in a Rule's APIGroups matches any
-// attested value.
-func validateAttestationAPIGroup(attestedGroup string, rules []admissionregistration.RuleWithOperations) error {
-	// "*" means the token is valid for all API groups; skip the check.
+// attested value. It is assumed that the cel expressions in the matchConditions
+// properly match the AdmissionReview request for which the TokenRequest is
+// being made.
+func validateAttestationAPIGroup(attestedGroup string, rules []admissionregistration.RuleWithOperations) bool {
+	// "*" means the token is valid for all API groups; skip the check. We only
+	// ever expect kube-apiserver to ever ask for this.
 	if attestedGroup == "*" {
-		return nil
-	}
-
-	if len(rules) == 0 {
-		return nil
+		return true
 	}
 
 	for _, rule := range rules {
 		for _, group := range rule.APIGroups {
+			// If there's an exact match
 			if group == "*" || group == attestedGroup {
-				return nil
+				return true
 			}
 		}
 	}
 
-	return errors.NewBadRequest(fmt.Sprintf("attested API group %q does not match any rule in the bound webhook configuration", attestedGroup))
+	// An aggregated API Server will never need a cross-group equivalent, so we
+	// do not check equivalents here.
+
+	// If this point is reached, there are either a) no rules or b) rules but
+	// none matched. If there are no rules, the invocation will never match and
+	// the request should be denied.
+	return false
 }
 
 func (r *TokenREST) authorizeAdmissionWebhookAuthnTokenRequest(ctx context.Context, userInfo user.Info, admissionReviewAPIGroup string) error {
@@ -425,11 +428,11 @@ func (r *TokenREST) authorizeAdmissionWebhookAuthnTokenRequest(ctx context.Conte
 	}
 
 	msg := reason
-	if err != nil {
+	switch {
+	case err != nil && len(reason) > 0:
+		msg = fmt.Sprintf("%v: %s", err, reason)
+	case err != nil:
 		msg = err.Error()
-		if len(reason) > 0 {
-			msg = fmt.Sprintf("%v: %s", err, reason)
-		}
 	}
 
 	return responsewriters.ForbiddenStatusError(attributes, msg)

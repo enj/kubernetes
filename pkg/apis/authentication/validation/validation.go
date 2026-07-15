@@ -20,6 +20,7 @@ package validation
 
 import (
 	"fmt"
+	"regexp"
 
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -27,6 +28,8 @@ import (
 )
 
 const MinTokenAgeSec = 10 * 60 // 10 minutes
+
+var regexpWebhookConfigurationKind = regexp.MustCompile(`(Validating|Mutating)WebhookConfiguration`)
 
 // ValidateTokenRequest validates a TokenRequest.
 func ValidateTokenRequest(tr *authentication.TokenRequest) field.ErrorList {
@@ -40,54 +43,58 @@ func ValidateTokenRequest(tr *authentication.TokenRequest) field.ErrorList {
 		allErrs = append(allErrs, field.Invalid(specPath.Child("expirationSeconds"), tr.Spec.ExpirationSeconds, "may not specify a duration larger than 2^32 seconds"))
 
 	}
-	attestErrs := validateAttestations(tr.Spec.Attestations, tr.Spec.BoundObjectRef, specPath)
-	return append(allErrs, attestErrs...)
+
+	allErrs = append(allErrs, validateAttestations(tr, specPath.Child("attestations"))...)
+	// allErrs = append(allErrs, validateAudience(tr, specPath.Child("attestations"))...)
+
+	return allErrs
 }
 
-func validateAttestations(attestations map[string]authentication.AttestationValue, boundObjectRef *authentication.BoundObjectReference, specPath *field.Path) field.ErrorList {
-	errs := field.ErrorList{}
+func validateAttestations(tr *authentication.TokenRequest, specPath *field.Path) field.ErrorList {
+	attestations := tr.Spec.Attestations
+	boundObjectRef := tr.Spec.BoundObjectRef
 
-	if len(attestations) == 0 {
-		return errs
-	}
-
-	// Attestations require a webhook-type bound object reference.
+	// Attestations require a bound object reference.
 	if boundObjectRef == nil {
-		errs = append(errs, field.Invalid(specPath.Child("attestations"), "", "attestations may not be specified without a bound object reference"))
-		return errs
-	}
-	switch boundObjectRef.Kind {
-	case "ValidatingWebhookConfiguration", "MutatingWebhookConfiguration":
-		// allowed
-	default:
-		errs = append(errs, field.Invalid(specPath.Child("attestations"), boundObjectRef.Kind, fmt.Sprintf("attestations may not be specified when bound object ref is of kind %s", boundObjectRef.Kind)))
-		return errs
+		if len(attestations) == 0 {
+			return nil
+		}
+		return field.ErrorList{field.Invalid(specPath, "", "attestations may not be specified without a bound object reference")}
 	}
 
+	if !isWebhookConfig(tr.Spec.BoundObjectRef.Kind) {
+		if len(attestations) == 0 {
+			return nil
+		}
+		return field.ErrorList{field.Invalid(specPath, boundObjectRef.Kind, fmt.Sprintf("attestations may not be specified when bound object ref is of kind %s", boundObjectRef.Kind))}
+	}
+
+	errs := field.ErrorList{}
 	for key, values := range attestations {
-		if len(values) == 0 {
-			errs = append(errs, field.Invalid(specPath.Child("attestations"), key, "may not specify empty value"))
-			continue
-		}
-
-		switch key {
-		case authentication.AttestationAdmissionReviewAPIGroups:
-			if len(values) != 1 {
-				errs = append(errs, field.Invalid(specPath.Child("attestations").Child(authentication.AttestationAdmissionReviewAPIGroups), key, "must specify a single value"))
-				continue
-			}
-
-			valueErrs := validateAdmissionReviewAPIGroupsValue(values[0], specPath, key)
-			errs = append(errs, valueErrs...)
-		default:
-			errs = append(errs, field.Invalid(specPath.Child("attestations"), key, "may not specify an unknown key"))
-		}
+		errs = append(errs, validateValues(key, values, specPath)...)
 	}
 
 	return errs
 }
 
-func validateAdmissionReviewAPIGroupsValue(group string, specPath *field.Path, key string) field.ErrorList {
+func validateValues(key string, values authentication.AttestationValue, specPath *field.Path) field.ErrorList {
+	if len(values) == 0 {
+		return field.ErrorList{field.Invalid(specPath, key, "may not specify empty value")}
+	}
+
+	switch key {
+	case authentication.AttestationAdmissionReviewAPIGroups:
+		if len(values) != 1 {
+			return field.ErrorList{field.Invalid(specPath.Child(authentication.AttestationAdmissionReviewAPIGroups), key, "must specify a single value")}
+		}
+
+		return validateAdmissionReviewAPIGroupsValue(values[0], specPath.Child(authentication.AttestationAdmissionReviewAPIGroups))
+	default:
+		return field.ErrorList{field.Invalid(specPath, key, "may not specify an unknown key")}
+	}
+}
+
+func validateAdmissionReviewAPIGroupsValue(group string, specPath *field.Path) field.ErrorList {
 	var errs field.ErrorList
 
 	// The value "" cannot be allowed for the "admissionReviewAPIGroups"
@@ -102,7 +109,7 @@ func validateAdmissionReviewAPIGroupsValue(group string, specPath *field.Path, k
 	// it needs a token to authenticate to a webhook, so there is never
 	// a need to allow the value "" for this attestation.
 	if len(group) == 0 {
-		errs = append(errs, field.Invalid(specPath.Child("attestations").Child(authentication.AttestationAdmissionReviewAPIGroups), key, "may not be an empty string"))
+		errs = append(errs, field.Invalid(specPath, group, "may not be an empty string"))
 		return errs
 	}
 
@@ -111,21 +118,25 @@ func validateAdmissionReviewAPIGroupsValue(group string, specPath *field.Path, k
 	}
 
 	// valid label, e.g. "apps"
-	labelErrs := validation.IsDNS1123Label(group)
-	if len(labelErrs) == 0 {
+	labelReasons := validation.IsDNS1123Label(group)
+	if len(labelReasons) == 0 {
 		return nil
 	}
 
 	// valid subdomain, e.g. "admissionregistration.k8s.io"
-	subdomainErrs := validation.IsDNS1123Subdomain(group)
-	if len(subdomainErrs) == 0 {
+	subdomainReasons := validation.IsDNS1123Subdomain(group)
+	if len(subdomainReasons) == 0 {
 		return nil
 	}
 
-	allErrs := append(labelErrs, subdomainErrs...)
-	for _, err := range allErrs {
-		errs = append(errs, field.Invalid(specPath.Child("attestations").Child(authentication.AttestationAdmissionReviewAPIGroups).Child(key), err, "must specify a valid API Group"))
+	allReasons := append(labelReasons, subdomainReasons...)
+	for _, reason := range allReasons {
+		errs = append(errs, field.Invalid(specPath, group, "must specify a valid API Group: "+reason))
 	}
 
 	return errs
+}
+
+func isWebhookConfig(s string) bool {
+	return regexpWebhookConfigurationKind.MatchString(s)
 }
