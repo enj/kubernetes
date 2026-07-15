@@ -1781,7 +1781,7 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 			name:     "ValidatingWebhookConfiguration with service audience",
 			kind:     "ValidatingWebhookConfiguration",
 			webhook:  validating.Name,
-			audience: "https://webhook-svc.webhook-ns.svc:8443//validate",
+			audience: "https://webhook-svc.webhook-ns.svc:8443/validate",
 		},
 		{
 			name:     "MutatingWebhookConfiguration with URL audience",

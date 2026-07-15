@@ -34,6 +34,8 @@ import (
 	"k8s.io/apiserver/pkg/registry/rest"
 	etcd3testing "k8s.io/apiserver/pkg/storage/etcd3/testing"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	fakeadmissionregistrationv1 "k8s.io/client-go/kubernetes/typed/admissionregistration/v1/fake"
+	ktesting "k8s.io/client-go/testing"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	authenticationapi "k8s.io/kubernetes/pkg/apis/authentication"
 	api "k8s.io/kubernetes/pkg/apis/core"
@@ -55,7 +57,7 @@ func newTokenStorage(t *testing.T, issuer token.TokenGenerator, auds authenticat
 		ResourcePrefix:          "serviceaccounts",
 	}
 	// set issuer, podStore and secretStore to allow the token endpoint to be initialised
-	rest, err := NewREST(restOptions, issuer, auds, nil, 0, podStorage, secretStorage, nodeStorage, nil, false, time.Hour*9999)
+	rest, err := NewREST(restOptions, issuer, auds, nil, 0, podStorage, secretStorage, nodeStorage, &fakeadmissionregistrationv1.FakeAdmissionregistrationV1{Fake: &ktesting.Fake{}}, false, time.Hour*9999)
 	if err != nil {
 		t.Fatalf("unexpected error from REST storage: %v", err)
 	}

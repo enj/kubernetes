@@ -350,7 +350,7 @@ func TestValidateWebhookAudience(t *testing.T) {
 			Name:      "webhook-svc",
 			Namespace: "webhook-ns",
 			Port:      ptr(int32(8443)),
-			Path:      ptr("validate"),
+			Path:      ptr("/validate"),
 		}},
 		{Service: &admissionregistration.ServiceReference{
 			Name:      "default-port-svc",
@@ -370,7 +370,7 @@ func TestValidateWebhookAudience(t *testing.T) {
 		},
 		{
 			name:     "service match with port and path",
-			audience: "https://webhook-svc.webhook-ns.svc:8443//validate",
+			audience: "https://webhook-svc.webhook-ns.svc:8443/validate",
 		},
 		{
 			name:     "service match with default port",
