@@ -27,6 +27,7 @@ import (
 	"gopkg.in/go-jose/go-jose.v2/jwt"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/audit"
 	apiserverserviceaccount "k8s.io/apiserver/pkg/authentication/serviceaccount"
@@ -288,33 +289,14 @@ func (v *validator) Validate(ctx context.Context, _ string, public *jwt.Claims, 
 		mutatingName, mutatingUID     string
 	)
 	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerWebhookAuthenticationToken) {
-		var (
-			ref              *ref
-			webhookCfgKind   string
-			webhookCfgGetter webhookCfgGetterFunc
-			namePtr, uidPtr  *string
-			noop             string
 
-			err error
-		)
-
+		var err error
 		switch {
 		case valref != nil:
-			webhookCfgKind = "ValidatingWebhookConfiguration"
-			ref = valref
-			webhookCfgGetter = toWebhookCfgGetterFunc(v.getter.GetValidatingWebhookConfiguration)
-			namePtr, uidPtr = &validatingName, &validatingUID
+			validatingName, validatingUID, err = validateWebhookCfgRef[*admissionregistrationv1.ValidatingWebhookConfiguration](ctx, v, &private.Kubernetes, valref, invalidIfDeletedBefore)
 		case mutref != nil:
-			webhookCfgKind = "MutatingWebhookConfiguration"
-			ref = mutref
-			webhookCfgGetter = toWebhookCfgGetterFunc(v.getter.GetMutatingWebhookConfiguration)
-			namePtr, uidPtr = &mutatingName, &mutatingUID
-		default:
-			namePtr, uidPtr = &noop, &noop
+			mutatingName, mutatingUID, err = validateWebhookCfgRef[*admissionregistrationv1.MutatingWebhookConfiguration](ctx, v, &private.Kubernetes, mutref, invalidIfDeletedBefore)
 		}
-
-		// this is an errorless no-op returning empty strings when the input reference is nil
-		*namePtr, *uidPtr, err = validateWebhookCfgRef(ctx, &private.Kubernetes, ref, webhookCfgGetter, invalidIfDeletedBefore, webhookCfgKind)
 		if err != nil {
 			return nil, err
 		}
@@ -355,21 +337,52 @@ func (v *validator) Validate(ctx context.Context, _ string, public *jwt.Claims, 
 	}, nil
 }
 
-type webhookCfg interface {
+type eitherWebhookCfg interface {
 	*admissionregistrationv1.ValidatingWebhookConfiguration | *admissionregistrationv1.MutatingWebhookConfiguration
 }
 
-type webhookCfgGetterFunc func(context.Context, string) (metav1.Object, error)
+type webhookCfgGetterFunc[T eitherWebhookCfg] func(context.Context, string) (metav1.Object, error)
 
-func validateWebhookCfgRef(ctx context.Context, private *kubernetes, ref *ref, get webhookCfgGetterFunc, invalidIfDeletedBefore time.Time, kind string) (string, string, error) {
+func getWebhookGetter[T eitherWebhookCfg](v *validator) webhookCfgGetterFunc[T] {
+	var t T
+	switch any(t).(type) {
+	case *admissionregistrationv1.ValidatingWebhookConfiguration:
+		return any(v.getter.GetValidatingWebhookConfiguration).(webhookCfgGetterFunc[T])
+	case *admissionregistrationv1.MutatingWebhookConfiguration:
+		return any(v.getter.GetMutatingWebhookConfiguration).(webhookCfgGetterFunc[T])
+	default:
+		panic("unreachable by type constraints")
+	}
+}
+
+func getWebhookKind[T eitherWebhookCfg]() string {
+	var t T
+	switch any(t).(type) {
+	case *admissionregistrationv1.ValidatingWebhookConfiguration:
+		return "ValidatingWebhookConfiguration"
+	case *admissionregistrationv1.MutatingWebhookConfiguration:
+		return "MutatingWebhookConfiguration"
+	default:
+		panic("unreachable by type constraints")
+	}
+}
+
+func validateWebhookCfgRef[T eitherWebhookCfg](ctx context.Context, v *validator, private *kubernetes, ref *ref, invalidIfDeletedBefore time.Time) (string, string, error) {
 	if ref == nil {
 		return "", "", nil
 	}
 
-	obj, err := get(ctx, ref.Name)
+	get := getWebhookGetter[T](v)
+	kind := getWebhookKind[T]()
+	_obj, err := get(ctx, ref.Name)
 	if err != nil {
 		klog.V(4).Infof("Could not retrieve %s object %q for service account %s/%s: %v", strings.ToLower(kind), ref.Name, private.Namespace, private.Svcacct.Name, err)
 		return "", "", errors.New("service account token has been invalidated")
+	}
+
+	obj, err := meta.Accessor(_obj)
+	if err != nil {
+		return "", "", fmt.Errorf("could not cast webhookconfig type to metav1.Object")
 	}
 
 	if objUID := string(obj.GetUID()); ref.UID != objUID {
@@ -381,21 +394,4 @@ func validateWebhookCfgRef(ctx context.Context, private *kubernetes, ref *ref, g
 		return "", "", errors.New("service account token has been invalidated")
 	}
 	return ref.Name, ref.UID, nil
-}
-
-func toWebhookCfgGetterFunc[T webhookCfg](f func(context.Context, string) (T, error)) webhookCfgGetterFunc {
-	return func(ctx context.Context, s string) (metav1.Object, error) {
-		cfg, err := f(ctx, s)
-		if err != nil {
-			return nil, err
-		}
-
-		var p any = cfg
-		o, ok := p.(metav1.Object)
-		if !ok {
-			return nil, fmt.Errorf("could not cast webhookconfig type to metav1.Object")
-		}
-
-		return o, nil
-	}
 }

@@ -23,15 +23,17 @@ import (
 	"strings"
 	"time"
 
-	admissionregistration "k8s.io/api/admissionregistration/v1"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	authenticationapiv1 "k8s.io/api/authentication/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/apiserver/pkg/admission/plugin/webhook"
 	"k8s.io/apiserver/pkg/audit"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
@@ -44,7 +46,7 @@ import (
 	"k8s.io/apiserver/pkg/registry/rest"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/apiserver/pkg/warning"
-	admissionregistrationv1 "k8s.io/client-go/kubernetes/typed/admissionregistration/v1"
+	typedadmissionregistrationv1 "k8s.io/client-go/kubernetes/typed/admissionregistration/v1"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/apis/authentication"
 	authenticationapi "k8s.io/kubernetes/pkg/apis/authentication"
@@ -70,8 +72,8 @@ type TokenREST struct {
 	pods                            rest.Getter
 	secrets                         rest.Getter
 	nodes                           rest.Getter
-	validatingWebhookConfigurations admissionregistrationv1.ValidatingWebhookConfigurationInterface
-	mutatingWebhookConfigurations   admissionregistrationv1.MutatingWebhookConfigurationInterface
+	validatingWebhookConfigurations typedadmissionregistrationv1.ValidatingWebhookConfigurationInterface
+	mutatingWebhookConfigurations   typedadmissionregistrationv1.MutatingWebhookConfigurationInterface
 	authorizer                      authorizer.Authorizer
 	issuer                          token.TokenGenerator
 	auds                            authenticator.Audiences
@@ -166,8 +168,8 @@ func (r *TokenREST) Create(ctx context.Context, name string, obj runtime.Object,
 		pod        *api.Pod
 		node       *api.Node
 		secret     *api.Secret
-		validating *admissionregistration.ValidatingWebhookConfiguration
-		mutating   *admissionregistration.MutatingWebhookConfiguration
+		validating *admissionregistrationv1.ValidatingWebhookConfiguration
+		mutating   *admissionregistrationv1.MutatingWebhookConfiguration
 	)
 
 	if ref := req.Spec.BoundObjectRef; ref != nil {
@@ -240,47 +242,17 @@ func (r *TokenREST) Create(ctx context.Context, name string, obj runtime.Object,
 				return nil, err
 			}
 
+			var err error
 			switch gvk.Kind {
 			case "ValidatingWebhookConfiguration":
-				valObj, err := r.validatingWebhookConfigurations.Get(newCtx, ref.Name, metav1.GetOptions{})
-				if err != nil {
-					return nil, err
-				}
-				validating = valObj
+				validating, err = getAndValidateWebhookConfig[*admissionregistrationv1.ValidatingWebhookConfiguration](newCtx, r, req, admissionReviewAPIGroups[0])
 				uid = validating.UID
-
-				var clientConfigs []admissionregistration.WebhookClientConfig
-				var rules []admissionregistration.RuleWithOperations
-				for _, wh := range validating.Webhooks {
-					clientConfigs = append(clientConfigs, wh.ClientConfig)
-					rules = append(rules, wh.Rules...)
-				}
-				if err := validateWebhookAudience(req.Spec.Audiences[0], clientConfigs); err != nil {
-					return nil, err
-				}
-				if ok := validateAttestationAPIGroup(admissionReviewAPIGroups[0], rules); !ok {
-					return nil, errors.NewForbidden(schema.GroupResource{Group: "", Resource: "serviceaccounts/token"}, svcacct.Name, fmt.Errorf("attested API group does not match any rule in the bound webhook configuration"))
-				}
 			case "MutatingWebhookConfiguration":
-				mutObj, err := r.mutatingWebhookConfigurations.Get(newCtx, ref.Name, metav1.GetOptions{})
-				if err != nil {
-					return nil, err
-				}
-				mutating = mutObj
+				mutating, err = getAndValidateWebhookConfig[*admissionregistrationv1.MutatingWebhookConfiguration](newCtx, r, req, admissionReviewAPIGroups[0])
 				uid = mutating.UID
-
-				var clientConfigs []admissionregistration.WebhookClientConfig
-				var rules []admissionregistration.RuleWithOperations
-				for _, wh := range mutating.Webhooks {
-					clientConfigs = append(clientConfigs, wh.ClientConfig)
-					rules = append(rules, wh.Rules...)
-				}
-				if err := validateWebhookAudience(req.Spec.Audiences[0], clientConfigs); err != nil {
-					return nil, err
-				}
-				if ok := validateAttestationAPIGroup(admissionReviewAPIGroups[0], rules); !ok {
-					return nil, errors.NewForbidden(schema.GroupResource{Group: "", Resource: "serviceaccounts/token"}, svcacct.Name, fmt.Errorf("attested API group does not match any rule in the bound webhook configuration"))
-				}
+			}
+			if err != nil {
+				return nil, errors.NewForbidden(schema.GroupResource{Group: "", Resource: "serviceaccounts/token"}, svcacct.Name, fmt.Errorf("token request denied"))
 			}
 		default:
 			return nil, errors.NewBadRequest(fmt.Sprintf("cannot bind token to object of type %s", gvk.String()))
@@ -328,6 +300,58 @@ func (r *TokenREST) Create(ctx context.Context, name string, obj runtime.Object,
 	return out, nil
 }
 
+type eitherWebhookCfg interface {
+	*admissionregistrationv1.ValidatingWebhookConfiguration | *admissionregistrationv1.MutatingWebhookConfiguration
+}
+
+type eitherWebhook interface {
+	admissionregistrationv1.ValidatingWebhook | admissionregistrationv1.MutatingWebhook
+}
+
+func getAndValidateWebhookConfig[T eitherWebhookCfg](newCtx context.Context, r *TokenREST, req *authenticationapi.TokenRequest, admissionReviewAPIGroups string) (T, error) {
+	var t T
+	switch any(t).(type) {
+	case *admissionregistrationv1.ValidatingWebhookConfiguration:
+		h, err := getAndValidateWebhookConfigGeneric[*admissionregistrationv1.ValidatingWebhookConfiguration, admissionregistrationv1.ValidatingWebhook](newCtx, r, req, admissionReviewAPIGroups, r.validatingWebhookConfigurations.Get)
+		return any(h).(T), err
+	case *admissionregistrationv1.MutatingWebhookConfiguration:
+		h, err := getAndValidateWebhookConfigGeneric[*admissionregistrationv1.MutatingWebhookConfiguration, admissionregistrationv1.MutatingWebhook](newCtx, r, req, admissionReviewAPIGroups, r.mutatingWebhookConfigurations.Get)
+		return any(h).(T), err
+	default:
+		panic("unreachable by type constraints")
+	}
+}
+
+func getter[T eitherWebhookCfg, U eitherWebhook](cfg T) webhookGetter[U] {
+	switch wh := any(cfg).(type) {
+	case *admissionregistrationv1.ValidatingWebhookConfiguration:
+		return any((*vwc)(wh)).(webhookGetter[U])
+	case *admissionregistrationv1.MutatingWebhookConfiguration:
+		return any((*mwc)(wh)).(webhookGetter[U])
+	default:
+		panic("unreachable by type constraints")
+	}
+}
+
+func getAndValidateWebhookConfigGeneric[T eitherWebhookCfg, U eitherWebhook](newCtx context.Context, r *TokenREST, req *authenticationapi.TokenRequest, admissionReviewAPIGroups string, get func(context.Context, string, metav1.GetOptions) (T, error)) (T, error) {
+	borName := req.Spec.BoundObjectRef.Name
+	obj, err := get(newCtx, borName, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	webhookGet := getter[T, U](obj)
+	if err := validateWebhookAudience2(obj, webhookGet, req.Spec.Audiences[0]); err != nil {
+		return nil, err
+	}
+
+	if err := validateAttestationAPIGroup2(obj, webhookGet, admissionReviewAPIGroups); err != nil {
+		return nil, err
+	}
+
+	return obj, nil
+}
+
 func getSvcAccountUserInfo(req *authenticationapi.TokenRequest, ref *authenticationapi.BoundObjectReference, svcacctUID string) user.Info {
 	info := serviceaccount.ServiceAccountInfo{
 		Name:         req.Name,
@@ -339,11 +363,111 @@ func getSvcAccountUserInfo(req *authenticationapi.TokenRequest, ref *authenticat
 	return info.UserInfo()
 }
 
+type vwc admissionregistrationv1.ValidatingWebhookConfiguration
+type mwc admissionregistrationv1.MutatingWebhookConfiguration
+type vw admissionregistrationv1.ValidatingWebhook
+type mw admissionregistrationv1.MutatingWebhook
+
+func (v *vwc) GetWebhooks() []admissionregistrationv1.ValidatingWebhook {
+	return v.Webhooks
+}
+
+func (m *mwc) GetWebhooks() []admissionregistrationv1.MutatingWebhook {
+	return m.Webhooks
+}
+
+type webhookGetter[T eitherWebhook] interface {
+	GetWebhooks() []T
+}
+
+func getWebhooks[T webhookGetter[U], U eitherWebhook](hook T) []U {
+	return hook.GetWebhooks()
+}
+
+//	func asWebhookGetter[T eitherWebhookCfg, U eitherWebhook](cfg T) webhookGetter[U] {
+//		var c any = cfg
+//		switch whc := c.(type) {
+//		case *admissionregistrationv1.ValidatingWebhookConfiguration:
+//			return (*vwc)(whc)
+//		case *admissionregistrationv1.MutatingWebhookConfiguration:
+//			var t any = cfg
+//			if _, ok := t.(*admissionregistrationv1.MutatingWebhookConfiguration); !ok {
+//				return nil, fmt.Errorf("mismatched webhook configuration and webhook types")
+//			}
+//			return webhook.NewMutatingWebhookAccessor(string(a.GetUID()), a.GetName(), whc), nil
+//		default:
+//			panic("unreachable by type constraints")
+//		}
+//	}
+func asAccessor[T eitherWebhookCfg, U eitherWebhook](cfg T, hook U) (webhook.WebhookAccessor, error) {
+	a, err := meta.Accessor(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	var h any = hook
+	switch wh := h.(type) {
+	case *admissionregistrationv1.ValidatingWebhook:
+		var t any = cfg
+		if _, ok := t.(*admissionregistrationv1.ValidatingWebhookConfiguration); !ok {
+			return nil, fmt.Errorf("mismatched webhook configuration and webhook types")
+		}
+		return webhook.NewValidatingWebhookAccessor(string(a.GetUID()), a.GetName(), wh), nil
+	case *admissionregistrationv1.MutatingWebhook:
+		var t any = cfg
+		if _, ok := t.(*admissionregistrationv1.MutatingWebhookConfiguration); !ok {
+			return nil, fmt.Errorf("mismatched webhook configuration and webhook types")
+		}
+		return webhook.NewMutatingWebhookAccessor(string(a.GetUID()), a.GetName(), wh), nil
+	default:
+		panic("unreachable by type constraints")
+	}
+}
+
 // validateWebhookAudience checks that the requested audience matches at least one
 // webhook's client config. For URL-configured webhooks the audience must be the URL
 // verbatim. For service-configured webhooks the audience must be
 // https://$name.$namespace.svc:$port[/$path].
-func validateWebhookAudience(audience string, clientConfigs []admissionregistration.WebhookClientConfig) error {
+func validateWebhookAudience2[T eitherWebhookCfg, U eitherWebhook](cfg T, gimme webhookGetter[U], audience string) error {
+	hooks := gimme.GetWebhooks()
+	for _, hook := range hooks {
+		a, err := asAccessor(cfg, hook)
+		if err != nil {
+			return err
+		}
+
+		cc := a.GetClientConfig()
+		if cc.URL != nil && audience == *cc.URL {
+			return nil
+		}
+		if cc.Service != nil {
+			port := int32(443)
+			if cc.Service.Port != nil {
+				port = *cc.Service.Port
+			}
+			expected := fmt.Sprintf("https://%s.%s.svc:%d", cc.Service.Name, cc.Service.Namespace, port)
+			if cc.Service.Path != nil && *cc.Service.Path != "" {
+				joined, err := url.JoinPath(expected, *cc.Service.Path)
+				if err != nil {
+					return errors.NewInternalError(fmt.Errorf("%w: unable to validate audience", err))
+				}
+				expected = joined
+			}
+			if audience == expected {
+				return nil
+			}
+		}
+
+	}
+
+	return errors.NewBadRequest("audience does not match webhook client config in the bound object")
+}
+
+// validateWebhookAudience checks that the requested audience matches at least one
+// webhook's client config. For URL-configured webhooks the audience must be the URL
+// verbatim. For service-configured webhooks the audience must be
+// https://$name.$namespace.svc:$port[/$path].
+func validateWebhookAudience(audience string, clientConfigs []admissionregistrationv1.WebhookClientConfig) error {
 	for _, cc := range clientConfigs {
 		if cc.URL != nil && audience == *cc.URL {
 			return nil
@@ -376,18 +500,25 @@ func validateWebhookAudience(audience string, clientConfigs []admissionregistrat
 // attested value. It is assumed that the cel expressions in the matchConditions
 // properly match the AdmissionReview request for which the TokenRequest is
 // being made.
-func validateAttestationAPIGroup(attestedGroup string, rules []admissionregistration.RuleWithOperations) bool {
+func validateAttestationAPIGroup2[T eitherWebhookCfg, U eitherWebhook](cfg T, gimme webhookGetter[U], attestedGroup string) error {
 	// "*" means the token is valid for all API groups; skip the check. We only
 	// ever expect kube-apiserver to ever ask for this.
 	if attestedGroup == "*" {
-		return true
+		return nil
 	}
 
-	for _, rule := range rules {
-		for _, group := range rule.APIGroups {
-			// If there's an exact match
-			if group == "*" || group == attestedGroup {
-				return true
+	for _, hook := range gimme.GetWebhooks() {
+		a, err := asAccessor(cfg, hook)
+		if err != nil {
+			return err
+		}
+
+		for _, rule := range a.GetRules() {
+			for _, group := range rule.APIGroups {
+				// If there's an exact match
+				if group == "*" || group == attestedGroup {
+					return nil
+				}
 			}
 		}
 	}
@@ -398,7 +529,7 @@ func validateAttestationAPIGroup(attestedGroup string, rules []admissionregistra
 	// If this point is reached, there are either a) no rules or b) rules but
 	// none matched. If there are no rules, the invocation will never match and
 	// the request should be denied.
-	return false
+	return fmt.Errorf("attestation does not match webhook rules")
 }
 
 func (r *TokenREST) authorizeAdmissionWebhookAuthnTokenRequest(ctx context.Context, userInfo user.Info, admissionReviewAPIGroup string) error {
