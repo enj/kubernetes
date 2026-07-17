@@ -48,7 +48,6 @@ import (
 	"k8s.io/apiserver/pkg/warning"
 	typedadmissionregistrationv1 "k8s.io/client-go/kubernetes/typed/admissionregistration/v1"
 	"k8s.io/klog/v2"
-	"k8s.io/kubernetes/pkg/apis/authentication"
 	authenticationapi "k8s.io/kubernetes/pkg/apis/authentication"
 	authenticationvalidation "k8s.io/kubernetes/pkg/apis/authentication/validation"
 
@@ -491,7 +490,7 @@ func (r *TokenREST) authorizeAdmissionWebhookAuthnTokenRequest(ctx context.Conte
 		Verb:            "attest",
 		APIVersion:      "*",
 		APIGroup:        "authentication.k8s.io",
-		Resource:        authentication.AttestationAdmissionReviewAPIGroups,
+		Resource:        authenticationapi.AttestationAdmissionReviewAPIGroups,
 		ResourceRequest: true,
 		Name:            admissionReviewAPIGroup,
 	}

@@ -2510,8 +2510,6 @@ var defaultKubernetesFeatureGateDependencies = map[featuregate.Feature][]feature
 
 	ServiceAccountTokenPodNodeInfo: {},
 
-	genericfeatures.APIServerWebhookAuthenticationToken: {},
-
 	ServiceCIDRStatusFieldWiping: {},
 
 	StaleControllerConsistencyDaemonSet: {featuregate.Feature(clientfeatures.AtomicFIFO)},
@@ -2579,6 +2577,8 @@ var defaultKubernetesFeatureGateDependencies = map[featuregate.Feature][]feature
 	genericfeatures.APIResponseCompression: {},
 
 	genericfeatures.APIServerIdentity: {},
+
+	genericfeatures.APIServerWebhookAuthenticationToken: {},
 
 	genericfeatures.APIServingWithRoutine: {},
 

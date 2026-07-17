@@ -218,7 +218,7 @@ type TokenRequestSpec struct {
 	// +optional
 	BoundObjectRef *BoundObjectReference `json:"boundObjectRef" protobuf:"bytes,3,opt,name=boundObjectRef"`
 
-	// Attestations is map of well-known keys to string-slice values.
+	// attestations is a map of well-known keys to string-slice values.
 	// The values for each key have a specific semantic meaning, which is
 	// documented on the key definition. Requesters of tokens may ask
 	// the Kubernetes API Server to attest to certain claims. The API Server
