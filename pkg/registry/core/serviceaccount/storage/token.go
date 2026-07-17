@@ -238,7 +238,7 @@ func (r *TokenREST) Create(ctx context.Context, name string, obj runtime.Object,
 			admissionReviewAPIGroups := attestations[authenticationapi.AttestationAdmissionReviewAPIGroups]
 
 			// indexing is safe to do since validation catches empty attestation values
-			if err := r.authorizeAdmissionWebhookAuthnTokenRequest(newCtx, getSvcAccountUserInfo(req, ref, string(svcacct.UID)), admissionReviewAPIGroups[0]); err != nil {
+			if err := r.authorizeAdmissionWebhookAuthnTokenRequest(newCtx, getSvcAccountUserInfo(req, string(svcacct.UID)), admissionReviewAPIGroups[0]); err != nil {
 				return nil, err
 			}
 
@@ -354,12 +354,11 @@ func getAndValidateWebhookConfigGeneric[T eitherWebhookCfg, U eitherWebhook](new
 	return obj, nil
 }
 
-func getSvcAccountUserInfo(req *authenticationapi.TokenRequest, ref *authenticationapi.BoundObjectReference, svcacctUID string) user.Info {
+func getSvcAccountUserInfo(req *authenticationapi.TokenRequest, svcacctUID string) user.Info {
 	info := serviceaccount.ServiceAccountInfo{
-		Name:         req.Name,
-		Namespace:    req.Namespace,
-		UID:          svcacctUID,
-		Attestations: req.Spec.Attestations,
+		Name:      req.Name,
+		Namespace: req.Namespace,
+		UID:       svcacctUID,
 	}
 
 	return info.UserInfo()
