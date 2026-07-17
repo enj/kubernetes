@@ -20,11 +20,11 @@ import (
 	"fmt"
 	"strings"
 
+	authenticationv1 "k8s.io/api/authentication/v1"
 	v1 "k8s.io/api/core/v1"
 	apimachineryvalidation "k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/klog/v2"
-	authenticationv1 "k8s.io/api/authentication/v1"
 )
 
 const (
