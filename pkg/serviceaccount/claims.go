@@ -28,7 +28,6 @@ import (
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/audit"
 	apiserverserviceaccount "k8s.io/apiserver/pkg/authentication/serviceaccount"
 	authenticationtokenjwt "k8s.io/apiserver/pkg/authentication/token/jwt"
@@ -297,6 +296,7 @@ func (v *validator) Validate(ctx context.Context, _ string, public *jwt.Claims, 
 		case mutref != nil:
 			mutatingName, mutatingUID, err = validateWebhookCfgRef[*admissionregistrationv1.MutatingWebhookConfiguration](ctx, v, &private.Kubernetes, mutref, invalidIfDeletedBefore)
 		}
+
 		if err != nil {
 			return nil, err
 		}
@@ -341,15 +341,21 @@ type eitherWebhookCfg interface {
 	*admissionregistrationv1.ValidatingWebhookConfiguration | *admissionregistrationv1.MutatingWebhookConfiguration
 }
 
-type webhookCfgGetterFunc[T eitherWebhookCfg] func(context.Context, string) (metav1.Object, error)
+type webhookCfgGetterFunc[T eitherWebhookCfg] func(context.Context, string) (T, error)
 
 func getWebhookGetter[T eitherWebhookCfg](v *validator) webhookCfgGetterFunc[T] {
 	var t T
 	switch any(t).(type) {
 	case *admissionregistrationv1.ValidatingWebhookConfiguration:
-		return any(v.getter.GetValidatingWebhookConfiguration).(webhookCfgGetterFunc[T])
+		return any(
+			webhookCfgGetterFunc[*admissionregistrationv1.ValidatingWebhookConfiguration](
+				v.getter.GetValidatingWebhookConfiguration,
+			)).(webhookCfgGetterFunc[T])
 	case *admissionregistrationv1.MutatingWebhookConfiguration:
-		return any(v.getter.GetMutatingWebhookConfiguration).(webhookCfgGetterFunc[T])
+		return any(
+			webhookCfgGetterFunc[*admissionregistrationv1.MutatingWebhookConfiguration](
+				v.getter.GetMutatingWebhookConfiguration,
+			)).(webhookCfgGetterFunc[T])
 	default:
 		panic("unreachable by type constraints")
 	}

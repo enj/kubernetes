@@ -1440,7 +1440,7 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 				BoundObjectRef: validatingRef("test-validating-webhook-nonexistent", ""),
 				Attestations:   appsAttestation,
 			},
-			errContains: `"test-validating-webhook-nonexistent" not found`,
+			errContains: `token request denied`,
 		},
 		{
 			name:   "nonexistent MutatingWebhookConfiguration",
@@ -1450,7 +1450,7 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 				BoundObjectRef: mutatingRef("test-mutating-webhook-nonexistent", ""),
 				Attestations:   appsAttestation,
 			},
-			errContains: `"test-mutating-webhook-nonexistent" not found`,
+			errContains: `token request denied`,
 		},
 
 		// UID mismatch
@@ -1630,7 +1630,7 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 				BoundObjectRef: validatingRef(validating.Name, validating.UID),
 				Attestations:   appsAttestation,
 			},
-			errContains: `audience does not match webhook client config in the bound object`,
+			errContains: `token request denied`,
 		},
 
 		// Attestation API group does not match webhook rules
@@ -1644,7 +1644,7 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 					authenticationv1.AttestationAdmissionReviewAPIGroups: {"networking.k8s.io"},
 				},
 			},
-			errContains: `attested API group does not match any rule in the bound webhook configuration`,
+			errContains: `token request denied`,
 		},
 	}
 
