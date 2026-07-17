@@ -42,16 +42,18 @@ type REST struct {
 	Token *TokenREST
 }
 
-type validatingWebhookConfigurationGetter interface {
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*admissionregistrationv1.ValidatingWebhookConfiguration, error)
+type webhook interface {
+	*admissionregistrationv1.ValidatingWebhookConfiguration | *admissionregistrationv1.MutatingWebhookConfiguration
+	metav1.Object
 }
-type mutatingWebhookConfigurationGetter interface {
-	Get(ctx context.Context, name string, opts metav1.GetOptions) (*admissionregistrationv1.MutatingWebhookConfiguration, error)
+
+type webhookGetter[T webhook] interface {
+	Get(ctx context.Context, name string, opts metav1.GetOptions) (T, error)
 }
 
 // NewREST returns a RESTStorage object that will work against service accounts.
 func NewREST(optsGetter generic.RESTOptionsGetter, issuer token.TokenGenerator, auds authenticator.Audiences, authorizer authorizer.Authorizer, max time.Duration, podStorage, secretStorage, nodeStorage rest.Getter,
-	validatingWebhookConfigurations validatingWebhookConfigurationGetter, mutatingWebhookConfigurations mutatingWebhookConfigurationGetter, extendExpiration bool, maxExtendedExpiration time.Duration) (*REST, error) {
+	validatingWebhooks webhookGetter[*admissionregistrationv1.ValidatingWebhookConfiguration], mutatingWebhooks webhookGetter[*admissionregistrationv1.MutatingWebhookConfiguration], extendExpiration bool, maxExtendedExpiration time.Duration) (*REST, error) {
 	store := &genericregistry.Store{
 		NewFunc:                   func() runtime.Object { return &api.ServiceAccount{} },
 		NewListFunc:               func() runtime.Object { return &api.ServiceAccountList{} },
@@ -74,19 +76,19 @@ func NewREST(optsGetter generic.RESTOptionsGetter, issuer token.TokenGenerator, 
 	var trest *TokenREST
 	if issuer != nil && podStorage != nil && secretStorage != nil {
 		trest = &TokenREST{
-			svcaccts:                        store,
-			pods:                            podStorage,
-			secrets:                         secretStorage,
-			nodes:                           nodeStorage,
-			validatingWebhookConfigurations: validatingWebhookConfigurations,
-			mutatingWebhookConfigurations:   mutatingWebhookConfigurations,
-			issuer:                          issuer,
-			auds:                            auds,
-			audsSet:                         sets.New[string](auds...),
-			authorizer:                      authorizer,
-			maxExpirationSeconds:            int64(max.Seconds()),
-			maxExtendedExpirationSeconds:    int64(maxExtendedExpiration.Seconds()),
-			extendExpiration:                extendExpiration,
+			svcaccts:                     store,
+			pods:                         podStorage,
+			secrets:                      secretStorage,
+			nodes:                        nodeStorage,
+			validatingWebhooks:           &vwhGetter{validatingWebhooks: validatingWebhooks},
+			mutatingWebhooks:             &mwhGetter{mutatingWebhooks: mutatingWebhooks},
+			issuer:                       issuer,
+			auds:                         auds,
+			audsSet:                      sets.New[string](auds...),
+			authorizer:                   authorizer,
+			maxExpirationSeconds:         int64(max.Seconds()),
+			maxExtendedExpirationSeconds: int64(maxExtendedExpiration.Seconds()),
+			extendExpiration:             extendExpiration,
 		}
 	}
 

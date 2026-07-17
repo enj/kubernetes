@@ -19,6 +19,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"iter"
 	"net/url"
 	"strings"
 	"time"
@@ -26,14 +27,12 @@ import (
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	authenticationapiv1 "k8s.io/api/authentication/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	"k8s.io/apiserver/pkg/admission/plugin/webhook"
 	"k8s.io/apiserver/pkg/audit"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
@@ -64,19 +63,19 @@ func (r *TokenREST) Destroy() {
 }
 
 type TokenREST struct {
-	svcaccts                        rest.Getter
-	pods                            rest.Getter
-	secrets                         rest.Getter
-	nodes                           rest.Getter
-	validatingWebhookConfigurations validatingWebhookConfigurationGetter
-	mutatingWebhookConfigurations   mutatingWebhookConfigurationGetter
-	authorizer                      authorizer.Authorizer
-	issuer                          token.TokenGenerator
-	auds                            authenticator.Audiences
-	audsSet                         sets.Set[string]
-	maxExpirationSeconds            int64
-	extendExpiration                bool
-	maxExtendedExpirationSeconds    int64
+	svcaccts                     rest.Getter
+	pods                         rest.Getter
+	secrets                      rest.Getter
+	nodes                        rest.Getter
+	validatingWebhooks           *vwhGetter
+	mutatingWebhooks             *mwhGetter
+	authorizer                   authorizer.Authorizer
+	issuer                       token.TokenGenerator
+	auds                         authenticator.Audiences
+	audsSet                      sets.Set[string]
+	maxExpirationSeconds         int64
+	extendExpiration             bool
+	maxExtendedExpirationSeconds int64
 }
 
 var _ = rest.NamedCreater(&TokenREST{})
@@ -225,13 +224,20 @@ func (r *TokenREST) Create(ctx context.Context, name string, obj runtime.Object,
 			}
 			secret = secretObj.(*api.Secret)
 			uid = secret.UID
-		case gvk.Group == "admissionregistration.k8s.io" && (gvk.Kind == "ValidatingWebhookConfiguration" || gvk.Kind == "MutatingWebhookConfiguration"):
+		case gvk.GroupVersion() == admissionregistrationv1.SchemeGroupVersion && (gvk.Kind == "ValidatingWebhookConfiguration" || gvk.Kind == "MutatingWebhookConfiguration"): // TODO(enj): we seem to have ignored the version for the other refs which is questionable ...
 			if !utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerWebhookAuthenticationToken) {
 				return nil, errors.NewBadRequest(fmt.Sprintf("cannot bind token to object of type %s (feature gate %s is disabled)", gvk.String(), genericfeatures.APIServerWebhookAuthenticationToken))
 			}
+
+			if r.hasAnyKubeAudiences(req.Spec.Audiences) {
+				return nil, fmt.Errorf("api server audiences are invalid for webhook token requests")
+			}
+
 			newCtx := newContext(ctx, strings.ToLower(gvk.Kind)+"s", ref.Name, "", gvk)
-			// validation guarantees the presence of this key and its single value
+
+			// validation guarantees the presence of both of these and their single value
 			admissionReviewAPIGroup := attestations[authenticationapi.AttestationAdmissionReviewAPIGroups][0]
+			audience := req.Spec.Audiences[0]
 
 			if err := r.authorizeAdmissionWebhookAuthnTokenRequest(newCtx, svcacct, admissionReviewAPIGroup); err != nil {
 				return nil, err
@@ -240,19 +246,13 @@ func (r *TokenREST) Create(ctx context.Context, name string, obj runtime.Object,
 			var err error
 			switch gvk.Kind {
 			case "ValidatingWebhookConfiguration":
-				validating, err = getAndValidateWebhookConfig[*admissionregistrationv1.ValidatingWebhookConfiguration](newCtx, r, req, admissionReviewAPIGroup)
-				if err != nil {
-					klog.V(4).ErrorS(err, "TODO FIX THIS")
-					return nil, errors.NewForbidden(schema.GroupResource{Group: "", Resource: "serviceaccounts/token"}, svcacct.Name, fmt.Errorf("token request denied"))
-				}
-				uid = validating.UID
+				validating, uid, err = getAndValidateWebhookConfig(newCtx, ref.Name, audience, admissionReviewAPIGroup, r.validatingWebhooks)
 			case "MutatingWebhookConfiguration":
-				mutating, err = getAndValidateWebhookConfig[*admissionregistrationv1.MutatingWebhookConfiguration](newCtx, r, req, admissionReviewAPIGroup)
-				if err != nil {
-					klog.V(4).ErrorS(err, "TODO FIX THIS")
-					return nil, errors.NewForbidden(schema.GroupResource{Group: "", Resource: "serviceaccounts/token"}, svcacct.Name, fmt.Errorf("token request denied"))
-				}
-				uid = mutating.UID
+				mutating, uid, err = getAndValidateWebhookConfig(newCtx, ref.Name, audience, admissionReviewAPIGroup, r.mutatingWebhooks)
+			}
+			if err != nil {
+				klog.V(4).ErrorS(err, "validation for bound webhook failed", "kind", gvk.Kind)
+				return nil, errors.NewForbidden(schema.GroupResource{Group: "", Resource: "serviceaccounts/token"}, svcacct.Name, fmt.Errorf("token request denied"))
 			}
 		default:
 			return nil, errors.NewBadRequest(fmt.Sprintf("cannot bind token to object of type %s", gvk.String()))
@@ -300,208 +300,6 @@ func (r *TokenREST) Create(ctx context.Context, name string, obj runtime.Object,
 	return out, nil
 }
 
-type eitherWebhookCfg interface {
-	*admissionregistrationv1.ValidatingWebhookConfiguration | *admissionregistrationv1.MutatingWebhookConfiguration
-}
-
-type eitherWebhook interface {
-	admissionregistrationv1.ValidatingWebhook | admissionregistrationv1.MutatingWebhook
-}
-
-func getAndValidateWebhookConfig[T eitherWebhookCfg](newCtx context.Context, r *TokenREST, req *authenticationapi.TokenRequest, admissionReviewAPIGroups string) (T, error) {
-	var t T
-	switch any(t).(type) {
-	case *admissionregistrationv1.ValidatingWebhookConfiguration:
-		h, err := getAndValidateWebhookConfigGeneric[*admissionregistrationv1.ValidatingWebhookConfiguration, admissionregistrationv1.ValidatingWebhook](newCtx, r, req, admissionReviewAPIGroups, r.validatingWebhookConfigurations.Get)
-		return any(h).(T), err
-	case *admissionregistrationv1.MutatingWebhookConfiguration:
-		h, err := getAndValidateWebhookConfigGeneric[*admissionregistrationv1.MutatingWebhookConfiguration, admissionregistrationv1.MutatingWebhook](newCtx, r, req, admissionReviewAPIGroups, r.mutatingWebhookConfigurations.Get)
-		return any(h).(T), err
-	default:
-		panic("unreachable by type constraints")
-	}
-}
-
-func getWebhookGetter[T eitherWebhookCfg, U eitherWebhook](cfg T) webhookGetter[U] {
-	switch wh := any(cfg).(type) {
-	case *admissionregistrationv1.ValidatingWebhookConfiguration:
-		return any((*vwc)(wh)).(webhookGetter[U])
-	case *admissionregistrationv1.MutatingWebhookConfiguration:
-		return any((*mwc)(wh)).(webhookGetter[U])
-	default:
-		panic("unreachable by type constraints")
-	}
-}
-
-func getAndValidateWebhookConfigGeneric[T eitherWebhookCfg, U eitherWebhook](newCtx context.Context, r *TokenREST, req *authenticationapi.TokenRequest, admissionReviewAPIGroups string, get func(context.Context, string, metav1.GetOptions) (T, error)) (T, error) {
-	obj, err := get(newCtx, req.Spec.BoundObjectRef.Name, metav1.GetOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	if r.hasAnyKubeAudiences(req.Spec.Audiences) {
-		return nil, fmt.Errorf("api server audiences are invalid for webhook token requests")
-	}
-	webhookGetter := getWebhookGetter[T, U](obj)
-	if err := validateWebhookAudience(obj, webhookGetter, req.Spec.Audiences[0]); err != nil {
-		return nil, err
-	}
-
-	if err := validateAttestationAPIGroup(obj, webhookGetter, admissionReviewAPIGroups); err != nil {
-		return nil, err
-	}
-
-	return obj, nil
-}
-
-type vwc admissionregistrationv1.ValidatingWebhookConfiguration
-type mwc admissionregistrationv1.MutatingWebhookConfiguration
-
-func (v *vwc) GetWebhooks() []admissionregistrationv1.ValidatingWebhook {
-	return v.Webhooks
-}
-
-func (m *mwc) GetWebhooks() []admissionregistrationv1.MutatingWebhook {
-	return m.Webhooks
-}
-
-type webhookGetter[T eitherWebhook] interface {
-	GetWebhooks() []T
-}
-
-func asAccessor[T eitherWebhookCfg, U eitherWebhook](cfg T, hook U) (webhook.WebhookAccessor, error) {
-	a, err := meta.Accessor(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	var h any = hook
-	switch wh := h.(type) {
-	case admissionregistrationv1.ValidatingWebhook:
-		var t any = cfg
-		if _, ok := t.(*admissionregistrationv1.ValidatingWebhookConfiguration); !ok {
-			return nil, fmt.Errorf("mismatched webhook configuration and webhook types")
-		}
-		return webhook.NewValidatingWebhookAccessor(string(a.GetUID()), a.GetName(), &wh), nil
-	case admissionregistrationv1.MutatingWebhook:
-		var t any = cfg
-		if _, ok := t.(*admissionregistrationv1.MutatingWebhookConfiguration); !ok {
-			return nil, fmt.Errorf("mismatched webhook configuration and webhook types")
-		}
-		return webhook.NewMutatingWebhookAccessor(string(a.GetUID()), a.GetName(), &wh), nil
-	default:
-		panic("unreachable by type constraints")
-	}
-}
-
-// validateWebhookAudience checks that the requested audience matches at least one
-// webhook's client config. For URL-configured webhooks the audience must be the URL
-// verbatim. For service-configured webhooks the audience must be
-// https://$name.$namespace.svc:$port[/$path].
-func validateWebhookAudience[T eitherWebhookCfg, U eitherWebhook](cfg T, gimme webhookGetter[U], audience string) error {
-	hooks := gimme.GetWebhooks()
-	for _, hook := range hooks {
-		a, err := asAccessor(cfg, hook)
-		if err != nil {
-			return err
-		}
-
-		cc := a.GetClientConfig()
-		if cc.URL != nil && audience == *cc.URL {
-			return nil
-		}
-		if cc.Service != nil {
-			port := int32(443)
-			if cc.Service.Port != nil {
-				port = *cc.Service.Port
-			}
-			expected := fmt.Sprintf("https://%s.%s.svc:%d", cc.Service.Name, cc.Service.Namespace, port)
-			if cc.Service.Path != nil && *cc.Service.Path != "" {
-				joined, err := url.JoinPath(expected, *cc.Service.Path)
-				if err != nil {
-					return errors.NewInternalError(fmt.Errorf("%w: unable to validate audience", err))
-				}
-				expected = joined
-			}
-			if audience == expected {
-				return nil
-			}
-		}
-
-	}
-
-	return errors.NewBadRequest("audience does not match webhook client config in the bound object")
-}
-
-// validateAttestationAPIGroup checks that the attested API group matches at least
-// one Rule in the webhook configuration. A "*" attestation value skips this check
-// since it represents all API groups. A "*" in a Rule's APIGroups matches any
-// attested value. It is assumed that the cel expressions in the matchConditions
-// properly match the AdmissionReview request for which the TokenRequest is
-// being made.
-func validateAttestationAPIGroup[T eitherWebhookCfg, U eitherWebhook](cfg T, gimme webhookGetter[U], attestedGroup string) error {
-	// "*" means the token is valid for all API groups; skip the check. We only
-	// ever expect kube-apiserver to ever ask for this.
-	if attestedGroup == "*" {
-		return nil
-	}
-
-	for _, hook := range gimme.GetWebhooks() {
-		a, err := asAccessor(cfg, hook)
-		if err != nil {
-			return err
-		}
-
-		for _, rule := range a.GetRules() {
-			for _, group := range rule.APIGroups {
-				// If there's an exact match
-				if group == "*" || group == attestedGroup {
-					return nil
-				}
-			}
-		}
-	}
-
-	// An aggregated API Server will never need a cross-group equivalent, so we
-	// do not check equivalents here.
-
-	// If this point is reached, there are either a) no rules or b) rules but
-	// none matched. If there are no rules, the invocation will never match and
-	// the request should be denied.
-	return fmt.Errorf("attestation does not match webhook rules")
-}
-
-func (r *TokenREST) authorizeAdmissionWebhookAuthnTokenRequest(ctx context.Context, sa *api.ServiceAccount, admissionReviewAPIGroup string) error {
-	attributes := authorizer.AttributesRecord{
-		User: (&serviceaccount.ServiceAccountInfo{
-			Name:      sa.Name,
-			Namespace: sa.Namespace,
-			UID:       string(sa.UID),
-		}).UserInfo(),
-		Verb:            "attest",
-		APIVersion:      "*",
-		APIGroup:        "authentication.k8s.io",
-		Resource:        authenticationapi.AttestationAdmissionReviewAPIGroups,
-		Name:            admissionReviewAPIGroup,
-		ResourceRequest: true,
-	}
-
-	authorized, reason, err := r.authorizer.Authorize(ctx, attributes)
-	if authorized == authorizer.DecisionAllow {
-		return nil
-	}
-
-	msg := reason
-	switch {
-	case err != nil && len(reason) > 0:
-		msg = fmt.Sprintf("%v: %s", err, reason)
-	case err != nil:
-		msg = err.Error()
-	}
-
-	return responsewriters.ForbiddenStatusError(attributes, msg)
-}
-
 func (r *TokenREST) GroupVersionKind(schema.GroupVersion) schema.GroupVersionKind {
 	return gvk
 }
@@ -536,4 +334,161 @@ func (r *TokenREST) hasAnyKubeAudiences(tokenAudience []string) bool {
 // TokenRequest's UID should be preserved when creating subresources
 func (r *TokenREST) PreserveRequestObjectMetaSystemFieldsOnSubresourceCreate() bool {
 	return true
+}
+
+func (r *TokenREST) authorizeAdmissionWebhookAuthnTokenRequest(ctx context.Context, sa *api.ServiceAccount, admissionReviewAPIGroup string) error {
+	attributes := authorizer.AttributesRecord{
+		User: (&serviceaccount.ServiceAccountInfo{
+			Name:      sa.Name,
+			Namespace: sa.Namespace,
+			UID:       string(sa.UID),
+		}).UserInfo(),
+		Verb:            "attest",
+		APIVersion:      "*",
+		APIGroup:        "authentication.k8s.io",
+		Resource:        authenticationapi.AttestationAdmissionReviewAPIGroups,
+		Name:            admissionReviewAPIGroup,
+		ResourceRequest: true,
+	}
+
+	authorized, reason, err := r.authorizer.Authorize(ctx, attributes)
+	if authorized == authorizer.DecisionAllow {
+		return nil
+	}
+
+	msg := reason
+	switch {
+	case err != nil && len(reason) > 0:
+		msg = fmt.Sprintf("%v: %s", err, reason)
+	case err != nil:
+		msg = err.Error()
+	}
+
+	return responsewriters.ForbiddenStatusError(attributes, msg)
+}
+
+type whFieldGetter[T webhook] interface {
+	get(ctx context.Context, name string) (T, iter.Seq[*webhookFields], error)
+}
+
+type webhookFields struct {
+	config admissionregistrationv1.WebhookClientConfig
+	rules  []admissionregistrationv1.RuleWithOperations
+}
+
+type vwhGetter struct {
+	validatingWebhooks webhookGetter[*admissionregistrationv1.ValidatingWebhookConfiguration]
+}
+
+func (v *vwhGetter) get(ctx context.Context, name string) (*admissionregistrationv1.ValidatingWebhookConfiguration, iter.Seq[*webhookFields], error) {
+	wh, err := v.validatingWebhooks.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, nil, err
+	}
+	return wh, func(yield func(*webhookFields) bool) {
+		for _, hook := range wh.Webhooks {
+			if !yield(&webhookFields{config: hook.ClientConfig, rules: hook.Rules}) {
+				return
+			}
+		}
+	}, nil
+}
+
+type mwhGetter struct {
+	mutatingWebhooks webhookGetter[*admissionregistrationv1.MutatingWebhookConfiguration]
+}
+
+func (m *mwhGetter) get(ctx context.Context, name string) (*admissionregistrationv1.MutatingWebhookConfiguration, iter.Seq[*webhookFields], error) {
+	wh, err := m.mutatingWebhooks.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, nil, err
+	}
+	return wh, func(yield func(*webhookFields) bool) {
+		for _, hook := range wh.Webhooks {
+			if !yield(&webhookFields{config: hook.ClientConfig, rules: hook.Rules}) {
+				return
+			}
+		}
+	}, nil
+}
+
+func getAndValidateWebhookConfig[T webhook](ctx context.Context, name, audience, admissionReviewAPIGroup string, getter whFieldGetter[T]) (T, types.UID, error) {
+	obj, whs, err := getter.get(ctx, name)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if err := validateWebhookAudience(whs, audience); err != nil {
+		return nil, "", err
+	}
+
+	if err := validateAttestationAPIGroup(whs, admissionReviewAPIGroup); err != nil {
+		return nil, "", err
+	}
+
+	return obj, obj.GetUID(), nil
+}
+
+// validateWebhookAudience checks that the requested audience matches at least one
+// webhook's client config. For URL-configured webhooks the audience must be the URL
+// verbatim. For service-configured webhooks the audience must be
+// https://$name.$namespace.svc:$port[/$path].
+func validateWebhookAudience(hooks iter.Seq[*webhookFields], audience string) error {
+	for hook := range hooks {
+		cc := hook.config
+		if cc.URL != nil && audience == *cc.URL {
+			return nil
+		}
+		if cc.Service != nil {
+			port := int32(443)
+			if cc.Service.Port != nil {
+				port = *cc.Service.Port
+			}
+			path := ""
+			if cc.Service.Path != nil {
+				path = *cc.Service.Path
+			}
+			u := &url.URL{
+				Scheme: "https",
+				Host:   fmt.Sprintf("%s.%s.svc:%d", cc.Service.Name, cc.Service.Namespace, port),
+				Path:   path,
+			}
+			if audience == u.String() {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("audience does not match webhook client config in the bound object")
+}
+
+// validateAttestationAPIGroup checks that the attested API group matches at least
+// one Rule in the webhook configuration. A "*" attestation value skips this check
+// since it represents all API groups. A "*" in a Rule's APIGroups matches any
+// attested value. It is assumed that the cel expressions in the matchConditions
+// properly match the AdmissionReview request for which the TokenRequest is
+// being made.
+func validateAttestationAPIGroup(hooks iter.Seq[*webhookFields], attestedGroup string) error {
+	// "*" means the token is valid for all API groups; skip the check. We only
+	// ever expect kube-apiserver to ever ask for this.
+	if attestedGroup == "*" {
+		return nil
+	}
+
+	for hook := range hooks {
+		for _, rule := range hook.rules {
+			for _, group := range rule.APIGroups {
+				if group == "*" || group == attestedGroup {
+					return nil
+				}
+			}
+		}
+	}
+
+	// An aggregated API Server will never need a cross-group equivalent, so we
+	// do not check equivalents here.
+
+	// If this point is reached, there are either a) no rules or b) rules but
+	// none matched. If there are no rules, the invocation will never match and
+	// the request should be denied.
+	return fmt.Errorf("attestation does not match webhook rules")
 }
