@@ -76,7 +76,7 @@ type TokenREST struct {
 	authorizer                      authorizer.Authorizer
 	issuer                          token.TokenGenerator
 	auds                            authenticator.Audiences
-	audsSet                         sets.String
+	audsSet                         sets.Set[string]
 	maxExpirationSeconds            int64
 	extendExpiration                bool
 	maxExtendedExpirationSeconds    int64
@@ -485,7 +485,7 @@ func validateAttestationAPIGroup[T eitherWebhookCfg, U eitherWebhook](cfg T, gim
 
 func (r *TokenREST) authorizeAdmissionWebhookAuthnTokenRequest(ctx context.Context, userInfo user.Info, admissionReviewAPIGroup string) error {
 	attributes := authorizer.AttributesRecord{
-		//TODO pass in a ServiceAccountInfo and call UserInfo() on it
+		// TODO: pass in a ServiceAccountInfo and call UserInfo() on it
 		User:            userInfo,
 		Verb:            "attest",
 		APIVersion:      "*",

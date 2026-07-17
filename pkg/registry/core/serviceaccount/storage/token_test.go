@@ -346,13 +346,13 @@ var _ warning.Recorder = &dummyRecorder{}
 func TestValidateWebhookAudience(t *testing.T) {
 	cfg := &admissionregistration.ValidatingWebhookConfiguration{
 		Webhooks: []admissionregistration.ValidatingWebhook{
-			{ClientConfig: admissionregistration.WebhookClientConfig{URL: ptr("https://validate.example.com")}},
+			{ClientConfig: admissionregistration.WebhookClientConfig{URL: new("https://validate.example.com")}},
 			{ClientConfig: admissionregistration.WebhookClientConfig{
 				Service: &admissionregistration.ServiceReference{
 					Name:      "webhook-svc",
 					Namespace: "webhook-ns",
-					Port:      ptr(int32(8443)),
-					Path:      ptr("/validate"),
+					Port:      new(int32(8443)),
+					Path:      new("/validate"),
 				},
 			}},
 			{ClientConfig: admissionregistration.WebhookClientConfig{
@@ -453,8 +453,4 @@ func TestValidateAttestationAPIGroup(t *testing.T) {
 			}
 		})
 	}
-}
-
-func ptr[T any](v T) *T {
-	return &v
 }

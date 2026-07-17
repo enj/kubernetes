@@ -221,10 +221,8 @@ func TestValidateTokenRequestAttestations(t *testing.T) {
 				if !found {
 					t.Errorf("expected error containing %q, got %v", tt.wantErr, errs)
 				}
-			} else {
-				if len(errs) > 0 {
-					t.Errorf("unexpected errors: %v", errs)
-				}
+			} else if len(errs) > 0 {
+				t.Errorf("unexpected errors: %v", errs)
 			}
 		})
 	}

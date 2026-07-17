@@ -61,7 +61,6 @@ import (
 	svcacct "k8s.io/kubernetes/plugin/pkg/admission/serviceaccount"
 	"k8s.io/kubernetes/test/integration/framework"
 	"k8s.io/kubernetes/test/utils/ktesting"
-	"k8s.io/utils/ptr"
 )
 
 const (
@@ -1311,9 +1310,9 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 		Webhooks: []admissionregistrationv1.ValidatingWebhook{
 			{
 				Name:                    "validate.webhook.test",
-				ClientConfig:            admissionregistrationv1.WebhookClientConfig{URL: ptr.To("https://validate.test")},
+				ClientConfig:            admissionregistrationv1.WebhookClientConfig{URL: new("https://validate.test")},
 				Rules:                   appsRule,
-				SideEffects:             ptr.To(admissionregistrationv1.SideEffectClassNone),
+				SideEffects:             new(admissionregistrationv1.SideEffectClassNone),
 				AdmissionReviewVersions: []string{"v1"},
 			},
 			{
@@ -1322,12 +1321,12 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 					Service: &admissionregistrationv1.ServiceReference{
 						Namespace: "webhook-ns",
 						Name:      "webhook-svc",
-						Port:      ptr.To(int32(8443)),
-						Path:      ptr.To("/validate"),
+						Port:      new(int32(8443)),
+						Path:      new("/validate"),
 					},
 				},
 				Rules:                   appsRule,
-				SideEffects:             ptr.To(admissionregistrationv1.SideEffectClassNone),
+				SideEffects:             new(admissionregistrationv1.SideEffectClassNone),
 				AdmissionReviewVersions: []string{"v1"},
 			},
 		},
@@ -1339,9 +1338,9 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 		Webhooks: []admissionregistrationv1.MutatingWebhook{
 			{
 				Name:                    "mutate.webhook.test",
-				ClientConfig:            admissionregistrationv1.WebhookClientConfig{URL: ptr.To("https://mutate.test")},
+				ClientConfig:            admissionregistrationv1.WebhookClientConfig{URL: new("https://mutate.test")},
 				Rules:                   appsRule,
-				SideEffects:             ptr.To(admissionregistrationv1.SideEffectClassNone),
+				SideEffects:             new(admissionregistrationv1.SideEffectClassNone),
 				AdmissionReviewVersions: []string{"v1"},
 			},
 			{
@@ -1350,11 +1349,11 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 					Service: &admissionregistrationv1.ServiceReference{
 						Namespace: "webhook-ns",
 						Name:      "mutating-svc",
-						Port:      ptr.To(int32(9443)),
+						Port:      new(int32(9443)),
 					},
 				},
 				Rules:                   appsRule,
-				SideEffects:             ptr.To(admissionregistrationv1.SideEffectClassNone),
+				SideEffects:             new(admissionregistrationv1.SideEffectClassNone),
 				AdmissionReviewVersions: []string{"v1"},
 			},
 		},
@@ -1852,9 +1851,9 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "test-validating-lifecycle"},
 			Webhooks: []admissionregistrationv1.ValidatingWebhook{{
 				Name:                    "lifecycle.validate.webhook.test",
-				ClientConfig:            admissionregistrationv1.WebhookClientConfig{URL: ptr.To("https://lifecycle.validate.test")},
+				ClientConfig:            admissionregistrationv1.WebhookClientConfig{URL: new("https://lifecycle.validate.test")},
 				Rules:                   appsRule,
-				SideEffects:             ptr.To(admissionregistrationv1.SideEffectClassNone),
+				SideEffects:             new(admissionregistrationv1.SideEffectClassNone),
 				AdmissionReviewVersions: []string{"v1"},
 			}},
 		})
@@ -1886,9 +1885,9 @@ func TestServiceAccountTokenAttestations(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "test-mutating-lifecycle"},
 			Webhooks: []admissionregistrationv1.MutatingWebhook{{
 				Name:                    "lifecycle.mutate.webhook.test",
-				ClientConfig:            admissionregistrationv1.WebhookClientConfig{URL: ptr.To("https://lifecycle.mutate.test")},
+				ClientConfig:            admissionregistrationv1.WebhookClientConfig{URL: new("https://lifecycle.mutate.test")},
 				Rules:                   appsRule,
-				SideEffects:             ptr.To(admissionregistrationv1.SideEffectClassNone),
+				SideEffects:             new(admissionregistrationv1.SideEffectClassNone),
 				AdmissionReviewVersions: []string{"v1"},
 			}},
 		})
@@ -2125,7 +2124,7 @@ func createDeletePod(t *testing.T, cs clientset.Interface, pod *v1.Pod) (*v1.Pod
 		}
 		done = true
 		if err := cs.CoreV1().Pods(pod.Namespace).Delete(context.TODO(), pod.Name, metav1.DeleteOptions{
-			GracePeriodSeconds: ptr.To(int64(0)),
+			GracePeriodSeconds: new(int64(0)),
 		}); err != nil {
 			t.Fatalf("err: %v", err)
 		}

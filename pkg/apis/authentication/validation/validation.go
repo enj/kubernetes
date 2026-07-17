@@ -139,7 +139,9 @@ func validateAdmissionReviewAPIGroupsValue(group string, specPath *field.Path) f
 		return nil
 	}
 
-	allReasons := append(labelReasons, subdomainReasons...)
+	allReasons := make([]string, 0, len(labelReasons)+len(subdomainReasons))
+	allReasons = append(allReasons, labelReasons...)
+	allReasons = append(allReasons, subdomainReasons...)
 	for _, reason := range allReasons {
 		errs = append(errs, field.Invalid(specPath, group, "must specify a valid API Group: "+reason))
 	}
