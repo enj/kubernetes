@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,7 +27,7 @@ import (
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	authenticationapiv1 "k8s.io/api/authentication/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/audit"
 	apiserverserviceaccount "k8s.io/apiserver/pkg/authentication/serviceaccount"
 	authenticationtokenjwt "k8s.io/apiserver/pkg/authentication/token/jwt"
@@ -289,17 +288,17 @@ func (v *validator) Validate(ctx context.Context, _ string, public *jwt.Claims, 
 		mutatingName, mutatingUID     string
 	)
 	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerWebhookAuthenticationToken) {
-
-		var err error
-		switch {
-		case valref != nil:
-			validatingName, validatingUID, err = validateWebhookCfgRef[*admissionregistrationv1.ValidatingWebhookConfiguration](ctx, v, &private.Kubernetes, valref, invalidIfDeletedBefore)
-		case mutref != nil:
-			mutatingName, mutatingUID, err = validateWebhookCfgRef[*admissionregistrationv1.MutatingWebhookConfiguration](ctx, v, &private.Kubernetes, mutref, invalidIfDeletedBefore)
+		if valref != nil {
+			validatingName, validatingUID, err = validateWebhookCfgRef(ctx, v.getValidatingWebhookMeta, "ValidatingWebhookConfiguration", &private.Kubernetes, valref, invalidIfDeletedBefore)
+			if err != nil {
+				return nil, err
+			}
 		}
-
-		if err != nil {
-			return nil, err
+		if mutref != nil {
+			mutatingName, mutatingUID, err = validateWebhookCfgRef(ctx, v.getMutatingWebhookMeta, "MutatingWebhookConfiguration", &private.Kubernetes, mutref, invalidIfDeletedBefore)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -320,7 +319,6 @@ func (v *validator) Validate(ctx context.Context, _ string, public *jwt.Claims, 
 	if utilfeature.DefaultFeatureGate.Enabled(features.ServiceAccountTokenJTI) {
 		jti = public.ID
 	}
-
 	return &apiserverserviceaccount.ServiceAccountInfo{
 		Namespace:                          private.Kubernetes.Namespace,
 		Name:                               private.Kubernetes.Svcacct.Name,
@@ -338,66 +336,36 @@ func (v *validator) Validate(ctx context.Context, _ string, public *jwt.Claims, 
 	}, nil
 }
 
-type eitherWebhookCfg interface {
-	*admissionregistrationv1.ValidatingWebhookConfiguration | *admissionregistrationv1.MutatingWebhookConfiguration
-}
-
-type webhookCfgGetterFunc[T eitherWebhookCfg] func(context.Context, string) (T, error)
-
-func getWebhookGetter[T eitherWebhookCfg](v *validator) webhookCfgGetterFunc[T] {
-	var t T
-	switch any(t).(type) {
-	case *admissionregistrationv1.ValidatingWebhookConfiguration:
-		return any(
-			webhookCfgGetterFunc[*admissionregistrationv1.ValidatingWebhookConfiguration](
-				v.getter.GetValidatingWebhookConfiguration,
-			)).(webhookCfgGetterFunc[T])
-	case *admissionregistrationv1.MutatingWebhookConfiguration:
-		return any(
-			webhookCfgGetterFunc[*admissionregistrationv1.MutatingWebhookConfiguration](
-				v.getter.GetMutatingWebhookConfiguration,
-			)).(webhookCfgGetterFunc[T])
-	default:
-		panic("unreachable by type constraints")
-	}
-}
-
-func getWebhookKind[T eitherWebhookCfg]() string {
-	var t T
-	switch any(t).(type) {
-	case *admissionregistrationv1.ValidatingWebhookConfiguration:
-		return "ValidatingWebhookConfiguration"
-	case *admissionregistrationv1.MutatingWebhookConfiguration:
-		return "MutatingWebhookConfiguration"
-	default:
-		panic("unreachable by type constraints")
-	}
-}
-
-func validateWebhookCfgRef[T eitherWebhookCfg](ctx context.Context, v *validator, private *kubernetes, ref *ref, invalidIfDeletedBefore time.Time) (string, string, error) {
-	if ref == nil {
-		return "", "", nil
-	}
-
-	get := getWebhookGetter[T](v)
-	kind := getWebhookKind[T]()
-	_obj, err := get(ctx, ref.Name)
+func (v *validator) getValidatingWebhookMeta(ctx context.Context, name string) (metav1.ObjectMeta, error) {
+	obj, err := v.getter.GetValidatingWebhookConfiguration(ctx, name)
 	if err != nil {
-		klog.V(4).Infof("Could not retrieve %s object %q for service account %s/%s: %v", strings.ToLower(kind), ref.Name, private.Namespace, private.Svcacct.Name, err)
+		return metav1.ObjectMeta{}, err
+	}
+	return obj.ObjectMeta, nil
+}
+
+func (v *validator) getMutatingWebhookMeta(ctx context.Context, name string) (metav1.ObjectMeta, error) {
+	obj, err := v.getter.GetMutatingWebhookConfiguration(ctx, name)
+	if err != nil {
+		return metav1.ObjectMeta{}, err
+	}
+	return obj.ObjectMeta, nil
+}
+
+type getter func(ctx context.Context, name string) (metav1.ObjectMeta, error)
+
+func validateWebhookCfgRef(ctx context.Context, get getter, kind string, private *kubernetes, ref *ref, invalidIfDeletedBefore time.Time) (string, string, error) {
+	obj, err := get(ctx, ref.Name)
+	if err != nil {
+		klog.V(4).Infof("Could not retrieve %s object %q for service account %s/%s: %v", kind, ref.Name, private.Namespace, private.Svcacct.Name, err)
 		return "", "", errors.New("service account token has been invalidated")
 	}
-
-	obj, err := meta.Accessor(_obj)
-	if err != nil {
-		return "", "", fmt.Errorf("could not cast webhookconfig type to metav1.Object")
-	}
-
-	if objUID := string(obj.GetUID()); ref.UID != objUID {
+	if objUID := string(obj.UID); ref.UID != objUID {
 		klog.V(4).Infof("%s UID no longer matches %s: %q != %q", kind, ref.Name, objUID, ref.UID)
-		return "", "", fmt.Errorf("validating UID (%s) does not match service account validating ref claim (%s)", objUID, ref.UID)
+		return "", "", fmt.Errorf("%s UID (%s) does not match service account validating ref claim (%s)", kind, objUID, ref.UID)
 	}
-	if deltime := obj.GetDeletionTimestamp(); deltime != nil && deltime.Time.Before(invalidIfDeletedBefore) {
-		klog.V(4).Infof("%s %q is deleted and awaiting removal for service account %s/%s", kind, obj.GetName(), private.Namespace, private.Svcacct.Name)
+	if deltime := obj.DeletionTimestamp; deltime != nil && deltime.Time.Before(invalidIfDeletedBefore) {
+		klog.V(4).Infof("%s %q is deleted and awaiting removal for service account %s/%s", kind, obj.Name, private.Namespace, private.Svcacct.Name)
 		return "", "", errors.New("service account token has been invalidated")
 	}
 	return ref.Name, ref.UID, nil

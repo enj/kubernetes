@@ -17,8 +17,11 @@ limitations under the License.
 package storage
 
 import (
+	"context"
 	"time"
 
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
@@ -26,7 +29,6 @@ import (
 	"k8s.io/apiserver/pkg/registry/generic"
 	genericregistry "k8s.io/apiserver/pkg/registry/generic/registry"
 	"k8s.io/apiserver/pkg/registry/rest"
-	admissionregistrationv1 "k8s.io/client-go/kubernetes/typed/admissionregistration/v1"
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/printers"
 	printersinternal "k8s.io/kubernetes/pkg/printers/internalversion"
@@ -40,8 +42,16 @@ type REST struct {
 	Token *TokenREST
 }
 
+type validatingWebhookConfigurationGetter interface {
+	Get(ctx context.Context, name string, opts metav1.GetOptions) (*admissionregistrationv1.ValidatingWebhookConfiguration, error)
+}
+type mutatingWebhookConfigurationGetter interface {
+	Get(ctx context.Context, name string, opts metav1.GetOptions) (*admissionregistrationv1.MutatingWebhookConfiguration, error)
+}
+
 // NewREST returns a RESTStorage object that will work against service accounts.
-func NewREST(optsGetter generic.RESTOptionsGetter, issuer token.TokenGenerator, auds authenticator.Audiences, authorizer authorizer.Authorizer, max time.Duration, podStorage, secretStorage, nodeStorage rest.Getter, admissionRegistrationClient admissionregistrationv1.AdmissionregistrationV1Interface, extendExpiration bool, maxExtendedExpiration time.Duration) (*REST, error) {
+func NewREST(optsGetter generic.RESTOptionsGetter, issuer token.TokenGenerator, auds authenticator.Audiences, authorizer authorizer.Authorizer, max time.Duration, podStorage, secretStorage, nodeStorage rest.Getter,
+	validatingWebhookConfigurations validatingWebhookConfigurationGetter, mutatingWebhookConfigurations mutatingWebhookConfigurationGetter, extendExpiration bool, maxExtendedExpiration time.Duration) (*REST, error) {
 	store := &genericregistry.Store{
 		NewFunc:                   func() runtime.Object { return &api.ServiceAccount{} },
 		NewListFunc:               func() runtime.Object { return &api.ServiceAccountList{} },
@@ -68,8 +78,8 @@ func NewREST(optsGetter generic.RESTOptionsGetter, issuer token.TokenGenerator, 
 			pods:                            podStorage,
 			secrets:                         secretStorage,
 			nodes:                           nodeStorage,
-			validatingWebhookConfigurations: admissionRegistrationClient.ValidatingWebhookConfigurations(),
-			mutatingWebhookConfigurations:   admissionRegistrationClient.MutatingWebhookConfigurations(),
+			validatingWebhookConfigurations: validatingWebhookConfigurations,
+			mutatingWebhookConfigurations:   mutatingWebhookConfigurations,
 			issuer:                          issuer,
 			auds:                            auds,
 			audsSet:                         sets.New[string](auds...),

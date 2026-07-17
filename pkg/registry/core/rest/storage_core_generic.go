@@ -113,9 +113,11 @@ func (c *GenericConfig) NewRESTStorage(apiResourceConfigSource serverstorage.API
 
 	var serviceAccountStorage *serviceaccountstore.REST
 	if c.ServiceAccountIssuer != nil {
-		serviceAccountStorage, err = serviceaccountstore.NewREST(restOptionsGetter, c.ServiceAccountIssuer, c.APIAudiences, authorizerfactory.NewAlwaysDenyAuthorizer(), c.ServiceAccountMaxExpiration, newNotFoundGetter(schema.GroupResource{Resource: "pods"}), secretStorage.Store, newNotFoundGetter(schema.GroupResource{Resource: "nodes"}), newNotFoundAdmissionRegistrationClient(), c.ExtendExpiration, c.MaxExtendedExpiration)
+		serviceAccountStorage, err = serviceaccountstore.NewREST(restOptionsGetter, c.ServiceAccountIssuer, c.APIAudiences, authorizerfactory.NewAlwaysDenyAuthorizer(), c.ServiceAccountMaxExpiration, newNotFoundGetter(schema.GroupResource{Resource: "pods"}), secretStorage.Store, newNotFoundGetter(schema.GroupResource{Resource: "nodes"}),
+			notFoundValidatingWebhookConfigurations{}, notFoundMutatingWebhookConfigurations{}, c.ExtendExpiration, c.MaxExtendedExpiration)
 	} else {
-		serviceAccountStorage, err = serviceaccountstore.NewREST(restOptionsGetter, nil, nil, authorizerfactory.NewAlwaysDenyAuthorizer(), 0, newNotFoundGetter(schema.GroupResource{Resource: "pods"}), newNotFoundGetter(schema.GroupResource{Resource: "secrets"}), newNotFoundGetter(schema.GroupResource{Resource: "nodes"}), newNotFoundAdmissionRegistrationClient(), false, c.MaxExtendedExpiration)
+		serviceAccountStorage, err = serviceaccountstore.NewREST(restOptionsGetter, nil, nil, authorizerfactory.NewAlwaysDenyAuthorizer(), 0, newNotFoundGetter(schema.GroupResource{Resource: "pods"}), newNotFoundGetter(schema.GroupResource{Resource: "secrets"}), newNotFoundGetter(schema.GroupResource{Resource: "nodes"}),
+			notFoundValidatingWebhookConfigurations{}, notFoundMutatingWebhookConfigurations{}, false, c.MaxExtendedExpiration)
 	}
 	if err != nil {
 		return genericapiserver.APIGroupInfo{}, err

@@ -38,7 +38,6 @@ import (
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
 	authenticationtokenjwt "k8s.io/apiserver/pkg/authentication/token/jwt"
-	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
@@ -46,11 +45,9 @@ import (
 	"k8s.io/apiserver/pkg/registry/rest"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/apiserver/pkg/warning"
-	typedadmissionregistrationv1 "k8s.io/client-go/kubernetes/typed/admissionregistration/v1"
 	"k8s.io/klog/v2"
 	authenticationapi "k8s.io/kubernetes/pkg/apis/authentication"
 	authenticationvalidation "k8s.io/kubernetes/pkg/apis/authentication/validation"
-
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/features"
 	token "k8s.io/kubernetes/pkg/serviceaccount"
@@ -71,8 +68,8 @@ type TokenREST struct {
 	pods                            rest.Getter
 	secrets                         rest.Getter
 	nodes                           rest.Getter
-	validatingWebhookConfigurations typedadmissionregistrationv1.ValidatingWebhookConfigurationInterface
-	mutatingWebhookConfigurations   typedadmissionregistrationv1.MutatingWebhookConfigurationInterface
+	validatingWebhookConfigurations validatingWebhookConfigurationGetter
+	mutatingWebhookConfigurations   mutatingWebhookConfigurationGetter
 	authorizer                      authorizer.Authorizer
 	issuer                          token.TokenGenerator
 	auds                            authenticator.Audiences
@@ -233,25 +230,26 @@ func (r *TokenREST) Create(ctx context.Context, name string, obj runtime.Object,
 				return nil, errors.NewBadRequest(fmt.Sprintf("cannot bind token to object of type %s (feature gate %s is disabled)", gvk.String(), genericfeatures.APIServerWebhookAuthenticationToken))
 			}
 			newCtx := newContext(ctx, strings.ToLower(gvk.Kind)+"s", ref.Name, "", gvk)
-			// validation guarantees the presence of this key
-			admissionReviewAPIGroups := attestations[authenticationapi.AttestationAdmissionReviewAPIGroups]
+			// validation guarantees the presence of this key and its single value
+			admissionReviewAPIGroup := attestations[authenticationapi.AttestationAdmissionReviewAPIGroups][0]
 
-			// indexing is safe to do since validation catches empty attestation values
-			if err := r.authorizeAdmissionWebhookAuthnTokenRequest(newCtx, getSvcAccountUserInfo(req, string(svcacct.UID)), admissionReviewAPIGroups[0]); err != nil {
+			if err := r.authorizeAdmissionWebhookAuthnTokenRequest(newCtx, svcacct, admissionReviewAPIGroup); err != nil {
 				return nil, err
 			}
 
 			var err error
 			switch gvk.Kind {
 			case "ValidatingWebhookConfiguration":
-				validating, err = getAndValidateWebhookConfig[*admissionregistrationv1.ValidatingWebhookConfiguration](newCtx, r, req, admissionReviewAPIGroups[0])
+				validating, err = getAndValidateWebhookConfig[*admissionregistrationv1.ValidatingWebhookConfiguration](newCtx, r, req, admissionReviewAPIGroup)
 				if err != nil {
+					klog.V(4).ErrorS(err, "TODO FIX THIS")
 					return nil, errors.NewForbidden(schema.GroupResource{Group: "", Resource: "serviceaccounts/token"}, svcacct.Name, fmt.Errorf("token request denied"))
 				}
 				uid = validating.UID
 			case "MutatingWebhookConfiguration":
-				mutating, err = getAndValidateWebhookConfig[*admissionregistrationv1.MutatingWebhookConfiguration](newCtx, r, req, admissionReviewAPIGroups[0])
+				mutating, err = getAndValidateWebhookConfig[*admissionregistrationv1.MutatingWebhookConfiguration](newCtx, r, req, admissionReviewAPIGroup)
 				if err != nil {
+					klog.V(4).ErrorS(err, "TODO FIX THIS")
 					return nil, errors.NewForbidden(schema.GroupResource{Group: "", Resource: "serviceaccounts/token"}, svcacct.Name, fmt.Errorf("token request denied"))
 				}
 				uid = mutating.UID
@@ -354,16 +352,6 @@ func getAndValidateWebhookConfigGeneric[T eitherWebhookCfg, U eitherWebhook](new
 	}
 
 	return obj, nil
-}
-
-func getSvcAccountUserInfo(req *authenticationapi.TokenRequest, svcacctUID string) user.Info {
-	info := serviceaccount.ServiceAccountInfo{
-		Name:      req.Name,
-		Namespace: req.Namespace,
-		UID:       svcacctUID,
-	}
-
-	return info.UserInfo()
 }
 
 type vwc admissionregistrationv1.ValidatingWebhookConfiguration
@@ -483,16 +471,19 @@ func validateAttestationAPIGroup[T eitherWebhookCfg, U eitherWebhook](cfg T, gim
 	return fmt.Errorf("attestation does not match webhook rules")
 }
 
-func (r *TokenREST) authorizeAdmissionWebhookAuthnTokenRequest(ctx context.Context, userInfo user.Info, admissionReviewAPIGroup string) error {
+func (r *TokenREST) authorizeAdmissionWebhookAuthnTokenRequest(ctx context.Context, sa *api.ServiceAccount, admissionReviewAPIGroup string) error {
 	attributes := authorizer.AttributesRecord{
-		// TODO: pass in a ServiceAccountInfo and call UserInfo() on it
-		User:            userInfo,
+		User: (&serviceaccount.ServiceAccountInfo{
+			Name:      sa.Name,
+			Namespace: sa.Namespace,
+			UID:       string(sa.UID),
+		}).UserInfo(),
 		Verb:            "attest",
 		APIVersion:      "*",
 		APIGroup:        "authentication.k8s.io",
 		Resource:        authenticationapi.AttestationAdmissionReviewAPIGroups,
-		ResourceRequest: true,
 		Name:            admissionReviewAPIGroup,
+		ResourceRequest: true,
 	}
 
 	authorized, reason, err := r.authorizer.Authorize(ctx, attributes)
