@@ -342,6 +342,9 @@ func getAndValidateWebhookConfigGeneric[T eitherWebhookCfg, U eitherWebhook](new
 		return nil, err
 	}
 
+	if r.hasAnyKubeAudiences(req.Spec.Audiences) {
+		return nil, fmt.Errorf("api server audiences are invalid for webhook token requests")
+	}
 	webhookGetter := getWebhookGetter[T, U](obj)
 	if err := validateWebhookAudience(obj, webhookGetter, req.Spec.Audiences[0]); err != nil {
 		return nil, err
@@ -366,8 +369,6 @@ func getSvcAccountUserInfo(req *authenticationapi.TokenRequest, svcacctUID strin
 
 type vwc admissionregistrationv1.ValidatingWebhookConfiguration
 type mwc admissionregistrationv1.MutatingWebhookConfiguration
-type vw admissionregistrationv1.ValidatingWebhook
-type mw admissionregistrationv1.MutatingWebhook
 
 func (v *vwc) GetWebhooks() []admissionregistrationv1.ValidatingWebhook {
 	return v.Webhooks
@@ -379,10 +380,6 @@ func (m *mwc) GetWebhooks() []admissionregistrationv1.MutatingWebhook {
 
 type webhookGetter[T eitherWebhook] interface {
 	GetWebhooks() []T
-}
-
-func getWebhooks[T webhookGetter[U], U eitherWebhook](hook T) []U {
-	return hook.GetWebhooks()
 }
 
 func asAccessor[T eitherWebhookCfg, U eitherWebhook](cfg T, hook U) (webhook.WebhookAccessor, error) {
@@ -538,6 +535,11 @@ func newContext(ctx context.Context, resource, name, namespace string, gvk schem
 func (r *TokenREST) isKubeAudiences(tokenAudience []string) bool {
 	// tokenAudiences must be a strict subset of apiserver audiences
 	return r.audsSet.HasAll(tokenAudience...)
+}
+
+// hasAnyKubeAudiences returns true if the tokenaudiences has any apiserver audiences.
+func (r *TokenREST) hasAnyKubeAudiences(tokenAudience []string) bool {
+	return r.audsSet.HasAny(tokenAudience...)
 }
 
 // PreserveRequestObjectMetaSystemFieldsOnSubresourceCreate indicates that the
