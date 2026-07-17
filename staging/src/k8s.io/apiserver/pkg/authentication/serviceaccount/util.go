@@ -24,7 +24,7 @@ import (
 	apimachineryvalidation "k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/klog/v2"
-	"k8s.io/kubernetes/pkg/apis/authentication"
+	authenticationv1 "k8s.io/api/authentication/v1"
 )
 
 const (
@@ -71,7 +71,7 @@ const (
 	AttestationKeyPrefix = "attestation.authentication.kubernetes.io/"
 	// AttestationAdmissionReviewAPIGroupsKey is the key used in a user's
 	// "extra" to specify the "admissionReviewAPIGroups" claim.
-	AttestationAdmissionReviewAPIGroupsKey = AttestationKeyPrefix + authentication.AttestationAdmissionReviewAPIGroups
+	AttestationAdmissionReviewAPIGroupsKey = AttestationKeyPrefix + authenticationv1.AttestationAdmissionReviewAPIGroups
 )
 
 // MakeUsername generates a username from the given namespace and ServiceAccount name.
@@ -153,7 +153,7 @@ type ServiceAccountInfo struct {
 	NodeName, NodeUID                                                     string
 	ValidatingWebhookConfigurationName, ValidatingWebhookConfigurationUID string
 	MutatingWebhookConfigurationName, MutatingWebhookConfigurationUID     string
-	Attestations                                                          map[string]authentication.AttestationValue
+	Attestations                                                          map[string]authenticationv1.AttestationValue
 }
 
 func (sa *ServiceAccountInfo) UserInfo() user.Info {
@@ -207,12 +207,12 @@ func (sa *ServiceAccountInfo) UserInfo() user.Info {
 	return info
 }
 
-func populateAttestationExtra(info *user.DefaultInfo, attestations map[string]authentication.AttestationValue) {
+func populateAttestationExtra(info *user.DefaultInfo, attestations map[string]authenticationv1.AttestationValue) {
 	for k, v := range attestations {
 		switch k {
 		// valid keys should be enumerated in the first case statement, and must
 		// be added here when new valid attestation keys are added
-		case authentication.AttestationAdmissionReviewAPIGroups /*, etc */ :
+		case authenticationv1.AttestationAdmissionReviewAPIGroups /*, etc */ :
 			info.Extra[AttestationKeyPrefix+k] = v
 		default:
 			klog.Warning(fmt.Printf("attestation key %s not recognized", k))

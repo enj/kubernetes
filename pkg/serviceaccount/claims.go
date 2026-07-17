@@ -27,6 +27,7 @@ import (
 	"gopkg.in/go-jose/go-jose.v2/jwt"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	authenticationapiv1 "k8s.io/api/authentication/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apiserver/pkg/audit"
 	apiserverserviceaccount "k8s.io/apiserver/pkg/authentication/serviceaccount"
@@ -328,7 +329,7 @@ func (v *validator) Validate(ctx context.Context, _ string, public *jwt.Claims, 
 		PodUID:                             podUID,
 		NodeName:                           nodeName,
 		NodeUID:                            nodeUID,
-		Attestations:                       private.Kubernetes.Attestations,
+		Attestations:                       toExternalAttestations(private.Kubernetes.Attestations),
 		ValidatingWebhookConfigurationName: validatingName,
 		ValidatingWebhookConfigurationUID:  validatingUID,
 		MutatingWebhookConfigurationName:   mutatingName,
@@ -400,4 +401,15 @@ func validateWebhookCfgRef[T eitherWebhookCfg](ctx context.Context, v *validator
 		return "", "", errors.New("service account token has been invalidated")
 	}
 	return ref.Name, ref.UID, nil
+}
+
+func toExternalAttestations(in map[string]authentication.AttestationValue) map[string]authenticationapiv1.AttestationValue {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]authenticationapiv1.AttestationValue, len(in))
+	for k, v := range in {
+		out[k] = authenticationapiv1.AttestationValue(v)
+	}
+	return out
 }

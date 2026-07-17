@@ -23,7 +23,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/authentication/user"
-	"k8s.io/kubernetes/pkg/apis/authentication"
+	authenticationv1 "k8s.io/api/authentication/v1"
 )
 
 func TestUserInfo(t *testing.T) {
@@ -76,8 +76,8 @@ func TestUserInfo(t *testing.T) {
 				Namespace:                          "ns",
 				ValidatingWebhookConfigurationName: "my-vwc",
 				ValidatingWebhookConfigurationUID:  "vwc-uid",
-				Attestations: map[string]authentication.AttestationValue{
-					authentication.AttestationAdmissionReviewAPIGroups: {"apps"},
+				Attestations: map[string]authenticationv1.AttestationValue{
+					authenticationv1.AttestationAdmissionReviewAPIGroups: {"apps"},
 				},
 			},
 			expectedUserInfo: &user.DefaultInfo{
@@ -96,8 +96,8 @@ func TestUserInfo(t *testing.T) {
 				Namespace:                        "ns",
 				MutatingWebhookConfigurationName: "my-mwc",
 				MutatingWebhookConfigurationUID:  "mwc-uid",
-				Attestations: map[string]authentication.AttestationValue{
-					authentication.AttestationAdmissionReviewAPIGroups: {"apps"},
+				Attestations: map[string]authenticationv1.AttestationValue{
+					authenticationv1.AttestationAdmissionReviewAPIGroups: {"apps"},
 				},
 			},
 			expectedUserInfo: &user.DefaultInfo{
